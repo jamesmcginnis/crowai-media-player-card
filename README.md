@@ -1,10 +1,10 @@
 # CrowAI Media Player Card
 
-CrowAI is a Home Assistant media player card built specifically for **iPhone**. Designed from the ground up for iPhone, it brings frosted-glass aesthetics, fluid touch animations, full Music Assistant integration, synced lyrics, a queue browser, push notifications, multi-room multicast playback, rich AI-powered media info panels, and an Apple TV remote — all in a card that feels like a native iPhone app.
+CrowAI is a Home Assistant media player card built specifically for **iPhone**. Designed from the ground up for iPhone, it brings frosted-glass aesthetics, fluid touch animations, full Music Assistant integration, synced lyrics, a queue browser, multi-room multicast playback, rich AI-powered media info panels, and an Apple TV remote — all in a card that feels like a native iPhone app.
 
 > ⚠️ **Music Assistant is required** for the Music Library browser, queue management, Vibe Queue Builder, AI Artist Radio, multi-room multicast playback and all MA-specific features.
 
-> ⚠️ **Music Assistant Queue Actions is required** for the Recommended tab, full queue browsing and library drill-in. See [Music Assistant Queue Actions](#-music-assistant-queue-actions-integration-required) below.
+> ⚠️ **Music Assistant Queue Actions is required** for the Recommended tab, full queue browsing and library drill-in. See [Music Assistant Queue Actions](https://github.com/droans/mass_queue) below.
 
 > ⚠️ **Google Gemini is required** for all AI features — AI Info Panel, Vibe Queue Builder, AI Search, Recommendations, AI Artist Radio, Announce AI Improve and Send Message AI. See [AI Features Setup](#-ai-features-setup-google-gemini--required) below.
 
@@ -78,7 +78,7 @@ In the card's visual editor, find the **AI Settings** section and select **Googl
 
 **`gemini-2.0-flash` is recommended.** The card caches all AI responses aggressively so daily quotas are rarely exhausted in normal use.
 
-> If you see "AI rate limit reached", your daily quota is exhausted — it resets at midnight.
+> If you see "AI rate limit reached", your daily quota is exhausted — it resets daily.
 
 ---
 
@@ -97,7 +97,7 @@ The recommended way to run Music Assistant is as a Home Assistant **App** (forme
 5. Open the Music Assistant web interface (via the app's page or the integration card) to add your music providers (Spotify, Apple Music, local library, Tidal, etc.) and players (HomePod, Sonos, AirPlay, Chromecast, etc.)
 6. MA-managed players appear in Home Assistant as `media_player.mass_*` entities — use these in the card's `ma_entities` config
 
-If you're not running Home Assistant OS (so the App store isn't available), Music Assistant can also run as a standalone Docker container — see the [Music Assistant installation docs](https://www.music-assistant.io/installation/) for that path.
+> 💡 **Highly recommended:** connect a streaming provider (Apple Music, Spotify, YouTube Music, Tidal, etc.) to Music Assistant rather than relying on a local library alone. Recommendations, the Vibe Queue Builder, AI Artist Radio and Similar Tracks all suggest music that needs to actually be playable through MA — a streaming provider gives them a full catalogue to draw from instead of just what you already have.
 
 GitHub: [github.com/music-assistant](https://github.com/music-assistant) · Full documentation: [music-assistant.io](https://music-assistant.io)
 
@@ -133,7 +133,7 @@ Repository: [github.com/droans/mass_queue](https://github.com/droans/mass_queue)
 - 🔄 **Automatic device switching** — card follows whichever device starts playing
 - 🎵 **Full media controls** — play/pause, skip, shuffle, repeat, seek via progress bar
 - ⏩ **Double-tap to seek** — double-tap left or right of artwork to seek −15s or +15s
-- 🖼️ **Artwork tap actions** — single-tap opens AI Info (music) or Media Info (TV/movies); long-press opens lyrics
+- 🖼️ **Artwork tap actions** — single-tap opens AI Info (music) or Media Info (TV/movies); double-tap the left or right side to seek −15s/+15s; long-press opens lyrics
 - 🖼️ **Artwork zoom** — tap the mini album art in the AI Info panel or album view to see a larger version
 - ✨ **Tactile button feedback** — glow and blur effects when buttons are pressed
 - 🔊 **Volume control** — slider or +/− buttons with optional routing to a separate volume entity
@@ -194,7 +194,7 @@ Decade moods search your MA library for chart compilations first, then fall back
 | Lyrics | Toggles lyrics panel |
 | Announce | TTS announcement panel |
 | Send Message | Push notification panel |
-| Share | Copies track info to clipboard |
+| Share | Copies track info + a link to your chosen music service (see [Sharing](#sharing)) |
 | More Info | Opens AI/Media Info panel |
 
 ### Multi-Room Multicast
@@ -215,27 +215,37 @@ Long-press the artwork while music plays to open the full-screen lyrics panel.
 - Double-tap to pause/resume auto-scrolling
 - Auto-close when track ends or changes
 
+### Sharing
+
+Share is available from the quick menu, the AI Info / Media Info panels, and the long-press menu on any queue row. It copies everything to the clipboard — there's a toast confirmation when it's done.
+
+- **Music** — copies the track title and artist (plus album, where shown) along with a link to find the track on your chosen streaming service
+- **Movies & TV** — copies the title, year and a short synopsis along with a link to find it on TheMovieDB
+- **Choose your service** — pick the destination for music links in **AI Settings**: YouTube Music (default), Apple Music, Spotify, Tidal, Amazon Music or Deezer
+
 ### Media Info Panels
 
 **Single-tap** the artwork to open:
 
 **Music — AI Info Panel:**
 - Year, label, length, fun fact, genre tags
-- Album pill — tap to browse album tracks with action bar; tap album art to zoom
+- Album pill — tap to open the album and browse its tracks, with its own action bar; tap album art to zoom
 - Band Members / Artist — tap any member to open their bio with photo (tap to zoom), Known For songs and fun fact
 - Similar Tracks — tap to drill in, long-press for enqueue menu
 - Mini album art — tap to view a larger version
 - Action bar: Play Now, Add, Play Next, Add Album
 
 **TV Shows:**
-- Poster (tap to zoom), genre tags, overview, similar shows, cast
+- Poster (tap to zoom), genre tags, overview, cast
+- Similar Shows — same idea as Similar Tracks; tap any to drill straight into that show's info
 - Season and episode browser with formatted airdates
 - Full back-navigation from episode detail back to Media Info
 
 **Movies:**
-- Poster (tap to zoom), title, year, genre tags, synopsis, similar movies, cast
+- Poster (tap to zoom), title, year, genre tags, synopsis, cast
+- Similar Movies — same idea as Similar Tracks; tap any to drill straight into that movie's info
 
-**Cast navigation:** tap any cast member to open their bio with photo (tap to zoom) and credits. Tap their photo in the bio to see a larger version.
+**Cast navigation:** tap any cast member to open their bio with photo (tap to zoom), Known For credits and a fun fact — the same related-content pattern used throughout the card. Tap their photo in the bio to see a larger version.
 
 ### Queue Panel
 
@@ -288,7 +298,6 @@ icon_theme: robot
 artwork_crossfade: false
 ambient_glow: false
 row_glow: false
-show_lyrics_button: false
 show_remote_button: true
 card_liquid_glass: true
 ```
@@ -300,7 +309,7 @@ card_liquid_glass: true
 ## 🔧 Troubleshooting
 
 **AI features show "Could not build queue" or "AI rate limit reached"**
-- Your Gemini daily quota (1,500 requests for `gemini-2.0-flash`) is exhausted. It resets at midnight.
+- Your Gemini daily quota (1,500 requests for `gemini-2.0-flash`) is exhausted. It resets daily.
 
 **AI features show "No AI agent found" or don't work**
 - Ensure the **Generative Language API** is enabled in Google Cloud Console — this is the most common setup mistake.
@@ -312,9 +321,6 @@ card_liquid_glass: true
 
 **Speaker pills stay greyed out after a queue builds**
 - This should clear automatically when the queue finishes. If not, a page refresh will always restore normal state.
-
-**Queue button is greyed out in the context menu**
-- A queue is currently building. Wait for the speaker pill to stop pulsing.
 
 **Custom colours don't work**
 - Turn off **Follow Home Assistant Theme** in the visual editor under Appearance & Behaviour.
@@ -349,9 +355,9 @@ All settings are configurable without touching YAML:
 | Appearance & Behaviour | Follow HA Theme, Auto Switch, Remember Last Speaker, Media Player Selector, Volume Buttons, Volume Percentage, Scroll Long Text, Lyrics persistence and caching |
 | Startup & Navigation | Startup view (Compact/Maximised/Remote), Retain Current View |
 | Volume Entity | Route volume control to a different media player entity |
-| Music Assistant | Radio Mode, Ambient Glow, Library & Queue Row Glow, Player Icon Theme, Artwork Crossfade, Show Lyrics/Remote/Library Buttons, Resize Button Spin, iTunes Artwork Fallback, Volume HUD, Volume HUD Liquid Glass, Card Liquid Glass |
+| Music Assistant | Radio Mode, Ambient Glow, Library & Queue Row Glow, Player Icon Theme, Artwork Crossfade, Show Remote/Library Buttons, Resize Button Spin, iTunes Artwork Fallback, Volume HUD, Volume HUD Liquid Glass, Card Liquid Glass |
 | Remote Control | Button row position (Bottom/Top) |
-| ✨ AI Settings | AI Agent selector, Share Track service, AI Vibe History cache, AI Response cache |
+| ✨ AI Settings | AI Agent selector, Share Track service (YouTube Music, Apple Music, Spotify, Tidal, Amazon Music, Deezer), AI Vibe History cache, AI Response cache |
 | AI Vibe Artist Seeds | Playlist search terms and radio fallback artist per vibe; Announce TTS Service selector; fully customisable |
 | Artwork Cache | Clear iTunes Artwork, Wikipedia Artwork, HA Registry Cache and Actor & Artist Bios individually, or **Clear All Caches** at once |
 | Music Library Cache | Toggle local caching of library tabs; choose retention (1/3/7/30 days); clear cache |

@@ -1,6 +1,6 @@
 # CrowAI Media Player Card
 
-CrowAI is a Home Assistant media player card built specifically for **iPhone**. Designed from the ground up for iPhone, it brings frosted-glass aesthetics, fluid touch animations, full Music Assistant integration, synced lyrics, a queue browser, push notifications, multi-room multicast playback, rich AI-powered media info panels, and an Apple TV remote — all in a card that feels like a native iPhone app.
+CrowAI is a Home Assistant media player card built specifically for **iPhone**. Designed from the ground up for iPhone, it brings frosted-glass aesthetics, fluid touch animations, full Music Assistant integration, synced lyrics, a queue browser, multi-room multicast playback, rich AI-powered media info panels, and an Apple TV remote — all in a card that feels like a native iPhone app.
 
 > ⚠️ **Music Assistant is required** for the Music Library browser, queue management, Vibe Queue Builder, AI Artist Radio, multi-room multicast playback and all MA-specific features.
 
@@ -22,7 +22,7 @@ CrowAI is a Home Assistant media player card built specifically for **iPhone**. 
 - **Compact and Expanded Modes** — toggle between full album art and a space-saving mini player
 - **Full Media Controls** — play/pause, track navigation, shuffle, repeat, seek and mute
 - **Double-tap to Seek** — double-tap the left or right zone of artwork to seek −15s or +15s
-- **Artwork Tap Actions** — single-tap opens AI Info (music) or Media Info (TV/movies); long-press opens lyrics
+- **Artwork Tap Actions** — single-tap opens AI Info (music) or Media Info (TV/movies); double-tap the left or right side to seek −15s/+15s; long-press opens lyrics
 - **Artwork Zoom** — tap the mini album art in AI Info or album view to see a larger version
 - **Mute Toggle** — tap the volume percentage badge or speaker icon to instantly mute/unmute
 - **Live Progress Tracking** — real-time playback position updates
@@ -64,7 +64,7 @@ Tap the playlist/queue button in the controls bar to open the contextual quick m
 - **Lyrics** — toggles the lyrics panel
 - **Announce** — opens the Announce panel
 - **Send Message** — opens the Send Message panel
-- **Share** — copies track info to clipboard
+- **Share** — copies track info plus a link to your chosen music service (see Sharing below)
 - **More Info** — opens the AI/Media Info panel
 
 ## Speaker Selector Menu
@@ -91,29 +91,39 @@ Long-press the artwork while music is playing to open the full-screen lyrics pan
 - Background prefetch — opens instantly
 - Auto-close when track ends or changes
 
+## Sharing
+
+Share is available from the quick menu, the AI Info / Media Info panels, and the long-press menu on any queue row. It copies everything to the clipboard — there's a toast confirmation when it's done.
+
+- **Music** — copies the track title and artist (plus album, where shown) along with a link to find the track on your chosen streaming service
+- **Movies & TV** — copies the title, year and a short synopsis along with a link to find it on TheMovieDB
+- **Choose your service** — pick the destination for music links in AI Settings: YouTube Music (default), Apple Music, Spotify, Tidal, Amazon Music or Deezer
+
 ## Media Info Panels
 
 **Single-tap** the artwork to open the relevant info panel.
 
 **Music — AI Info Panel:**
 - Year, label, length, fun fact, genre tags
-- Album pill — tap to browse album tracks; tap album art to zoom
+- Album pill — tap to open the album and browse its tracks; tap album art to zoom
 - Band Members / Artist — tap any member to open their bio with photo (tap to zoom), Known For songs and fun fact
 - Similar Tracks — tap to drill in, long-press for the enqueue menu
 - Mini album art — tap to see a larger version
 - Action bar: Play Now, Add, Play Next, Add Album
 
 **TV Shows:**
-- Poster (tap to zoom), genre tags, overview, similar shows, cast
+- Poster (tap to zoom), genre tags, overview, cast
+- Similar Shows — same idea as Similar Tracks; tap any to drill straight into that show's info
 - Season and episode browser with formatted airdates
 - Full back-navigation from episode detail all the way back to the Media Info panel
 - Cast member bios with photo zoom
 
 **Movies:**
-- Poster (tap to zoom), title, year, genre tags, synopsis, similar movies, cast
+- Poster (tap to zoom), title, year, genre tags, synopsis, cast
+- Similar Movies — same idea as Similar Tracks; tap any to drill straight into that movie's info
 - Cast member bios with photo zoom
 
-**Cast navigation:** tap any cast member to open their person page with bio, photo (tap to zoom) and credits.
+**Cast navigation:** tap any cast member to open their person page with bio, photo (tap to zoom), Known For credits and a fun fact — the same related-content pattern used throughout the card.
 
 ## Queue Panel
 
@@ -170,7 +180,7 @@ The recommended way to run Music Assistant is as a Home Assistant **App** (forme
 5. Open the Music Assistant web interface to add your music providers (Spotify, Apple Music, local library, Tidal, etc.) and players (HomePod, Sonos, AirPlay, Chromecast, etc.)
 6. MA-managed players appear in HA as `media_player.mass_*` entities — use these in the card's `ma_entities` config
 
-If you're not running Home Assistant OS, Music Assistant can also run as a standalone Docker container — see the [installation docs](https://www.music-assistant.io/installation/).
+> 💡 **Highly recommended:** connect a streaming provider (Apple Music, Spotify, YouTube Music, Tidal, etc.) to Music Assistant rather than relying on a local library alone. Recommendations, the Vibe Queue Builder, AI Artist Radio and Similar Tracks all suggest music that needs to actually be playable through MA — a streaming provider gives them a full catalogue to draw from instead of just what you already have.
 
 GitHub: [github.com/music-assistant](https://github.com/music-assistant) · Documentation: [music-assistant.io](https://music-assistant.io)
 
@@ -205,9 +215,9 @@ Repository: [github.com/droans/mass_queue](https://github.com/droans/mass_queue)
 - **Appearance & Behaviour** — Follow HA Theme, Auto Switch, Remember Last Speaker, Media Player Selector, Volume Buttons, Volume Percentage, Scroll Long Text, Lyrics persistence and caching
 - **Startup & Navigation** — Startup view (Compact/Maximised/Remote), Retain Current View
 - **Volume Entity** — route volume control to a different media player entity
-- **Music Assistant** — Radio Mode, Ambient Glow, Library & Queue Row Glow, Player Icon Theme, Artwork Crossfade, Show Lyrics/Remote/Library Buttons, Resize Button Spin, iTunes Artwork Fallback, Volume HUD, Volume HUD Liquid Glass, Card Liquid Glass
+- **Music Assistant** — Radio Mode, Ambient Glow, Library & Queue Row Glow, Player Icon Theme, Artwork Crossfade, Show Remote/Library Buttons, Resize Button Spin, iTunes Artwork Fallback, Volume HUD, Volume HUD Liquid Glass, Card Liquid Glass
 - **Remote Control** — button row position (Bottom/Top)
-- **✨ AI Settings** — AI Agent selector (Google Gemini required), Share Track service, AI Vibe History cache, AI Response cache
+- **✨ AI Settings** — AI Agent selector (Google Gemini required), Share Track service (YouTube Music, Apple Music, Spotify, Tidal, Amazon Music, Deezer), AI Vibe History cache, AI Response cache
 - **AI Vibe Artist Seeds** — customisable playlist search terms and radio fallback artist per vibe category; Announce TTS Service selector
 - **Artwork Cache** — clear iTunes Artwork, Wikipedia Artwork, HA Registry Cache and Actor & Artist Bios individually, or Clear All Caches at once
 - **Music Library Cache** — toggle local caching of library tabs; choose retention (1/3/7/30 days); clear cache
@@ -250,7 +260,6 @@ icon_theme: robot
 artwork_crossfade: false
 ambient_glow: false
 row_glow: false
-show_lyrics_button: false
 show_remote_button: true
 card_liquid_glass: true
 ```
