@@ -7199,16 +7199,95 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     } catch (e) { /* localStorage unavailable */ }
   }
 
+  // Checks whether Music Assistant already knows this track (from any
+  // connected provider, not just local library) and returns its thumbnail
+  // directly if so. This is the same kind of lookup the queue itself
+  // benefits from — MA has already resolved the real artwork, so there's no
+  // need to go searching iTunes/Wikipedia for something MA can just hand us.
+  async _fetchMaLibraryArt(artist, title) {
+    if (!title) return null;
+    try {
+      const configEntryId = await this._getMAConfigEntryId();
+      if (!configEntryId) return null;
+      const query = artist ? `${title} ${artist}` : title;
+      const res = await this._hass.connection.sendMessagePromise({
+        type: 'call_service', domain: 'music_assistant', service: 'search',
+        service_data: { config_entry_id: configEntryId, name: query, media_type: 'track', limit: 10 },
+        return_response: true
+      });
+      const response = res?.response || {};
+      let tracks = [];
+      if (Array.isArray(response)) tracks = response;
+      else if (Array.isArray(response.tracks)) tracks = response.tracks;
+      else Object.values(response).forEach(v => { if (Array.isArray(v)) tracks.push(...v); });
+      if (!tracks.length) return null;
+
+      const norm = s => (s || '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]/g, '');
+      const nTitle = norm(title), nArtist = norm(artist);
+      const scored = tracks.map(t => {
+        const tTitle  = norm(t.name || t.title || '');
+        const tArtist = norm((t.artists && t.artists[0]?.name) || t.artist?.name || t.artist || '');
+        let score = 0;
+        if (tTitle === nTitle) score += 4;
+        else if (tTitle.includes(nTitle) || nTitle.includes(tTitle)) score += 2;
+        if (nArtist && tArtist) {
+          if (tArtist === nArtist) score += 3;
+          else if (tArtist.includes(nArtist) || nArtist.includes(tArtist)) score += 1;
+        }
+        return { t, score };
+      }).sort((a, b) => b.score - a.score);
+
+      const best = scored[0];
+      // Require a reasonably confident match — at least a partial title hit —
+      // before trusting this as "the same track" and using its art as a
+      // stand-in, since the user never actually picked this exact result.
+      if (!best || best.score < 2) return null;
+      return best.t.thumbnail || best.t.image || null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // If a cached Wikipedia blob URL ever goes dead (e.g. revoked by a "Clear
+  // Cache" press during this session), this evicts it from the shared cache
+  // by matching on the URL itself — no need to know which name it belonged
+  // to. Called from every art-application function's image error handler so
+  // a future lookup re-fetches instead of returning the same dead URL.
+  _evictStaleWikiBlobBySrc(blobSrc) {
+    if (!blobSrc || !blobSrc.startsWith('blob:') || !this._wikiBlobCache) return;
+    for (const [name, url] of this._wikiBlobCache.entries()) {
+      if (url === blobSrc) { this._wikiBlobCache.delete(name); break; }
+    }
+  }
+
   _fetchItunesArt(artist, album, track) {
     if (!artist && !album && !track) return;
     if (!this._itunesArtCache) this._itunesArtCache = {};
     const cacheKey = [artist, album || track].filter(Boolean).join('|').toLowerCase();
     if (cacheKey in this._itunesArtCache) return;
     this._itunesArtCache[cacheKey] = null; // mark in-flight
+
+    // Check Music Assistant's own search in parallel with iTunes — if MA
+    // already knows this track from any connected provider, its thumbnail
+    // is just as authoritative as the queue's and arrives without the
+    // iTunes round trip at all. First one to resolve with a usable result
+    // wins; running them in parallel (not sequentially) means tracks MA
+    // doesn't have don't pay any extra latency waiting on this check.
+    this._fetchMaLibraryArt(artist, track || album).then(maUrl => {
+      if (!maUrl || this._itunesArtCache[cacheKey]) return; // already resolved by iTunes or a prior hit
+      this._itunesArtCache[cacheKey] = maUrl;
+      this._lastArtKey = null;
+      this._saveItunesPreferred();
+      const cur = this._hass?.states[this._entity];
+      if (cur) this.updateContent(cur);
+      this._patchQueueArt(cacheKey, maUrl);
+    }).catch(() => {});
+
     const searchTerm = encodeURIComponent([artist, track || album].filter(Boolean).join(' '));
     fetch(`https://itunes.apple.com/search?term=${searchTerm}&entity=musicTrack&limit=10`)
       .then(r => r.ok ? r.json() : null)
       .then(data => {
+        if (this._itunesArtCache[cacheKey]) return; // MA already resolved this — don't overwrite
         const results = data?.results || [];
         const norm = s => (s || '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]/g, '');
         const nTrack = norm(track), nArtist = norm(artist), nAlbum = norm(album);
@@ -7221,12 +7300,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         }).sort((a, b) => b.s - a.s);
         const best = (scored[0]?.s > 0 ? scored[0]?.item : null) || results[0];
         if (!best?.artworkUrl100) {
-          this._itunesArtCache[cacheKey] = '';
+          if (!this._itunesArtCache[cacheKey]) this._itunesArtCache[cacheKey] = '';
           return;
         }
         const url = best.artworkUrl100
           .replace('100x100bb', '600x600bb')
           .replace('100x100-75', '600x600bb');
+        if (this._itunesArtCache[cacheKey]) return; // MA resolved it while this was in flight
         this._itunesArtCache[cacheKey] = url;
         this._lastArtKey = null;
         this._saveItunesPreferred(); // persist to localStorage immediately
@@ -7235,7 +7315,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         // Also patch any open queue panel rows waiting on this key
         this._patchQueueArt(cacheKey, url);
       })
-      .catch(() => { this._itunesArtCache[cacheKey] = ''; this._saveItunesPreferred(); });
+      .catch(() => { if (!this._itunesArtCache[cacheKey]) { this._itunesArtCache[cacheKey] = ''; this._saveItunesPreferred(); } });
   }
 
   // Wires { once: true } error listeners on queue art thumbnails.
@@ -11236,7 +11316,12 @@ For members: list the band members (2-6 names). If the artist is a solo performe
         row.dataset.art = img; // store for click-through
         const artEl = row.querySelector('.ai-sim-art-ph');
         if (!artEl) return;
-        artEl.innerHTML = `<img src="${img}" style="width:100%;height:100%;object-fit:cover;display:block" onerror="this.style.display='none'">`;
+        artEl.innerHTML = '';
+        const _im = document.createElement('img');
+        _im.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block';
+        _im.addEventListener('error', () => { this._evictStaleWikiBlobBySrc(_im.src); _im.style.display = 'none'; });
+        _im.src = img;
+        artEl.appendChild(_im);
         artEl.style.border = 'none';
       };
       // Pre-fill rows immediately with the main panel art as a fallback —
@@ -11562,7 +11647,12 @@ For members: list the band members (2-6 names). If the artist is a solo performe
       if (row) row.dataset.art = img; // store for click-through
       const artEl = content.querySelector(`.ai-rec-art[data-rec-idx="${i}"]`);
       if (!artEl) return;
-      artEl.innerHTML = `<img src="${img}" style="width:100%;height:100%;object-fit:cover;display:block" onerror="this.style.display='none'">`;
+      artEl.innerHTML = '';
+      const _im = document.createElement('img');
+      _im.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block';
+      _im.addEventListener('error', () => { this._evictStaleWikiBlobBySrc(_im.src); _im.style.display = 'none'; });
+      _im.src = img;
+      artEl.appendChild(_im);
       artEl.style.border = 'none';
       if (isFinal) artEl.dataset.final = '1';
     };
@@ -13837,7 +13927,12 @@ Include ALL tracks. Use null for unknown fields.`;
       const _applySearchArt = (i, img) => {
         const artEl = content.querySelector(`.ai-search-art[data-search-idx="${i}"]`);
         if (!artEl || artEl.querySelector('img') || _stale()) return;
-        artEl.innerHTML = `<img src="${img}" style="width:100%;height:100%;object-fit:cover;display:block" onerror="this.style.display='none'">`;
+        const _im = document.createElement('img');
+        _im.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block';
+        _im.addEventListener('error', () => { this._evictStaleWikiBlobBySrc(_im.src); _im.style.display = 'none'; });
+        _im.src = img;
+        artEl.innerHTML = '';
+        artEl.appendChild(_im);
         artEl.style.border = 'none';
       };
       const _fetchSearchArtWithRetry = (rec, i, retriesLeft, delayMs) => {
@@ -15158,7 +15253,13 @@ Include ALL tracks. Use null for unknown fields.`;
         const _applyKfArt = (i, img) => {
           const artEl = content.querySelector(`.cast-kf-art[data-kf-idx="${i}"]`);
           if (!artEl || artEl.dataset.loaded) return;
-          artEl.innerHTML = `<img src="${img}" alt="" style="width:100%;height:100%;object-fit:cover;display:block;" onerror="this.parentNode.innerHTML=''">`;
+          const _im = document.createElement('img');
+          _im.alt = '';
+          _im.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;';
+          _im.addEventListener('error', () => { this._evictStaleWikiBlobBySrc(_im.src); if (artEl.parentNode) artEl.innerHTML = ''; });
+          _im.src = img;
+          artEl.innerHTML = '';
+          artEl.appendChild(_im);
           artEl.style.border = 'none';
           artEl.style.background = 'transparent';
           artEl.dataset.loaded = '1';
@@ -16804,8 +16905,11 @@ Include ALL tracks. Use null for unknown fields.`;
     this._hass.callService('media_player', 'media_stop', { entity_id: eid }).catch(() => {});
 
     // Step 3: restart keepers at the captured position.
-    // media_play after media_stop can advance the queue — use play_media with the
-    // exact media_content_id to replay the same track, then seek to where we were.
+    // media_play after media_stop can advance the queue, so we replay the exact
+    // track instead — but enqueue:'replace' would discard the rest of the
+    // queue and start a brand new one with just this track. Use enqueue:'next'
+    // + a skip instead, the same pattern used elsewhere in the card for
+    // "play this specific track" without disrupting anything queued after it.
     if (keepers.length && _mediaId) {
       const self = this;
       setTimeout(() => {
@@ -16815,14 +16919,17 @@ Include ALL tracks. Use null for unknown fields.`;
             entity_id: keepers[0], group_members: keepers.slice(1)
           }).catch(() => {});
         }
-        // Play the same track on the (first) keeper
+        // Insert the same track as "next" (preserving the rest of the queue),
+        // then skip to it so it becomes current again.
         self._hass?.connection?.sendMessagePromise({
           type: 'call_service', domain: 'music_assistant', service: 'play_media',
           service_data: {
             entity_id: keepers[0], media_id: _mediaId,
-            media_type: _mediaType, enqueue: 'replace',
+            media_type: _mediaType, enqueue: 'next',
             ...(self._config?.ma_radio_mode ? { radio_mode: true } : {})
           }
+        }).then(() => {
+          return self._hass?.callService('media_player', 'media_next_track', { entity_id: keepers[0] }).catch(() => {});
         }).then(() => {
           // Seek to the captured position once playback starts
           if (_resumePos && _resumePos > 1) {
@@ -19212,7 +19319,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
             </div>
             <div style="margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.07);">
               <div style="font-size:13px;font-weight:500;margin-bottom:4px;color:var(--primary-text-color, #111);">AI Response Cache</div>
-              <div style="font-size:11px;color:#888;margin-bottom:10px;line-height:1.4;">AI panel results (track info, recommendations, album details, search) cached in your browser session. Clears automatically when you close the tab.</div>
+              <div style="font-size:11px;color:#888;margin-bottom:10px;line-height:1.4;">AI panel results (track info, recommendations, album details, search) are cached for up to 30 days, surviving closed tabs and browser restarts — not just this session.</div>
               <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
                 <span style="font-size:12px;color:#888;" id="ai-session-cache-status">Calculating…</span>
                 <button id="ai-session-cache-clear-btn" style="font-size:12px;font-weight:500;color:#ff453a;background:rgba(255,69,58,0.12);border:1px solid rgba(255,69,58,0.3);border-radius:8px;padding:5px 12px;cursor:pointer;white-space:nowrap;">Clear Cache</button>
@@ -19887,7 +19994,13 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
     const aiSessionCacheClearBtn = root.getElementById('ai-session-cache-clear-btn');
     const updateAISessionCacheStatus = () => {
       try {
-        const count = Object.keys(sessionStorage).filter(k => k.startsWith('crow_ai_')).length;
+        let count = Object.keys(sessionStorage).filter(k => k.startsWith('crow_ai_')).length;
+        ['videoInfo','recs','moodUriCache','similarArtists','searchResults','tvEpCount','castBio','moviePoster'].forEach(name => {
+          try {
+            const store = JSON.parse(localStorage.getItem('crow_ai_local_' + name) || '{}');
+            count += Object.keys(store).length;
+          } catch(_) {}
+        });
         if (aiSessionCacheStatus) aiSessionCacheStatus.textContent = count === 0 ? 'No AI responses cached' : `${count} cached response${count === 1 ? '' : 's'}`;
       } catch(_) { if (aiSessionCacheStatus) aiSessionCacheStatus.textContent = 'No AI responses cached'; }
     };
@@ -19900,6 +20013,11 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
         sessionStorage.removeItem('crow_entity_registry');
         sessionStorage.removeItem('crow_device_registry');
         sessionStorage.removeItem('crow_area_registry');
+        // Also clear the longer-lived localStorage layer (_aiLocalGet/_aiLocalSet,
+        // 30-day expiry) — without this, pressing "Clear Cache" looked complete
+        // but stale results would just get re-hydrated from here on next lookup.
+        ['videoInfo','recs','moodUriCache','similarArtists','searchResults','tvEpCount','castBio','moviePoster']
+          .forEach(name => localStorage.removeItem('crow_ai_local_' + name));
       } catch(_) {}
       // Also clear in-memory AI caches on the card
       const _ce = document.querySelector('crowai-media-player-card') || [...document.querySelectorAll('*')].find(el => el.tagName?.toLowerCase() === 'crowai-media-player-card');
@@ -20596,6 +20714,6 @@ if (!window.customCards.some(card => card.type === "crowai-media-player-card")) 
     type: "crowai-media-player-card",
     name: "CrowAI Media Player Card",
     preview: true,
-    description: "A sleek media player card with MA support, HomePod detection, and remote control."
+    description: "An AI-powered media player card built for iPhone, with deep Music Assistant integration, synced lyrics, and Apple TV remote control."
   });
 };
