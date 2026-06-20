@@ -3639,7 +3639,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       if (pic) return true;
       // No entity_picture — check iTunes art cache for a resolved URL
       const attrs = state.attributes;
-      const itunesKey = [attrs.media_artist || '', attrs.media_album_name || attrs.media_title || '']
+      const itunesKey = [attrs.media_artist || '', attrs.media_title || attrs.media_album_name || '']
         .filter(Boolean).join('|').toLowerCase();
       if (itunesKey && this._itunesArtCache?.[itunesKey]) return state.state === 'playing';
       // No art at all — still allow opening Discogs if there's track metadata while playing
@@ -4187,7 +4187,19 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             clearTimeout(this._suppressArtTapTimer);
             this._suppressArtTapTimer = setTimeout(() => { this._suppressArtTap = false; }, 600);
             const card = r.getElementById('cardOuter');
-            const expand = () => this._expandFromCompact();
+            // expand() wraps the real _expandFromCompact() and re-arms the
+            // suppression window right as it resolves. The transition itself
+            // can take longer than the original 600ms suppression, and when
+            // _switchToMAAndRun adds its own ~400ms wait on top of that, the
+            // original window can expire before the destination panel is
+            // actually visible — leaving a gap for a stray tap to slip through
+            // and open AI Info instead of whatever was actually selected.
+            const expand = () => this._expandFromCompact().then(res => {
+              this._suppressArtTap = true;
+              clearTimeout(this._suppressArtTapTimer);
+              this._suppressArtTapTimer = setTimeout(() => { this._suppressArtTap = false; }, 600);
+              return res;
+            });
             const _runMA = (action) => item._needsMA ? this._switchToMAAndRun(action) : expand().then(action);
             if (item.id === 'qm_queue') { expand().then(() => this._showQueuePanel('next', true)); }
             else if (item.id === 'qm_library')      { expand().then(() => item._needsMA ? this._switchToMAAndRun(() => this._openMABrowser()) : this._openMABrowser()); }
@@ -5045,6 +5057,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           // landing elsewhere while this menu was open shouldn't be able to
           // open AI Info a moment after the user picks something here.
           if (this._artTapTimer) { clearTimeout(this._artTapTimer); this._artTapTimer = null; }
+          // This menu never set _suppressArtTap at all, unlike the main quick
+          // menu — meaning the gap between picking an item here and
+          // _switchToMAAndRun's entity-switch wait completing was entirely
+          // unprotected. Suppress now too, same as the main menu does.
+          this._suppressArtTap = true;
+          clearTimeout(this._suppressArtTapTimer);
+          this._suppressArtTapTimer = setTimeout(() => { this._suppressArtTap = false; }, 600);
         };
 
         const infoPopup = r.getElementById('infoPopup');
@@ -5731,7 +5750,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
     // Build the cache key whenever there's track metadata, not just when playing.
     const itunesCacheKey = hasTrackMeta
-      ? [itunesArtist, itunesAlbum || itunesTrack].filter(Boolean).join('|').toLowerCase() : '';
+      ? [itunesArtist, itunesTrack || itunesAlbum].filter(Boolean).join('|').toLowerCase() : '';
     if (!this._itunesArtCache) this._itunesArtCache = {};
 
     // Fire async fetch only when actually playing, nothing cached yet, and not a live stream.
@@ -7263,7 +7282,11 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   _fetchItunesArt(artist, album, track) {
     if (!artist && !album && !track) return;
     if (!this._itunesArtCache) this._itunesArtCache = {};
-    const cacheKey = [artist, album || track].filter(Boolean).join('|').toLowerCase();
+    // Key must match the search term's priority (track over album) — otherwise
+    // two different tracks from the same album collide on one cache slot, and
+    // whichever gets looked up first "wins" that slot for every other track
+    // on the album, even though each was searched for individually.
+    const cacheKey = [artist, track || album].filter(Boolean).join('|').toLowerCase();
     if (cacheKey in this._itunesArtCache) return;
     this._itunesArtCache[cacheKey] = null; // mark in-flight
 
@@ -8785,7 +8808,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       const makeArt = (item) => {
         if (!this._itunesArtCache) this._itunesArtCache = {};
         const itunesKey = (item.artist || item.album || item.title)
-          ? [item.artist, item.album || item.title].filter(Boolean).join('|').toLowerCase()
+          ? [item.artist, item.title || item.album].filter(Boolean).join('|').toLowerCase()
           : '';
         const cachedArt = itunesKey ? (this._itunesArtCache[itunesKey] || '') : '';
         const artSrc = item.thumbnail || cachedArt || '';
@@ -9137,7 +9160,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
     if (type === 'music') {
       // Use iTunes cached art as fallback when entity_picture is absent
-      const itunesKey = [attrs.media_artist || '', attrs.media_album_name || attrs.media_title || '']
+      const itunesKey = [attrs.media_artist || '', attrs.media_title || attrs.media_album_name || '']
         .filter(Boolean).join('|').toLowerCase();
       const itunesArt = (itunesKey && this._itunesArtCache?.[itunesKey]) || '';
       const artist = attrs.media_artist || '';
@@ -10032,9 +10055,15 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   async _switchToMAAndRun(action) {
     const allMA = this._getValidMASpeakers(true);
     if (!allMA.length) { this._showToast('No Music Assistant speakers configured'); return; }
+    const _rearmSuppress = () => {
+      this._suppressArtTap = true;
+      clearTimeout(this._suppressArtTapTimer);
+      this._suppressArtTapTimer = setTimeout(() => { this._suppressArtTap = false; }, 600);
+    };
     if (allMA.length === 1) {
       this._switchEntity(allMA[0]);
       await new Promise(res => setTimeout(res, 400));
+      _rearmSuppress();
       action();
       return;
     }
@@ -10058,6 +10087,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         popup.remove();
         this._switchEntity(eid);
         await new Promise(res => setTimeout(res, 400));
+        _rearmSuppress();
         action();
       });
       popup.appendChild(btn);
@@ -10913,7 +10943,7 @@ Include ALL tracks. Use null for unknown fields.`;
       if (context.fromSearch) return ''; // don't use entity art for search/rec results
       const state = this._hass?.states[this._entity];
       const attrs = state?.attributes || {};
-      const itunesKey = [(attrs.media_artist||''), (attrs.media_album_name||attrs.media_title||'')]
+      const itunesKey = [(attrs.media_artist||''), (attrs.media_title||attrs.media_album_name||'')]
         .filter(Boolean).join('|').toLowerCase();
       const itunesArt = (itunesKey && this._itunesArtCache?.[itunesKey]) || '';
       return (attrs.entity_picture_local || attrs.entity_picture || attrs.album_art || itunesArt || '')
@@ -11589,7 +11619,7 @@ For members: list the band members (2-6 names). If the artist is a solo performe
     // Build swipeable rec rows
     const artUrl = (() => {
       const a = attrs;
-      const itunesKey = [(a.media_artist||''), (a.media_album_name||a.media_title||'')].filter(Boolean).join('|').toLowerCase();
+      const itunesKey = [(a.media_artist||''), (a.media_title||a.media_album_name||'')].filter(Boolean).join('|').toLowerCase();
       return ((a.entity_picture_local || a.entity_picture || a.album_art || (itunesKey && this._itunesArtCache?.[itunesKey]) || '')
         .replace(/^http:\/\//i, 'https://'));
     })();
@@ -16065,7 +16095,7 @@ Include ALL tracks. Use null for unknown fields.`;
     const artist = (item.artists && item.artists[0] && item.artists[0].name) || '';
     const album  = (item.album && item.album.name) || '';
     const track  = item.name || item.title || '';
-    const key    = [artist, album || track].filter(Boolean).join('|').toLowerCase();
+    const key    = [artist, track || album].filter(Boolean).join('|').toLowerCase();
     if (key && this._itunesArtCache && this._itunesArtCache[key]) return this._itunesArtCache[key];
     return null;
   }
@@ -16180,7 +16210,7 @@ Include ALL tracks. Use null for unknown fields.`;
     const artist = (item.artists && item.artists[0] && item.artists[0].name) || '';
     const album  = (item.album && item.album.name) || '';
     const track  = item.name || item.title || '';
-    return [artist, album || track].filter(Boolean).join('|').toLowerCase();
+    return [artist, track || album].filter(Boolean).join('|').toLowerCase();
   }
 
   _maItemSvg(tab) {
