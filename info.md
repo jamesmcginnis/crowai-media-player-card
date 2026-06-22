@@ -150,7 +150,7 @@ Push notifications to iPhones running the HA Companion App:
 
 ## Music Assistant Library Browser
 
-Tabs: Recently Played, Recommended, Playlists, Artists, Albums, Songs, Radio, Podcasts, Audiobooks, Favourites, Search.
+Tabs: Recently Played, Recommended, Playlists, Artists, Albums, Songs, Radio, Podcasts, Audiobooks, Favourites.
 
 - Tap any item to play; drill into collections with a back button
 - Action bar on every drill-down: Play All, Add to Queue, Play Next
