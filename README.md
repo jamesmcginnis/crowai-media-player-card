@@ -256,7 +256,7 @@ Share is available from the quick menu, the AI Info / Media Info panels, and the
 
 ### Music Assistant Library Browser
 
-Tabs: Recently Played, Recommended, Playlists, Artists, Albums, Songs, Radio, Podcasts, Audiobooks, Favourites, Search.
+Tabs: Recently Played, Recommended, Playlists, Artists, Albums, Songs, Radio, Podcasts, Audiobooks, Favourites.
 
 - Tap any item to play; drill into collections with a back button
 - Action bar: Play All, Add to Queue, Play Next
