@@ -11108,7 +11108,6 @@ For members: list the band members (2-6 names). If the artist is a solo performe
             </div>`).join('')}
         </div>
       </div>` : ''}
-      ${navigator.share ? `<div style="margin-bottom:10px;"><button id="ai-info-share-btn" style="display:inline-flex;align-items:center;gap:6px;background:${this._pt("btnBg")};border:1px solid ${this._pt("border")};border-radius:20px;padding:6px 14px;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;"><svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:${this._pt("dim")};"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg><span style="font-size:12px;color:${this._pt("dim")};font-weight:500;">Share</span></button></div>` : ''}
       ${similarHtml}
 `;
 
@@ -11190,19 +11189,6 @@ For members: list the band members (2-6 names). If the artist is a solo performe
     });
 
     // Wire share button
-    const _shareBtn = content.querySelector('#ai-info-share-btn');
-    if (_shareBtn && navigator.share) {
-      _shareBtn.addEventListener('click', () => {
-        const _album = data.album ? ` · ${data.album}` : '';
-        const _url = this._buildShareUrl(trackTitle, artistName);
-        navigator.share({
-          title: `${trackTitle} — ${artistName}`,
-          text: `🎵 ${trackTitle} by ${artistName}${_album}`,
-          url: _url
-        }).catch(() => {});
-      });
-    }
-
     // Show header share button — always show on iOS, uses native share sheet
     const _hs = r.getElementById('infoShareBtn');
     if (_hs) {
@@ -11297,6 +11283,10 @@ For members: list the band members (2-6 names). If the artist is a solo performe
             img.addEventListener('error', () => {
               URL.revokeObjectURL(blobUrl);
               if (this._wikiBlobCache?.get(memberName) === blobUrl) this._wikiBlobCache.delete(memberName);
+              // Restore the placeholder SVG so a broken blob never shows as a question-mark icon
+              if (memberEl.contains(img)) {
+                memberEl.innerHTML = `<svg viewBox="0 0 24 24" style="width:22px;height:22px;fill:${this._pt('dim')}"><path d="M12,4A4,4 0 0,1 16,8A4,4 0 0,1 12,12A4,4 0 0,1 8,8A4,4 0 0,1 12,4M12,14C16.42,14 20,15.79 20,18V20H4V18C4,15.79 7.58,14 12,14Z"/></svg>`;
+              }
             });
             memberEl.innerHTML = '';
             memberEl.appendChild(img);
@@ -14173,9 +14163,11 @@ Include ALL tracks. Use null for unknown fields.`;
     const _qsr = r.getElementById('queueSearchRow');
     if (_qsr) { _qsr.classList.add('hidden'); const _qi = r.getElementById('queueSearchInput'); if (_qi) _qi.value = ''; }
     _popup.querySelectorAll('.info-popup-back').forEach(b => b.remove());
-    // Hide queue menu button on close
+    // Hide queue menu button and share button on close
     const _rb2 = r.getElementById('queueMenuBtn');
     if (_rb2) _rb2.classList.add('hidden');
+    const _shareHdr = r.getElementById('infoShareBtn');
+    if (_shareHdr) { _shareHdr.classList.add('hidden'); _shareHdr.onclick = null; }
     if (_icReset) {
       _icReset.classList.remove('queue-reorder-mode');
       this._teardownQueueDrag(_icReset);
@@ -14462,10 +14454,6 @@ Include ALL tracks. Use null for unknown fields.`;
           ${_seasonsCount ? `<button id="tv-seasons-btn" style="align-self:flex-start;display:inline-flex;align-items:center;gap:5px;background:rgba(99,179,237,0.1);border:1px solid rgba(99,179,237,0.25);border-radius:20px;padding:3px 9px;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;margin-bottom:2px;"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:#63b3ed;flex-shrink:0"><path d="M21,3H3C1.89,3 1,3.89 1,5V17A2,2 0 0,0 3,19H8V21H16V19H21A2,2 0 0,0 23,17V5C23,3.89 22.1,3 21,3M21,17H3V5H21V17Z"/></svg><span style="font-size:11px;color:#63b3ed;font-weight:600;">${_seasonsCount} season${_seasonsCount !== 1 ? 's' : ''}</span><svg viewBox="0 0 24 24" style="width:9px;height:9px;fill:#63b3ed;opacity:0.6"><path d="M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z"/></svg></button>` : ''}
           ${ratingHtml}
           ${directorHtml}
-          ${navigator.share ? `<button id="video-info-share-btn" style="margin-top:8px;display:inline-flex;align-items:center;gap:5px;background:${this._pt("btnBg")};border:1px solid ${this._pt("border")};border-radius:20px;padding:5px 12px;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;">
-            <svg viewBox="0 0 24 24" style="width:12px;height:12px;fill:${this._pt("dim")};"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg>
-            <span style="font-size:11px;color:${this._pt("dim")};font-weight:500;">Share</span>
-          </button>` : ''}
         </div>
       </div>
       ${data.overview ? `<div class="info-section-label">Overview</div><div class="info-overview">${data.overview}</div>` : ''}
@@ -14628,22 +14616,6 @@ Include ALL tracks. Use null for unknown fields.`;
     }
 
     // Fetch cast photos from Wikipedia — with staleness guard and retry loop.
-    // Wire video share button
-    const _videoShareBtn = content.querySelector('#video-info-share-btn');
-    if (_videoShareBtn && navigator.share) {
-      _videoShareBtn.addEventListener('click', () => {
-        const _type = data.type === 'tv' ? 'TV Series' : 'Movie';
-        const _year = data.year ? ` (${data.year})` : '';
-        const _overview = data.overview ? data.overview.slice(0, 100) + (data.overview.length > 100 ? '\u2026' : '') : '';
-        const _url = `https://www.themoviedb.org/search?query=${encodeURIComponent(data.title || '')}`;
-        navigator.share({
-          title: `${data.title}${_year} \u2014 ${_type}`,
-          text: `\uD83C\uDFAC ${data.title}${_year}${data.director ? ` \u2014 Dir. ${data.director}` : ''}${_overview ? '\n' + _overview : ''}`,
-          url: _url
-        }).catch(() => {});
-      });
-    }
-
     // Show header share button for this movie/TV panel
     const _vs = this.shadowRoot?.getElementById('infoShareBtn');
     if (_vs) {
