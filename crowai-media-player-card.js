@@ -2448,7 +2448,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         .info-popup-back:active { opacity: 0.6; }
         .info-popup-back svg { width: 16px; height: 16px; fill: var(--accent, #007AFF); }
 
-        .info-popup-content { flex: 1; overflow-y: auto; padding: 12px 14px 16px; }
+        .info-popup-content { flex: 1; overflow-y: auto; padding: 12px 14px 80px; }
         .info-popup-content::-webkit-scrollbar { width: 3px; }
         .info-popup-content::-webkit-scrollbar-thumb { background: var(--crow-panel-btn-bg,rgba(255,255,255,0.12)); border-radius: 2px; }
 
@@ -2523,6 +2523,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         }
         .queue-cap-banner svg { width: 15px; height: 15px; fill: var(--crow-panel-icon-dim, rgba(255,255,255,0.35)); flex-shrink: 0; margin-top: 1px; }
         .queue-cap-banner-text { font-size: 11px; color: var(--crow-panel-text-dim, rgba(255,255,255,0.45)); line-height: 1.5; }
+        /* ─── Now Playing AI Banner ─── */
+        @keyframes crow-banner-in { from { opacity:0;transform:translateY(4px); } to { opacity:1;transform:translateY(0); } }
 
         .queue-row {
           display: flex; align-items: center; gap: 10px;
@@ -4061,6 +4063,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         const _qmMediaType = this._detectMediaType(state);
         const _qmIsVideo = _qmMediaType === 'tv' || _qmMediaType === 'movie';
         if (isPlaying && ((isMa || hasMA) || _qmIsVideo)) items.push({ id: 'qm_ai_recs', label: 'Recommendations', icon: '<svg viewBox="0 0 24 24"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>', active: false });
+        if (isPlaying && _qmIsVideo) items.push({ id: 'qm_mood_video', label: 'Mood Match', icon: '<svg viewBox="0 0 24 24"><path d="M12 2A10 10 0 1 0 22 12 10 10 0 0 0 12 2M12 20A8 8 0 1 1 20 12 8 8 0 0 1 12 20M17 11.5A1.5 1.5 0 1 1 15.5 10 1.5 1.5 0 0 1 17 11.5M8.5 10A1.5 1.5 0 1 1 7 11.5 1.5 1.5 0 0 1 8.5 10M12 17.5C9.67 17.5 7.69 16.04 6.89 14H17.11C16.31 16.04 14.33 17.5 12 17.5Z"/></svg>', active: false, _qmVideoTitle: attrs?.media_series_title || attrs?.media_title || '' });
+        if (isPlaying && _qmIsVideo) items.push({ id: 'qm_trivia', label: 'Trivia', icon: '<svg viewBox="0 0 24 24"><path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"/></svg>', active: false, _qmVideoTitle: attrs?.media_series_title || attrs?.media_title || '' });
         }
 
         // AI Artist Radio — MA only, only when a track is playing
@@ -4195,6 +4199,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             else if (item.id === 'qm_mood')         { expand().then(() => _runMA(() => this._showAIMoodQueue())); }
             else if (item.id === 'qm_ai_recs')      { expand().then(() => { const _rMT = this._detectMediaType(this._hass?.states[this._entity]); (_rMT === 'tv' || _rMT === 'movie') ? this._showAIRecommendations() : _runMA(() => this._showAIRecommendations()); }); }
             else if (item.id === 'qm_ai_search')    { expand().then(() => _runMA(() => this._showAISearchPanel())); }
+            else if (item.id === 'qm_mood_video')   { expand().then(() => this._showMoodMatchPanel(item._qmVideoTitle)); }
+            else if (item.id === 'qm_trivia')       { expand().then(() => this._showTriviaPanel(item._qmVideoTitle)); }
             else if (item.id === 'qm_soundtrack')   { expand().then(() => _runMA(() => this._showAISearchPanel(`Music from ${item._atMedia}`))); }
             else if (item.id === 'qm_add_similar')  { expand().then(() => { this._queuePanelDirection = null; item._needsMA ? this._switchToMAAndRun(() => this._addSimilarSongsToQueue()) : this._addSimilarSongsToQueue(); }); }
             else if (item.id === 'qm_play_album')   { expand().then(() => { this._queuePanelDirection = null; item._needsMA ? this._switchToMAAndRun(() => this._playAlbum()) : this._playAlbum(); }); }
@@ -10255,8 +10261,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       const store = JSON.parse(localStorage.getItem('crow_ai_local_' + cacheName) || '{}');
       const entry = store[key];
       if (!entry) return null;
-      // Expire after 30 days
-      if (Date.now() - entry.ts > 30 * 24 * 3600 * 1000) { delete store[key]; localStorage.setItem('crow_ai_local_' + cacheName, JSON.stringify(store)); return null; }
+      // Expire after ttl days (default 30) — per-entry ttl field allows shorter expiry (e.g. 7 days for streaming availability)
+      const ttlDays = entry.ttl || 30;
+      if (Date.now() - entry.ts > ttlDays * 24 * 3600 * 1000) { delete store[key]; localStorage.setItem('crow_ai_local_' + cacheName, JSON.stringify(store)); return null; }
       return entry.data;
     } catch(_) { return null; }
   }
@@ -11086,15 +11093,32 @@ For members: list the band members (2-6 names). If the artist is a solo performe
       </div>
 
       ${metaRows.length ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:12px;">
-        ${metaRows.filter(([l]) => l !== 'Album').map(([l,v]) => `<div style="background:${this._pt("bg")};border-radius:8px;padding:7px 10px;">
-          <div style="font-size:9px;font-weight:700;color:${this._pt("dim")};text-transform:uppercase;letter-spacing:0.4px;margin-bottom:2px">${l}</div>
-          <div style="font-size:12px;color:${this._pt("text")};font-weight:500">${v}</div>
+        ${metaRows.filter(([l]) => l !== 'Album').map(([l,v]) => `<div id="${l === 'Year' ? 'music-year-box' : ''}" data-year="${l === 'Year' ? v : ''}" style="background:${this._pt("bg")};border-radius:8px;padding:7px 10px;${l === 'Year' ? 'cursor:pointer;-webkit-tap-highlight-color:transparent;' : ''}">
+          <div style="font-size:9px;font-weight:700;color:${this._pt("dim")};text-transform:uppercase;letter-spacing:0.4px;margin-bottom:2px">${l}${l === 'Year' ? ' <span style="font-size:8px;opacity:0.5;">ⓘ</span>' : ''}</div>
+          <div style="font-size:12px;color:${l === 'Year' ? '#63b3ed' : this._pt("text")};font-weight:500">${v}</div>
         </div>`).join('')}
       </div>` : ''}
       ${data.fact ? `<div style="padding:10px 12px;background:rgba(99,179,237,0.07);border:1px solid rgba(99,179,237,0.14);border-radius:10px;margin-bottom:12px;">
         <div style="font-size:9px;font-weight:700;color:rgba(99,179,237,0.6);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:3px">✨ Fun Fact</div>
         <div style="font-size:12px;color:${this._pt("text")};line-height:1.5">${data.fact}</div>
       </div>` : ''}
+      <div id="music-action-row" style="display:flex;gap:8px;margin:0 0 12px;">
+        <button id="music-ask-btn" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:9px 12px;border-radius:12px;background:${this._pt("btnBg")};border:1px solid ${this._pt("border")};color:${this._pt("text")};font-size:12px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;-webkit-tap-highlight-color:transparent;">
+          <svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:rgba(99,179,237,0.8);flex-shrink:0"><path d="M20,2H4A2,2 0 0,0 2,4V22L6,18H20A2,2 0 0,0 22,16V4A2,2 0 0,0 20,2M6,9H18V11H6V9M14,14H6V12H14V14M18,8H6V6H18V8Z"/></svg>
+          Ask
+        </button>
+        <button id="music-meaning-btn" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:9px 12px;border-radius:12px;background:${this._pt("btnBg")};border:1px solid ${this._pt("border")};color:${this._pt("text")};font-size:12px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;-webkit-tap-highlight-color:transparent;">
+          <svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:rgba(99,179,237,0.8);flex-shrink:0"><path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9-4.03-9-9-9zm1 14h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+          Meaning
+        </button>
+        <button id="music-trivia-btn" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:9px 12px;border-radius:12px;background:${this._pt("btnBg")};border:1px solid ${this._pt("border")};color:${this._pt("text")};font-size:12px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;-webkit-tap-highlight-color:transparent;">
+          <svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:rgba(99,179,237,0.8);flex-shrink:0"><path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"/></svg>
+          Trivia
+        </button>
+      </div>
+      <div id="music-ask-panel" style="display:none;margin-bottom:12px;"></div>
+      <div id="music-meaning-panel" style="display:none;margin-bottom:12px;"></div>
+      <div id="music-trivia-panel" style="display:none;margin-bottom:12px;"></div>
       ${(data.members && data.members.length >= 1) ? `
       <div style="margin-bottom:14px;">
         <div class="info-section-label">${data.members.length === 1 ? 'Artist' : 'Band Members'}</div>
@@ -11405,6 +11429,10 @@ For members: list the band members (2-6 names). If the artist is a solo performe
         _simSelf._showAITrackInfo(row.dataset.title, row.dataset.artist, { fromSearch: true, overrideArt: row.dataset.art || '' });
       });
     });
+
+    // Wire new music AI features
+    this._wireMusicActionRow(content, trackTitle, artistName, data);
+    this._loadDayInMusicContext(content, trackTitle, artistName, data.year || null);
   }
 
   /**
@@ -14109,6 +14137,247 @@ Include ALL tracks. Use null for unknown fields.`;
   }
 
   // Renders the vibe queue into the already-open infoPopup so we don't need to close it first
+
+  // ── Music Action Row (Ask / Meaning / Trivia) ───────────────────────────────
+  // Handles mutual exclusivity: opening one panel closes the others.
+  _wireMusicActionRow(content, trackTitle, artistName, data) {
+    const PANELS = [
+      { btnId: '#music-ask-btn',     panelId: '#music-ask-panel' },
+      { btnId: '#music-meaning-btn', panelId: '#music-meaning-panel' },
+      { btnId: '#music-trivia-btn',  panelId: '#music-trivia-panel' },
+    ];
+    const _dim    = this._pt('dim');
+    const _text   = this._pt('text');
+    const _bg     = this._pt('btnBg');
+    const _border = this._pt('border');
+
+    const _closeAll = (exceptBtnId) => {
+      PANELS.forEach(p => {
+        if (p.btnId === exceptBtnId) return;
+        const btn   = content.querySelector(p.btnId);
+        const panel = content.querySelector(p.panelId);
+        if (btn)   { btn.style.background = this._pt('btnBg'); btn.style.borderColor = this._pt('border'); btn.style.color = this._pt('text'); }
+        if (panel) { panel.style.display = 'none'; panel.innerHTML = ''; }
+      });
+    };
+
+    // ── Ask ──
+    const askBtn   = content.querySelector('#music-ask-btn');
+    const askPanel = content.querySelector('#music-ask-panel');
+    if (askBtn && askPanel) {
+      let askOpen = false;
+      askBtn.addEventListener('click', () => {
+        askOpen = !askOpen;
+        if (askOpen) _closeAll('#music-ask-btn');
+        askBtn.style.background  = askOpen ? 'rgba(99,179,237,0.15)' : this._pt('btnBg');
+        askBtn.style.borderColor = askOpen ? 'rgba(99,179,237,0.4)'  : this._pt('border');
+        askBtn.style.color       = askOpen ? '#63b3ed'               : this._pt('text');
+        if (!askOpen) { askPanel.style.display = 'none'; askPanel.innerHTML = ''; return; }
+        askPanel.style.display = 'block';
+        askPanel.innerHTML = `
+          <div style="padding:10px 12px;background:${_bg};border:1px solid ${_border};border-radius:12px;">
+            <div style="display:flex;gap:8px;align-items:center;">
+              <input id="music-ask-input" type="text" placeholder="Who wrote this? Is there a live version?…"
+                style="flex:1;font-size:12px;padding:8px 12px;border-radius:10px;border:1px solid ${_border};background:rgba(0,0,0,0.2);color:${_text};font-family:-apple-system,BlinkMacSystemFont,sans-serif;outline:none;min-width:0;-webkit-appearance:none;">
+              <button id="music-ask-send" style="flex-shrink:0;padding:8px 14px;border-radius:10px;background:rgba(99,179,237,0.15);border:1px solid rgba(99,179,237,0.3);color:#63b3ed;font-size:12px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;-webkit-tap-highlight-color:transparent;">Ask</button>
+            </div>
+            <div id="music-ask-answer" style="margin-top:8px;font-size:12px;color:${_text};line-height:1.6;"></div>
+          </div>`;
+        const input    = askPanel.querySelector('#music-ask-input');
+        const sendBtn  = askPanel.querySelector('#music-ask-send');
+        const answerEl = askPanel.querySelector('#music-ask-answer');
+        const _doAsk = async () => {
+          const q = input?.value?.trim();
+          if (!q) return;
+          answerEl.innerHTML = `<div style="display:flex;align-items:center;gap:7px;opacity:0.6;"><div style="width:10px;height:10px;border:1.5px solid rgba(99,179,237,0.3);border-top-color:#63b3ed;border-radius:50%;animation:ma-spin 0.8s linear infinite;"></div><span>Thinking…</span></div>`;
+          const hasAI = await this._aiCheckAvailable();
+          if (!hasAI) { answerEl.textContent = 'AI agent not available.'; return; }
+          const prompt = `About the song "${trackTitle}" by "${artistName}"${data.year ? ' (' + data.year + ')' : ''}: ${q}\n\nAnswer in 2-4 plain sentences.`;
+          const result = await this._aiConverse(prompt, { noCache: true });
+          if (answerEl && askPanel.isConnected) answerEl.textContent = result || 'No answer returned.';
+        };
+        sendBtn?.addEventListener('click', _doAsk);
+        input?.addEventListener('keydown', e => { if (e.key === 'Enter') _doAsk(); });
+        setTimeout(() => input?.focus(), 50);
+      });
+    }
+
+    // ── Meaning ──
+    const meaningBtn   = content.querySelector('#music-meaning-btn');
+    const meaningPanel = content.querySelector('#music-meaning-panel');
+    if (meaningBtn && meaningPanel) {
+      let meaningOpen = false;
+      meaningBtn.addEventListener('click', async () => {
+        meaningOpen = !meaningOpen;
+        if (meaningOpen) _closeAll('#music-meaning-btn');
+        meaningBtn.style.background  = meaningOpen ? 'rgba(99,179,237,0.15)' : this._pt('btnBg');
+        meaningBtn.style.borderColor = meaningOpen ? 'rgba(99,179,237,0.4)'  : this._pt('border');
+        meaningBtn.style.color       = meaningOpen ? '#63b3ed'               : this._pt('text');
+        if (!meaningOpen) { meaningPanel.style.display = 'none'; meaningPanel.innerHTML = ''; return; }
+        meaningPanel.style.display = 'block';
+        const cacheKey = ('meaning|' + artistName + '|' + trackTitle).toLowerCase();
+        if (!this._aiMeaningCache) this._aiMeaningCache = new Map();
+        let text = this._aiMeaningCache.get(cacheKey)
+          || this._aiLocalGet('meaning', cacheKey)
+          || this._aiSessionGet('meaning', cacheKey);
+        if (text) {
+          meaningPanel.innerHTML = `<div style="padding:10px 12px;background:${_bg};border:1px solid ${_border};border-radius:12px;font-size:12px;color:${_text};line-height:1.6;">${text}</div>`;
+          return;
+        }
+        meaningPanel.innerHTML = `<div style="display:flex;align-items:center;gap:7px;padding:10px 12px;background:${_bg};border:1px solid ${_border};border-radius:12px;opacity:0.6;"><div style="width:12px;height:12px;border:1.5px solid rgba(99,179,237,0.3);border-top-color:#63b3ed;border-radius:50%;animation:ma-spin 0.8s linear infinite;"></div><span style="font-size:11px;color:${_dim};">Interpreting…</span></div>`;
+        const hasAI = await this._aiCheckAvailable();
+        if (!meaningPanel.isConnected) return;
+        if (!hasAI) { meaningPanel.innerHTML = ''; return; }
+        const raw = await this._aiConverse(`What is the song "${trackTitle}" by "${artistName}" about? In 2-3 sentences, explain the themes and emotional meaning without quoting any lyrics. No preamble.`);
+        if (!meaningPanel.isConnected) return;
+        if (!raw) { meaningPanel.innerHTML = ''; return; }
+        const cleaned = raw.replace(/^["']|["']$/g, '').trim();
+        this._aiMeaningCache.set(cacheKey, cleaned);
+        this._aiSessionSet('meaning', cacheKey, cleaned);
+        this._aiLocalSet('meaning', cacheKey, cleaned);
+        meaningPanel.innerHTML = `<div style="padding:10px 12px;background:${_bg};border:1px solid ${_border};border-radius:12px;font-size:12px;color:${_text};line-height:1.6;">${cleaned}</div>`;
+      });
+    }
+
+    // ── Trivia ──
+    const triviaBtn   = content.querySelector('#music-trivia-btn');
+    const triviaPanel = content.querySelector('#music-trivia-panel');
+    if (triviaBtn && triviaPanel) {
+      let triviaOpen = false;
+      triviaBtn.addEventListener('click', async () => {
+        triviaOpen = !triviaOpen;
+        if (triviaOpen) _closeAll('#music-trivia-btn');
+        triviaBtn.style.background  = triviaOpen ? 'rgba(99,179,237,0.15)' : this._pt('btnBg');
+        triviaBtn.style.borderColor = triviaOpen ? 'rgba(99,179,237,0.4)'  : this._pt('border');
+        triviaBtn.style.color       = triviaOpen ? '#63b3ed'               : this._pt('text');
+        if (!triviaOpen) { triviaPanel.style.display = 'none'; triviaPanel.innerHTML = ''; return; }
+        triviaPanel.style.display = 'block';
+        const cacheKey = ('mtrivia|' + artistName + '|' + trackTitle).toLowerCase();
+        if (!this._aiMusicTriviaCache) this._aiMusicTriviaCache = new Map();
+        let questions = this._aiMusicTriviaCache.get(cacheKey) || this._aiSessionGet('mTrivia', cacheKey);
+        if (!questions) {
+          triviaPanel.innerHTML = `<div style="display:flex;align-items:center;gap:7px;padding:10px 12px;background:${_bg};border:1px solid ${_border};border-radius:12px;opacity:0.6;"><div style="width:12px;height:12px;border:1.5px solid rgba(99,179,237,0.3);border-top-color:#63b3ed;border-radius:50%;animation:ma-spin 0.8s linear infinite;"></div><span style="font-size:11px;color:${_dim};">Generating trivia…</span></div>`;
+          const hasAI = await this._aiCheckAvailable();
+          if (!triviaPanel.isConnected) return;
+          if (!hasAI) { triviaPanel.innerHTML = ''; return; }
+          const raw = await this._aiConverse(`Generate 5 fun trivia questions about the song "${trackTitle}" by "${artistName}" — mix track facts, artist history, and chart performance. Respond ONLY with a JSON array:\n[{"q":"Question?","a":"Answer"}]`);
+          if (!triviaPanel.isConnected) return;
+          if (!raw) { triviaPanel.innerHTML = ''; return; }
+          try {
+            const i1 = raw.indexOf('['), i2 = raw.lastIndexOf(']');
+            questions = JSON.parse(i1 !== -1 ? raw.slice(i1, i2+1) : raw);
+            this._aiMusicTriviaCache.set(cacheKey, questions);
+            this._aiSessionSet('mTrivia', cacheKey, questions);
+          } catch(e) { triviaPanel.innerHTML = ''; return; }
+        }
+        if (!triviaPanel.isConnected) return;
+        triviaPanel.innerHTML = `<div style="padding:10px 12px;background:${_bg};border:1px solid ${_border};border-radius:12px;">
+          <div style="font-size:10px;font-weight:700;color:rgba(99,179,237,0.7);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:8px;">Tap a question to reveal the answer</div>
+          ${(questions||[]).map(item => `
+            <div class="music-trivia-card" style="padding:9px 12px;margin-bottom:6px;border-radius:10px;background:rgba(255,255,255,0.04);border:1px solid ${_border};cursor:pointer;-webkit-tap-highlight-color:transparent;">
+              <div style="font-size:12px;font-weight:600;color:${_text};">${item.q||''}</div>
+              <div class="music-trivia-answer" style="display:none;font-size:12px;color:rgba(99,179,237,0.9);margin-top:6px;padding-top:6px;border-top:1px solid ${_border};">${item.a||''}</div>
+            </div>`).join('')}
+        </div>`;
+        triviaPanel.querySelectorAll('.music-trivia-card').forEach(card => {
+          card.addEventListener('click', () => {
+            const ans = card.querySelector('.music-trivia-answer');
+            if (!ans) return;
+            const showing = ans.style.display !== 'none';
+            ans.style.display = showing ? 'none' : 'block';
+            card.style.background  = showing ? 'rgba(255,255,255,0.04)' : 'rgba(99,179,237,0.08)';
+            card.style.borderColor = showing ? _border : 'rgba(99,179,237,0.3)';
+          });
+        });
+      });
+    }
+  }
+
+
+  // ── Music: This Day in Music Context ─────────────────────────────────────────
+  // Renders a subtle one-liner below the fun fact giving cultural context for the release year.
+  async _loadDayInMusicContext(content, trackTitle, artistName, year) {
+    if (!year) return;
+    const cacheKey = ('daymusic|' + artistName + '|' + trackTitle + '|' + year).toLowerCase();
+    if (!this._aiDayMusicCache) this._aiDayMusicCache = new Map();
+    const ls = this._aiLocalGet('dayMusic', cacheKey);
+    if (ls) this._aiDayMusicCache.set(cacheKey, ls);
+    const ss = !this._aiDayMusicCache.has(cacheKey) ? this._aiSessionGet('dayMusic', cacheKey) : null;
+    if (ss) this._aiDayMusicCache.set(cacheKey, ss);
+
+    // Wire the Year box click to show a popup
+    const yearBox = content.querySelector('#music-year-box');
+    if (!yearBox) return;
+
+    yearBox.addEventListener('click', async () => {
+      // Remove any existing popup
+      content.querySelectorAll('.music-year-popup').forEach(el => el.remove());
+
+      const _dim = this._pt('dim');
+      const _text = this._pt('text');
+      const _bg = this._pt('btnBg');
+      const _border = this._pt('border');
+
+      // Show popup with loading state
+      const popup = document.createElement('div');
+      popup.className = 'music-year-popup';
+      popup.style.cssText = `position:fixed;inset:0;z-index:99999;display:flex;align-items:flex-end;justify-content:center;background:rgba(0,0,0,0.5);`;
+      popup.innerHTML = `
+        <div style="width:100%;max-width:480px;background:var(--crow-panel-bg,#13131a);border-radius:20px 20px 0 0;padding:20px 20px 36px;box-shadow:0 -8px 40px rgba(0,0,0,0.6);">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+            <div style="display:flex;align-items:center;gap:7px;">
+              <svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:rgba(99,179,237,0.7);flex-shrink:0"><path d="M12 2C6.5 2 2 6.5 2 12S6.5 22 12 22 22 17.5 22 12 17.5 2 12 2M12 20C7.59 20 4 16.41 4 12S7.59 4 12 4 20 7.59 20 12 16.41 20 12 20M12.5 7H11V13L16.25 16.15L17 14.92L12.5 12.25V7Z"/></svg>
+              <span style="font-size:13px;font-weight:700;color:${_text};">${year} in Music</span>
+            </div>
+            <button class="year-popup-close" style="width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,0.1);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;">
+              <svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:${_text}"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+            </button>
+          </div>
+          <div id="year-popup-body" style="font-size:13px;color:${_text};line-height:1.6;">
+            <div style="display:flex;align-items:center;gap:8px;opacity:0.5;">
+              <div style="width:14px;height:14px;border:2px solid rgba(99,179,237,0.3);border-top-color:#63b3ed;border-radius:50%;animation:ma-spin 0.8s linear infinite;flex-shrink:0;"></div>
+              <span style="font-size:12px;color:${_dim};">Loading context…</span>
+            </div>
+          </div>
+        </div>`;
+
+      // Mount on card outer so it sits above everything
+      const cardOuter = this.shadowRoot?.getElementById('cardOuter') || this.shadowRoot;
+      cardOuter.appendChild(popup);
+
+      // Close on backdrop or button tap
+      const _close = () => popup.remove();
+      popup.addEventListener('click', e => { if (e.target === popup) _close(); });
+      popup.querySelector('.year-popup-close')?.addEventListener('click', _close);
+
+      // Fetch or use cached text
+      let text = this._aiDayMusicCache.get(cacheKey);
+      if (!text) {
+        const hasAI = await this._aiCheckAvailable();
+        if (!popup.isConnected) return;
+        if (!hasAI) {
+          const body = popup.querySelector('#year-popup-body');
+          if (body) body.textContent = 'AI agent not available.';
+          return;
+        }
+        const raw = await this._aiConverse(`"${trackTitle}" by "${artistName}" was released in ${year}. In 2-3 sentences, describe what was happening in music and pop culture in ${year} — notable albums, cultural moments, or musical movements. No preamble, no mention of this specific song.`);
+        if (!popup.isConnected) return;
+        if (!raw) {
+          const body = popup.querySelector('#year-popup-body');
+          if (body) body.textContent = 'No context found.';
+          return;
+        }
+        text = raw.replace(/^["']|["']$/g, '').trim();
+        this._aiDayMusicCache.set(cacheKey, text);
+        this._aiSessionSet('dayMusic', cacheKey, text);
+        this._aiLocalSet('dayMusic', cacheKey, text);
+      }
+
+      const body = popup.querySelector('#year-popup-body');
+      if (body && popup.isConnected) body.textContent = text;
+    });
+  }
+
   _showAIMoodQueueInPanel(content, popup) {
     // Re-use _showAIMoodQueue but intercept maPopup.appendChild to render into infoContent instead
     // Simplest approach: just call _showAIMoodQueue normally — it will find maPopup
@@ -14458,7 +14727,26 @@ Include ALL tracks. Use null for unknown fields.`;
       </div>
       ${data.overview ? `<div class="info-section-label">Overview</div><div class="info-overview">${data.overview}</div>` : ''}
       ${(data.fun_fact || data.fact) ? `<div style="margin:10px 0;padding:10px 12px;background:rgba(99,179,237,0.07);border:1px solid rgba(99,179,237,0.14);border-radius:10px;"><div style="font-size:10px;font-weight:700;color:rgba(99,179,237,0.6);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:4px">✨ Fun Fact</div><div style="font-size:12px;color:${this._pt("text")};line-height:1.5">${data.fun_fact || data.fact}</div></div>` : ''}
+      <div id="content-warning-section"></div>
+      <div id="action-row" style="display:flex;gap:8px;margin:12px 0 8px;">
+        <button id="ask-btn" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:9px 12px;border-radius:12px;background:${this._pt("btnBg")};border:1px solid ${this._pt("border")};color:${this._pt("text")};font-size:12px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;-webkit-tap-highlight-color:transparent;">
+          <svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:rgba(99,179,237,0.8);flex-shrink:0"><path d="M20,2H4A2,2 0 0,0 2,4V22L6,18H20A2,2 0 0,0 22,16V4A2,2 0 0,0 20,2M6,9H18V11H6V9M14,14H6V12H14V14M18,8H6V6H18V8Z"/></svg>
+          Ask
+        </button>
+        <button id="mood-btn" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:9px 12px;border-radius:12px;background:${this._pt("btnBg")};border:1px solid ${this._pt("border")};color:${this._pt("text")};font-size:12px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;-webkit-tap-highlight-color:transparent;">
+          <svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:rgba(99,179,237,0.8);flex-shrink:0"><path d="M12 2A10 10 0 1 0 22 12 10 10 0 0 0 12 2M12 20A8 8 0 1 1 20 12 8 8 0 0 1 12 20M17 11.5A1.5 1.5 0 1 1 15.5 10 1.5 1.5 0 0 1 17 11.5M8.5 10A1.5 1.5 0 1 1 7 11.5 1.5 1.5 0 0 1 8.5 10M12 17.5C9.67 17.5 7.69 16.04 6.89 14H17.11C16.31 16.04 14.33 17.5 12 17.5Z"/></svg>
+          Mood Match
+        </button>
+        <button id="trivia-btn" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:9px 12px;border-radius:12px;background:${this._pt("btnBg")};border:1px solid ${this._pt("border")};color:${this._pt("text")};font-size:12px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;-webkit-tap-highlight-color:transparent;">
+          <svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:rgba(99,179,237,0.8);flex-shrink:0"><path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"/></svg>
+          Trivia
+        </button>
+      </div>
+      <div id="ask-panel" style="display:none;margin-bottom:12px;"></div>
+      <div id="mood-panel" style="display:none;margin-bottom:12px;"></div>
+      <div id="trivia-panel" style="display:none;margin-bottom:12px;"></div>
       ${castHtml}
+      <div id="wtw-section"></div>
       ${(data.similar && data.similar.length) ? `
       <div class="info-section-label" style="margin-top:12px;">Similar</div>
       <div id="video-similar-list">
@@ -14479,6 +14767,11 @@ Include ALL tracks. Use null for unknown fields.`;
           </div>`).join('')}
       </div>` : ''}
 `;
+
+    // Wire post-render async features
+    this._loadContentWarning(content, data);
+    this._loadWhereToWatch(content, data);
+    this._wireVideoActionRow(content, data);
 
     // Always fetch the correct poster from iTunes by title+year.
     // If we have an overrideArt (e.g. from a similar-item click), show it immediately
@@ -14631,6 +14924,7 @@ Include ALL tracks. Use null for unknown fields.`;
       };
     }
 
+
     // Photos are fetched as blob URLs to bypass HA's CSP restriction on upload.wikimedia.org.
     // Each photo is retried up to 3 times (at 3s, 8s, 15s) so slow network calls that
     // didn't resolve before the panel painted still appear once they complete.
@@ -14725,6 +15019,420 @@ Include ALL tracks. Use null for unknown fields.`;
       return dateStr;
     }
   }
+
+  // ── Where to Watch ───────────────────────────────────────────────────────────
+  // Fires async after _renderVideoInfoDetail sets content.innerHTML.
+  // Injects a styled streaming-services section into the #wtw-section placeholder.
+  // Cached for 7 days in localStorage (streaming rights change — shorter than the
+  // 30-day default used for static info like cast/plot).
+  async _loadWhereToWatch(content, data) {
+    const title = data.title || '';
+    const year  = data.year  || '';
+    const type  = data.type  || 'movie';
+    if (!title) return;
+
+    const cacheKey  = ('wtw|' + type + '|' + title + '|' + year).toLowerCase();
+    const _section  = () => content.querySelector('#wtw-section');
+    const _dim      = this._pt('dim');
+    const _text     = this._pt('text');
+    const _bg       = this._pt('bg');
+    const _border   = this._pt('border');
+
+    // Helper — render the services into the placeholder
+    const _render = (services) => {
+      const el = _section();
+      if (!el) return;
+      if (!services || !services.length) { el.innerHTML = ''; return; }
+
+      // Build service pills — each is a real <a> anchor for iOS deep-link compatibility
+      const SERVICE_URLS = {
+        'netflix':        'https://www.netflix.com/search?q=',
+        'amazon':         'https://www.amazon.co.uk/s?k=',
+        'amazon prime':   'https://www.amazon.co.uk/s?k=',
+        'prime video':    'https://www.amazon.co.uk/s?k=',
+        'disney+':        'https://www.disneyplus.com/search/',
+        'disney plus':    'https://www.disneyplus.com/search/',
+        'apple tv+':      'https://tv.apple.com/search?term=',
+        'apple tv plus':  'https://tv.apple.com/search?term=',
+        'apple tv':       'https://tv.apple.com/search?term=',
+        'bbc iplayer':    'https://www.bbc.co.uk/iplayer/search?q=',
+        'itvx':           'https://www.itv.com/search?q=',
+        'channel 4':      'https://www.channel4.com/search?q=',
+        'channel4':       'https://www.channel4.com/search?q=',
+        'all 4':          'https://www.channel4.com/search?q=',
+        'my5':            'https://www.channel5.com/search?q=',
+        'channel 5':      'https://www.channel5.com/search?q=',
+        'now':            'https://www.nowtv.com/search?q=',
+        'now tv':         'https://www.nowtv.com/search?q=',
+        'paramount+':     'https://www.paramountplus.com/search/',
+        'paramount plus': 'https://www.paramountplus.com/search/',
+        'hbo max':        'https://play.max.com/search?q=',
+        'max':            'https://play.max.com/search?q=',
+        'hulu':           'https://www.hulu.com/search?q=',
+        'peacock':        'https://www.peacocktv.com/search?q=',
+        'sky go':         'https://www.sky.com/watch/search?q=',
+        'britbox':        'https://www.britbox.com/search?q=',
+        'mubi':           'https://mubi.com/en/gb/search?q=',
+        'youtube':        'https://www.youtube.com/results?search_query=',
+        'youtube premium':'https://www.youtube.com/results?search_query=',
+        'crunchyroll':    'https://www.crunchyroll.com/search?q=',
+        'curiosity stream':'https://curiositystream.com/search?q=',
+      };
+
+      const SERVICE_COLORS = {
+        'netflix':        '#E50914',
+        'amazon':         '#00A8E1',
+        'amazon prime':   '#00A8E1',
+        'prime video':    '#00A8E1',
+        'disney+':        '#113CCF',
+        'disney plus':    '#113CCF',
+        'apple tv+':      '#555555',
+        'apple tv plus':  '#555555',
+        'apple tv':       '#555555',
+        'bbc iplayer':    '#FF6B35',
+        'itvx':           '#542082',
+        'channel 4':      '#6700C8',
+        'channel4':       '#6700C8',
+        'all 4':          '#6700C8',
+        'my5':            '#0033FF',
+        'channel 5':      '#0033FF',
+        'now':            '#00CA2C',
+        'now tv':         '#00CA2C',
+        'paramount+':     '#0064FF',
+        'paramount plus': '#0064FF',
+        'hbo max':        '#5822B4',
+        'max':            '#5822B4',
+        'hulu':           '#3DBB3D',
+        'peacock':        '#E8C619',
+        'sky go':         '#0057FF',
+        'britbox':        '#C41A1A',
+        'mubi':           '#1A1A1A',
+        'youtube':        '#FF0000',
+        'crunchyroll':    '#F47521',
+      };
+
+      const q = encodeURIComponent(title + (year ? ' ' + year : ''));
+      const _hexToRgba = (hex, alpha) => {
+        const h = hex.replace('#','');
+        const r = parseInt(h.slice(0,2),16), g = parseInt(h.slice(2,4),16), b = parseInt(h.slice(4,6),16);
+        return `rgba(${r},${g},${b},${alpha})`;
+      };
+      const googlePill = `<a href="https://www.google.com/search?q=${encodeURIComponent('where can I watch ' + title + (year ? ' ' + year : ''))}" target="_blank" rel="noopener"
+        style="display:inline-flex;align-items:center;gap:5px;padding:5px 11px;border-radius:20px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.15);text-decoration:none;font-size:12px;font-weight:600;color:${_dim};white-space:nowrap;-webkit-tap-highlight-color:transparent;flex-shrink:0;">
+        <svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:${_dim};flex-shrink:0"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+        Search
+      </a>`;
+      const pillsHtml = services.map(svc => {
+        const key   = (svc.service || svc).toLowerCase().trim();
+        const label = svc.service || svc;
+        const note  = svc.note || ''; // e.g. "Season 1-3" or "Subscription"
+        const color = SERVICE_COLORS[key] || '#63b3ed';
+        const isHex = color.startsWith('#');
+        const bgColor     = isHex ? _hexToRgba(color, 0.13) : color.replace(/[\d.]+\)$/, '0.13)');
+        const borderColor = isHex ? _hexToRgba(color, 0.35) : color.replace(/[\d.]+\)$/, '0.35)');
+        const base  = Object.entries(SERVICE_URLS).find(([k]) => key.includes(k))?.[1] || null;
+        const href  = base ? base + q : `https://www.google.com/search?q=${encodeURIComponent('watch ' + title + (year ? ' ' + year : '') + ' ' + label)}`;
+        return `<a href="${href}" target="_blank" rel="noopener"
+          style="display:inline-flex;align-items:center;gap:5px;padding:5px 11px;border-radius:20px;
+                 background:${bgColor};border:1px solid ${borderColor};text-decoration:none;
+                 font-size:12px;font-weight:600;color:${_text};white-space:nowrap;
+                 -webkit-tap-highlight-color:transparent;flex-shrink:0;">
+          ${label}${note ? `<span style="font-size:10px;font-weight:400;color:${_dim};margin-left:1px">${note}</span>` : ''}
+        </a>`;
+      }).join('');
+
+      el.innerHTML = `
+        <div style="margin-top:12px;">
+          <div style="display:flex;align-items:center;gap:5px;margin-bottom:8px;">
+            <svg viewBox="0 0 24 24" style="width:11px;height:11px;fill:rgba(99,179,237,0.7);flex-shrink:0">
+              <path d="M21,3H3C1.89,3 1,3.89 1,5V17A2,2 0 0,0 3,19H8V21H16V19H21A2,2 0 0,0 23,17V5C23,3.89 22.1,3 21,3M21,17H3V5H21V17Z"/>
+            </svg>
+            <span style="font-size:10px;font-weight:700;color:rgba(99,179,237,0.7);letter-spacing:0.5px;text-transform:uppercase;">Where to Watch</span>
+            <span style="font-size:9px;color:${_dim};margin-left:2px;">• AI</span>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;">
+            ${googlePill}
+            ${pillsHtml}
+          </div>
+        </div>`;
+    };
+
+    // Check caches first — render immediately if we have a hit
+    if (!this._aiWtwCache) this._aiWtwCache = new Map();
+    const _lsHit = this._aiLocalGet('wtw', cacheKey);
+    if (_lsHit) { this._aiWtwCache.set(cacheKey, _lsHit); }
+    const _ssHit = !this._aiWtwCache.has(cacheKey) ? this._aiSessionGet('wtw', cacheKey) : null;
+    if (_ssHit) { this._aiWtwCache.set(cacheKey, _ssHit); }
+
+    if (this._aiWtwCache.has(cacheKey)) {
+      _render(this._aiWtwCache.get(cacheKey));
+      return;
+    }
+
+    // Show a subtle loading state in the placeholder
+    const _elNow = _section();
+    if (_elNow) {
+      _elNow.innerHTML = `<div style="display:flex;align-items:center;gap:7px;margin-top:12px;opacity:0.5;">
+        <div style="width:12px;height:12px;border:1.5px solid rgba(99,179,237,0.3);border-top-color:#63b3ed;border-radius:50%;animation:ma-spin 0.8s linear infinite;flex-shrink:0;"></div>
+        <span style="font-size:10px;color:${_dim};">Finding streaming services…</span>
+      </div>`;
+    }
+
+    // Check AI is available
+    const hasAI = await this._aiCheckAvailable();
+    if (!hasAI || !_section()) return;
+
+    const typeLabel = type === 'tv' ? 'TV series' : 'movie';
+    const prompt = `Where can I watch the ${typeLabel} "${title}"${year ? ` (${year})` : ''} ? Respond ONLY with a JSON array, no markdown, no preamble: [{"service":"Netflix","note":""},{"service":"Amazon Prime Video","note":""}]`;
+
+    try {
+      const raw = await this._aiConverse(prompt);
+      if (!_section()) return; // panel navigated away
+      if (!raw) { const el = _section(); if (el) el.innerHTML = ''; return; }
+      const i1 = raw.indexOf('['), i2 = raw.lastIndexOf(']');
+      if (i1 === -1 || i2 === -1) { const el = _section(); if (el) el.innerHTML = ''; return; }
+      const services = JSON.parse(raw.slice(i1, i2 + 1));
+      // Only cache non-empty results — empty means the AI wasn't confident,
+      // so we want to retry on next open rather than permanently showing nothing
+      if (services && services.length) {
+        this._aiWtwCache.set(cacheKey, services);
+        this._aiSessionSet('wtw', cacheKey, services);
+        try {
+          const store = JSON.parse(localStorage.getItem('crow_ai_local_wtw') || '{}');
+          store[cacheKey] = { data: services, ts: Date.now(), ttl: 7 };
+          localStorage.setItem('crow_ai_local_wtw', JSON.stringify(store));
+        } catch(_) {}
+      }
+      _render(services);
+    } catch(e) {
+      const el = _section();
+      if (el) el.innerHTML = '';
+    }
+  }
+
+
+  // ── Content Warning ──────────────────────────────────────────────────────────
+  // Renders a small pill into #content-warning-section showing suitability info.
+  async _loadContentWarning(content, data) {
+    const el = content.querySelector('#content-warning-section');
+    if (!el || !data.title) return;
+    const cacheKey = ('cw|' + (data.type||'') + '|' + data.title + '|' + (data.year||'')).toLowerCase();
+    if (!this._aiCwCache) this._aiCwCache = new Map();
+    const ls = this._aiLocalGet('cw', cacheKey);
+    if (ls) this._aiCwCache.set(cacheKey, ls);
+    const ss = !this._aiCwCache.has(cacheKey) ? this._aiSessionGet('cw', cacheKey) : null;
+    if (ss) this._aiCwCache.set(cacheKey, ss);
+    let result = this._aiCwCache.get(cacheKey);
+    if (!result) {
+      const hasAI = await this._aiCheckAvailable();
+      if (!content.querySelector('#content-warning-section')) return;
+      if (!hasAI) return;
+      const typeLabel = data.type === 'tv' ? 'TV series' : 'movie';
+      const raw = await this._aiConverse(`For the ${typeLabel} "${data.title}"${data.year ? ' (' + data.year + ')' : ''}, give a brief content advisory. Respond ONLY with a JSON object: {"rating":"e.g. 15","themes":["Violence","Strong language"],"kid_friendly":false}. Use UK age ratings (U, PG, 12, 15, 18). Max 3 themes.`);
+      if (!raw) return;
+      try {
+        const i1 = raw.indexOf('{'), i2 = raw.lastIndexOf('}');
+        result = JSON.parse(i1 !== -1 ? raw.slice(i1, i2+1) : raw);
+        this._aiCwCache.set(cacheKey, result);
+        this._aiSessionSet('cw', cacheKey, result);
+        this._aiLocalSet('cw', cacheKey, result);
+      } catch(e) { return; }
+    }
+    const elNow = content.querySelector('#content-warning-section');
+    if (!elNow || !result) return;
+    const _dim = this._pt('dim');
+    const ratingColor = result.kid_friendly ? '#34c759' : result.rating === '18' ? '#ff3b30' : result.rating === '15' ? '#ff9500' : '#63b3ed';
+    const themesHtml = (result.themes || []).map(t =>
+      `<span style="font-size:10px;color:${_dim};background:rgba(255,255,255,0.06);border-radius:4px;padding:2px 6px;">${t}</span>`
+    ).join('');
+    elNow.innerHTML = `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:8px 0 4px;">
+      <span style="font-size:11px;font-weight:700;color:${ratingColor};background:${ratingColor}22;border:1px solid ${ratingColor}55;border-radius:5px;padding:1px 7px;flex-shrink:0;">${result.rating || '?'}</span>
+      ${themesHtml}
+    </div>`;
+  }
+
+  // ── Video Action Row (Ask / Mood Match / Trivia) ────────────────────────────
+  // Handles mutual exclusivity: opening one panel closes the others.
+  _wireVideoActionRow(content, data) {
+    const PANELS = [
+      { btnId: '#ask-btn',   panelId: '#ask-panel' },
+      { btnId: '#mood-btn',  panelId: '#mood-panel' },
+      { btnId: '#trivia-btn',panelId: '#trivia-panel' },
+    ];
+    const _dim    = this._pt('dim');
+    const _text   = this._pt('text');
+    const _bg     = this._pt('btnBg');
+    const _border = this._pt('border');
+
+    const _closeAll = (exceptBtnId) => {
+      PANELS.forEach(p => {
+        if (p.btnId === exceptBtnId) return;
+        const btn   = content.querySelector(p.btnId);
+        const panel = content.querySelector(p.panelId);
+        if (btn)   { btn.style.background = this._pt('btnBg'); btn.style.borderColor = this._pt('border'); btn.style.color = this._pt('text'); }
+        if (panel) { panel.style.display = 'none'; panel.innerHTML = ''; }
+      });
+    };
+
+    // ── Ask ──
+    const askBtn   = content.querySelector('#ask-btn');
+    const askPanel = content.querySelector('#ask-panel');
+    if (askBtn && askPanel) {
+      let askOpen = false;
+      askBtn.addEventListener('click', () => {
+        askOpen = !askOpen;
+        if (askOpen) _closeAll('#ask-btn');
+        askBtn.style.background   = askOpen ? 'rgba(99,179,237,0.15)' : this._pt('btnBg');
+        askBtn.style.borderColor  = askOpen ? 'rgba(99,179,237,0.4)'  : this._pt('border');
+        askBtn.style.color        = askOpen ? '#63b3ed'               : this._pt('text');
+        if (!askOpen) { askPanel.style.display = 'none'; askPanel.innerHTML = ''; return; }
+        askPanel.style.display = 'block';
+        askPanel.innerHTML = `
+          <div style="padding:10px 12px;background:${_bg};border:1px solid ${_border};border-radius:12px;">
+            <div style="display:flex;gap:8px;align-items:center;">
+              <input id="ask-input" type="text" placeholder="Is this suitable for kids? Best watch order?…"
+                style="flex:1;font-size:12px;padding:8px 12px;border-radius:10px;border:1px solid ${_border};background:rgba(0,0,0,0.2);color:${_text};font-family:-apple-system,BlinkMacSystemFont,sans-serif;outline:none;min-width:0;-webkit-appearance:none;">
+              <button id="ask-send" style="flex-shrink:0;padding:8px 14px;border-radius:10px;background:rgba(99,179,237,0.15);border:1px solid rgba(99,179,237,0.3);color:#63b3ed;font-size:12px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;-webkit-tap-highlight-color:transparent;">Ask</button>
+            </div>
+            <div id="ask-answer" style="margin-top:8px;font-size:12px;color:${_text};line-height:1.6;"></div>
+          </div>`;
+        const input    = askPanel.querySelector('#ask-input');
+        const sendBtn  = askPanel.querySelector('#ask-send');
+        const answerEl = askPanel.querySelector('#ask-answer');
+        const _doAsk = async () => {
+          const q = input?.value?.trim();
+          if (!q) return;
+          answerEl.innerHTML = `<div style="display:flex;align-items:center;gap:7px;opacity:0.6;"><div style="width:10px;height:10px;border:1.5px solid rgba(99,179,237,0.3);border-top-color:#63b3ed;border-radius:50%;animation:ma-spin 0.8s linear infinite;"></div><span>Thinking…</span></div>`;
+          const hasAI = await this._aiCheckAvailable();
+          if (!hasAI) { answerEl.textContent = 'AI agent not available.'; return; }
+          const typeLabel = data.type === 'tv' ? 'TV series' : 'movie';
+          const result = await this._aiConverse(`About the ${typeLabel} "${data.title}"${data.year ? ' (' + data.year + ')' : ''}: ${q}\n\nAnswer in 2-4 plain sentences.`, { noCache: true });
+          if (answerEl && askPanel.isConnected) answerEl.textContent = result || 'No answer returned.';
+        };
+        sendBtn?.addEventListener('click', _doAsk);
+        input?.addEventListener('keydown', e => { if (e.key === 'Enter') _doAsk(); });
+        setTimeout(() => input?.focus(), 50);
+      });
+    }
+
+    // ── Mood Match ──
+    const moodBtn   = content.querySelector('#mood-btn');
+    const moodPanel = content.querySelector('#mood-panel');
+    if (moodBtn && moodPanel) {
+      const MOODS = ['Dark & Gritty','Light & Fun','Mind-Bending','Action-Packed','Emotional','Slow Burn','Scary','Feel-Good'];
+      let moodOpen = false;
+      moodBtn.addEventListener('click', () => {
+        moodOpen = !moodOpen;
+        if (moodOpen) _closeAll('#mood-btn');
+        moodBtn.style.background  = moodOpen ? 'rgba(99,179,237,0.15)' : this._pt('btnBg');
+        moodBtn.style.borderColor = moodOpen ? 'rgba(99,179,237,0.4)'  : this._pt('border');
+        moodBtn.style.color       = moodOpen ? '#63b3ed'               : this._pt('text');
+        if (!moodOpen) { moodPanel.style.display = 'none'; moodPanel.innerHTML = ''; return; }
+        moodPanel.style.display = 'block';
+        moodPanel.innerHTML = `
+          <div style="padding:10px 12px;background:${_bg};border:1px solid ${_border};border-radius:12px;">
+            <div style="font-size:11px;color:${_dim};margin-bottom:8px;">Pick a vibe and I\'ll suggest what to watch next:</div>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;" id="mood-chips">
+              ${MOODS.map(m => `<button data-mood="${m}" style="padding:5px 12px;border-radius:20px;background:rgba(255,255,255,0.06);border:1px solid ${_border};color:${_text};font-size:12px;font-weight:500;font-family:-apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;-webkit-tap-highlight-color:transparent;">${m}</button>`).join('')}
+            </div>
+            <div id="mood-results" style="margin-top:10px;"></div>
+          </div>`;
+        const resultsEl = moodPanel.querySelector('#mood-results');
+        moodPanel.querySelectorAll('[data-mood]').forEach(chip => {
+          chip.addEventListener('click', async () => {
+            const mood = chip.dataset.mood;
+            moodPanel.querySelectorAll('[data-mood]').forEach(c => {
+              c.style.background  = c === chip ? 'rgba(99,179,237,0.15)' : 'rgba(255,255,255,0.06)';
+              c.style.borderColor = c === chip ? 'rgba(99,179,237,0.4)'  : _border;
+              c.style.color       = c === chip ? '#63b3ed'               : _text;
+            });
+            const cacheKey = ('mood|' + data.title + '|' + mood).toLowerCase();
+            if (!this._aiMoodCache) this._aiMoodCache = new Map();
+            let recs = this._aiMoodCache.get(cacheKey) || this._aiSessionGet('mood', cacheKey);
+            if (!recs) {
+              resultsEl.innerHTML = `<div style="display:flex;align-items:center;gap:7px;opacity:0.6;"><div style="width:10px;height:10px;border:1.5px solid rgba(99,179,237,0.3);border-top-color:#63b3ed;border-radius:50%;animation:ma-spin 0.8s linear infinite;"></div><span style="font-size:11px;color:${_dim};">Finding ${mood.toLowerCase()} picks…</span></div>`;
+              const hasAI = await this._aiCheckAvailable();
+              if (!moodPanel.isConnected) return;
+              if (!hasAI) { resultsEl.textContent = 'AI agent not available.'; return; }
+              const typeLabel = data.type === 'tv' ? 'TV series' : 'movie';
+              const raw = await this._aiConverse(`I just watched the ${typeLabel} "${data.title}"${data.year ? ' (' + data.year + ')' : ''}. I\'m in a "${mood}" mood. Suggest 4 ${data.type === 'tv' ? 'TV shows or movies' : 'movies or TV shows'} that match this vibe. Respond ONLY with a JSON array:\n[{"title":"Title","year":"YYYY","type":"tv or movie","reason":"10 word max reason"}]`);
+              if (!raw) { resultsEl.textContent = 'No suggestions returned.'; return; }
+              try {
+                const i1 = raw.indexOf('['), i2 = raw.lastIndexOf(']');
+                recs = JSON.parse(i1 !== -1 ? raw.slice(i1, i2+1) : raw);
+                this._aiMoodCache.set(cacheKey, recs);
+                this._aiSessionSet('mood', cacheKey, recs);
+              } catch(e) { resultsEl.textContent = 'Could not parse suggestions.'; return; }
+            }
+            if (!moodPanel.isConnected) return;
+            resultsEl.innerHTML = (recs||[]).map(r => `
+              <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid ${_border};">
+                <div style="flex:1;min-width:0;">
+                  <div style="font-size:13px;font-weight:600;color:${_text};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${r.title||''}</div>
+                  <div style="font-size:11px;color:${_dim};margin-top:1px;">${[r.year, r.type==='tv'?'TV Series':'Movie'].filter(Boolean).join(' · ')}</div>
+                  ${r.reason ? `<div style="font-size:10px;color:rgba(99,179,237,0.6);margin-top:1px;">${r.reason}</div>` : ''}
+                </div>
+              </div>`).join('');
+          });
+        });
+      });
+    }
+
+    // ── Trivia ──
+    const triviaBtn   = content.querySelector('#trivia-btn');
+    const triviaPanel = content.querySelector('#trivia-panel');
+    if (triviaBtn && triviaPanel) {
+      let triviaOpen = false;
+      triviaBtn.addEventListener('click', async () => {
+        triviaOpen = !triviaOpen;
+        if (triviaOpen) _closeAll('#trivia-btn');
+        triviaBtn.style.background  = triviaOpen ? 'rgba(99,179,237,0.15)' : this._pt('btnBg');
+        triviaBtn.style.borderColor = triviaOpen ? 'rgba(99,179,237,0.4)'  : this._pt('border');
+        triviaBtn.style.color       = triviaOpen ? '#63b3ed'               : this._pt('text');
+        if (!triviaOpen) { triviaPanel.style.display = 'none'; triviaPanel.innerHTML = ''; return; }
+        triviaPanel.style.display = 'block';
+        const cacheKey = ('trivia|' + data.title + '|' + (data.year||'')).toLowerCase();
+        if (!this._aiTriviaCache) this._aiTriviaCache = new Map();
+        let questions = this._aiTriviaCache.get(cacheKey) || this._aiSessionGet('trivia', cacheKey);
+        if (!questions) {
+          triviaPanel.innerHTML = `<div style="display:flex;align-items:center;gap:7px;padding:10px 12px;background:${_bg};border:1px solid ${_border};border-radius:12px;opacity:0.6;"><div style="width:12px;height:12px;border:1.5px solid rgba(99,179,237,0.3);border-top-color:#63b3ed;border-radius:50%;animation:ma-spin 0.8s linear infinite;"></div><span style="font-size:11px;color:${_dim};">Generating trivia…</span></div>`;
+          const hasAI = await this._aiCheckAvailable();
+          if (!triviaPanel.isConnected) return;
+          if (!hasAI) { triviaPanel.innerHTML = ''; return; }
+          const typeLabel = data.type === 'tv' ? 'TV series' : 'movie';
+          const raw = await this._aiConverse(`Generate 5 fun trivia questions about the ${typeLabel} "${data.title}"${data.year ? ' (' + data.year + ')' : ''}. Respond ONLY with a JSON array:\n[{"q":"Question?","a":"Answer"}]`);
+          if (!triviaPanel.isConnected) return;
+          if (!raw) { triviaPanel.innerHTML = ''; return; }
+          try {
+            const i1 = raw.indexOf('['), i2 = raw.lastIndexOf(']');
+            questions = JSON.parse(i1 !== -1 ? raw.slice(i1, i2+1) : raw);
+            this._aiTriviaCache.set(cacheKey, questions);
+            this._aiSessionSet('trivia', cacheKey, questions);
+          } catch(e) { triviaPanel.innerHTML = ''; return; }
+        }
+        if (!triviaPanel.isConnected) return;
+        triviaPanel.innerHTML = `<div style="padding:10px 12px;background:${_bg};border:1px solid ${_border};border-radius:12px;">
+          <div style="font-size:10px;font-weight:700;color:rgba(99,179,237,0.7);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:8px;">Tap a question to reveal the answer</div>
+          ${(questions||[]).map(item => `
+            <div class="trivia-card" style="padding:9px 12px;margin-bottom:6px;border-radius:10px;background:rgba(255,255,255,0.04);border:1px solid ${_border};cursor:pointer;-webkit-tap-highlight-color:transparent;">
+              <div style="font-size:12px;font-weight:600;color:${_text};">${item.q||''}</div>
+              <div class="trivia-answer" style="display:none;font-size:12px;color:rgba(99,179,237,0.9);margin-top:6px;padding-top:6px;border-top:1px solid ${_border};">${item.a||''}</div>
+            </div>`).join('')}
+        </div>`;
+        triviaPanel.querySelectorAll('.trivia-card').forEach(card => {
+          card.addEventListener('click', () => {
+            const ans = card.querySelector('.trivia-answer');
+            if (!ans) return;
+            const showing = ans.style.display !== 'none';
+            ans.style.display = showing ? 'none' : 'block';
+            card.style.background  = showing ? 'rgba(255,255,255,0.04)' : 'rgba(99,179,237,0.08)';
+            card.style.borderColor = showing ? _border : 'rgba(99,179,237,0.3)';
+          });
+        });
+      });
+    }
+  }
+
 
   // ── TV Seasons list ──────────────────────────────────────────────────────────
   async _showTvSeasons(content, data, artUrl) {
