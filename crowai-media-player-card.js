@@ -27,7 +27,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   }
 
   static getStubConfig() {
-    return { entities: [], auto_switch: true, accent_color: '#007AFF', volume_accent: '#007AFF', title_color: '#ffffff', artist_color: '#ffffff', button_color: '#ffffff', player_bg: '#1c1c1e', player_bg_opacity: 100, show_entity_selector: true, volume_control: 'slider', startup_mode: 'compact', remember_view: false, volume_entity: '', ma_entities: [], show_vol_pct: true, vol_pct_color: 'rgba(255,255,255,0.45)', scroll_text: false, remember_last_entity: false, entity_startup_volumes: {}, lyrics_bg: '#0a0a0c', lyrics_text_color: '#ffffff', lyrics_scroll_mode: 'highlight', lyrics_persist: false, lyrics_cache_ttl: 7, lyrics_cache_enabled: true, ma_library_cache_enabled: true, ma_library_cache_ttl: 1, ma_radio_mode: false, show_ma_library_button: true, use_ha_theme: false, remote_buttons_position: 'bottom', ambient_glow: false, announce_tts_service: '', row_glow: false, show_remote_button: true, ma_ios_library: true, artwork_crossfade: false, icon_theme: 'robot', resize_btn_spin: true, remote_art_blur: true, volume_hud: true, itunes_art: true, controls_theme: 'classic', add_pill_color: '', card_liquid_glass: true, volume_hud_glass: false, ai_conversation_agent: '', share_service: 'youtube_music' };
+    return { entities: [], auto_switch: true, accent_color: '#007AFF', volume_accent: '#007AFF', title_color: '#ffffff', artist_color: '#ffffff', button_color: '#ffffff', player_bg: '#1c1c1e', player_bg_opacity: 100, show_entity_selector: true, volume_control: 'slider', startup_mode: 'compact', remember_view: false, volume_entity: '', ma_entities: [], show_vol_pct: true, vol_pct_color: 'rgba(255,255,255,0.45)', scroll_text: false, remember_last_entity: false, entity_startup_volumes: {}, lyrics_bg: '#0a0a0c', lyrics_text_color: '#ffffff', lyrics_scroll_mode: 'highlight', lyrics_persist: false, lyrics_cache_ttl: 7, lyrics_cache_enabled: true, ma_library_cache_enabled: true, ma_library_cache_ttl: 1, ma_radio_mode: false, show_ma_library_button: true, use_ha_theme: false, remote_buttons_position: 'bottom', ambient_glow: false, announce_tts_service: '', row_glow: false, show_remote_button: true, ma_ios_library: true, artwork_crossfade: false, icon_theme: 'robot', resize_btn_spin: true, remote_art_blur: true, volume_hud: true, itunes_art: true, controls_theme: 'classic', add_pill_color: '', card_liquid_glass: true, volume_hud_glass: false, ai_conversation_agent: '', share_service: 'youtube_music', song_intro_enabled: false };
   }
 
   setConfig(config) {
@@ -156,6 +156,14 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (!this._maQueueEventSub && this._hass?.connection &&
         this._hass?.services?.mass_queue) {
       this._subscribeMAQueueEvents();
+    }
+
+    // Pre-warm MA config entry ID as soon as HA connection is ready — ensures
+    // mood taps never wait for this async lookup. connectedCallback also tries
+    // this but HA may not be fully ready at that point (e.g. on startup).
+    if (!this._maConfigEntryId && !this._maConfigEntryIdFetching && this._hass?.connection) {
+      this._maConfigEntryIdFetching = true;
+      this._getMAConfigEntryId().catch(() => {}).finally(() => { this._maConfigEntryIdFetching = false; });
     }
 
     if (this._config.auto_switch) {
@@ -391,6 +399,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       }
       const _trackChanged = hasRealMeta && this._lastTrackKey !== newTrackKey;
       if (_trackChanged) {
+        // Restore prog-area and remove intro div on track change
+        clearTimeout(this._songIntroTimer);
+        const _pa = this.shadowRoot?.getElementById('prog-area');
+        const _introDiv = this.shadowRoot?.getElementById('song-intro-div');
+        if (_pa) { _pa.style.overflow = ''; _pa.style.height = ''; _pa.style.visibility = ''; }
+        if (_introDiv) _introDiv.remove();
         // Song changed — clear artwork and AI caches
         this._itunesArtCache = {};
         this._confirmedArtUrls = new Map();
@@ -436,16 +450,20 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         }
         // Background AI Info prefetch — silently warm the cache so long-press is instant.
         // Debounced: if the track changes again within 3s the previous prefetch is cancelled.
-        if (newTitle && newArtist && this._maEntityIds?.has(this._entity)) {
+        if (newTitle && newArtist) {
           clearTimeout(this._prefetchTrackInfoTimer);
           const _pfTitle = newTitle, _pfArtist = newArtist;
           this._prefetchTrackInfoTimer = setTimeout(() => {
             // Only fire if the track is still the same one
             const _cur = this._hass?.states[this._entity]?.attributes;
             if (_cur?.media_title === _pfTitle && _cur?.media_artist === _pfArtist) {
-              this._prefetchAITrackInfo(_pfTitle, _pfArtist);
-              // Also pre-fetch recs in background — makes opening recommendations instant
-              this._prefetchAIRecs(_pfTitle, _pfArtist, _cur?.media_album_name || '');
+              if (this._maEntityIds?.has(this._entity)) {
+                this._prefetchAITrackInfo(_pfTitle, _pfArtist);
+                // Also pre-fetch recs in background — makes opening recommendations instant
+                this._prefetchAIRecs(_pfTitle, _pfArtist, _cur?.media_album_name || '');
+              }
+              // Song Intro — fires only if enabled in settings (off by default)
+              if (this._config?.song_intro_enabled) this._showSongIntro(_pfTitle, _pfArtist);
             }
           }, 5000); // 5s debounce — user is probably settled on this track
         }
@@ -677,6 +695,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     this._maLibStoreValidated = true; // already validated above
     this._loadItunesPreferred();
     this._loadWikiUrlCache();
+    // Pre-warm MA config entry ID so first mood tap has zero extra latency
+    setTimeout(() => { this._getMAConfigEntryId().catch(() => {}); }, 2000);
     this._timer = setInterval(() => this.updateLiveProgress(), 1000);
 
     this._haNotificationInterceptor = (e) => {
@@ -2200,6 +2220,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           to   { transform: scaleX(0); }
         }
         @keyframes ma-spin { to { transform: rotate(360deg); } }
+        @keyframes crow-intro-fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 
         /* ── Queue reorder mode ──────────────────────────────────────────── */
         .ma-loading { display: flex; align-items: center; justify-content: center; min-height: 100px; color: var(--crow-panel-text-dim,rgba(255,255,255,0.35)); font-size: 13px; gap: 8px; }
@@ -3435,8 +3456,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
               <div class="track-artist" id="tArtist"></div>
             </div>
           </div>
-          <div class="progress-bar" id="progWrap"><div class="progress-fill" id="progFill"></div></div>
-          <div class="progress-times"><span id="pCur">0:00</span><span id="pTot">0:00</span></div>
+          <div id="prog-area">
+            <div class="progress-bar" id="progWrap"><div class="progress-fill" id="progFill"></div></div>
+            <div class="progress-times"><span id="pCur">0:00</span><span id="pTot">0:00</span></div>
+          </div>
           <div class="controls">
             <!-- Remote btn — both modes, Apple TV only, absolutely positioned left to mirror vol-pct -->
             <button class="remote-toggle-btn" id="remoteBtn" title="Remote Control">
@@ -4195,8 +4218,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             const _runMA = (action) => item._needsMA ? this._switchToMAAndRun(action) : expand().then(action);
             if (item.id === 'qm_queue') { expand().then(() => this._showQueuePanel('next', true)); }
             else if (item.id === 'qm_library')      { expand().then(() => item._needsMA ? this._switchToMAAndRun(() => this._openMABrowser()) : this._openMABrowser()); }
-            else if (item.id === 'qm_mood')         { expand().then(() => { this._queuePanelDirection = null; item._needsMA ? this._switchToMAAndRun(() => this._showAIMoodQueue()) : this._showAIMoodQueue(); }); }
-            else if (item.id === 'qm_mood')         { expand().then(() => _runMA(() => this._showAIMoodQueue())); }
+            else if (item.id === 'qm_mood')         { expand().then(() => { this._queuePanelDirection = null; this._showAIMoodQueue(); }); }
             else if (item.id === 'qm_ai_recs')      { expand().then(() => { const _rMT = this._detectMediaType(this._hass?.states[this._entity]); (_rMT === 'tv' || _rMT === 'movie') ? this._showAIRecommendations() : _runMA(() => this._showAIRecommendations()); }); }
             else if (item.id === 'qm_ai_search')    { expand().then(() => _runMA(() => this._showAISearchPanel())); }
             else if (item.id === 'qm_mood_video')   { expand().then(() => this._showMoodMatchPanel(item._qmVideoTitle)); }
@@ -5103,7 +5125,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           closeMenu();
           this._closeInfoPopup();
           this._queuePanelDirection = null;
-          setTimeout(() => this._showAIMoodQueue(), 350);
+          setTimeout(() => this._showAIMoodQueue(), 350); // No _switchToMAAndRun — playMoodOnSpeaker resolves MA entity internally
         });
 
         // ── AI Search ──
@@ -5594,8 +5616,14 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       titleEl.style.color  = this._config.title_color  || '#ffffff';
       artistEl.style.color = this._config.artist_color || 'rgba(255,255,255,0.7)';
     }
-    this._applyScrollText(titleEl,  state.attributes.media_title  || (isPlaying ? 'Media' : 'Idle'));
-    this._applyScrollText(artistEl, state.attributes.media_artist || state.attributes.friendly_name || '');
+    // Clear optimistic media display if HA has now confirmed real state
+    const _hasRealMedia = !!(state.attributes.media_title || state.attributes.media_artist);
+    const _optimisticActive = this._optimisticMediaExpiry && Date.now() < this._optimisticMediaExpiry;
+    if (!_optimisticActive || _hasRealMedia) {
+      this._optimisticMediaExpiry = undefined;
+      this._applyScrollText(titleEl,  state.attributes.media_title  || (isPlaying ? 'Media' : 'Idle'));
+      this._applyScrollText(artistEl, state.attributes.media_artist || state.attributes.friendly_name || '');
+    }
 
     r.getElementById('cardOuter').classList.toggle('vol-btn-mode', this._config.volume_control === 'buttons');
 
@@ -10079,6 +10107,18 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     setTimeout(() => document.addEventListener('pointerdown', _close), 100);
   }
 
+  // Optimistically update the card title/artist display before HA confirms state.
+  // Cleared automatically when updateContent next runs with real HA state.
+  _setOptimisticMedia(title, artist) {
+    const r = this.shadowRoot;
+    const titleEl  = r?.getElementById('tTitle');
+    const artistEl = r?.getElementById('tArtist');
+    if (titleEl)  this._applyScrollText(titleEl,  title);
+    if (artistEl) this._applyScrollText(artistEl, artist);
+    // Flag so updateContent clears this once HA state arrives
+    this._optimisticMediaExpiry = Date.now() + 12000; // clear after 12s max
+  }
+
   _expandFromCompact() {
     const cardOuter = this.shadowRoot?.getElementById('cardOuter');
     if (!cardOuter?.classList.contains('mode-compact')) return Promise.resolve();
@@ -10420,6 +10460,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
     const vibeHtml = '';
 
+
     const factHtml = data.fact
       ? `<div style="margin-top:10px;padding:10px 12px;background:rgba(99,179,237,0.07);border:1px solid rgba(99,179,237,0.14);border-radius:10px;">
            <div style="font-size:10px;font-weight:700;color:rgba(99,179,237,0.6);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:4px">✨ Fun Fact</div>
@@ -10584,6 +10625,65 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         this._aiLocalSet('videoInfo', cacheKey, results);
       }
     } catch(e) { /* silent */ }
+  }
+
+
+  // ── Song Intro ───────────────────────────────────────────────────────────────
+  // Fires 5s after a track starts (same debounce as prefetch). Shows a subtle
+  // one-liner below the artist name — e.g. "✨ A B-side that almost never was."
+  // Auto-dismisses after 8s or on tap. Never fires for radio/streams.
+  async _showSongIntro(trackTitle, artistName) {
+    const r = this.shadowRoot;
+
+    const cacheKey = ('intro|' + artistName + '|' + trackTitle).toLowerCase();
+    if (!this._aiIntroCache) this._aiIntroCache = new Map();
+
+    let text = this._aiIntroCache.get(cacheKey) || this._aiSessionGet('songIntro', cacheKey);
+    if (!text) {
+      const hasAI = await this._aiCheckAvailable();
+      const _cur = this._hass?.states[this._entity]?.attributes;
+      if (_cur?.media_title !== trackTitle || _cur?.media_artist !== artistName) return;
+      if (!hasAI) return;
+      const raw = await this._aiConverse(`For the song "${trackTitle}" by "${artistName}", give one short intriguing fact or context in under 12 words — something a music fan would find genuinely interesting. No preamble, no quotation marks.`);
+      const _cur2 = this._hass?.states[this._entity]?.attributes;
+      if (_cur2?.media_title !== trackTitle || _cur2?.media_artist !== artistName) return;
+      if (!raw) return;
+      text = raw.replace(/^["'✨\s]+|["'\s]+$/g, '').trim();
+      this._aiIntroCache.set(cacheKey, text);
+      this._aiSessionSet('songIntro', cacheKey, text);
+    }
+
+    const progArea = r?.getElementById('prog-area');
+    if (!progArea) return;
+
+    // Collapse prog-area to zero height without removing it from DOM
+    // (removing it causes HA to throw a configuration error on re-render)
+    const _restore = () => {
+      clearTimeout(this._songIntroTimer);
+      const pa = r?.getElementById('prog-area');
+      const intro = r?.getElementById('song-intro-div');
+      if (pa) { pa.style.overflow = ''; pa.style.height = ''; pa.style.visibility = ''; }
+      if (intro) intro.remove();
+    };
+
+    // Collapse without removing
+    progArea.style.overflow = 'hidden';
+    progArea.style.height = '0';
+    progArea.style.visibility = 'hidden';
+
+    // Remove any stale intro div then insert fresh one
+    r?.getElementById('song-intro-div')?.remove();
+    const intro = document.createElement('div');
+    intro.id = 'song-intro-div';
+    intro.style.cssText = 'display:flex;align-items:center;gap:5px;font-size:10px;color:rgba(99,179,237,0.85);cursor:pointer;-webkit-tap-highlight-color:transparent;opacity:0;transition:opacity 0.4s ease;padding:4px 0 6px;';
+    intro.innerHTML = `<svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:rgba(99,179,237,0.7);flex-shrink:0"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${text}</span>`;
+    progArea.insertAdjacentElement('beforebegin', intro);
+
+    requestAnimationFrame(() => { intro.style.opacity = '1'; });
+    intro.addEventListener('click', _restore);
+
+    clearTimeout(this._songIntroTimer);
+    this._songIntroTimer = setTimeout(_restore, 8000);
   }
 
   // Silently pre-warm the AI track info cache so long-press on artwork is instant
@@ -10795,7 +10895,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // Use the SAME cache key and prompt as _showAITrackInfo so prefetched data
     // is always found by the display function — prevents double-fetching.
     const primaryArtist = artistName.split(/\s*[&,]\s*/)[0].trim() || artistName;
-    const cacheKey = ('trackinfo|' + artistName + '|' + trackTitle).toLowerCase();
+    const cacheKey = ('trackinfo|' + artistName + '|' + trackTitle).toLowerCase(); // v2 adds chart+reception
     if (!this._aiTrackInfoCache) this._aiTrackInfoCache = new Map();
     // Check sessionStorage first
     if (!this._aiTrackInfoCache.has(cacheKey)) {
@@ -10815,7 +10915,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       const raw = resp?.response?.speech?.plain?.speech || '';
       const s = raw.indexOf('{'), e2 = raw.lastIndexOf('}');
       if (s === -1 || e2 <= s) return;
-      const data = JSON.parse(raw.slice(s, e2 + 1));
       if (data.found === false) return; // don't cache hallucinated results
       this._aiTrackInfoCache.set(cacheKey, data);
       this._aiSessionSet('trackInfo', cacheKey, data);
@@ -10941,7 +11040,7 @@ Include ALL tracks. Use null for unknown fields.`;
       return;
     }
 
-    const cacheKey = ('trackinfo|' + artistName + '|' + trackTitle).toLowerCase();
+    const cacheKey = ('trackinfo|' + artistName + '|' + trackTitle).toLowerCase(); // v2 adds chart+reception
     if (!this._aiTrackInfoCache) this._aiTrackInfoCache = new Map();
 
     // Check sessionStorage before network
@@ -10956,27 +11055,14 @@ Include ALL tracks. Use null for unknown fields.`;
       const primaryArtist = artistName.split(/\s*[&,]\s*/)[0].trim() || artistName;
       const queryArtist = primaryArtist !== artistName ? primaryArtist : artistName;
 
-      const prompt = `You are a music encyclopedia. For the track "${trackTitle}" by "${queryArtist}", provide a JSON object (no markdown, raw JSON only):
-{
-  "year": "release year",
-  "album": "album name",
-  "label": "record label",
-  "genre": ["genre1","genre2"],
-  "duration": "duration e.g. 3:42",
-  "fact": "One fascinating fact in 1-2 sentences. If this track does not exist or you are not confident, set this to null.",
-  "vibe": "3-word vibe e.g. Euphoric indie anthem",
-  "members": ["Member Name 1","Member Name 2"],
-  "similar": [{"title":"Track","artist":"Artist"},{"title":"Track","artist":"Artist"},{"title":"Track","artist":"Artist"}],
-  "found": true
-}
-For members: list the band members (2-6 names). If the artist is a solo performer, set members to [\"${primaryArtist}\"] (just their own name as a single-element array). IMPORTANT: If you cannot find reliable information about this specific track, set "found" to false and all other fields to null. Do NOT invent or hallucinate details. Respond with ONLY the JSON.`;
+      const prompt = `You are a music encyclopedia. For the track "${trackTitle}" by "${queryArtist}", provide a JSON object (no markdown, raw JSON only):\n{\n  \"year\": \"release year\",\n  \"chart\": \"highest chart position e.g. UK #1 or US #4 Billboard Hot 100, or null if truly unknown\",\n  \"reception\": \"one short phrase e.g. 4x Platinum or Critically acclaimed or GRAMMY winner, null only if no notable reception\",\n  \"album\": \"album name\",\n  \"label\": \"record label\",\n  \"genre\": [\"genre1\",\"genre2\"],\n  \"duration\": \"duration e.g. 3:42\",\n  \"fact\": \"One fascinating fact in 1-2 sentences. If this track does not exist or you are not confident, set this to null.\",\n  \"vibe\": \"3-word vibe e.g. Euphoric indie anthem\",\n  \"members\": [\"Member Name 1\",\"Member Name 2\"],\n  \"similar\": [{\"title\":\"Track\",\"artist\":\"Artist\"},{\"title\":\"Track\",\"artist\":\"Artist\"},{\"title\":\"Track\",\"artist\":\"Artist\"}],\n  \"found\": true\n}\\nFor members: list the band members (2-6 names). If the artist is a solo performer, set members to [\"${queryArtist}\"] (just their own name as a single-element array). IMPORTANT: If you cannot find reliable information about this specific track, set \"found\" to false and all other fields to null. Do NOT invent or hallucinate details. Respond with ONLY the JSON.`;
       try {
         const resp = await this._hass.connection.sendMessagePromise({
           type: 'conversation/process', text: prompt,
           agent_id: agentId, language: navigator.language || 'en'
         });
         if (_stale()) return;
-        const raw = resp?.response?.speech?.plain?.speech || '';
+      const prompt = `You are a music encyclopedia. For the track "${trackTitle}" by "${queryArtist}", provide a JSON object (no markdown, raw JSON only):\n{\n  "year": "release year",\n  "album": "album name",\n  "label": "record label",\n  "genre": ["genre1","genre2"],\n  "duration": "duration e.g. 3:42",\n  "fact": "One fascinating fact in 1-2 sentences. If this track does not exist or you are not confident, set this to null.",\n  "vibe": "3-word vibe e.g. Euphoric indie anthem",\n  "members": ["Member Name 1","Member Name 2"],\n  "similar": [{"title":"Track","artist":"Artist"},{"title":"Track","artist":"Artist"},{"title":"Track","artist":"Artist"}],\n  "found": true\n}\nFor members: list the band members (2-6 names). If the artist is a solo performer, set members to [\"${queryArtist}\"] (just their own name as a single-element array). IMPORTANT: If you cannot find reliable information about this specific track, set "found" to false and all other fields to null. Do NOT invent or hallucinate details. Respond with ONLY the JSON.`;
         // Robust extraction — find first { to last }
         const s = raw.indexOf('{'), e2 = raw.lastIndexOf('}');
         if (s === -1 || e2 <= s) throw new Error('No JSON');
@@ -11272,9 +11358,11 @@ For members: list the band members (2-6 names). If the artist is a solo performe
       setTimeout(() => this._prefetchAIAlbumTracks(data.album, artistName), 500);
     }
 
-    // Long-press on artist name → similar artist radio
+    // Tap artist name → bio, long-press → artist radio
     const _artistNameEl = content.querySelector('#ai-track-artist-name');
     if (_artistNameEl && artistName) {
+      // Style as a link
+      _artistNameEl.style.color = '#63b3ed';
       let _artLpTimer = null, _artLpFired = false;
       _artistNameEl.addEventListener('pointerdown', () => {
         _artLpFired = false;
@@ -11283,6 +11371,10 @@ For members: list the band members (2-6 names). If the artist is a solo performe
       _artistNameEl.addEventListener('pointerup',     () => { clearTimeout(_artLpTimer); }, { passive: true });
       _artistNameEl.addEventListener('pointercancel', () => { clearTimeout(_artLpTimer); _artLpFired = false; }, { passive: true });
       _artistNameEl.addEventListener('pointermove',   () => { clearTimeout(_artLpTimer); }, { passive: true });
+      _artistNameEl.addEventListener('click', () => {
+        if (_artLpFired) { _artLpFired = false; return; }
+        this._showCastBio(content, artistName, trackTitle, artUrl);
+      });
     }
 
     // Wire band member clicks → bio panel, and fetch Wikipedia photos
@@ -12801,6 +12893,9 @@ Include ALL tracks. Use null for unknown fields.`;
           const m = moods[parseInt(btn.dataset.idx)];
           const _ms = m.maSearch || m.query;
           const _seeds = Array.isArray(_ms) ? _ms : [_ms];
+          // Optimistic UI — show mood label + primary seed artist instantly
+          const _primarySeed = Array.isArray(_seeds) ? _seeds[0] : _seeds;
+          self._setOptimisticMedia(m.label, _primarySeed);
           doMood(_seeds, m.label, m.query || '');
         });
       });
@@ -12834,103 +12929,107 @@ Include ALL tracks. Use null for unknown fields.`;
       const seedArtists = Array.isArray(seeds) ? seeds : [seeds];
       const primarySeed = seedArtists[0];
 
-      // ── No-pipe shortcut: search for a track immediately, then add radio ──
+      // ── No-pipe path: fire radio instantly, then silently upgrade with a track ──
+      // Strategy: start playing artist radio immediately (< 1s feedback), then run
+      // parallel searches across all seed artists. If any search returns a track,
+      // upgrade the queue silently. This guarantees something always plays fast.
       const _isNoPipeMood = !moodQuery || (!moodQuery.includes('|') && !/\b(19[5-9]0s|20[012]0s)\b/i.test(moodQuery));
       if (_isNoPipeMood) {
         const _firstSeed = seedArtists[0];
 
-        // Get config entry for track search (cached after first use)
-        let _cid = self._maConfigEntryId;
-        if (!_cid) {
+        // ── Step 1: fire artist radio immediately — no waiting ────────────────
+        let _radioStarted = false;
+        const _fireRadio = async (seed, enqueue = 'replace') => {
           try {
-            _cid = await self._getMAConfigEntryId();
-          } catch(_) {}
-        }
-
-        if (_cid) {
-          // Search for a specific track from the first seed artist — plays instantly
-          try {
-            const _searchRes = await self._hass.connection.sendMessagePromise({
-              type: 'call_service', domain: 'music_assistant', service: 'search',
-              service_data: { config_entry_id: _cid, name: _firstSeed, media_type: 'track', limit: 10 },
-              return_response: true
-            });
-            if (_stale()) return;
-            const _tracks = _searchRes?.response?.tracks || [];
-            if (_tracks.length) {
-              // Pick a random track from the results
-              const _pick = _tracks[Math.floor(Math.random() * _tracks.length)];
-              // Play it — if it fails fall back to artist radio
-              self._hass.connection.sendMessagePromise({
-                type: 'call_service', domain: 'music_assistant', service: 'play_media',
-                service_data: { entity_id: maEntity, media_id: _pick.uri, media_type: 'track', enqueue: 'replace' }
-              }).catch(() => {
-                // Track play failed — fall back to artist radio
-                self._hass.connection.sendMessagePromise({
-                  type: 'call_service', domain: 'music_assistant', service: 'play_media',
-                  service_data: { entity_id: maEntity, media_id: self._moodArtistUriCache?.get(_firstSeed) || _firstSeed, media_type: 'artist', enqueue: 'replace', radio_mode: true }
-                }).catch(() => { self._showToast(`Could not start ${label} — try again`); });
-              });
-              self._pillPulse(500);
-              self._hideLoadingToast();
-              // Add all seeds as radio in background after short delay
-              setTimeout(() => {
-                (async () => {
-                  for (const _seed of seedArtists) {
-                    if (_stale()) return;
-                    const _uri = self._moodArtistUriCache?.get(_seed);
-                    await self._hass.connection.sendMessagePromise({
-                      type: 'call_service', domain: 'music_assistant', service: 'play_media',
-                      service_data: { entity_id: maEntity, media_id: _uri || _seed, media_type: 'artist', enqueue: 'add', radio_mode: true }
-                    }).catch(() => {});
-                  }
-                })();
-              }, 1500);
-              self._maBatchLoading = false;
-              clearTimeout(self._maBatchLoadingTimer);
-              return;
-            }
-          } catch(_) {}
-        }
-
-        // Fallback: fire artist radio directly if search failed or no config entry
-        try {
-          await self._hass.connection.sendMessagePromise({
-            type: 'call_service', domain: 'music_assistant', service: 'play_media',
-            service_data: { entity_id: maEntity,
-              media_id: self._moodArtistUriCache?.get(_firstSeed) || _firstSeed,
-              media_type: 'artist', enqueue: 'replace', radio_mode: true }
-          });
-        } catch(_) {
-          // Try next seed
-          const _fallback = seedArtists[1];
-          if (_fallback) {
-            self._hass.connection.sendMessagePromise({
+            await self._hass.connection.sendMessagePromise({
               type: 'call_service', domain: 'music_assistant', service: 'play_media',
-              service_data: { entity_id: maEntity, media_id: self._moodArtistUriCache?.get(_fallback) || _fallback, media_type: 'artist', enqueue: 'replace', radio_mode: true }
-            }).catch(() => { self._showToast(`Could not start ${label} — try again`); });
-          } else {
-            self._showToast(`Could not start ${label} — try again`);
-          }
-        }
+              service_data: { entity_id: maEntity, media_id: self._moodArtistUriCache?.get(seed) || seed, media_type: 'artist', enqueue, radio_mode: true }
+            });
+            return true;
+          } catch(_) { return false; }
+        };
+
+        // Fire primary seed radio immediately — don't await, let it run in background
+        const _radioPromise = _fireRadio(_firstSeed).then(ok => {
+          if (!ok && seedArtists[1]) return _fireRadio(seedArtists[1]);
+          return ok;
+        }).then(ok => {
+          _radioStarted = ok;
+          if (!ok) self._showToast(`Could not start ${label} — check Music Assistant`);
+        });
+
+        // Show toast + pulse immediately
         self._pillPulse(500);
         self._hideLoadingToast();
-        if (seedArtists.length > 1) {
-          setTimeout(() => {
-            (async () => {
-              for (const _seed of seedArtists.slice(1)) {
-                if (_stale()) return;
-                await self._hass.connection.sendMessagePromise({
-                  type: 'call_service', domain: 'music_assistant', service: 'play_media',
-                  service_data: { entity_id: maEntity, media_id: self._moodArtistUriCache?.get(_seed) || _seed, media_type: 'artist', enqueue: 'add', radio_mode: true }
-                }).catch(() => {});
-              }
-            })();
-          }, 1500);
-        }
         self._maBatchLoading = false;
         clearTimeout(self._maBatchLoadingTimer);
+
+        // ── Step 2: parallel track search across all seeds ────────────────────
+        // Run in background — upgrade queue if a good track is found
+        (async () => {
+          // Wait for radio to be established before upgrading
+          await _radioPromise;
+          if (_stale() || !_radioStarted) return;
+
+          const _cid = self._maConfigEntryId || await self._getMAConfigEntryId().catch(() => null);
+          if (!_cid || _stale()) return;
+
+          // Search all seeds in parallel
+          const _searches = seedArtists.map(seed =>
+            self._hass.connection.sendMessagePromise({
+              type: 'call_service', domain: 'music_assistant', service: 'search',
+              service_data: { config_entry_id: _cid, name: seed, media_type: 'track', limit: 8 },
+              return_response: true
+            }).then(r => r?.response?.tracks || []).catch(() => [])
+          );
+          const _results = await Promise.all(_searches);
+          if (_stale()) return;
+
+          // Flatten, deduplicate by URI, pick a random track
+          const _allTracks = _results.flat().filter((t, i, arr) => t?.uri && arr.findIndex(x => x.uri === t.uri) === i);
+          if (!_allTracks.length) {
+            // No tracks found — extend queue with remaining seeds as radio
+            for (const _seed of seedArtists.slice(1)) {
+              if (_stale()) return;
+              await _fireRadio(_seed, 'add');
+            }
+            return;
+          }
+
+          // Pick a random track and silently replace queue with it
+          const _pick = _allTracks[Math.floor(Math.random() * _allTracks.length)];
+          await self._hass.connection.sendMessagePromise({
+            type: 'call_service', domain: 'music_assistant', service: 'play_media',
+            service_data: { entity_id: maEntity, media_id: _pick.uri, media_type: 'track', enqueue: 'replace' }
+          }).catch(() => {}); // radio already playing — silent failure is fine
+
+          if (_stale()) return;
+
+          // Add all seed artists as radio behind the track
+          await new Promise(res => setTimeout(res, 800));
+          for (const _seed of seedArtists) {
+            if (_stale()) return;
+            await _fireRadio(_seed, 'add');
+          }
+        })();
+
         return;
+      }
+
+      // ── Pipe/decade mood: fire artist radio BEFORE awaiting config entry ────
+      // This guarantees something plays in < 1s regardless of MA search latency.
+      const _isDecadeMood = moodQuery && /\b(19[5-9]0s|20[012]0s)\b/i.test(moodQuery.split('|')[0]);
+      if (!_isDecadeMood) {
+        self._hass.connection.sendMessagePromise({
+          type: 'call_service', domain: 'music_assistant', service: 'play_media',
+          service_data: { entity_id: maEntity,
+            media_id: self._moodArtistUriCache?.get(primarySeed) || primarySeed,
+            media_type: 'artist', enqueue: 'replace', radio_mode: true }
+        }).catch(() => {});
+        self._pillPulse(500);
+        self._hideLoadingToast();
+        self._maBatchLoading = false;
+        clearTimeout(self._maBatchLoadingTimer);
       }
 
       try {
@@ -12943,49 +13042,43 @@ Include ALL tracks. Use null for unknown fields.`;
         if (!self._moodLibraryCache) self._moodLibraryCache = new Map();
         const _libCacheKey = seedArtists.join('|').toLowerCase();
 
-        // ── Fire primary seed radio immediately for pipe moods ───────────────
-        // Playlist search takes time — start playing from maSearch artist right away
-        // then replace/extend queue when playlist tracks are found.
-        const _isDecadeMood = moodQuery && /\b(19[5-9]0s|20[012]0s)\b/i.test(moodQuery.split('|')[0]);
-        if (!_isDecadeMood && moodQuery?.includes('|')) {
-          self._hass.connection.sendMessagePromise({
-            type: 'call_service', domain: 'music_assistant', service: 'play_media',
-            service_data: { entity_id: maEntity,
-              media_id: self._moodArtistUriCache?.get(primarySeed) || primarySeed,
-              media_type: 'artist', enqueue: 'replace', radio_mode: true }
-          }).catch(() => {});
-          self._pillPulse(500);
-          self._hideLoadingToast();
-        }
-
-        // ── Option 0: Multi-seed radio for decade moods ───────────────────────
-        // For decade moods, resolve URIs for ALL seed artists and fire radio.
         let localTracks = self._moodLibraryCache.get(_libCacheKey);
 
         if (!localTracks && moodQuery && moodQuery.includes('|') && !_isDecadeMood) {
-          // ── Genre/Social: playlist search — play first track immediately, fill rest in background ──
+          // ── Genre/Social: run ALL pipe queries in parallel, use first results ──
           try {
             const _queries = moodQuery.split('|').map(q => q.trim()).filter(Boolean);
-            let _firstPlayed = false;
-            const _bgTracks = [];
 
-            for (const _q of _queries) {
-              const [_playlists, _albums] = await Promise.all([
-                self._hass.connection.sendMessagePromise({
-                  type: 'call_service', domain: 'music_assistant', service: 'search',
-                  service_data: { config_entry_id: configEntryId, name: _q, media_type: 'playlist', limit: 5 },
-                  return_response: true
-                }).then(r => r?.response?.playlists || []).catch(() => []),
-                self._hass.connection.sendMessagePromise({
-                  type: 'call_service', domain: 'music_assistant', service: 'search',
-                  service_data: { config_entry_id: configEntryId, name: _q, media_type: 'album', limit: 5 },
-                  return_response: true
-                }).then(r => r?.response?.albums || []).catch(() => []),
-              ]);
-              if (_stale()) return;
-              const _compilations = [..._playlists, ..._albums];
-              if (!_compilations.length) continue;
+            // Fire all query searches simultaneously
+            const _allQueryResults = await Promise.all(
+              _queries.map(async _q => {
+                const [_playlists, _albums] = await Promise.all([
+                  self._hass.connection.sendMessagePromise({
+                    type: 'call_service', domain: 'music_assistant', service: 'search',
+                    service_data: { config_entry_id: configEntryId, name: _q, media_type: 'playlist', limit: 5 },
+                    return_response: true
+                  }).then(r => r?.response?.playlists || []).catch(() => []),
+                  self._hass.connection.sendMessagePromise({
+                    type: 'call_service', domain: 'music_assistant', service: 'search',
+                    service_data: { config_entry_id: configEntryId, name: _q, media_type: 'album', limit: 5 },
+                    return_response: true
+                  }).then(r => r?.response?.albums || []).catch(() => []),
+                ]);
+                return [..._playlists, ..._albums];
+              })
+            );
+            if (_stale()) return;
 
+            // Flatten all found compilations, deduplicate by uri
+            const _seen = new Set();
+            const _compilations = _allQueryResults.flat().filter(item => {
+              const key = item.uri || item.item_id || item.name || '';
+              if (_seen.has(key)) return false;
+              _seen.add(key); return true;
+            });
+
+            if (_compilations.length) {
+              // Fetch tracks for top compilations in parallel
               const _trackChunks = await Promise.all(
                 _compilations.slice(0, 5).map(item =>
                   self._hass.connection.sendMessagePromise({
@@ -12997,64 +13090,66 @@ Include ALL tracks. Use null for unknown fields.`;
               );
               if (_stale()) return;
 
+              // Interleave tracks across compilations, deduplicate
               const _allTracks = [];
+              const _uris = new Set();
               const _maxLen = Math.max(..._trackChunks.map(c => c.length), 0);
               for (let i = 0; i < _maxLen; i++) {
-                for (const chunk of _trackChunks) { if (chunk[i]) _allTracks.push(chunk[i]); }
+                for (const chunk of _trackChunks) {
+                  if (!chunk[i]) continue;
+                  const u = chunk[i].uri || chunk[i].item_id || '';
+                  if (u && _uris.has(u)) continue;
+                  if (u) _uris.add(u);
+                  _allTracks.push(chunk[i]);
+                }
               }
-              const _uris = new Set();
-              const _deduped = _allTracks.filter(t => {
-                const u = t.uri || t.item_id || '';
-                if (!u) return true;
-                if (_uris.has(u)) return false;
-                _uris.add(u); return true;
-              });
-              if (!_deduped.length) continue;
 
               // Shuffle
-              for (let i = _deduped.length - 1; i > 0; i--) {
+              for (let i = _allTracks.length - 1; i > 0; i--) {
                 const j = Math.floor(Math.random() * (i + 1));
-                [_deduped[i], _deduped[j]] = [_deduped[j], _deduped[i]];
+                [_allTracks[i], _allTracks[j]] = [_allTracks[j], _allTracks[i]];
               }
 
-              if (!_firstPlayed && _deduped.length) {
-                // Play the first track immediately — fire and forget
-                const _first = _deduped.shift();
+              if (_allTracks.length) {
+                // Replace artist radio with first playlist track, queue rest in background
+                const _first = _allTracks.shift();
                 self._hass.connection.sendMessagePromise({
                   type: 'call_service', domain: 'music_assistant', service: 'play_media',
                   service_data: { entity_id: maEntity, media_id: _first.uri, media_type: 'track', enqueue: 'replace' }
-                }).catch(() => {});
-                _firstPlayed = true;
-                self._pillPulse(500);
-                self._hideLoadingToast();
+                }).catch(() => {}); // artist radio already playing — silent failure fine
+
+                // Add remaining tracks in background
+                (async () => {
+                  for (const t of _allTracks) {
+                    if (_stale()) return;
+                    await self._hass.connection.sendMessagePromise({
+                      type: 'call_service', domain: 'music_assistant', service: 'play_media',
+                      service_data: { entity_id: maEntity, media_id: t.uri, media_type: 'track', enqueue: 'add' }
+                    }).catch(() => {});
+                  }
+                })();
+                localTracks = [];
+                return;
               }
-
-              _bgTracks.push(..._deduped);
-
-              if (_bgTracks.length >= MIN_LOCAL_TRACKS) break;
             }
-
-            if (_firstPlayed) {
-              // Add remaining tracks in background
-              (async () => {
-                for (const t of _bgTracks) {
-                  if (_stale()) return;
-                  await self._hass.connection.sendMessagePromise({
-                    type: 'call_service', domain: 'music_assistant', service: 'play_media',
-                    service_data: { entity_id: maEntity, media_id: t.uri, media_type: 'track', enqueue: 'add' }
-                  }).catch(() => {});
-                }
-              })();
-              localTracks = []; // signal that we handled playback
-              return; // exit try — playback started
-            }
-
-            if (_bgTracks.length >= MIN_LOCAL_TRACKS) localTracks = _bgTracks;
+            if (_allTracks?.length >= MIN_LOCAL_TRACKS) localTracks = _allTracks;
           } catch(_) {}
         }
 
         if (_isDecadeMood && !localTracks) {
-          // ── Decade: play first found track immediately, add rest in background ──
+          // ── Decade: fire multi-seed radio immediately, then enrich with specific tracks ──
+          // Fire all seed artists as radio right away so something plays instantly
+          self._hass.connection.sendMessagePromise({
+            type: 'call_service', domain: 'music_assistant', service: 'play_media',
+            service_data: { entity_id: maEntity,
+              media_id: self._moodArtistUriCache?.get(primarySeed) || primarySeed,
+              media_type: 'artist', enqueue: 'replace', radio_mode: true }
+          }).catch(() => {});
+          self._pillPulse(500);
+          self._hideLoadingToast();
+          self._maBatchLoading = false;
+          clearTimeout(self._maBatchLoadingTimer);
+
           try {
             const _decade = moodQuery.split('|')[0].match(/\b(19[5-9]0s|20[012]0s)\b/i)?.[0] || '';
             let _firstPlayed = false;
@@ -13332,19 +13427,17 @@ Include ALL tracks. Use null for unknown fields.`;
         }
 
         if (_stale()) return;
-        // Toast stays visible until entity starts playing (handled in set hass)
-        self._moodLoadingEntity = maEntity;
-        setTimeout(() => {
-          if (self._moodLoadingEntity === maEntity) {
-            self._moodLoadingEntity = null;
-            self._hideLoadingToast();
-          }
-        }, 15000);
+        // Toast and pulse already dismissed when radio fired — just ensure clean state
+        self._hideLoadingToast();
         self._pillPulse(500);
+        self._maBatchLoading = false;
+        clearTimeout(self._maBatchLoadingTimer);
       } catch(_e) {
         if (_stale()) return;
         self._hideLoadingToast();
         self._pillPulse(0);
+        self._maBatchLoading = false;
+        clearTimeout(self._maBatchLoadingTimer);
         self._showToast('Could not start ' + label + ' — check Music Assistant');
       }
     };
@@ -14691,7 +14784,7 @@ Include ALL tracks. Use null for unknown fields.`;
     const metaItems = [data.year, data.status].filter(Boolean);
     // Seasons rendered as a separate tappable button if available — see #tv-seasons-btn below
     const ratingHtml = data.rating ? `<div style="display:inline-flex;align-items:center;gap:6px;margin:4px 0;"><svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:#FFD60A"><path d="M12,17.27L18.18,21L16.54,13.97L22,9.24L14.81,8.62L12,2L9.19,8.62L2,9.24L7.46,13.97L5.82,21L12,17.27Z"/></svg><span style="font-size:13px;font-weight:600;color:#FFD60A">${data.rating}</span><span style="font-size:11px;color:${this._pt("dim")}">/ 10</span></div>` : '';
-    const directorHtml = data.director ? `<div style="font-size:11px;color:${this._pt("dim")};margin-top:4px;">Dir. ${data.director}</div>` : '';
+    const directorHtml = data.director ? `<div id="video-director-link" data-director="${(data.director||'').replace(/"/g,'&quot;')}" style="font-size:11px;color:#63b3ed;margin-top:4px;cursor:pointer;-webkit-tap-highlight-color:transparent;">Dir. ${data.director}</div>` : '';
 
     // Hero art — always start with a spinner; iTunes fetch replaces it with the
     // correct poster. Never use the entity picture as a placeholder because HA's
@@ -14995,6 +15088,14 @@ Include ALL tracks. Use null for unknown fields.`;
       });
     });
 
+    // Wire director link → bio panel
+    const directorLink = content.querySelector('#video-director-link');
+    if (directorLink) {
+      directorLink.addEventListener('click', () => {
+        self._showCastBio(content, directorLink.dataset.director, data.title || '', artUrl);
+      });
+    }
+
     // Wire seasons button → seasons list panel
     const _seasonsBtn = content.querySelector('#tv-seasons-btn');
     if (_seasonsBtn) {
@@ -15212,7 +15313,8 @@ Include ALL tracks. Use null for unknown fields.`;
 
 
   // ── Content Warning ──────────────────────────────────────────────────────────
-  // Renders a small pill into #content-warning-section showing suitability info.
+  // Renders clickable content warning pills into #content-warning-section.
+  // Tapping any pill opens a bottom-sheet popup explaining that rating/theme.
   async _loadContentWarning(content, data) {
     const el = content.querySelector('#content-warning-section');
     if (!el || !data.title) return;
@@ -15228,11 +15330,15 @@ Include ALL tracks. Use null for unknown fields.`;
       if (!content.querySelector('#content-warning-section')) return;
       if (!hasAI) return;
       const typeLabel = data.type === 'tv' ? 'TV series' : 'movie';
-      const raw = await this._aiConverse(`For the ${typeLabel} "${data.title}"${data.year ? ' (' + data.year + ')' : ''}, give a brief content advisory. Respond ONLY with a JSON object: {"rating":"e.g. 15","themes":["Violence","Strong language"],"kid_friendly":false}. Use UK age ratings (U, PG, 12, 15, 18). Max 3 themes.`);
+      const raw = await this._aiConverse(`For the ${typeLabel} "${data.title}"${data.year ? ' (' + data.year + ')' : ''}, give a brief content advisory. Respond ONLY with a JSON object: {"rating":"e.g. 15","rating_desc":"One sentence explaining what this UK age rating means for this title","themes":[{"label":"Violence","desc":"One sentence describing the nature of violence in this title"},{"label":"Language","desc":"One sentence describing the language"}],"kid_friendly":false}. Use UK age ratings (U, PG, 12, 15, 18). Max 3 themes.`);
       if (!raw) return;
       try {
         const i1 = raw.indexOf('{'), i2 = raw.lastIndexOf('}');
         result = JSON.parse(i1 !== -1 ? raw.slice(i1, i2+1) : raw);
+        // Normalise themes — support both old string[] and new {label,desc}[] format
+        if (result.themes && typeof result.themes[0] === 'string') {
+          result.themes = result.themes.map(t => ({ label: t, desc: '' }));
+        }
         this._aiCwCache.set(cacheKey, result);
         this._aiSessionSet('cw', cacheKey, result);
         this._aiLocalSet('cw', cacheKey, result);
@@ -15241,14 +15347,57 @@ Include ALL tracks. Use null for unknown fields.`;
     const elNow = content.querySelector('#content-warning-section');
     if (!elNow || !result) return;
     const _dim = this._pt('dim');
+    const _text = this._pt('text');
+    const _bg = this._pt('btnBg');
+    const _border = this._pt('border');
     const ratingColor = result.kid_friendly ? '#34c759' : result.rating === '18' ? '#ff3b30' : result.rating === '15' ? '#ff9500' : '#63b3ed';
-    const themesHtml = (result.themes || []).map(t =>
-      `<span style="font-size:10px;color:${_dim};background:rgba(255,255,255,0.06);border-radius:4px;padding:2px 6px;">${t}</span>`
+    const themes = result.themes || [];
+
+    const _showCwPopup = (title, titleColor, body) => {
+      // Remove any existing popup
+      this.shadowRoot?.querySelectorAll('.cw-popup').forEach(el => el.remove());
+      const cardOuter = this.shadowRoot?.getElementById('cardOuter') || this.shadowRoot;
+      const popup = document.createElement('div');
+      popup.className = 'cw-popup';
+      popup.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;align-items:flex-end;justify-content:center;background:rgba(0,0,0,0.5);';
+      popup.innerHTML = `
+        <div style="width:100%;max-width:480px;background:var(--crow-panel-bg,#13131a);border-radius:20px 20px 0 0;padding:20px 20px 40px;box-shadow:0 -8px 40px rgba(0,0,0,0.6);">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+            <span style="font-size:15px;font-weight:700;color:${titleColor};">${title}</span>
+            <button class="cw-popup-close" style="width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,0.1);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;">
+              <svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:${_text}"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+            </button>
+          </div>
+          <div style="font-size:13px;color:${_text};line-height:1.6;">${body}</div>
+        </div>`;
+      cardOuter.appendChild(popup);
+      const _close = () => popup.remove();
+      popup.addEventListener('click', e => { if (e.target === popup) _close(); });
+      popup.querySelector('.cw-popup-close')?.addEventListener('click', _close);
+    };
+
+    const ratingPillHtml = `<span class="cw-pill" data-cw-type="rating" style="display:inline-flex;align-items:center;font-size:11px;font-weight:700;color:${ratingColor};background:${ratingColor}22;border:1px solid ${ratingColor}55;border-radius:5px;padding:2px 8px;flex-shrink:0;cursor:pointer;-webkit-tap-highlight-color:transparent;">${result.rating || '?'}</span>`;
+    const themePillsHtml = themes.map(t =>
+      `<span class="cw-pill" data-cw-type="theme" data-cw-label="${(t.label||'').replace(/"/g,'&quot;')}" data-cw-desc="${(t.desc||'').replace(/"/g,'&quot;')}" style="display:inline-flex;align-items:center;font-size:10px;color:${_dim};background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:4px;padding:2px 7px;cursor:pointer;-webkit-tap-highlight-color:transparent;">${t.label||''}</span>`
     ).join('');
+
     elNow.innerHTML = `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:8px 0 4px;">
-      <span style="font-size:11px;font-weight:700;color:${ratingColor};background:${ratingColor}22;border:1px solid ${ratingColor}55;border-radius:5px;padding:1px 7px;flex-shrink:0;">${result.rating || '?'}</span>
-      ${themesHtml}
+      ${ratingPillHtml}${themePillsHtml}
     </div>`;
+
+    // Wire pill taps
+    elNow.querySelectorAll('.cw-pill').forEach(pill => {
+      pill.addEventListener('click', () => {
+        if (pill.dataset.cwType === 'rating') {
+          const rDesc = result.rating_desc || `Rated ${result.rating} by the BBFC.`;
+          _showCwPopup(`${result.rating} Rating`, ratingColor, rDesc);
+        } else {
+          const label = pill.dataset.cwLabel || '';
+          const desc  = pill.dataset.cwDesc  || `This title contains ${label.toLowerCase()}.`;
+          _showCwPopup(label, _dim, desc);
+        }
+      });
+    });
   }
 
   // ── Video Action Row (Ask / Mood Match / Trivia) ────────────────────────────
@@ -15550,11 +15699,11 @@ Include ALL tracks. Use null for unknown fields.`;
 
     // Fetch episodes from AI
     if (!this._tvEpisodesCache) this._tvEpisodesCache = new Map();
-    const cacheKey = `${showTitle.toLowerCase()}|s${seasonNum}`;
+    const cacheKey = `${showTitle.toLowerCase()}|s${seasonNum}|v2`; // v2 = includes tease field
     let episodes = this._tvEpisodesCache.get(cacheKey);
     if (!episodes) {
       try {
-        const prompt = `List all episodes of Season ${seasonNum} of "${showTitle}". Reply ONLY with a JSON array — no markdown:\n[{"ep":1,"title":"Episode Title","airdate":"YYYY-MM-DD","overview":"One sentence synopsis."}]`;
+        const prompt = `List all episodes of Season ${seasonNum} of "${showTitle}". Reply ONLY with a JSON array — no markdown:\n[{"ep":1,"title":"Episode Title","airdate":"YYYY-MM-DD","tease":"Under 10 words, spoiler-free teaser"}]\nKeep teases intriguing but spoiler-free — no plot reveals.`;
         const resp = await this._hass.connection.sendMessagePromise({
           type: 'conversation/process', text: prompt, agent_id: agentId, language: navigator.language || 'en'
         });
@@ -15584,6 +15733,7 @@ Include ALL tracks. Use null for unknown fields.`;
       return;
     }
 
+
     const epRows = episodes.map(ep => `
       <div class="tv-ep-row" data-ep="${ep.ep}" style="display:flex;align-items:flex-start;gap:12px;padding:10px 14px;background:${this._pt("bg")};border:1px solid ${this._pt("div")};border-radius:12px;cursor:pointer;-webkit-tap-highlight-color:transparent;">
         <div style="width:28px;text-align:center;flex-shrink:0;padding-top:1px;">
@@ -15591,7 +15741,7 @@ Include ALL tracks. Use null for unknown fields.`;
         </div>
         <div style="flex:1;min-width:0;">
           <div style="font-size:13px;font-weight:600;color:${this._pt("text")};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${ep.title || 'Episode ' + ep.ep}</div>
-          ${ep.airdate ? `<div style="font-size:11px;color:${this._pt("dim")};margin-top:1px;">${self._formatAirdate(ep.airdate)}</div>` : ''}
+          ${ep.tease ? '<div style="font-size:11px;color:' + this._pt('dim') + ';margin-top:2px;font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">✨ ' + ep.tease + '</div>' : ep.airdate ? '<div style="font-size:11px;color:' + this._pt('dim') + ';margin-top:1px;">' + self._formatAirdate(ep.airdate) + '</div>' : ''}
         </div>
         <svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:${this._pt("dim")};flex-shrink:0;margin-top:2px;"><path d="M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z"/></svg>
       </div>`).join('');
@@ -15636,8 +15786,8 @@ Include ALL tracks. Use null for unknown fields.`;
         : (detail?.overview || ep.overview
             ? `<div style="font-size:13px;color:${this._pt("text")};line-height:1.6;">${detail?.overview || ep.overview}</div>`
             : '');
-      const writerHtml = detail?.writer ? `<div style="font-size:11px;color:${this._pt("dim")};margin-top:6px;">Written by ${detail.writer}</div>` : '';
-      const directorHtml = detail?.director ? `<div style="font-size:11px;color:${this._pt("dim")};margin-top:2px;">Directed by ${detail.director}</div>` : '';
+      const writerHtml = detail?.writer ? `<div style="font-size:11px;color:${this._pt("dim")};margin-top:6px;">Written by <span class="ep-writer-link" data-name="${(detail.writer||'').replace(/"/g,'&quot;')}" style="color:#63b3ed;cursor:pointer;-webkit-tap-highlight-color:transparent;">${detail.writer}</span></div>` : '';
+      const directorHtml = detail?.director ? `<div style="font-size:11px;color:${this._pt("dim")};margin-top:2px;">Directed by <span class="ep-director-link" data-name="${(detail.director||'').replace(/"/g,'&quot;')}" style="color:#63b3ed;cursor:pointer;-webkit-tap-highlight-color:transparent;">${detail.director}</span></div>` : '';
       const ratingHtml = detail?.rating ? `<div style="display:inline-flex;align-items:center;gap:5px;margin-top:6px;"><svg viewBox="0 0 24 24" style="width:11px;height:11px;fill:#FFD60A"><path d="M12,17.27L18.18,21L16.54,13.97L22,9.24L14.81,8.62L12,2L9.19,8.62L2,9.24L7.46,13.97L5.82,21L12,17.27Z"/></svg><span style="font-size:12px;font-weight:600;color:#FFD60A;">${detail.rating}</span><span style="font-size:11px;color:${this._pt("dim")};">/ 10</span></div>` : '';
       const funFactHtml = detail?.fun_fact ? `<div style="margin-top:12px;padding:10px 12px;background:rgba(99,179,237,0.07);border:1px solid rgba(99,179,237,0.14);border-radius:10px;"><div style="font-size:10px;font-weight:700;color:rgba(99,179,237,0.6);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:4px;">✨ Fun Fact</div><div style="font-size:12px;color:${this._pt("text")};line-height:1.5;">${detail.fun_fact}</div></div>` : '';
 
@@ -15655,12 +15805,33 @@ Include ALL tracks. Use null for unknown fields.`;
         ${ep.airdate ? `<div style="font-size:11px;color:${this._pt("dim")};margin-bottom:10px;">${this._formatAirdate(ep.airdate)}</div>` : ''}
         ${overviewHtml}
         ${writerHtml}${directorHtml}${ratingHtml}
-        ${funFactHtml}`;
+        ${funFactHtml}
+        ${!isLoading ? `
+        <div id="ep-action-row" style="display:flex;gap:8px;margin:14px 0 8px;">
+          <button id="ep-ask-btn" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:9px 12px;border-radius:12px;background:${this._pt("btnBg")};border:1px solid ${this._pt("border")};color:${this._pt("text")};font-size:12px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;-webkit-tap-highlight-color:transparent;">
+            <svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:rgba(99,179,237,0.8);flex-shrink:0"><path d="M20,2H4A2,2 0 0,0 2,4V22L6,18H20A2,2 0 0,0 22,16V4A2,2 0 0,0 20,2M6,9H18V11H6V9M14,14H6V12H14V14M18,8H6V6H18V8Z"/></svg>
+            Ask
+          </button>
+          <button id="ep-trivia-btn" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:9px 12px;border-radius:12px;background:${this._pt("btnBg")};border:1px solid ${this._pt("border")};color:${this._pt("text")};font-size:12px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;-webkit-tap-highlight-color:transparent;">
+            <svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:rgba(99,179,237,0.8);flex-shrink:0"><path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"/></svg>
+            Trivia
+          </button>
+        </div>
+        <div id="ep-ask-panel" style="display:none;margin-bottom:12px;"></div>
+        <div id="ep-trivia-panel" style="display:none;margin-bottom:12px;"></div>` : ''}`;
+
 
       const self = this;
       content.querySelector('#tv-ep-detail-back').addEventListener('click', () => {
         self._showTvEpisodes(content, showData, seasonNum, artUrl);
       });
+
+      // Wire director and writer bio links
+      content.querySelectorAll('.ep-director-link, .ep-writer-link').forEach(el => {
+        el.addEventListener('click', () => { self._showCastBio(content, el.dataset.name, showTitle, artUrl); });
+      });
+      // Wire Ask + Trivia action row
+      if (!isLoading) self._wireEpisodeActionRow(content, ep, showTitle, seasonNum);
     };
 
     _render(null, true);
@@ -15685,6 +15856,123 @@ Include ALL tracks. Use null for unknown fields.`;
       } catch(e) {}
     }
     _render(detail, false);
+  }
+
+
+  // ── Episode Detail Action Row (Ask / Trivia) ─────────────────────────────────
+  _wireEpisodeActionRow(content, ep, showTitle, seasonNum) {
+    const PANELS = [
+      { btnId: '#ep-ask-btn',    panelId: '#ep-ask-panel' },
+      { btnId: '#ep-trivia-btn', panelId: '#ep-trivia-panel' },
+    ];
+    const _dim    = this._pt('dim');
+    const _text   = this._pt('text');
+    const _bg     = this._pt('btnBg');
+    const _border = this._pt('border');
+    const epLabel = `S${seasonNum}E${ep.ep} "${ep.title || 'Episode ' + ep.ep}"`;
+
+    const _closeAll = (exceptBtnId) => {
+      PANELS.forEach(p => {
+        if (p.btnId === exceptBtnId) return;
+        const btn   = content.querySelector(p.btnId);
+        const panel = content.querySelector(p.panelId);
+        if (btn)   { btn.style.background = this._pt('btnBg'); btn.style.borderColor = this._pt('border'); btn.style.color = this._pt('text'); }
+        if (panel) { panel.style.display = 'none'; panel.innerHTML = ''; }
+      });
+    };
+
+    // ── Ask ──
+    const askBtn   = content.querySelector('#ep-ask-btn');
+    const askPanel = content.querySelector('#ep-ask-panel');
+    if (askBtn && askPanel) {
+      let askOpen = false;
+      askBtn.addEventListener('click', () => {
+        askOpen = !askOpen;
+        if (askOpen) _closeAll('#ep-ask-btn');
+        askBtn.style.background  = askOpen ? 'rgba(99,179,237,0.15)' : this._pt('btnBg');
+        askBtn.style.borderColor = askOpen ? 'rgba(99,179,237,0.4)'  : this._pt('border');
+        askBtn.style.color       = askOpen ? '#63b3ed'               : this._pt('text');
+        if (!askOpen) { askPanel.style.display = 'none'; askPanel.innerHTML = ''; return; }
+        askPanel.style.display = 'block';
+        askPanel.innerHTML = `
+          <div style="padding:10px 12px;background:${_bg};border:1px solid ${_border};border-radius:12px;">
+            <div style="display:flex;gap:8px;align-items:center;">
+              <input id="ep-ask-input" type="text" placeholder="Who plays the villain? Is this a filler episode?…"
+                style="flex:1;font-size:12px;padding:8px 12px;border-radius:10px;border:1px solid ${_border};background:rgba(0,0,0,0.2);color:${_text};font-family:-apple-system,BlinkMacSystemFont,sans-serif;outline:none;min-width:0;-webkit-appearance:none;">
+              <button id="ep-ask-send" style="flex-shrink:0;padding:8px 14px;border-radius:10px;background:rgba(99,179,237,0.15);border:1px solid rgba(99,179,237,0.3);color:#63b3ed;font-size:12px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;-webkit-tap-highlight-color:transparent;">Ask</button>
+            </div>
+            <div id="ep-ask-answer" style="margin-top:8px;font-size:12px;color:${_text};line-height:1.6;"></div>
+          </div>`;
+        const input    = askPanel.querySelector('#ep-ask-input');
+        const sendBtn  = askPanel.querySelector('#ep-ask-send');
+        const answerEl = askPanel.querySelector('#ep-ask-answer');
+        const _doAsk = async () => {
+          const q = input?.value?.trim();
+          if (!q) return;
+          answerEl.innerHTML = `<div style="display:flex;align-items:center;gap:7px;opacity:0.6;"><div style="width:10px;height:10px;border:1.5px solid rgba(99,179,237,0.3);border-top-color:#63b3ed;border-radius:50%;animation:ma-spin 0.8s linear infinite;"></div><span>Thinking…</span></div>`;
+          const hasAI = await this._aiCheckAvailable();
+          if (!hasAI) { answerEl.textContent = 'AI agent not available.'; return; }
+          const result = await this._aiConverse(`About ${epLabel} of "${showTitle}": ${q}\n\nAnswer in 2-4 plain sentences.`, { noCache: true });
+          if (answerEl && askPanel.isConnected) answerEl.textContent = result || 'No answer returned.';
+        };
+        sendBtn?.addEventListener('click', _doAsk);
+        input?.addEventListener('keydown', e => { if (e.key === 'Enter') _doAsk(); });
+        setTimeout(() => input?.focus(), 50);
+      });
+    }
+
+    // ── Trivia ──
+    const triviaBtn   = content.querySelector('#ep-trivia-btn');
+    const triviaPanel = content.querySelector('#ep-trivia-panel');
+    if (triviaBtn && triviaPanel) {
+      let triviaOpen = false;
+      triviaBtn.addEventListener('click', async () => {
+        triviaOpen = !triviaOpen;
+        if (triviaOpen) _closeAll('#ep-trivia-btn');
+        triviaBtn.style.background  = triviaOpen ? 'rgba(99,179,237,0.15)' : this._pt('btnBg');
+        triviaBtn.style.borderColor = triviaOpen ? 'rgba(99,179,237,0.4)'  : this._pt('border');
+        triviaBtn.style.color       = triviaOpen ? '#63b3ed'               : this._pt('text');
+        if (!triviaOpen) { triviaPanel.style.display = 'none'; triviaPanel.innerHTML = ''; return; }
+        triviaPanel.style.display = 'block';
+        const cacheKey = ('eptrivia|' + showTitle + '|s' + seasonNum + 'e' + ep.ep).toLowerCase();
+        if (!this._aiEpTriviaCache) this._aiEpTriviaCache = new Map();
+        let questions = this._aiEpTriviaCache.get(cacheKey) || this._aiSessionGet('epTrivia', cacheKey);
+        if (!questions) {
+          triviaPanel.innerHTML = `<div style="display:flex;align-items:center;gap:7px;padding:10px 12px;background:${_bg};border:1px solid ${_border};border-radius:12px;opacity:0.6;"><div style="width:12px;height:12px;border:1.5px solid rgba(99,179,237,0.3);border-top-color:#63b3ed;border-radius:50%;animation:ma-spin 0.8s linear infinite;"></div><span style="font-size:11px;color:${_dim};">Generating trivia…</span></div>`;
+          const hasAI = await this._aiCheckAvailable();
+          if (!triviaPanel.isConnected) return;
+          if (!hasAI) { triviaPanel.innerHTML = ''; return; }
+          const raw = await this._aiConverse(`Generate 5 fun trivia questions about ${epLabel} of "${showTitle}" — mix plot details, behind-the-scenes facts, and cast/crew. Respond ONLY with a JSON array:\n[{"q":"Question?","a":"Answer"}]`);
+          if (!triviaPanel.isConnected) return;
+          if (!raw) { triviaPanel.innerHTML = ''; return; }
+          try {
+            const i1 = raw.indexOf('['), i2 = raw.lastIndexOf(']');
+            questions = JSON.parse(i1 !== -1 ? raw.slice(i1, i2+1) : raw);
+            this._aiEpTriviaCache.set(cacheKey, questions);
+            this._aiSessionSet('epTrivia', cacheKey, questions);
+          } catch(e) { triviaPanel.innerHTML = ''; return; }
+        }
+        if (!triviaPanel.isConnected) return;
+        triviaPanel.innerHTML = `<div style="padding:10px 12px;background:${_bg};border:1px solid ${_border};border-radius:12px;">
+          <div style="font-size:10px;font-weight:700;color:rgba(99,179,237,0.7);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:8px;">Tap a question to reveal the answer</div>
+          ${(questions||[]).map(item => `
+            <div class="ep-trivia-card" style="padding:9px 12px;margin-bottom:6px;border-radius:10px;background:rgba(255,255,255,0.04);border:1px solid ${_border};cursor:pointer;-webkit-tap-highlight-color:transparent;">
+              <div style="font-size:12px;font-weight:600;color:${_text};">${item.q||''}</div>
+              <div class="ep-trivia-answer" style="display:none;font-size:12px;color:rgba(99,179,237,0.9);margin-top:6px;padding-top:6px;border-top:1px solid ${_border};">${item.a||''}</div>
+            </div>`).join('')}
+        </div>`;
+        triviaPanel.querySelectorAll('.ep-trivia-card').forEach(card => {
+          card.addEventListener('click', () => {
+            const ans = card.querySelector('.ep-trivia-answer');
+            if (!ans) return;
+            const showing = ans.style.display !== 'none';
+            ans.style.display = showing ? 'none' : 'block';
+            card.style.background  = showing ? 'rgba(255,255,255,0.04)' : 'rgba(99,179,237,0.08)';
+            card.style.borderColor = showing ? _border : 'rgba(99,179,237,0.3)';
+          });
+        });
+      });
+    }
   }
 
   // Show a bio panel for a cast member, with back button to return to the detail view
@@ -15717,7 +16005,7 @@ Include ALL tracks. Use null for unknown fields.`;
     // Show bio immediately with placeholder photo, then load async
     const renderBio = (imgUrl, isLoading) => {
       const photoHtml = imgUrl
-        ? `<img src="${imgUrl}" alt="${name}" style="width:80px;height:80px;object-fit:cover;border-radius:50%;border:2px solid rgba(255,255,255,0.1);" onerror="this.style.display='none'">`
+        ? `<img id="cast-bio-photo-img" src="${imgUrl}" alt="${name}" style="width:80px;height:80px;object-fit:cover;border-radius:50%;border:2px solid rgba(255,255,255,0.1);">`
         : `<div style="width:80px;height:80px;border-radius:50%;background:${this._pt("bg")};border:2px solid rgba(255,255,255,0.1);display:flex;align-items:center;justify-content:center;"><svg viewBox="0 0 24 24" style="width:36px;height:36px;fill:${this._pt("dim")}"><path d="M12,4A4,4 0 0,1 16,8A4,4 0 0,1 12,12A4,4 0 0,1 8,8A4,4 0 0,1 12,4M12,14C16.42,14 20,15.79 20,18V20H4V18C4,15.79 7.58,14 12,14Z"/></svg></div>`;
 
       const metaLine = [bio?.born ? 'b. ' + bio.born : null, bio?.nationality].filter(Boolean).join(' · ');
@@ -15799,6 +16087,18 @@ Include ALL tracks. Use null for unknown fields.`;
                 </div>`;
               }
             }).join('')}
+        <div id="bio-action-row" style="display:flex;gap:8px;margin:14px 0 8px;">
+          <button id="bio-ask-btn" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:9px 12px;border-radius:12px;background:${this._pt("btnBg")};border:1px solid ${this._pt("border")};color:${this._pt("text")};font-size:12px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;-webkit-tap-highlight-color:transparent;">
+            <svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:rgba(99,179,237,0.8);flex-shrink:0"><path d="M20,2H4A2,2 0 0,0 2,4V22L6,18H20A2,2 0 0,0 22,16V4A2,2 0 0,0 20,2M6,9H18V11H6V9M14,14H6V12H14V14M18,8H6V6H18V8Z"/></svg>
+            Ask
+          </button>
+          <button id="bio-trivia-btn" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:9px 12px;border-radius:12px;background:${this._pt("btnBg")};border:1px solid ${this._pt("border")};color:${this._pt("text")};font-size:12px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;-webkit-tap-highlight-color:transparent;">
+            <svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:rgba(99,179,237,0.8);flex-shrink:0"><path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"/></svg>
+            Trivia
+          </button>
+        </div>
+        <div id="bio-ask-panel" style="display:none;margin-bottom:12px;"></div>
+        <div id="bio-trivia-panel" style="display:none;margin-bottom:12px;"></div>
           </div>` : ''}`;
 
       content.querySelector('#cast-bio-back').addEventListener('click', () => {
@@ -15807,21 +16107,52 @@ Include ALL tracks. Use null for unknown fields.`;
         content.scrollTop = savedScroll;
         this._rewireCastClicks(content, showTitle, artUrl);
       });
+      this._wireBioActionRow(content, name, showTitle);
     };
 
     // Render immediately with placeholder while fetching photo + bio in parallel
     let bio = null;
     renderBio(null, true);
 
+    const _fallbackPhotoHtml = `<div style="width:80px;height:80px;border-radius:50%;background:rgba(255,255,255,0.06);border:2px solid rgba(255,255,255,0.1);display:flex;align-items:center;justify-content:center;"><svg viewBox="0 0 24 24" style="width:36px;height:36px;fill:rgba(255,255,255,0.2)"><path d="M12,4A4,4 0 0,1 16,8A4,4 0 0,1 12,12A4,4 0 0,1 8,8A4,4 0 0,1 12,4M12,14C16.42,14 20,15.79 20,18V20H4V18C4,15.79 7.58,14 12,14Z"/></svg></div>`;
     const _wireBioPhotoTap = (imgSrc) => {
       const photoContainer = content.querySelector('#cast-bio-photo');
-      if (!photoContainer || !imgSrc) return;
+      if (!photoContainer) return;
+      // Wire error handler via JS — more reliable than inline onerror in HA's CSP
+      const imgEl = photoContainer.querySelector('#cast-bio-photo-img');
+      if (imgEl) {
+        imgEl.addEventListener('error', () => {
+          // Evict dead blob from all caches
+          if (imgSrc) {
+            if (this._wikiBlobCache) {
+              for (const [k, v] of this._wikiBlobCache) {
+                if (v === imgSrc) { this._wikiBlobCache.delete(k); break; }
+              }
+            }
+            try { URL.revokeObjectURL(imgSrc); } catch(_) {}
+          }
+          photoContainer.innerHTML = _fallbackPhotoHtml;
+        }, { once: true });
+      }
+      if (!imgSrc) return;
       photoContainer.style.cursor = 'zoom-in';
       photoContainer.onclick = () => this._showBioPhotoLightbox(imgSrc, name, content);
     };
 
     // Fetch photo and bio in parallel
-    const photoPromise = this._fetchWikipediaThumbWithRetry(name, 2, 1500);
+    // For music context, append disambiguation hints so Wikipedia finds the right article
+    // e.g. "Queen" → tries "Queen" first, then "Queen band", then "Queen musician"
+    const isMusicCtx = this._detectMediaType(this._hass?.states[this._entity]) === 'music';
+    const _photoName = name;
+    const photoPromise = this._fetchWikipediaThumbWithRetry(_photoName, 2, 1500).then(async blobUrl => {
+      if (blobUrl) return blobUrl;
+      if (!isMusicCtx) return null;
+      // Try with " band" suffix
+      const blobUrl2 = await this._fetchWikipediaThumb(name + ' band');
+      if (blobUrl2) return blobUrl2;
+      // Try with " musician" suffix
+      return this._fetchWikipediaThumb(name + ' musician');
+    });
 
     // Bio cache — keyed by name, persisted in localStorage (30-day TTL)
     if (!this._castBioCache) this._castBioCache = new Map();
@@ -15865,7 +16196,23 @@ Include ALL tracks. Use null for unknown fields.`;
       // We observe the back button that renderBio creates
       const backBtn = content.querySelector('#cast-bio-back');
       if (backBtn && blobUrl && blobUrl.startsWith('blob:')) {
-        backBtn.addEventListener('click', () => URL.revokeObjectURL(blobUrl), { once: true });
+        backBtn.addEventListener('click', () => {
+          URL.revokeObjectURL(blobUrl);
+          // Evict blob from cache regardless of which name key it was stored under
+          // (may be "Queen band" not "Queen" if disambiguation was used)
+          if (this._wikiBlobCache) {
+            for (const [k, v] of this._wikiBlobCache) {
+              if (v === blobUrl) { this._wikiBlobCache.delete(k); break; }
+            }
+          }
+          // Also clear any __none__ entries for this name and its variants so
+          // the next bio open re-tries Wikipedia rather than returning null instantly
+          if (this._wikiThumbUrlCache) {
+            [name, name + ' band', name + ' musician'].forEach(n => {
+              if (this._wikiThumbUrlCache.get(n) === '__none__') this._wikiThumbUrlCache.delete(n);
+            });
+          }
+        }, { once: true });
       }
 
       // Wire Known For rows → detail panel (video only) + fetch poster art
@@ -16023,6 +16370,124 @@ Include ALL tracks. Use null for unknown fields.`;
     });
   }
 
+  // ── Bio Action Row (Ask / Trivia) ───────────────────────────────────────────
+  _wireBioActionRow(content, name, showTitle) {
+    const PANELS = [
+      { btnId: '#bio-ask-btn',    panelId: '#bio-ask-panel' },
+      { btnId: '#bio-trivia-btn', panelId: '#bio-trivia-panel' },
+    ];
+    const _dim    = this._pt('dim');
+    const _text   = this._pt('text');
+    const _bg     = this._pt('btnBg');
+    const _border = this._pt('border');
+
+    const _closeAll = (exceptBtnId) => {
+      PANELS.forEach(p => {
+        if (p.btnId === exceptBtnId) return;
+        const btn   = content.querySelector(p.btnId);
+        const panel = content.querySelector(p.panelId);
+        if (btn)   { btn.style.background = this._pt('btnBg'); btn.style.borderColor = this._pt('border'); btn.style.color = this._pt('text'); }
+        if (panel) { panel.style.display = 'none'; panel.innerHTML = ''; }
+      });
+    };
+
+    // ── Ask ──
+    const askBtn   = content.querySelector('#bio-ask-btn');
+    const askPanel = content.querySelector('#bio-ask-panel');
+    if (askBtn && askPanel) {
+      let askOpen = false;
+      askBtn.addEventListener('click', () => {
+        askOpen = !askOpen;
+        if (askOpen) _closeAll('#bio-ask-btn');
+        askBtn.style.background  = askOpen ? 'rgba(99,179,237,0.15)' : this._pt('btnBg');
+        askBtn.style.borderColor = askOpen ? 'rgba(99,179,237,0.4)'  : this._pt('border');
+        askBtn.style.color       = askOpen ? '#63b3ed'               : this._pt('text');
+        if (!askOpen) { askPanel.style.display = 'none'; askPanel.innerHTML = ''; return; }
+        askPanel.style.display = 'block';
+        askPanel.innerHTML = `
+          <div style="padding:10px 12px;background:${_bg};border:1px solid ${_border};border-radius:12px;">
+            <div style="display:flex;gap:8px;align-items:center;">
+              <input id="bio-ask-input" type="text" placeholder="What was their breakthrough role? Awards won?…"
+                style="flex:1;font-size:12px;padding:8px 12px;border-radius:10px;border:1px solid ${_border};background:rgba(0,0,0,0.2);color:${_text};font-family:-apple-system,BlinkMacSystemFont,sans-serif;outline:none;min-width:0;-webkit-appearance:none;">
+              <button id="bio-ask-send" style="flex-shrink:0;padding:8px 14px;border-radius:10px;background:rgba(99,179,237,0.15);border:1px solid rgba(99,179,237,0.3);color:#63b3ed;font-size:12px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;-webkit-tap-highlight-color:transparent;">Ask</button>
+            </div>
+            <div id="bio-ask-answer" style="margin-top:8px;font-size:12px;color:${_text};line-height:1.6;"></div>
+          </div>`;
+        const input    = askPanel.querySelector('#bio-ask-input');
+        const sendBtn  = askPanel.querySelector('#bio-ask-send');
+        const answerEl = askPanel.querySelector('#bio-ask-answer');
+        const _doAsk = async () => {
+          const q = input?.value?.trim();
+          if (!q) return;
+          answerEl.innerHTML = `<div style="display:flex;align-items:center;gap:7px;opacity:0.6;"><div style="width:10px;height:10px;border:1.5px solid rgba(99,179,237,0.3);border-top-color:#63b3ed;border-radius:50%;animation:ma-spin 0.8s linear infinite;"></div><span>Thinking…</span></div>`;
+          const hasAI = await this._aiCheckAvailable();
+          if (!hasAI) { answerEl.textContent = 'AI agent not available.'; return; }
+          const context = showTitle ? ` known for "${showTitle}"` : '';
+          const prompt = `About ${name}${context}: ${q}\n\nAnswer in 2-4 plain sentences.`;
+          const result = await this._aiConverse(prompt, { noCache: true });
+          if (answerEl && askPanel.isConnected) answerEl.textContent = result || 'No answer returned.';
+        };
+        sendBtn?.addEventListener('click', _doAsk);
+        input?.addEventListener('keydown', e => { if (e.key === 'Enter') _doAsk(); });
+        setTimeout(() => input?.focus(), 50);
+      });
+    }
+
+    // ── Trivia ──
+    const triviaBtn   = content.querySelector('#bio-trivia-btn');
+    const triviaPanel = content.querySelector('#bio-trivia-panel');
+    if (triviaBtn && triviaPanel) {
+      let triviaOpen = false;
+      triviaBtn.addEventListener('click', async () => {
+        triviaOpen = !triviaOpen;
+        if (triviaOpen) _closeAll('#bio-trivia-btn');
+        triviaBtn.style.background  = triviaOpen ? 'rgba(99,179,237,0.15)' : this._pt('btnBg');
+        triviaBtn.style.borderColor = triviaOpen ? 'rgba(99,179,237,0.4)'  : this._pt('border');
+        triviaBtn.style.color       = triviaOpen ? '#63b3ed'               : this._pt('text');
+        if (!triviaOpen) { triviaPanel.style.display = 'none'; triviaPanel.innerHTML = ''; return; }
+        triviaPanel.style.display = 'block';
+        const cacheKey = ('biotrivia|' + name).toLowerCase();
+        if (!this._aiBioTriviaCache) this._aiBioTriviaCache = new Map();
+        let questions = this._aiBioTriviaCache.get(cacheKey) || this._aiSessionGet('bioTrivia', cacheKey);
+        if (!questions) {
+          triviaPanel.innerHTML = `<div style="display:flex;align-items:center;gap:7px;padding:10px 12px;background:${_bg};border:1px solid ${_border};border-radius:12px;opacity:0.6;"><div style="width:12px;height:12px;border:1.5px solid rgba(99,179,237,0.3);border-top-color:#63b3ed;border-radius:50%;animation:ma-spin 0.8s linear infinite;"></div><span style="font-size:11px;color:${_dim};">Generating trivia…</span></div>`;
+          const hasAI = await this._aiCheckAvailable();
+          if (!triviaPanel.isConnected) return;
+          if (!hasAI) { triviaPanel.innerHTML = ''; return; }
+          const context = showTitle ? ` known for "${showTitle}"` : '';
+          const raw = await this._aiConverse(`Generate 5 fun trivia questions about ${name}${context} — mix career highlights, personal facts, and lesser-known details. Respond ONLY with a JSON array:\n[{"q":"Question?","a":"Answer"}]`);
+          if (!triviaPanel.isConnected) return;
+          if (!raw) { triviaPanel.innerHTML = ''; return; }
+          try {
+            const i1 = raw.indexOf('['), i2 = raw.lastIndexOf(']');
+            questions = JSON.parse(i1 !== -1 ? raw.slice(i1, i2+1) : raw);
+            this._aiBioTriviaCache.set(cacheKey, questions);
+            this._aiSessionSet('bioTrivia', cacheKey, questions);
+          } catch(e) { triviaPanel.innerHTML = ''; return; }
+        }
+        if (!triviaPanel.isConnected) return;
+        triviaPanel.innerHTML = `<div style="padding:10px 12px;background:${_bg};border:1px solid ${_border};border-radius:12px;">
+          <div style="font-size:10px;font-weight:700;color:rgba(99,179,237,0.7);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:8px;">Tap a question to reveal the answer</div>
+          ${(questions||[]).map(item => `
+            <div class="bio-trivia-card" style="padding:9px 12px;margin-bottom:6px;border-radius:10px;background:rgba(255,255,255,0.04);border:1px solid ${_border};cursor:pointer;-webkit-tap-highlight-color:transparent;">
+              <div style="font-size:12px;font-weight:600;color:${_text};">${item.q||''}</div>
+              <div class="bio-trivia-answer" style="display:none;font-size:12px;color:rgba(99,179,237,0.9);margin-top:6px;padding-top:6px;border-top:1px solid ${_border};">${item.a||''}</div>
+            </div>`).join('')}
+        </div>`;
+        triviaPanel.querySelectorAll('.bio-trivia-card').forEach(card => {
+          card.addEventListener('click', () => {
+            const ans = card.querySelector('.bio-trivia-answer');
+            if (!ans) return;
+            const showing = ans.style.display !== 'none';
+            ans.style.display = showing ? 'none' : 'block';
+            card.style.background  = showing ? 'rgba(255,255,255,0.04)' : 'rgba(99,179,237,0.08)';
+            card.style.borderColor = showing ? _border : 'rgba(99,179,237,0.3)';
+          });
+        });
+      });
+    }
+  }
+
   // Re-wire cast clicks after restoring saved HTML
   _rewireCastClicks(content, showTitle, artUrl) {
     const self = this;
@@ -16031,6 +16496,32 @@ Include ALL tracks. Use null for unknown fields.`;
         self._showCastBio(content, item.dataset.castName, showTitle, artUrl);
       });
     });
+
+    // Re-wire director link (video info panel)
+    const directorLink = content.querySelector('#video-director-link');
+    if (directorLink) {
+      directorLink.addEventListener('click', () => {
+        self._showCastBio(content, directorLink.dataset.director, showTitle, artUrl);
+      });
+    }
+
+    // Re-wire artist name link (music AI panel)
+    const artistNameEl = content.querySelector('#ai-track-artist-name');
+    if (artistNameEl) {
+      let _artLpTimer = null, _artLpFired = false;
+      artistNameEl.style.color = '#63b3ed';
+      artistNameEl.addEventListener('pointerdown', () => {
+        _artLpFired = false;
+        _artLpTimer = setTimeout(() => { _artLpFired = true; self._playArtistRadio(artistNameEl.dataset.artist); }, 500);
+      }, { passive: true });
+      artistNameEl.addEventListener('pointerup',     () => { clearTimeout(_artLpTimer); }, { passive: true });
+      artistNameEl.addEventListener('pointercancel', () => { clearTimeout(_artLpTimer); _artLpFired = false; }, { passive: true });
+      artistNameEl.addEventListener('pointermove',   () => { clearTimeout(_artLpTimer); }, { passive: true });
+      artistNameEl.addEventListener('click', () => {
+        if (_artLpFired) { _artLpFired = false; return; }
+        self._showCastBio(content, artistNameEl.dataset.artist, showTitle, artUrl);
+      });
+    }
   }
 
   // Fetch movie/TV poster from iTunes Search API
@@ -19989,6 +20480,13 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                 <option value="youtube_music">YouTube Music</option>
               </select>
             </div>
+            <div style="margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.07);display:flex;align-items:center;justify-content:space-between;gap:12px;">
+              <div>
+                <div style="font-size:13px;font-weight:500;color:var(--primary-text-color, #111);">Song Intro</div>
+                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Shows a brief AI fact below the artist name for a few seconds when a new track starts. Off by default.</div>
+              </div>
+              <label class="toggle-switch" style="flex-shrink:0"><input type="checkbox" id="song_intro_enabled"><span class="toggle-track"></span></label>
+            </div>
             <div style="margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.07);">
               <div style="font-size:13px;font-weight:500;margin-bottom:4px;color:var(--primary-text-color, #111);">AI Vibe History</div>
               <div style="font-size:11px;color:#888;margin-bottom:10px;line-height:1.4;">Tracks recently suggested artists per mood so the AI avoids repeating them. History is kept for 30 days per mood.</div>
@@ -19999,10 +20497,10 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
             </div>
             <div style="margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.07);">
               <div style="font-size:13px;font-weight:500;margin-bottom:4px;color:var(--primary-text-color, #111);">AI Response Cache</div>
-              <div style="font-size:11px;color:#888;margin-bottom:10px;line-height:1.4;">AI panel results (track info, recommendations, album details, search) are cached for up to 30 days, surviving closed tabs and browser restarts — not just this session.</div>
+              <div style="font-size:11px;color:#888;margin-bottom:10px;line-height:1.4;">AI panel results (track info, recommendations, album details, search, where to watch, trivia, bios etc.) are cached for up to 30 days.</div>
               <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
                 <span style="font-size:12px;color:#888;" id="ai-session-cache-status">Calculating…</span>
-                <button id="ai-session-cache-clear-btn" style="font-size:12px;font-weight:500;color:#ff453a;background:rgba(255,69,58,0.12);border:1px solid rgba(255,69,58,0.3);border-radius:8px;padding:5px 12px;cursor:pointer;white-space:nowrap;">Clear Cache</button>
+                <button id="ai-session-cache-clear-btn" style="font-size:12px;font-weight:500;color:#ff453a;background:rgba(255,69,58,0.12);border:1px solid rgba(255,69,58,0.3);border-radius:8px;padding:5px 12px;cursor:pointer;white-space:nowrap;">Clear</button>
               </div>
             </div>
           </div>
@@ -20054,41 +20552,67 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
           </div>
         </div>
 
-        <!-- Artwork & Wikipedia Cache -->
+        <!-- Caches -->
         <div>
-          <div class="section-title">Artwork Cache</div>
+          <div class="section-title">Caches</div>
           <div class="card-block" style="padding:12px;">
-            <div style="font-size:11px;color:#888;margin-bottom:12px;line-height:1.4;">iTunes and Wikipedia artwork URLs are cached locally so they load instantly on return visits. Stored for up to 30 days.</div>
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;">
+            <button id="clear-all-caches-btn" style="width:100%;padding:10px;font-size:13px;font-weight:600;color:#ff453a;background:rgba(255,69,58,0.08);border:1px solid rgba(255,69,58,0.25);border-radius:10px;cursor:pointer;font-family:inherit;margin-bottom:14px;">🗑 Clear All Caches</button>
+
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,0.07);">
               <div>
                 <div style="font-size:13px;font-weight:500;margin-bottom:2px;">iTunes Artwork</div>
                 <span style="font-size:12px;color:#888;" id="itunes-cache-status">Calculating…</span>
               </div>
               <button id="itunes-cache-clear-btn" style="font-size:12px;font-weight:500;color:#ff453a;background:rgba(255,69,58,0.12);border:1px solid rgba(255,69,58,0.3);border-radius:8px;padding:5px 12px;cursor:pointer;white-space:nowrap;">Clear</button>
             </div>
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.07);">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.07);">
               <div>
                 <div style="font-size:13px;font-weight:500;margin-bottom:2px;">Wikipedia Artwork</div>
                 <span style="font-size:12px;color:#888;" id="wiki-cache-status">Calculating…</span>
               </div>
               <button id="wiki-cache-clear-btn" style="font-size:12px;font-weight:500;color:#ff453a;background:rgba(255,69,58,0.12);border:1px solid rgba(255,69,58,0.3);border-radius:8px;padding:5px 12px;cursor:pointer;white-space:nowrap;">Clear</button>
             </div>
-            <div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.07);display:flex;align-items:center;justify-content:space-between;gap:12px;">
-              <div>
-                <div style="font-size:13px;font-weight:500;margin-bottom:2px;">HA Registry Cache</div>
-                <span style="font-size:12px;color:#888;" id="registry-cache-status">Calculating…</span>
-              </div>
-              <button id="registry-cache-clear-btn" style="font-size:12px;font-weight:500;color:#ff453a;background:rgba(255,69,58,0.12);border:1px solid rgba(255,69,58,0.3);border-radius:8px;padding:5px 12px;cursor:pointer;white-space:nowrap;">Clear</button>
-            </div>
-            <div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.07);display:flex;align-items:center;justify-content:space-between;gap:12px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.07);">
               <div>
                 <div style="font-size:13px;font-weight:500;margin-bottom:2px;">Actor &amp; Artist Bios</div>
                 <span style="font-size:12px;color:#888;" id="bio-cache-status">Calculating…</span>
               </div>
               <button id="bio-cache-clear-btn" style="font-size:12px;font-weight:500;color:#ff453a;background:rgba(255,69,58,0.12);border:1px solid rgba(255,69,58,0.3);border-radius:8px;padding:5px 12px;cursor:pointer;white-space:nowrap;">Clear</button>
             </div>
-            <div style="margin-top:12px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.07);">
-              <button id="clear-all-caches-btn" style="width:100%;padding:10px;font-size:13px;font-weight:600;color:#ff453a;background:rgba(255,69,58,0.08);border:1px solid rgba(255,69,58,0.25);border-radius:10px;cursor:pointer;font-family:inherit;">🗑 Clear All Caches</button>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.07);">
+              <div>
+                <div style="font-size:13px;font-weight:500;margin-bottom:2px;">Where to Watch</div>
+                <span style="font-size:12px;color:#888;" id="wtw-cache-status">Calculating…</span>
+              </div>
+              <button id="wtw-cache-clear-btn" style="font-size:12px;font-weight:500;color:#ff453a;background:rgba(255,69,58,0.12);border:1px solid rgba(255,69,58,0.3);border-radius:8px;padding:5px 12px;cursor:pointer;white-space:nowrap;">Clear</button>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.07);">
+              <div>
+                <div style="font-size:13px;font-weight:500;margin-bottom:2px;">Trivia &amp; Meanings</div>
+                <span style="font-size:12px;color:#888;" id="trivia-cache-status">Calculating…</span>
+              </div>
+              <button id="trivia-cache-clear-btn" style="font-size:12px;font-weight:500;color:#ff453a;background:rgba(255,69,58,0.12);border:1px solid rgba(255,69,58,0.3);border-radius:8px;padding:5px 12px;cursor:pointer;white-space:nowrap;">Clear</button>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.07);">
+              <div>
+                <div style="font-size:13px;font-weight:500;margin-bottom:2px;">Content Warnings</div>
+                <span style="font-size:12px;color:#888;" id="cw-cache-status">Calculating…</span>
+              </div>
+              <button id="cw-cache-clear-btn" style="font-size:12px;font-weight:500;color:#ff453a;background:rgba(255,69,58,0.12);border:1px solid rgba(255,69,58,0.3);border-radius:8px;padding:5px 12px;cursor:pointer;white-space:nowrap;">Clear</button>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.07);">
+              <div>
+                <div style="font-size:13px;font-weight:500;margin-bottom:2px;">Year in Music</div>
+                <span style="font-size:12px;color:#888;" id="daymusic-cache-status">Calculating…</span>
+              </div>
+              <button id="daymusic-cache-clear-btn" style="font-size:12px;font-weight:500;color:#ff453a;background:rgba(255,69,58,0.12);border:1px solid rgba(255,69,58,0.3);border-radius:8px;padding:5px 12px;cursor:pointer;white-space:nowrap;">Clear</button>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:10px;">
+              <div>
+                <div style="font-size:13px;font-weight:500;margin-bottom:2px;">HA Registry</div>
+                <span style="font-size:12px;color:#888;" id="registry-cache-status">Calculating…</span>
+              </div>
+              <button id="registry-cache-clear-btn" style="font-size:12px;font-weight:500;color:#ff453a;background:rgba(255,69,58,0.12);border:1px solid rgba(255,69,58,0.3);border-radius:8px;padding:5px 12px;cursor:pointer;white-space:nowrap;">Clear</button>
             </div>
           </div>
         </div>
@@ -20675,7 +21199,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
     const updateAISessionCacheStatus = () => {
       try {
         let count = Object.keys(sessionStorage).filter(k => k.startsWith('crow_ai_')).length;
-        ['videoInfo','recs','moodUriCache','similarArtists','searchResults','tvEpCount','castBio','moviePoster'].forEach(name => {
+        ['videoInfo','recs','moodUriCache','similarArtists','searchResults','tvEpCount','castBio','moviePoster','wtw','cw','meaning','trivia','mTrivia','bioTrivia','dayMusic','mood'].forEach(name => {
           try {
             const store = JSON.parse(localStorage.getItem('crow_ai_local_' + name) || '{}');
             count += Object.keys(store).length;
@@ -20696,13 +21220,13 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
         // Also clear the longer-lived localStorage layer (_aiLocalGet/_aiLocalSet,
         // 30-day expiry) — without this, pressing "Clear Cache" looked complete
         // but stale results would just get re-hydrated from here on next lookup.
-        ['videoInfo','recs','moodUriCache','similarArtists','searchResults','tvEpCount','castBio','moviePoster']
+        ['videoInfo','recs','moodUriCache','similarArtists','searchResults','tvEpCount','castBio','moviePoster','wtw','cw','meaning','trivia','mTrivia','bioTrivia','dayMusic','mood']
           .forEach(name => localStorage.removeItem('crow_ai_local_' + name));
       } catch(_) {}
       // Also clear in-memory AI caches on the card
       const _ce = document.querySelector('crowai-media-player-card') || [...document.querySelectorAll('*')].find(el => el.tagName?.toLowerCase() === 'crowai-media-player-card');
       if (_ce) {
-        ['_aiTrackInfoCache','_aiInfoCache','_aiRecsCache','_aiAddSimilarCache','_aiAlbumTracksCache','_aiVideoInfoCache','_aiSimilarArtistsCache','_aiSearchResultCache','_tvEpCountCache','_tvEpisodesCache','_tvEpDetailCache','_tvActorCache','_aiPromptCache','_entityRegistryCache','_deviceRegistryCache','_areaRegistryCache'].forEach(k => { if (_ce[k]) _ce[k] = _ce[k] instanceof Map ? new Map() : {}; });
+        ['_aiTrackInfoCache','_aiInfoCache','_aiRecsCache','_aiAddSimilarCache','_aiAlbumTracksCache','_aiVideoInfoCache','_aiSimilarArtistsCache','_aiSearchResultCache','_tvEpCountCache','_tvEpisodesCache','_tvEpDetailCache','_tvActorCache','_aiPromptCache','_entityRegistryCache','_deviceRegistryCache','_areaRegistryCache','_aiWtwCache','_aiCwCache','_aiMoodCache','_aiTriviaCache','_aiMusicTriviaCache','_aiMeaningCache','_aiDayMusicCache','_aiBioTriviaCache','_castBioCache'].forEach(k => { if (_ce[k]) _ce[k] = _ce[k] instanceof Map ? new Map() : {}; });
         _ce._aiAvailable = undefined;
         _ce._maConfigEntryId = null;
       }
@@ -20994,6 +21518,63 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       });
     }
 
+    // ── Where to Watch cache ────────────────────────────────────────────────────
+    const wtwCacheStatus   = root.getElementById('wtw-cache-status');
+    const wtwCacheClearBtn = root.getElementById('wtw-cache-clear-btn');
+    const _getCardEl = () => document.querySelector('crowai-media-player-card') || [...document.querySelectorAll('*')].find(el => el.tagName?.toLowerCase() === 'crowai-media-player-card');
+    const _countLocalCache = (name) => { try { return Object.keys(JSON.parse(localStorage.getItem('crow_ai_local_' + name) || '{}')).length; } catch(_) { return 0; } };
+    const _clearLocalCache = (name, cardProp) => {
+      try { localStorage.removeItem('crow_ai_local_' + name); } catch(_) {}
+      const ce = _getCardEl(); if (ce && cardProp && ce[cardProp]) ce[cardProp] = new Map();
+    };
+    if (wtwCacheStatus) {
+      const n = _countLocalCache('wtw'); wtwCacheStatus.textContent = n ? `${n} title${n !== 1 ? 's' : ''} cached` : 'No entries cached';
+    }
+    if (wtwCacheClearBtn) wtwCacheClearBtn.addEventListener('click', () => {
+      _clearLocalCache('wtw', '_aiWtwCache');
+      if (wtwCacheStatus) wtwCacheStatus.textContent = 'No entries cached';
+      wtwCacheClearBtn.textContent = '✓'; setTimeout(() => { wtwCacheClearBtn.textContent = 'Clear'; }, 2000);
+    });
+
+    // ── Trivia & Meanings cache ──────────────────────────────────────────────────
+    const triviaCacheStatus   = root.getElementById('trivia-cache-status');
+    const triviaCacheClearBtn = root.getElementById('trivia-cache-clear-btn');
+    if (triviaCacheStatus) {
+      const n = _countLocalCache('trivia') + _countLocalCache('mTrivia') + _countLocalCache('bioTrivia') + _countLocalCache('meaning');
+      triviaCacheStatus.textContent = n ? `${n} entr${n !== 1 ? 'ies' : 'y'} cached` : 'No entries cached';
+    }
+    if (triviaCacheClearBtn) triviaCacheClearBtn.addEventListener('click', () => {
+      ['trivia','mTrivia','bioTrivia','meaning'].forEach(name => _clearLocalCache(name, null));
+      const ce = _getCardEl();
+      if (ce) { ['_aiTriviaCache','_aiMusicTriviaCache','_aiBioTriviaCache','_aiMeaningCache'].forEach(k => { if (ce[k]) ce[k] = new Map(); }); }
+      if (triviaCacheStatus) triviaCacheStatus.textContent = 'No entries cached';
+      triviaCacheClearBtn.textContent = '✓'; setTimeout(() => { triviaCacheClearBtn.textContent = 'Clear'; }, 2000);
+    });
+
+    // ── Content Warnings cache ───────────────────────────────────────────────────
+    const cwCacheStatus   = root.getElementById('cw-cache-status');
+    const cwCacheClearBtn = root.getElementById('cw-cache-clear-btn');
+    if (cwCacheStatus) {
+      const n = _countLocalCache('cw'); cwCacheStatus.textContent = n ? `${n} title${n !== 1 ? 's' : ''} cached` : 'No entries cached';
+    }
+    if (cwCacheClearBtn) cwCacheClearBtn.addEventListener('click', () => {
+      _clearLocalCache('cw', '_aiCwCache');
+      if (cwCacheStatus) cwCacheStatus.textContent = 'No entries cached';
+      cwCacheClearBtn.textContent = '✓'; setTimeout(() => { cwCacheClearBtn.textContent = 'Clear'; }, 2000);
+    });
+
+    // ── Year in Music cache ──────────────────────────────────────────────────────
+    const dayMusicCacheStatus   = root.getElementById('daymusic-cache-status');
+    const dayMusicCacheClearBtn = root.getElementById('daymusic-cache-clear-btn');
+    if (dayMusicCacheStatus) {
+      const n = _countLocalCache('dayMusic'); dayMusicCacheStatus.textContent = n ? `${n} year${n !== 1 ? 's' : ''} cached` : 'No entries cached';
+    }
+    if (dayMusicCacheClearBtn) dayMusicCacheClearBtn.addEventListener('click', () => {
+      _clearLocalCache('dayMusic', '_aiDayMusicCache');
+      if (dayMusicCacheStatus) dayMusicCacheStatus.textContent = 'No entries cached';
+      dayMusicCacheClearBtn.textContent = '✓'; setTimeout(() => { dayMusicCacheClearBtn.textContent = 'Clear'; }, 2000);
+    });
+
     // ── Clear All Caches ──────────────────────────────────────────────────────
     const clearAllBtn = root.getElementById('clear-all-caches-btn');
     if (clearAllBtn) {
@@ -21026,6 +21607,8 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
             '_entityRegistryCache', '_deviceRegistryCache', '_areaRegistryCache',
             '_maLibMemCache', '_drillInCache', '_maImageCache', '_maRootCache', '_maTabRenderCache',
             '_lyricsCache', '_moodArtistUriCache', '_moodLibraryCache', '_queueDataCache', '_appIconCache',
+            '_aiWtwCache', '_aiCwCache', '_aiMoodCache', '_aiTriviaCache', '_aiMusicTriviaCache',
+            '_aiMeaningCache', '_aiDayMusicCache', '_aiBioTriviaCache', '_castBioCache',
           ];
           document.querySelectorAll('*').forEach(el => {
             if (el.tagName?.toLowerCase() !== 'crowai-media-player-card') return;
@@ -21131,6 +21714,13 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
     if (_shareServiceEl) {
       _shareServiceEl.value = this._config?.share_service || 'youtube_music';
       _shareServiceEl.onchange = (e) => this._updateConfig('share_service', e.target.value);
+
+    // Song Intro toggle
+    const _songIntroEl = root.getElementById('song_intro_enabled');
+    if (_songIntroEl) {
+      _songIntroEl.checked = this._config?.song_intro_enabled === true;
+      _songIntroEl.onchange = (e) => this._updateConfig('song_intro_enabled', e.target.checked);
+    }
     }
   }
 
@@ -21370,6 +21960,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       itunes_art: true, controls_theme: 'classic', add_pill_color: '',
       ai_conversation_agent: '',
       share_service: 'youtube_music',
+      song_intro_enabled: false,
     };
     // Strip keys that match their default value to keep YAML clean
     const cleanConfig = { ...this._config, [key]: value };
