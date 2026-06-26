@@ -390,6 +390,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         // Also clear mood loading flag if this entity was the mood target
         if (this._moodLoadingEntity === this._entity) {
           this._moodLoadingEntity = null;
+          if (this._moodLoadingLabel) {
+            this._showToast(`✓ ${this._moodLoadingLabel} playing`, 2500);
+            this._moodLoadingLabel = null;
+          }
         }
       }
       this._lastEntityState = newState;
@@ -4857,11 +4861,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (queueReorderDoneBtn) {
       queueReorderDoneBtn.onclick = (e) => {
         e.stopPropagation();
-        if (!this._queueReorderMode) return;
-        this._queueReorderMode = false;
         const _ic = r.getElementById('infoContent');
-        if (_ic) { _ic.classList.remove('queue-reorder-mode'); this._teardownQueueDrag(_ic); }
-        queueReorderDoneBtn.classList.add('hidden');
+        this._exitReorderMode(_ic);
       };
     }
 
@@ -5768,6 +5769,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       ? [itunesArtist, itunesAlbum || itunesTrack].filter(Boolean).join('|').toLowerCase() : '';
     if (!this._itunesArtCache) this._itunesArtCache = {};
 
+    // Compute isMaForArt early — needed for iTunes gate below
+    const isMaForArt = r.getElementById('cardOuter').classList.contains('ma-entity');
+
     // Fire async fetch only when actually playing, nothing cached yet, and not a live stream.
     // Radio stations and continuous streams have their own entity_picture artwork — iTunes
     // would just show the currently-playing song's album art, which is wrong for a radio station.
@@ -5790,8 +5794,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const effectiveUrl = artUrl || cachedItunes;
 
     // ── Artwork display ──────────────────────────────────────────────────────
-    // Compute isMaForArt before the skip-guard so it feeds into the change key.
-    const isMaForArt = r.getElementById('cardOuter').classList.contains('ma-entity');
 
     // Skip every DOM operation in this section when nothing that affects artwork
     // display has actually changed (e.g. a volume-level state push). Any change to
@@ -7341,6 +7343,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           .replace('100x100bb', '600x600bb')
           .replace('100x100-75', '600x600bb');
         if (this._itunesArtCache[cacheKey]) return; // MA resolved it while this was in flight
+        // Stale-track guard — verify the fetched key still matches the currently
+        // playing track before caching. Rapid track changes can cause an earlier
+        // fetch to resolve after the track has changed, writing wrong art.
+        const _curAttrs = this._hass?.states[this._entity]?.attributes || {};
+        const _curKey = [_curAttrs.media_artist || '', _curAttrs.media_album_name || _curAttrs.media_title || ''].filter(Boolean).join('|').toLowerCase();
+        if (_curKey && _curKey !== cacheKey) return; // track changed while fetching — discard
         this._itunesArtCache[cacheKey] = url;
         this._lastArtKey = null;
         this._saveItunesPreferred(); // persist to localStorage immediately
@@ -7562,6 +7570,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // Don't open the library during an announcement
     if (this._announceActive) return;
     this._maNavReset();
+    // Dismiss any track confirm popup that may have been left open
+    this._hideTrackConfirm();
     const r = this.shadowRoot;
     const popup = r.getElementById('maPopup');
     this._maBrowserOpenedAt = Date.now(); // used by backdrop guard
@@ -9146,8 +9156,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (_rbo) _rbo.classList.add('hidden');
     const _ic = r.getElementById('infoContent');
     if (_ic) { _ic.classList.remove('queue-reorder-mode'); this._teardownQueueDrag(_ic); }
-    this._queueReorderMode = false;
-    r.getElementById('queueReorderDoneBtn')?.classList.add('hidden');
+    this._exitReorderMode(r?.getElementById('infoContent'));
     // Reset nav stack and any lingering back button from a previous session
     this._infoNavStack = [];
     r.getElementById('infoPopup').querySelectorAll('.info-popup-back').forEach(b => b.remove());
@@ -11062,7 +11071,7 @@ Include ALL tracks. Use null for unknown fields.`;
           agent_id: agentId, language: navigator.language || 'en'
         });
         if (_stale()) return;
-      const prompt = `You are a music encyclopedia. For the track "${trackTitle}" by "${queryArtist}", provide a JSON object (no markdown, raw JSON only):\n{\n  "year": "release year",\n  "album": "album name",\n  "label": "record label",\n  "genre": ["genre1","genre2"],\n  "duration": "duration e.g. 3:42",\n  "fact": "One fascinating fact in 1-2 sentences. If this track does not exist or you are not confident, set this to null.",\n  "vibe": "3-word vibe e.g. Euphoric indie anthem",\n  "members": ["Member Name 1","Member Name 2"],\n  "similar": [{"title":"Track","artist":"Artist"},{"title":"Track","artist":"Artist"},{"title":"Track","artist":"Artist"}],\n  "found": true\n}\nFor members: list the band members (2-6 names). If the artist is a solo performer, set members to [\"${queryArtist}\"] (just their own name as a single-element array). IMPORTANT: If you cannot find reliable information about this specific track, set "found" to false and all other fields to null. Do NOT invent or hallucinate details. Respond with ONLY the JSON.`;
+        const raw = resp?.response?.speech?.plain?.speech || '';
         // Robust extraction — find first { to last }
         const s = raw.indexOf('{'), e2 = raw.lastIndexOf('}');
         if (s === -1 || e2 <= s) throw new Error('No JSON');
@@ -12955,14 +12964,25 @@ Include ALL tracks. Use null for unknown fields.`;
           return ok;
         }).then(ok => {
           _radioStarted = ok;
-          if (!ok) self._showToast(`Could not start ${label} — check Music Assistant`);
+          if (ok) {
+            self._showLoadingToast(`✓ ${label} — loading…`);
+            self._moodLoadingEntity = maEntity;
+            self._moodLoadingLabel = label;
+            setTimeout(() => {
+              if (self._moodLoadingEntity === maEntity) {
+                self._moodLoadingEntity = null;
+                self._moodLoadingLabel = null;
+                self._hideLoadingToast();
+              }
+            }, 8000);
+          } else {
+            self._hideLoadingToast();
+            self._showToast(`Could not start ${label} — check Music Assistant`);
+          }
+          self._pillPulse(500);
+          self._maBatchLoading = false;
+          clearTimeout(self._maBatchLoadingTimer);
         });
-
-        // Show toast + pulse immediately
-        self._pillPulse(500);
-        self._hideLoadingToast();
-        self._maBatchLoading = false;
-        clearTimeout(self._maBatchLoadingTimer);
 
         // ── Step 2: parallel track search across all seeds ────────────────────
         // Run in background — upgrade queue if a good track is found
@@ -12996,11 +13016,17 @@ Include ALL tracks. Use null for unknown fields.`;
             return;
           }
 
-          // Pick a random track and silently replace queue with it
-          const _pick = _allTracks[Math.floor(Math.random() * _allTracks.length)];
+          // Deduplicate against current queue before adding
+          const _qUris = self._getQueueUriSet();
+          const _dedupedTracks = _allTracks.filter(t => t?.uri && !_qUris.has(t.uri.toLowerCase()));
+          if (!_dedupedTracks.length) return;
+
+          // Queue found track to play next — don't replace current track (avoids skip)
+          const _pick = _dedupedTracks[Math.floor(Math.random() * _dedupedTracks.length)];
+          _qUris.add(_pick.uri.toLowerCase());
           await self._hass.connection.sendMessagePromise({
             type: 'call_service', domain: 'music_assistant', service: 'play_media',
-            service_data: { entity_id: maEntity, media_id: _pick.uri, media_type: 'track', enqueue: 'replace' }
+            service_data: { entity_id: maEntity, media_id: _pick.uri, media_type: 'track', enqueue: 'next' }
           }).catch(() => {}); // radio already playing — silent failure is fine
 
           if (_stale()) return;
@@ -13025,9 +13051,22 @@ Include ALL tracks. Use null for unknown fields.`;
           service_data: { entity_id: maEntity,
             media_id: self._moodArtistUriCache?.get(primarySeed) || primarySeed,
             media_type: 'artist', enqueue: 'replace', radio_mode: true }
-        }).catch(() => {});
+        }).then(() => {
+          self._showLoadingToast(`✓ ${label} — finding tracks…`);
+          self._moodLoadingEntity = maEntity;
+          self._moodLoadingLabel = label;
+          setTimeout(() => {
+            if (self._moodLoadingEntity === maEntity) {
+              self._moodLoadingEntity = null;
+              self._moodLoadingLabel = null;
+              self._hideLoadingToast();
+            }
+          }, 12000);
+        }).catch(() => {
+          self._hideLoadingToast();
+          self._showToast(`Could not start ${label} — check Music Assistant`);
+        });
         self._pillPulse(500);
-        self._hideLoadingToast();
         self._maBatchLoading = false;
         clearTimeout(self._maBatchLoadingTimer);
       }
@@ -13077,6 +13116,21 @@ Include ALL tracks. Use null for unknown fields.`;
               _seen.add(key); return true;
             });
 
+            if (!_compilations.length) {
+              // No compilations found in library — extend radio with all seeds and exit
+              // Radio already fired above, so just add remaining seeds
+              (async () => {
+                for (const _seed of seedArtists.slice(1)) {
+                  if (_stale()) return;
+                  await self._hass.connection.sendMessagePromise({
+                    type: 'call_service', domain: 'music_assistant', service: 'play_media',
+                    service_data: { entity_id: maEntity, media_id: self._moodArtistUriCache?.get(_seed) || _seed, media_type: 'artist', enqueue: 'add', radio_mode: true }
+                  }).catch(() => {});
+                }
+              })();
+              return;
+            }
+
             if (_compilations.length) {
               // Fetch tracks for top compilations in parallel
               const _trackChunks = await Promise.all(
@@ -13111,16 +13165,27 @@ Include ALL tracks. Use null for unknown fields.`;
               }
 
               if (_allTracks.length) {
-                // Replace artist radio with first playlist track, queue rest in background
-                const _first = _allTracks.shift();
+                // Deduplicate against current queue
+                const _qUrisPipe = self._getQueueUriSet();
+                const _seenPipe = new Set(_qUrisPipe);
+                const _dedupedPipe = _allTracks.filter(t => {
+                  if (!t?.uri) return false;
+                  const k = t.uri.toLowerCase();
+                  if (_seenPipe.has(k)) return false;
+                  _seenPipe.add(k); return true;
+                });
+                if (!_dedupedPipe.length) { localTracks = []; return; }
+
+                // Queue first playlist track to play next — don't replace current
+                const _first = _dedupedPipe.shift();
                 self._hass.connection.sendMessagePromise({
                   type: 'call_service', domain: 'music_assistant', service: 'play_media',
-                  service_data: { entity_id: maEntity, media_id: _first.uri, media_type: 'track', enqueue: 'replace' }
+                  service_data: { entity_id: maEntity, media_id: _first.uri, media_type: 'track', enqueue: 'next' }
                 }).catch(() => {}); // artist radio already playing — silent failure fine
 
-                // Add remaining tracks in background
+                // Add remaining deduplicated tracks in background
                 (async () => {
-                  for (const t of _allTracks) {
+                  for (const t of _dedupedPipe) {
                     if (_stale()) return;
                     await self._hass.connection.sendMessagePromise({
                       type: 'call_service', domain: 'music_assistant', service: 'play_media',
@@ -13144,9 +13209,22 @@ Include ALL tracks. Use null for unknown fields.`;
             service_data: { entity_id: maEntity,
               media_id: self._moodArtistUriCache?.get(primarySeed) || primarySeed,
               media_type: 'artist', enqueue: 'replace', radio_mode: true }
-          }).catch(() => {});
+          }).then(() => {
+            self._showLoadingToast(`✓ ${label} — finding tracks…`);
+            self._moodLoadingEntity = maEntity;
+            self._moodLoadingLabel = label;
+            setTimeout(() => {
+              if (self._moodLoadingEntity === maEntity) {
+                self._moodLoadingEntity = null;
+                self._moodLoadingLabel = null;
+                self._hideLoadingToast();
+              }
+            }, 12000);
+          }).catch(() => {
+            self._hideLoadingToast();
+            self._showToast(`Could not start ${label} — check Music Assistant`);
+          });
           self._pillPulse(500);
-          self._hideLoadingToast();
           self._maBatchLoading = false;
           clearTimeout(self._maBatchLoadingTimer);
 
@@ -13178,7 +13256,7 @@ Include ALL tracks. Use null for unknown fields.`;
                   _firstPlayed = true;
                   self._hass.connection.sendMessagePromise({
                     type: 'call_service', domain: 'music_assistant', service: 'play_media',
-                    service_data: { entity_id: maEntity, media_id: track.uri, media_type: 'track', enqueue: 'replace' }
+                    service_data: { entity_id: maEntity, media_id: track.uri, media_type: 'track', enqueue: 'next' }
                   }).catch(() => {});
                   self._pillPulse(500);
                   self._hideLoadingToast();
@@ -13198,8 +13276,16 @@ Include ALL tracks. Use null for unknown fields.`;
                 const j = Math.floor(Math.random() * (i + 1));
                 [_decadeBgTracks[i], _decadeBgTracks[j]] = [_decadeBgTracks[j], _decadeBgTracks[i]];
               }
+              const _qUrisDecade = self._getQueueUriSet();
+              const _seenDecade = new Set(_qUrisDecade);
+              const _dedupedDecade = _decadeBgTracks.filter(t => {
+                if (!t?.uri) return false;
+                const k = t.uri.toLowerCase();
+                if (_seenDecade.has(k)) return false;
+                _seenDecade.add(k); return true;
+              });
               (async () => {
-                for (const t of _decadeBgTracks) {
+                for (const t of _dedupedDecade) {
                   if (_stale()) return;
                   await self._hass.connection.sendMessagePromise({
                     type: 'call_service', domain: 'music_assistant', service: 'play_media',
@@ -13241,7 +13327,7 @@ Include ALL tracks. Use null for unknown fields.`;
                   _libFirstPlayed = true;
                   self._hass.connection.sendMessagePromise({
                     type: 'call_service', domain: 'music_assistant', service: 'play_media',
-                    service_data: { entity_id: maEntity, media_id: pick.uri, media_type: 'track', enqueue: 'replace' }
+                    service_data: { entity_id: maEntity, media_id: pick.uri, media_type: 'track', enqueue: 'next' }
                   }).catch(() => {});
                   self._pillPulse(500);
                   self._hideLoadingToast();
@@ -13294,13 +13380,15 @@ Include ALL tracks. Use null for unknown fields.`;
           }
         }
 
-        // ── De-duplicate by URI to remove any exact duplicate tracks ────────
-        const _seenUris = new Set();
+        // ── De-duplicate by URI — within batch AND against current queue ────
+        const _qUrisLocal = self._getQueueUriSet();
+        const _seenUris = new Set(_qUrisLocal);
         const _uriDeduped = (localTracks || []).filter(t => {
           const _uri = t.uri || t.item_id || '';
           if (!_uri) return true;
-          if (_seenUris.has(_uri)) return false;
-          _seenUris.add(_uri);
+          const _k = _uri.toLowerCase();
+          if (_seenUris.has(_k)) return false;
+          _seenUris.add(_k);
           return true;
         });
         if (_uriDeduped.length >= MIN_LOCAL_TRACKS) localTracks = _uriDeduped;
@@ -13320,13 +13408,14 @@ Include ALL tracks. Use null for unknown fields.`;
           await self._hass.connection.sendMessagePromise({
             type: 'call_service', domain: 'music_assistant', service: 'play_media',
             service_data: { entity_id: maEntity, media_id: first.uri,
-              media_type: 'track', enqueue: 'replace' }
+              media_type: 'track', enqueue: 'next' }
           });
           if (_stale()) return;
           usedLibrary = true;
-          // Add remaining tracks in background sequentially to preserve shuffle order
+          // Deduplicate and add remaining tracks in background
+          const _opt1Rest = self._dedupeTracksForQueue(rest);
           (async () => {
-            for (const t of rest) {
+            for (const t of _opt1Rest) {
               if (_stale()) return;
               await self._hass.connection.sendMessagePromise({
                 type: 'call_service', domain: 'music_assistant', service: 'play_media',
@@ -13341,13 +13430,14 @@ Include ALL tracks. Use null for unknown fields.`;
           await self._hass.connection.sendMessagePromise({
             type: 'call_service', domain: 'music_assistant', service: 'play_media',
             service_data: { entity_id: maEntity, media_id: first.uri,
-              media_type: 'track', enqueue: 'replace' }
+              media_type: 'track', enqueue: 'next' }
           });
           if (_stale()) return;
           usedLibrary = true;
-          // Add remaining local tracks in background
+          // Deduplicate and add remaining local tracks in background
+          const _opt3Rest = self._dedupeTracksForQueue(rest);
           (async () => {
-            for (const t of rest) {
+            for (const t of _opt3Rest) {
               if (_stale()) return;
               await self._hass.connection.sendMessagePromise({
                 type: 'call_service', domain: 'music_assistant', service: 'play_media',
@@ -14534,8 +14624,7 @@ Include ALL tracks. Use null for unknown fields.`;
       _icReset.classList.remove('queue-reorder-mode');
       this._teardownQueueDrag(_icReset);
     }
-    this._queueReorderMode = false;
-    r.getElementById('queueReorderDoneBtn')?.classList.add('hidden');
+    this._exitReorderMode(r?.getElementById('infoContent'));
   }
 
   _detectMediaType(state) {
@@ -19126,6 +19215,63 @@ Include ALL tracks. Use null for unknown fields.`;
     }
   }
 
+  // Returns a Set of URIs currently in the queue — used to deduplicate before adding tracks.
+  _getQueueUriSet() {
+    const items = this._queueDataCache?.items || [];
+    return new Set(items.map(i => i.uri).filter(Boolean));
+  }
+
+  // Filters a track array against the queue + itself to remove duplicates.
+  // Mutates nothing — returns a new array.
+  _dedupeTracksForQueue(tracks) {
+    const existing = this._getQueueUriSet();
+    const seen = new Set(existing);
+    return tracks.filter(t => {
+      const uri = t?.uri || t?.item_id || '';
+      if (!uri || seen.has(uri)) return false;
+      seen.add(uri);
+      return true;
+    });
+  }
+
+  _exitReorderMode(content) {
+    clearTimeout(this._reorderIdleTimer);
+    this._reorderIdleTimer = null;
+    if (!this._queueReorderMode) return;
+    this._queueReorderMode = false;
+    const r = this.shadowRoot;
+    const _ic = content || r?.getElementById('infoContent');
+    if (_ic) { _ic.classList.remove('queue-reorder-mode'); this._teardownQueueDrag(_ic); }
+    r?.getElementById('queueReorderDoneBtn')?.classList.add('hidden');
+  }
+
+  // Returns a Set of URIs currently in the cached queue — used to deduplicate
+  // tracks before adding them via enqueue:'add'. Cheap — just reads cached data.
+  _getQueueUriSet() {
+    const items = this._queueDataCache?.items || [];
+    const uris = new Set();
+    for (const item of items) {
+      if (item.uri) uris.add(item.uri.toLowerCase());
+    }
+    return uris;
+  }
+
+  _resetReorderIdleTimer() {
+    if (this._queueReordering) return; // don't reset mid-drag
+    clearTimeout(this._reorderIdleTimer);
+    this._reorderIdleTimer = setTimeout(() => {
+      // Don't exit mid-drag — wait for the drag to finish then try again
+      if (this._queueReordering) {
+        this._resetReorderIdleTimer();
+        return;
+      }
+      if (this._queueReorderMode) {
+        const r = this.shadowRoot;
+        this._exitReorderMode(r?.getElementById('infoContent'));
+      }
+    }, 4000);
+  }
+
   _toggleQueueReorder() {
     const r = this.shadowRoot;
     const content  = r.getElementById('infoContent');
@@ -19137,9 +19283,11 @@ Include ALL tracks. Use null for unknown fields.`;
 
     if (this._queueReorderMode) {
       this._setupQueueDrag(content);
+      this._resetReorderIdleTimer(); // start 7s idle timer
     } else {
+      clearTimeout(this._reorderIdleTimer);
+      this._reorderIdleTimer = null;
       this._teardownQueueDrag(content);
-      // Don't close the panel — user may want to drag more tracks
     }
   }
 
@@ -19377,7 +19525,11 @@ Include ALL tracks. Use null for unknown fields.`;
     const isMaByKnown    = this._knownMaEntities?.has(this._entity);
     const isMa = isMaByAttrs || isMaByEntityId || isMaByRegistry || isMaByConfig || isMaByKnown;
 
-    const _cleanup = () => { this._queueReordering = false; };
+    const _cleanup = () => {
+      this._queueReordering = false;
+      // Reset the idle timer — user just finished a drag, give them another 7s
+      this._resetReorderIdleTimer();
+    };
 
     if (!isMa) {
       _cleanup();
