@@ -17179,6 +17179,26 @@ Include ALL tracks. Use null for unknown fields.`;
       self._loadDayInMusicContext(content, _storedTrack, _storedArtist, _storedYear);
     }
 
+    // Re-wire similar track rows — long-press (enqueue menu) and tap (drill in)
+    content.querySelectorAll('.ai-sim-row').forEach(row => {
+      let lpTimer = null, lpFired = false;
+      const cancelLP = () => { if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; } };
+      row.addEventListener('pointerdown', () => {
+        lpFired = false;
+        lpTimer = setTimeout(() => {
+          cancelLP(); lpFired = true;
+          self._showTrackEnqueueMenu(row, row.dataset.title, row.dataset.artist, '');
+        }, 480);
+      }, { passive: true });
+      row.addEventListener('pointerup',     () => cancelLP(), { passive: true });
+      row.addEventListener('pointercancel', () => { cancelLP(); lpFired = false; }, { passive: true });
+      row.addEventListener('pointermove',   () => cancelLP(), { passive: true });
+      row.addEventListener('click', () => {
+        if (lpFired) { lpFired = false; return; }
+        self._showAITrackInfo(row.dataset.title, row.dataset.artist, { fromSearch: true, overrideArt: row.dataset.art || '' });
+      });
+    });
+
     // Re-wire video info panel (director, seasons, cast, ratings, content warnings)
     if (content.dataset.videoDataJson && !_storedTrack) {
       try {
