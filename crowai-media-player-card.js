@@ -3519,7 +3519,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           <!-- MA Search -->
           <div class="ma-search-row">
             <div class="ma-search-input-wrap">
-              <input class="ma-search-input" id="maSearchInput" type="text" placeholder="Search library…">
+              <input class="ma-search-input" id="maSearchInput" type="search" enterkeyhint="search" placeholder="Search library…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
               <button class="ma-search-clear hidden" id="maSearchClear" tabindex="-1">
                 <svg viewBox="0 0 24 24"><path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/></svg>
               </button>
@@ -3801,6 +3801,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         this._artTapTimer = null;
         // If lyrics are open, a tap should just close them — never open AI Info
         if (this._lyricsOpen) { this._closeLyrics(); return; }
+        if (this._lyricsClosedAt && Date.now() - this._lyricsClosedAt < 400) return;
         // Don't open library during queue operations — enqueue: replace briefly idles MA
         if (this._suppressArtTap) return;
         // If the info popup is already open — showing Recommendations, Search,
@@ -4780,7 +4781,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
     maSearchBtn.onclick = () => _doMASearch(maSearchInput.value.trim());
     maSearchInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') _doMASearch(maSearchInput.value.trim());
+      if (e.key === 'Enter' || e.key === 'Go' || e.keyCode === 13) _doMASearch(maSearchInput.value.trim());
+    });
+    maSearchInput.addEventListener('keyup', (e) => {
+      if (e.key === 'Enter' || e.key === 'Go' || e.keyCode === 13) _doMASearch(maSearchInput.value.trim());
     });
     maSearchInput.addEventListener('input', () => {
       maSearchClear.classList.toggle('hidden', !maSearchInput.value);
@@ -4836,6 +4840,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           maSearchClear.classList.add('hidden');
           this._maLastSearch = null;
           this._maInSearchResults = false;
+          const _tabPh = { radio: 'Search radio stations…', podcast: 'Search podcasts…', artist: 'Search artists…', album: 'Search albums…', track: 'Search songs…', playlist: 'Search playlists…' };
+          maSearchInput.placeholder = _tabPh[tab.dataset.tab] || 'Search library…';
           this._loadMATab(tab.dataset.tab);
         }
       };
@@ -6372,7 +6378,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           if (this._artTapTimer) { clearTimeout(this._artTapTimer); this._artTapTimer = null; }
           this._closeLyrics();
         }
-      }, { passive: true });
+      });
     }
 
     // Sample album art brightness and apply adaptive scrim if needed
@@ -6429,6 +6435,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     this._lyricsOpen  = false;
     this._lyricLines  = null;
     this._lastLyricIdx = -1;
+    this._lyricsClosedAt = Date.now();
   }
 
   /**
@@ -7713,15 +7720,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         rr.getElementById('maTabs')?.setAttribute('style', 'display:none');
         rr.querySelector('.ma-search-row')?.setAttribute('style', 'display:none');
         // Only show iOS search bar for the four main searchable types
-        const _searchableTabs = new Set(['artist', 'album', 'track', 'playlist']);
+        const _searchableTabs = new Set(['artist', 'album', 'track', 'playlist', 'radio']);
         const _iosBar = rr.getElementById('maIosSearchBar');
         if (_iosBar) _iosBar.classList.toggle('hidden', !_searchableTabs.has(tab));
         // Update placeholder to reflect whether full search is available
         const _iosInput = rr.getElementById('maIosSearchInput');
         if (_iosInput) {
-          _iosInput.placeholder = _searchableTabs.has(tab)
-            ? 'Search\u2026 (Enter to search all music)'
-            : 'Search\u2026';
+          _iosInput.placeholder = tab === 'radio' ? 'Search radio stations… (press Enter)' : _searchableTabs.has(tab) ? 'Search… (Enter to search all music)' : 'Search…';
           _iosInput._fullSearchEnabled = _searchableTabs.has(tab);
         }
         if (_iosBar) _iosBar.classList.remove('hidden');
@@ -7959,8 +7964,35 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         } catch (_) {}
       }
 
-      // ── Option 4: Parallel fetch for non-album types (or album browse_media failed) ──
-      if (!tracks.length && uri) {
+      // ── Option A+B: Fire browse_media immediately for all types ──────────────
+      const maEntityEarly = this._resolveMATargetEntity() || this._entity;
+      const _browsePromise = uri ? this._hass.connection.sendMessagePromise({
+        type: 'call_service', domain: 'media_player', service: 'browse_media',
+        service_data: { entity_id: maEntityEarly, media_content_id: uri },
+        return_response: true
+      }).then(res => {
+        const result = res?.response?.[maEntityEarly]?.result || res?.result || {};
+        return (result.children || []).map(c => ({
+          name: c.title || c.name || '', uri: c.media_content_id || c.uri || '',
+          image: c.thumbnail || c.image || null,
+          artists: c.media_artist ? [{ name: c.media_artist }] : [], album: null, _tab: 'track'
+        }));
+      }).catch(() => []) : Promise.resolve([]);
+
+      if (!tracks.length) {
+        const browseTracks = await _browsePromise;
+        if (aborted()) return;
+        if (browseTracks.length) {
+          tracks = browseTracks;
+          this._renderMAGrid(tracks, effectiveTab, content);
+          if (titleEl) titleEl.textContent = item.name || item.title || '';
+          this._drillInCache.set(cacheKey, { tracks, ts: Date.now() });
+        }
+      }
+
+      // ── Option 4: Richer mass_queue data (upgrades optimistic render) ─────────
+      const _hadOptimisticRender = tracks.length > 0;
+      if (uri) {
         const configEntry = await this._getMassQueueConfigEntry();
         if (aborted()) return;
         const maEntity    = this._resolveMATargetEntity() || this._entity;
@@ -8066,11 +8098,14 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       }
 
       if (!tracks.length) {
-        // All fetches exhausted — play the collection directly
-        this._maBrowserNavStack.pop();
-        this._maNavReset();
-        this._playMAItem(item, tab);
-        return;
+        if (_hadOptimisticRender) {
+          // browse_media already rendered, mass_queue gave nothing better — keep it
+        } else {
+          this._maBrowserNavStack.pop();
+          this._maNavReset();
+          this._playMAItem(item, tab);
+          return;
+        }
       }
 
       if (aborted()) return;
@@ -8158,17 +8193,402 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     });
   }
 
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // RADIO BROWSER — Context menu + More Info panel
+  // ════════════════════════════════════════════════════════════════════════════
+
+  _showRbContextMenu(anchor, st, entity) {
+    // Use same pattern as _showEnqueueMenu — append to shadow root, position relative to card
+    const r = this.shadowRoot;
+    r.querySelectorAll('.enqueue-backdrop').forEach(el => el.remove());
+    r.querySelectorAll('.enqueue-menu').forEach(el => el.remove());
+
+    const backdrop = document.createElement('div');
+    backdrop.className = 'enqueue-backdrop';
+    const _openedAt = Date.now();
+    backdrop.addEventListener('pointerdown', () => {
+      if (Date.now() - _openedAt < 200) return;
+      backdrop.remove(); menu.remove();
+    });
+    r.appendChild(backdrop);
+
+    const menu = document.createElement('div');
+    menu.className = 'enqueue-menu';
+
+    const strategies = [
+      { mode: 'play_now',   label: 'Play Now',  icon: '<path d="M8 5v14l11-7z"/>' },
+      { mode: 'share',      label: 'Share',     icon: '<path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z"/>' },
+      { mode: 'more_info',  label: 'More Info', icon: '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/>' },
+    ];
+
+    menu.innerHTML = strategies.map(s =>
+      '<div class="enqueue-menu-item" data-mode="' + s.mode + '"><svg class="enqueue-menu-icon" viewBox="0 0 24 24">' + s.icon + '</svg><div class="enqueue-menu-label">' + s.label + '</div></div>'
+    ).join('');
+
+    r.appendChild(menu);
+
+    // Position relative to card, below anchor row
+    const anchorRect = anchor.getBoundingClientRect();
+    const cardRect   = r.host.getBoundingClientRect();
+    menu.style.top   = Math.min(anchorRect.bottom - cardRect.top + 4, cardRect.height - 180) + 'px';
+    menu.style.right = '12px';
+
+    const _menuOpenedAt = Date.now();
+    const _menuReady = () => Date.now() - _menuOpenedAt > 350;
+
+    menu.querySelectorAll('.enqueue-menu-item').forEach(el => {
+      el.addEventListener('click', e => {
+        e.stopPropagation();
+        if (!_menuReady()) return;
+        backdrop.remove(); menu.remove();
+        const mode = el.dataset.mode;
+        if (mode === 'play_now') {
+          const url = st.url_resolved || st.url;
+          if (!url) { this._showToast('No stream URL'); return; }
+          this._hass.connection.sendMessagePromise({
+            type: 'call_service', domain: 'music_assistant', service: 'play_media',
+            service_data: { entity_id: entity, media_id: url, media_type: 'radio', enqueue: 'replace' }
+          }).then(() => {
+            this._showToast('\u25b6 ' + st.name);
+            const _rbCmEntity = entity;
+            let _rbCmChecks = 0;
+            const _rbCmInterval = setInterval(() => {
+              _rbCmChecks++;
+              const _s = this._hass?.states[_rbCmEntity]?.state;
+              if (_s === 'playing') { clearInterval(_rbCmInterval); return; }
+              if (_rbCmChecks >= 2 && (_s === 'idle' || _s === 'paused' || _s === 'off')) {
+                clearInterval(_rbCmInterval);
+                this._showToast('\u26a0\ufe0f ' + st.name + ' didn\u0027t start — it may be geo-blocked or unavailable', 4000);
+                return;
+              }
+              if (_rbCmChecks >= 8) clearInterval(_rbCmInterval);
+            }, 500);
+          }).catch(() => {
+            this._hass.callService('media_player', 'play_media', { entity_id: entity, media_content_id: url, media_content_type: 'music' });
+            this._showToast('\u25b6 ' + st.name);
+          });
+          this._closeMABrowser();
+        } else if (mode === 'share') {
+          const parts = [st.name];
+          if (st.homepage) parts.push(st.homepage);
+          if (st.url_resolved || st.url) parts.push('Stream: ' + (st.url_resolved || st.url));
+          this._copyToClipboard(parts.join('\n'));
+        } else if (mode === 'more_info') {
+          this._showRbMoreInfo(st);
+        }
+      });
+    });
+  }
+
+
+  async _showRbMoreInfo(st) {
+    const r       = this.shadowRoot;
+    const popup   = r.getElementById('infoPopup');
+    const content = r.getElementById('infoContent');
+    const titleEl = r.getElementById('infoPopupTitle');
+    if (!popup || !content) return;
+
+    // Open the info popup
+    popup.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
+    popup.style.setProperty('backdrop-filter', 'none');
+    popup.style.setProperty('-webkit-backdrop-filter', 'none');
+    popup.classList.add('visible');
+    this._infoPopupOpenedAt = Date.now();
+    if (titleEl) titleEl.textContent = st.name || 'Station Info';
+    const _rbo = r.getElementById('queueMenuBtn');
+    if (_rbo) _rbo.classList.add('hidden');
+
+    // Show share button in header
+    const _rbShare = r.getElementById('infoShareBtn');
+    if (_rbShare) {
+      _rbShare.classList.remove('hidden');
+      _rbShare.onclick = () => {
+        const parts = [st.name];
+        if (st.homepage) parts.push(st.homepage);
+        if (st.url_resolved || st.url) parts.push('Stream: ' + (st.url_resolved || st.url));
+        this._copyToClipboard(parts.join('\n'));
+      };
+    }
+
+    const _pt = (k) => this._pt(k);
+
+    // Build tag pills HTML
+    const allTags = (st.tags || '').split(',').map(t => t.trim()).filter(Boolean);
+    const tagsHtml = allTags.length ? allTags.map(tag =>
+      `<button class="rb-tag-pill" data-tag="${tag.replace(/"/g,'&quot;')}" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.13);border-radius:20px;padding:3px 10px;font-size:11px;font-weight:600;color:rgba(255,255,255,0.7);cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;position:relative;">${tag}</button>`
+    ).join('') : '';
+
+    // Country flag from countrycode
+    const _flag = (cc) => {
+      if (!cc || cc.length !== 2) return '';
+      return cc.toUpperCase().replace(/./g, c => String.fromCodePoint(c.charCodeAt(0) + 127397));
+    };
+
+    const faviconHtml = st.favicon
+      ? `<img src="${st.favicon}" alt="" style="width:72px;height:72px;border-radius:12px;object-fit:cover;display:block;" onerror="this.style.display='none'">`
+      : `<div style="width:72px;height:72px;border-radius:12px;background:rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:center;"><svg viewBox="0 0 24 24" style="width:32px;height:32px;fill:rgba(255,255,255,0.3)"><path d="M12 1c-4.97 0-9 4.03-9 9v7c0 1.66 1.34 3 3 3h3v-8H5v-2c0-3.87 3.13-7 7-7s7 3.13 7 7v2h-4v8h3c1.66 0 3-1.34 3-3v-7c0-4.97-4.03-9-9-9z"/></svg></div>`;
+
+    const metaItems = [
+      st.codec    && ['Format',   st.codec + (st.bitrate ? ' · ' + st.bitrate + 'kbps' : '')],
+      st.country  && ['Country',  _flag(st.countrycode) + ' ' + st.country],
+      st.language && ['Language', st.language.charAt(0).toUpperCase() + st.language.slice(1)],
+      st.votes    && ['Votes',    Number(st.votes).toLocaleString()],
+    ].filter(Boolean);
+
+    const metaGridHtml = metaItems.length ? `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:14px;">
+        ${metaItems.map(([l,v]) => `
+          <div style="background:${_pt('bg')};border-radius:8px;padding:7px 10px;">
+            <div style="font-size:9px;font-weight:700;color:${_pt('dim')};text-transform:uppercase;letter-spacing:0.4px;margin-bottom:2px">${l}</div>
+            <div style="font-size:12px;color:${_pt('text')};font-weight:500">${v}</div>
+          </div>`).join('')}
+      </div>` : '';
+
+    const streamUrl = st.url_resolved || st.url || '';
+    const homepageHtml = st.homepage ? `
+      <div style="margin-bottom:10px;">
+        <div style="font-size:11px;font-weight:700;color:${_pt('dim')};text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">Website</div>
+        <button class="rb-homepage-btn" style="display:inline-flex;align-items:center;gap:6px;background:rgba(99,179,237,0.1);border:1px solid rgba(99,179,237,0.25);border-radius:20px;padding:5px 12px;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;">
+          <svg viewBox="0 0 24 24" style="width:12px;height:12px;fill:#63b3ed;flex-shrink:0"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zm6.93 6h-2.95c-.32-1.25-.78-2.45-1.38-3.56 1.84.63 3.37 1.91 4.33 3.56zM12 4.04c.83 1.2 1.48 2.53 1.91 3.96h-3.82c.43-1.43 1.08-2.76 1.91-3.96zM4.26 14C4.1 13.36 4 12.69 4 12s.1-1.36.26-2h3.38c-.08.66-.14 1.32-.14 2s.06 1.34.14 2H4.26zm.82 2h2.95c.32 1.25.78 2.45 1.38 3.56-1.84-.63-3.37-1.9-4.33-3.56zm2.95-8H5.08c.96-1.66 2.49-2.93 4.33-3.56C8.81 5.55 8.35 6.75 8.03 8zM12 19.96c-.83-1.2-1.48-2.53-1.91-3.96h3.82c-.43 1.43-1.08 2.76-1.91 3.96zM14.34 14H9.66c-.09-.66-.16-1.32-.16-2s.07-1.35.16-2h4.68c.09.65.16 1.32.16 2s-.07 1.34-.16 2zm.25 5.56c.6-1.11 1.06-2.31 1.38-3.56h2.95c-.96 1.65-2.49 2.93-4.33 3.56zM16.36 14c.08-.66.14-1.32.14-2s-.06-1.34-.14-2h3.38c.16.64.26 1.31.26 2s-.1 1.36-.26 2h-3.38z"/></svg>
+          <span style="font-size:12px;color:#63b3ed;font-weight:600;">${st.homepage}</span>
+        </button>
+      </div>` : '';
+
+    const streamHtml = streamUrl ? `
+      <div style="margin-bottom:14px;">
+        <div style="font-size:11px;font-weight:700;color:${_pt('dim')};text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">Stream URL</div>
+        <button class="rb-stream-copy-btn" style="display:flex;align-items:center;gap:8px;width:100%;background:${_pt('bg')};border:1px solid ${_pt('border')};border-radius:10px;padding:8px 10px;cursor:pointer;font-family:inherit;text-align:left;-webkit-tap-highlight-color:transparent;">
+          <svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:${_pt('dim')};flex-shrink:0"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+          <span class="rb-stream-url-text" style="font-size:10px;color:${_pt('dim')};font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">${streamUrl}</span>
+        </button>
+      </div>` : '';
+
+    content.innerHTML = `
+      <div style="display:flex;gap:14px;align-items:flex-start;margin-bottom:16px;">
+        ${faviconHtml}
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:16px;font-weight:700;color:${_pt('text')};line-height:1.3;margin-bottom:4px;">${st.name || ''}</div>
+          ${st.country ? `<div style="font-size:12px;color:${_pt('dim')}">${_flag(st.countrycode)} ${st.country}</div>` : ''}
+        </div>
+      </div>
+      ${metaGridHtml}
+      ${homepageHtml}
+      ${streamHtml}
+      ${tagsHtml ? `
+        <div style="font-size:11px;font-weight:700;color:${_pt('dim')};text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">Tags</div>
+        <div id="rb-tags-wrap" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;position:relative;">${tagsHtml}</div>` : ''}
+      <div id="rb-ai-bio" style="margin-top:4px;">
+        <div style="display:flex;align-items:center;gap:7px;opacity:0.5;padding:4px 0;">
+          <div style="width:12px;height:12px;border:1.5px solid rgba(99,179,237,0.3);border-top-color:#63b3ed;border-radius:50%;animation:ma-spin 0.8s linear infinite;flex-shrink:0;"></div>
+          <span style="font-size:12px;color:${_pt('dim')};">Loading station info…</span>
+        </div>
+      </div>`;
+
+    // Wire homepage button
+    content.querySelector('.rb-homepage-btn')?.addEventListener('click', () => {
+      if (st.homepage) window.open(st.homepage, '_blank');
+    });
+
+    // Wire stream URL copy
+    content.querySelector('.rb-stream-copy-btn')?.addEventListener('click', () => {
+      this._copyToClipboard(streamUrl);
+      const lbl = content.querySelector('.rb-stream-url-text');
+      if (lbl) { const orig = lbl.textContent; lbl.textContent = '\u2713 Copied!'; setTimeout(() => { lbl.textContent = orig; }, 1500); }
+    });
+
+    // Wire tag pills — bottom-sheet popup style (matches content warning pills)
+    const tagsWrap = content.querySelector('#rb-tags-wrap');
+    if (tagsWrap) {
+      if (!this._rbTagCache) this._rbTagCache = new Map();
+      tagsWrap.querySelectorAll('.rb-tag-pill').forEach(pill => {
+        pill.addEventListener('click', async () => {
+          const tag = pill.dataset.tag;
+          const _pt2 = (k) => this._pt(k);
+          // Show bottom sheet immediately with spinner
+          document.querySelectorAll('.rb-tag-sheet').forEach(el => el.remove());
+          const sheet = document.createElement('div');
+          sheet.className = 'rb-tag-sheet';
+          sheet.style.cssText = 'position:absolute;z-index:99999;display:flex;align-items:flex-end;justify-content:center;background:rgba(0,0,0,0.5);left:0;top:' + window.scrollY + 'px;width:' + document.documentElement.clientWidth + 'px;height:' + window.innerHeight + 'px;';
+          sheet.innerHTML = '<div style="width:100%;max-width:480px;background:var(--crow-panel-bg,#13131a);border-radius:20px 20px 0 0;padding:20px 20px 40px;box-shadow:0 -8px 40px rgba(0,0,0,0.6);">'
+            + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">'
+            + '<span style="font-size:15px;font-weight:700;color:' + _pt2('text') + ';">' + tag + '</span>'
+            + '<button class="rb-tag-sheet-close" style="width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,0.1);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;"><svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:' + _pt2('text') + '"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>'
+            + '</div>'
+            + '<div class="rb-tag-sheet-body" style="font-size:13px;color:' + _pt2('text') + ';line-height:1.6;display:flex;align-items:center;gap:8px;opacity:0.6;"><div style="width:14px;height:14px;border:2px solid rgba(99,179,237,0.25);border-top-color:#63b3ed;border-radius:50%;animation:ma-spin 0.8s linear infinite;flex-shrink:0;"></div>Loading…</div>'
+            + '</div>';
+          document.body.appendChild(sheet);
+          const _closeSheet = () => sheet.remove();
+          sheet.addEventListener('click', e => { if (e.target === sheet) _closeSheet(); });
+          sheet.querySelector('.rb-tag-sheet-close')?.addEventListener('click', _closeSheet);
+
+          // Fetch description
+          let desc = this._rbTagCache.get(tag);
+          if (!desc) {
+            const hasAI = await this._aiCheckAvailable();
+            if (sheet.isConnected && hasAI) {
+              const raw = await this._aiConverse('In 1-2 sentences, describe the "' + tag + '" radio/music genre or category. Be concise and factual.');
+              desc = raw || 'No description available.';
+              this._rbTagCache.set(tag, desc);
+            } else {
+              desc = 'No description available.';
+            }
+          }
+          const bodyEl = sheet.querySelector('.rb-tag-sheet-body');
+          if (bodyEl && sheet.isConnected) bodyEl.innerHTML = desc;
+        });
+      });
+    }
+
+    // AI bio — lazy loaded
+    const bioCacheKey = 'rbbio|' + (st.name || '').toLowerCase();
+    const _bioEl = content.querySelector('#rb-ai-bio');
+    let cachedBio = this._rbTagCache?.get(bioCacheKey) || this._aiSessionGet('rbBio', bioCacheKey);
+    if (cachedBio) {
+      if (_bioEl) _bioEl.innerHTML = '<div style="font-size:12px;color:' + _pt('dim') + ';line-height:1.6;">' + cachedBio + '</div>';
+    } else {
+      const hasAI = await this._aiCheckAvailable();
+      if (_bioEl && _bioEl.isConnected) {
+        if (hasAI) {
+          const countryCtx = st.country ? ' based in ' + st.country : '';
+          const tagCtx = allTags.slice(0, 3).join(', ');
+          const bioProm = await this._aiConverse('In 2 sentences, describe the radio station "' + (st.name || '') + '"' + countryCtx + (tagCtx ? ' known for ' + tagCtx : '') + '. Be factual and concise — if you don\'t know this specific station, describe it based on its genre tags only.');
+          if (!this._rbTagCache) this._rbTagCache = new Map();
+          this._rbTagCache.set(bioCacheKey, bioProm || '');
+          if (bioProm) this._aiSessionSet('rbBio', bioCacheKey, bioProm);
+          if (_bioEl && _bioEl.isConnected) {
+            _bioEl.innerHTML = bioProm ? '<div style="font-size:12px;color:' + _pt('dim') + ';line-height:1.6;">' + bioProm + '</div>' : '';
+          }
+        } else {
+          _bioEl.innerHTML = '';
+        }
+      }
+    }
+  }
+
   async _searchMA(query) {
     if (!query) return;
     this._maLastSearch = query;
     this._maInSearchResults = true;
     const content = this.shadowRoot.getElementById('maContent');
     this.shadowRoot?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
-    content.innerHTML = this._psLoading('Searching…');
 
     // Remember which tab is active before deactivating them
     const activeTabEl = this.shadowRoot.querySelector('.ma-tab.active');
-    const activeTabKey = activeTabEl ? activeTabEl.dataset.tab : null;
+    const activeTabKey = activeTabEl ? activeTabEl.dataset.tab : (this._maCurrentTab || null);
+
+    // Radio tab: search radio-browser.info instead of MA library
+    if (activeTabKey === 'radio' || this._maCurrentTab === 'radio') {
+      // Clear the action bar — it doesn't apply to a radio station list
+      this.shadowRoot?.getElementById('maContent')?.querySelector('.ma-drill-actions')?.remove();
+      content.innerHTML = this._psLoading('Searching radio stations…');
+      try {
+        const rbRes = await fetch('https://de1.api.radio-browser.info/json/stations/search?name=' + encodeURIComponent(query) + '&limit=30&hidebroken=true&order=votes&reverse=true');
+        if (!rbRes.ok) throw new Error('HTTP ' + rbRes.status);
+        const stations = await rbRes.json();
+        if (!stations?.length) {
+          content.innerHTML = this._psAutoClose(this._psEmpty('M9.5,3A6.5,6.5 0 0,1 16,9.5C16,11.11 15.41,12.59 14.44,13.73L14.71,14H15.5L20.5,19L19,20.5L14,15.5V14.71L13.73,14.44C12.59,15.41 11.11,16 9.5,16A6.5,6.5 0 0,1 3,9.5A6.5,6.5 0 0,1 9.5,3M9.5,5C7,5 5,7 5,9.5C5,12 7,14 9.5,14C12,14 14,12 14,9.5C14,7 12,5 9.5,5Z', 'No stations found', 'Nothing matched "' + query + '" — try a different search'), null, 8000, 'rbNoResBtn', 'rbNoResRing');
+          this._psAutoCloseStart(this.shadowRoot, null, () => { this._maInSearchResults = false; this.shadowRoot?.querySelectorAll('.ma-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'radio')); this._loadMATab('radio'); }, 8000, 'rbNoResBtn', 'rbNoResRing');
+          return;
+        }
+        this.shadowRoot.querySelectorAll('.ma-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'radio'));
+        const rbEntity = this._resolveMATargetEntity() || this._entity;
+        content.innerHTML = '';
+        const rbList = document.createElement('div');
+        rbList.style.cssText = 'display:flex;flex-direction:column;';
+        const _rbPlayStation = (st) => {
+          const url = st.url_resolved || st.url;
+          if (!url) { this._showToast('No stream URL for this station'); return; }
+          const _rbEntity = rbEntity;
+          const _rbSelf = this;
+          this._hass.connection.sendMessagePromise({
+            type: 'call_service', domain: 'music_assistant', service: 'play_media',
+            service_data: { entity_id: _rbEntity, media_id: url, media_type: 'radio', enqueue: 'replace' }
+          }).then(async () => {
+            _rbSelf._showToast('\u25b6 ' + st.name);
+            // Subscribe to state_changed to catch rapid idle transitions (geo-blocking etc.)
+            let _rbUnsub = null;
+            let _rbResolved = false;
+            const _rbFail = () => {
+              if (_rbResolved) return;
+              _rbResolved = true;
+              if (_rbUnsub) { try { _rbUnsub(); } catch(_) {} }
+              _rbSelf._showToast('\u26a0\ufe0f ' + st.name + ' didn\u0027t start \u2014 it may be geo-blocked or unavailable', 4500);
+            };
+            const _rbSuccess = () => {
+              if (_rbResolved) return;
+              _rbResolved = true;
+              if (_rbUnsub) { try { _rbUnsub(); } catch(_) {} }
+            };
+            try {
+              _rbUnsub = await _rbSelf._hass.connection.subscribeEvents((event) => {
+                const d = event?.data;
+                if (!d || d.entity_id !== _rbEntity) return;
+                const newState = d.new_state?.state || '';
+                const oldState = d.old_state?.state || '';
+                // Went idle/off after being playing or unknown — stream failed
+                if ((newState === 'idle' || newState === 'off') &&
+                    (oldState === 'playing' || oldState === 'buffering' || oldState === 'unknown')) {
+                  _rbFail();
+                }
+                // Successfully playing with new content
+                if (newState === 'playing' || newState === 'buffering') {
+                  _rbSuccess();
+                }
+              }, 'state_changed');
+            } catch(_) {}
+            // Safety timeout — stop monitoring after 8s regardless
+            setTimeout(() => { _rbSuccess(); }, 8000);
+          }).catch(() => {
+            this._hass.callService('media_player', 'play_media', { entity_id: _rbEntity, media_content_id: url, media_content_type: 'music' });
+            this._showToast('▶ ' + st.name);
+          });
+          this._closeMABrowser();
+        };
+
+        stations.forEach(st => {
+          const row = document.createElement('div');
+          row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer;-webkit-tap-highlight-color:transparent;position:relative;';
+          const fav = st.favicon ? '<img src="' + st.favicon + '" alt="" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display=\'none\'">' : '<svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:rgba(255,255,255,0.3)"><path d="M12 1c-4.97 0-9 4.03-9 9v7c0 1.66 1.34 3 3 3h3v-8H5v-2c0-3.87 3.13-7 7-7s7 3.13 7 7v2h-4v8h3c1.66 0 3-1.34 3-3v-7c0-4.97-4.03-9-9-9z"/></svg>';
+          const tags = [st.tags?.split(',')[0], st.countrycode, st.codec ? (st.codec + (st.bitrate ? ' · ' + st.bitrate + 'kbps' : '')) : null].filter(Boolean).join(' · ');
+          row.innerHTML = '<div style="width:40px;height:40px;border-radius:8px;background:rgba(255,255,255,0.08);flex-shrink:0;overflow:hidden;display:flex;align-items:center;justify-content:center;">' + fav + '</div><div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:600;color:var(--primary-text-color,#fff);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (st.name || 'Unknown') + '</div><div style="font-size:11px;color:rgba(255,255,255,0.45);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + tags + '</div></div>';
+
+          // Long-press context menu
+          let _rbLpTimer = null, _rbLpFired = false;
+          row.addEventListener('contextmenu', e => e.preventDefault());
+          row.addEventListener('pointerdown', () => {
+            _rbLpFired = false;
+            _rbLpTimer = setTimeout(() => {
+              _rbLpFired = true;
+              this._showRbContextMenu(row, st, rbEntity);
+            }, 480);
+          }, { passive: true });
+          row.addEventListener('pointerup',     () => clearTimeout(_rbLpTimer), { passive: true });
+          row.addEventListener('pointercancel', () => { clearTimeout(_rbLpTimer); _rbLpFired = false; }, { passive: true });
+          row.addEventListener('pointermove',   () => clearTimeout(_rbLpTimer), { passive: true });
+          row.addEventListener('click', () => {
+            if (_rbLpFired) { _rbLpFired = false; return; }
+            _rbPlayStation(st);
+          });
+          rbList.appendChild(row);
+        });
+        content.appendChild(rbList);
+      } catch(e) {
+        content.innerHTML = '';
+        const errDiv = document.createElement('div');
+        errDiv.style.cssText = 'margin:16px 4px;background:rgba(255,165,0,0.1);border:1px solid rgba(255,165,0,0.3);border-radius:12px;padding:14px;';
+        errDiv.innerHTML = '<div style="font-size:13px;font-weight:600;color:rgba(255,165,0,0.9);margin-bottom:6px;">📡 Can\'t reach Radio Browser</div><div style="font-size:12px;color:rgba(255,255,255,0.6);line-height:1.5;">Radio search uses <strong>radio-browser.info</strong>. Your device can\'t reach it right now.</div>';
+        const closeBtn = document.createElement('button');
+        closeBtn.textContent = 'Go back';
+        closeBtn.style.cssText = 'margin-top:12px;padding:6px 14px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:8px;color:#fff;font-size:12px;font-family:inherit;cursor:pointer;';
+        closeBtn.addEventListener('click', () => { this._maInSearchResults = false; this.shadowRoot?.querySelectorAll('.ma-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'radio')); this._loadMATab('radio'); });
+        errDiv.appendChild(closeBtn);
+        content.appendChild(errDiv);
+      }
+      return;
+    }
+
+    content.innerHTML = this._psLoading('Searching…');
     this.shadowRoot.querySelectorAll('.ma-tab').forEach(t => t.classList.remove('active'));
 
     // Map tab key → MA search response key(s)
@@ -9170,6 +9590,25 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (this._isLiveStream(state)) {
       // Don't show this during an announcement — TTS briefly looks like a live stream
       if (this._announceActive) { this._closeInfoPopup(); return; }
+
+      // If the stream is broadcasting track metadata, use the AI Info panel
+      const _streamAttrs  = state.attributes;
+      const _streamTrack  = (_streamAttrs.media_title  || '').trim();
+      const _streamArtist = (_streamAttrs.media_artist || '').trim();
+      const _stationName  = _streamAttrs.media_station || _streamAttrs.friendly_name || '';
+
+      if (_streamTrack && _streamArtist) {
+        // Full track info available — show AI panel with station badge
+        this._showAITrackInfo(_streamTrack, _streamArtist, { stationName: _stationName });
+        return;
+      }
+      if (_streamTrack) {
+        // Title only (e.g. talk radio show name) — try AI panel with title as track
+        this._showAITrackInfo(_streamTrack, '', { stationName: _stationName });
+        return;
+      }
+
+      // No metadata — show the standard "Live stream" screen
       const _ic = r.getElementById('infoContent');
       _ic.innerHTML = this._psAutoClose(this._psEmpty('M12,3V13.55C11.41,13.21 10.73,13 10,13C7.79,13 6,14.79 6,17C6,19.21 7.79,21 10,21C12.21,21 14,19.21 14,17V7H18V3H12Z', 'Live stream', "Media information isn't available for radio and live streams."), null, 10000, 'infoStreamBtn', 'infoStreamRing');
       this._psAutoCloseStart(this.shadowRoot, null, this._closeInfoPopup.bind(this), 10000, 'infoStreamBtn', 'infoStreamRing');
@@ -10605,8 +11044,14 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // Silently pre-warm the video info cache so long-press on artwork is instant
   async _prefetchVideoInfo(title) {
     if (!title) return;
-    const cleanTitle = title.replace(/\s*\(\d{4}\)\s*$/, '').replace(/\s*[-:]\s*[^-:]+$/, '').trim() || title;
-    const cacheKey = ('videoinfo|' + cleanTitle).toLowerCase();
+    // Use title verbatim if it came from media_series_title (already the clean show name).
+    // Only strip colon-subtitles when falling back to media_title (episode titles).
+    const _isSeriesTitle = !!(this._hass?.states[this._entity]?.attributes?.media_series_title);
+    const cleanTitle = title
+      .replace(/\s*\(\d{4}\)\s*$/, '')                          // always strip trailing year
+      .replace(_isSeriesTitle ? /(?!)/ : /\s*[-:]\s*[^-:]+$/, '') // only strip colon if not series title
+      .trim() || title;
+    const cacheKey = ('videoinfo3|' + cleanTitle).toLowerCase(); // v2: preserves series title colons
     if (!this._aiVideoInfoCache) this._aiVideoInfoCache = new Map();
     if (this._aiVideoInfoCache.has(cacheKey)) return;
     // Check localStorage before firing an AI call
@@ -10904,7 +11349,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // Use the SAME cache key and prompt as _showAITrackInfo so prefetched data
     // is always found by the display function — prevents double-fetching.
     const primaryArtist = artistName.split(/\s*[&,]\s*/)[0].trim() || artistName;
-    const cacheKey = ('trackinfo|' + artistName + '|' + trackTitle).toLowerCase(); // v2 adds chart+reception
+    const cacheKey = ('trackinfo3|' + artistName + '|' + trackTitle).toLowerCase();
     if (!this._aiTrackInfoCache) this._aiTrackInfoCache = new Map();
     // Check sessionStorage first
     if (!this._aiTrackInfoCache.has(cacheKey)) {
@@ -11021,6 +11466,7 @@ Include ALL tracks. Use null for unknown fields.`;
     // Use override art (e.g. already-fetched thumbnail from a similar/rec row) to avoid
     // a redundant iTunes request and prevent entity art from bleeding into the panel.
     let specificArt = context.overrideArt || null;
+    const stationName = context.stationName || '';
     if (!specificArt) {
       specificArt = await this._fetchItunesArtForTrack(artistName, trackTitle);
     }
@@ -11049,7 +11495,7 @@ Include ALL tracks. Use null for unknown fields.`;
       return;
     }
 
-    const cacheKey = ('trackinfo|' + artistName + '|' + trackTitle).toLowerCase(); // v2 adds chart+reception
+    const cacheKey = ('trackinfo3|' + artistName + '|' + trackTitle).toLowerCase();
     if (!this._aiTrackInfoCache) this._aiTrackInfoCache = new Map();
 
     // Check sessionStorage before network
@@ -11105,7 +11551,6 @@ Include ALL tracks. Use null for unknown fields.`;
           <svg viewBox="0 0 24 24" style="width:36px;height:36px;fill:${this._pt("icon")}"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
           <div style="font-size:14px;font-weight:600;color:${this._pt("text")}">Media not found</div>
           <div style="font-size:12px;color:${this._pt("dim")};line-height:1.6;">The AI couldn't find reliable information for<br><strong style="color:${this._pt("dim")}">${trackTitle}</strong>${artistName ? `<br><span style="font-size:11px">by ${artistName}</span>` : ''}</div>
-          <div style="font-size:11px;color:${this._pt("dim")};line-height:1.5;">This can happen with compilation albums, soundtracks,<br>or tracks with multiple featured artists.</div>
         </div>`;
       return;
     }
@@ -11147,10 +11592,9 @@ Include ALL tracks. Use null for unknown fields.`;
       </div>` : '';
 
     // Make album name clickable to view tracks
+    const _pillStyle = 'display:inline-flex;align-items:center;gap:5px;background:rgba(99,179,237,0.1);border:1px solid rgba(99,179,237,0.25);border-radius:20px;padding:4px 10px;flex-shrink:0;max-width:160px;overflow:hidden;';
     const albumClickHtml = data.album
-      ? `<button id="ai-track-album-btn" data-album="${(data.album||'').replace(/"/g,'&quot;')}" data-artist="${(artistName||'').replace(/"/g,'&quot;')}"
-           style="background:none;border:none;padding:0;cursor:pointer;font-family:inherit;text-align:left;margin-top:4px;display:inline-block;">`
-      + `<div style="display:inline-flex;align-items:center;gap:5px;background:rgba(99,179,237,0.1);border:1px solid rgba(99,179,237,0.25);border-radius:20px;padding:3px 9px;"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:#63b3ed;flex-shrink:0"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg><span style="font-size:11px;color:#63b3ed;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px;">${data.album}</span><svg viewBox="0 0 24 24" style="width:9px;height:9px;fill:#63b3ed;opacity:0.6;flex-shrink:0"><path d="M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z"/></svg></div></button>`
+      ? `<button id="ai-track-album-btn" data-album="${(data.album||'').replace(/"/g,'&quot;')}" data-artist="${(artistName||'').replace(/"/g,'&quot;')}" style="background:none;border:none;padding:0;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;${_pillStyle}"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:#63b3ed;flex-shrink:0"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg><span style="font-size:11px;color:#63b3ed;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${data.album}</span><svg viewBox="0 0 24 24" style="width:9px;height:9px;fill:#63b3ed;opacity:0.6;flex-shrink:0"><path d="M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z"/></svg></button>`
       : '';
 
     const isMaForBar = this._maEntityIds?.has(this._entity) || (this._maEntityIds?.size > 0);
@@ -11181,9 +11625,12 @@ Include ALL tracks. Use null for unknown fields.`;
       <div style="display:flex;gap:12px;margin-bottom:14px;">
         <div style="width:64px;height:64px;border-radius:10px;overflow:hidden;flex-shrink:0;background:${this._pt("bg")};display:flex;align-items:center;justify-content:center;">${artHtml}</div>
         <div style="flex:1;min-width:0;">
-          <div style="font-size:15px;font-weight:700;color:${this._pt("text")};letter-spacing:-0.3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${trackTitle}</div>
-          <div id="ai-track-artist-name" data-artist="${(artistName||''). replace(/"/g,'&quot;')}" style="font-size:12px;color:${this._pt("dim")};margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;">${artistName}</div>
-          ${data.album ? `<div id="ai-track-album-link" data-album="${(data.album||'').replace(/"/g,'&quot;')}" data-artist="${(artistName||'').replace(/"/g,'&quot;')}" style="cursor:pointer;"><div style="display:inline-flex;align-items:center;gap:5px;background:rgba(99,179,237,0.1);border:1px solid rgba(99,179,237,0.25);border-radius:20px;padding:3px 9px;margin-top:4px;"><svg viewBox=\"0 0 24 24\" style=\"width:10px;height:10px;fill:#63b3ed;flex-shrink:0\"><path d=\"M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z\"/></svg><span style=\"font-size:11px;color:#63b3ed;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px;\">${data.album}</span><svg viewBox=\"0 0 24 24\" style=\"width:9px;height:9px;fill:#63b3ed;opacity:0.6;flex-shrink:0\"><path d=\"M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z\"/></svg></div></div>` : ''}
+          <div style="font-size:15px;font-weight:700;color:${this._pt('text')};letter-spacing:-0.3px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${trackTitle}</div>
+          <div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:5px;align-items:center;">
+            <div id="ai-track-artist-name" data-artist="${(artistName||''). replace(/"/g,'&quot;')}" style="display:inline-flex;align-items:center;gap:5px;background:rgba(99,179,237,0.1);border:1px solid rgba(99,179,237,0.25);border-radius:20px;padding:4px 10px;cursor:pointer;-webkit-tap-highlight-color:transparent;flex-shrink:0;max-width:160px;overflow:hidden;"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:#63b3ed;flex-shrink:0"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg><span style="font-size:11px;color:#63b3ed;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${artistName}</span></div>
+            ${albumClickHtml}
+          </div>
+
         </div>
       </div>
 
@@ -11261,10 +11708,15 @@ Include ALL tracks. Use null for unknown fields.`;
         if (action === 'play_album') {
           const _alb = btn.dataset.album;
           const _art = btn.dataset.artist;
-          if (_alb) this._playAlbum(_alb, _art);
+          if (_alb) {
+            const _isStreamNow = this._isLiveStream(this._hass?.states[this._entity]);
+            const _albumMode = _isStreamNow ? 'replace' : 'add';
+            this._playAlbum(_alb, _art, _albumMode);
+            this._showToast(_isStreamNow ? '▶ Playing album' : 'Album added to queue');
+          }
           return;
         }
-        if (!isMa && !_barAllMA.length) { this._showToast('Music Assistant required'); return; }
+        if (!_barAllMA.length) { this._showToast('Music Assistant required'); return; }
 
         // Play Now from queue context — never use 'replace' (clears queue).
         // Strategy: if MA has move_queue_item_next and we have a queueItemId, use it
@@ -11327,7 +11779,7 @@ Include ALL tracks. Use null for unknown fields.`;
     });
 
     // Album name click → open AI info for the album
-    const albumLink = content.querySelector('#ai-track-album-link');
+    const albumLink = content.querySelector('#ai-track-album-btn');
     if (albumLink) {
       albumLink.addEventListener('click', () => {
         const albumName   = albumLink.dataset.album;
@@ -11344,20 +11796,7 @@ Include ALL tracks. Use null for unknown fields.`;
           r?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
           content.innerHTML = _savedContent;
           if (titleEl) titleEl.textContent = _savedTitle;
-          // Re-wire the album link on the restored content
-          const _restoredAlbumLink = content.querySelector('#ai-track-album-link');
-          if (_restoredAlbumLink) {
-            _restoredAlbumLink.addEventListener('click', () => {
-              const _an = _restoredAlbumLink.dataset.album;
-              const _aa = _restoredAlbumLink.dataset.artist;
-              const _sc2 = content.innerHTML;
-              this._showAIAlbumTracks(content, _an, _aa, artUrl, () => {
-                r?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
-                content.innerHTML = _sc2;
-                if (titleEl) titleEl.textContent = _savedTitle;
-              });
-            });
-          }
+          this._rewireCastClicks(content, artistName, artUrl);
         });
       });
     }
@@ -11531,6 +11970,10 @@ Include ALL tracks. Use null for unknown fields.`;
       });
     });
 
+    // Store for rewiring after back navigation
+    content.dataset.musicTrackTitle = trackTitle  || '';
+    content.dataset.musicArtistName = artistName  || '';
+    content.dataset.musicTrackYear  = data.year   || '';
     // Wire new music AI features
     this._wireMusicActionRow(content, trackTitle, artistName, data);
     this._loadDayInMusicContext(content, trackTitle, artistName, data.year || null);
@@ -13168,10 +13611,14 @@ Include ALL tracks. Use null for unknown fields.`;
                 // Deduplicate against current queue
                 const _qUrisPipe = self._getQueueUriSet();
                 const _seenPipe = new Set(_qUrisPipe);
+                const _artistCountsPipe = new Map();
+                const _getArtistPipe = t => { const a = t?.artists?.[0]?.name || t?.artist?.name || t?.artist || ''; return typeof a === 'string' ? a.toLowerCase().trim() : ''; };
                 const _dedupedPipe = _allTracks.filter(t => {
                   if (!t?.uri) return false;
                   const k = t.uri.toLowerCase();
                   if (_seenPipe.has(k)) return false;
+                  const artist = _getArtistPipe(t);
+                  if (artist) { const cnt = _artistCountsPipe.get(artist) || 0; if (cnt >= 3) return false; _artistCountsPipe.set(artist, cnt + 1); }
                   _seenPipe.add(k); return true;
                 });
                 if (!_dedupedPipe.length) { localTracks = []; return; }
@@ -13278,10 +13725,14 @@ Include ALL tracks. Use null for unknown fields.`;
               }
               const _qUrisDecade = self._getQueueUriSet();
               const _seenDecade = new Set(_qUrisDecade);
+              const _artistCountsDecade = new Map();
+              const _getArtistDecade = t => { const a = t?.artists?.[0]?.name || t?.artist?.name || t?.artist || ''; return typeof a === 'string' ? a.toLowerCase().trim() : ''; };
               const _dedupedDecade = _decadeBgTracks.filter(t => {
                 if (!t?.uri) return false;
                 const k = t.uri.toLowerCase();
                 if (_seenDecade.has(k)) return false;
+                const artist = _getArtistDecade(t);
+                if (artist) { const cnt = _artistCountsDecade.get(artist) || 0; if (cnt >= 3) return false; _artistCountsDecade.set(artist, cnt + 1); }
                 _seenDecade.add(k); return true;
               });
               (async () => {
@@ -13624,6 +14075,45 @@ Include ALL tracks. Use null for unknown fields.`;
     closeBtn.addEventListener('click', () => { overlay.remove(); maPopup.classList.remove('visible'); });
     wireMoodBtns(scrollDiv);
 
+    // Option C: Pre-warm artist URIs while user browses the mood grid
+    (async () => {
+      const _cid = await this._getMAConfigEntryId().catch(() => null);
+      if (!_cid || !this._moodArtistUriCache) return;
+      const _uncached = [];
+      const _seen = new Set();
+      for (const m of moods) {
+        const _seeds = Array.isArray(m.maSearch) ? m.maSearch : [m.maSearch || m.query];
+        const _primary = _seeds[0];
+        if (_primary && !this._moodArtistUriCache.has(_primary) && !_seen.has(_primary)) {
+          _seen.add(_primary);
+          _uncached.push(_primary);
+        }
+      }
+      for (let i = 0; i < Math.min(_uncached.length, 8); i++) {
+        const seed = _uncached[i];
+        await new Promise(res => setTimeout(res, i * 300));
+        if (!maPopup.classList.contains('visible')) return;
+        try {
+          const res = await self._hass.connection.sendMessagePromise({
+            type: 'call_service', domain: 'music_assistant', service: 'search',
+            service_data: { config_entry_id: _cid, name: seed, media_type: 'artist', limit: 1 },
+            return_response: true
+          });
+          const artists = res?.response?.artists || (Array.isArray(res?.response) ? res.response : []);
+          const uri = Array.isArray(artists) ? artists[0]?.uri : null;
+          if (uri) {
+            this._moodArtistUriCache.set(seed, uri);
+            this._aiLocalSet('moodUriCache', seed.toLowerCase(), uri);
+          }
+        } catch(_) {}
+      }
+      try {
+        const cacheObj = {};
+        this._moodArtistUriCache.forEach((v, k) => { cacheObj[k] = v; });
+        sessionStorage.setItem('crow_mood_uri_cache', JSON.stringify(cacheObj));
+      } catch(_) {}
+    })();
+
     // ── Search filter logic ──────────────────────────────────────────────────
     const _applyFilter = (q) => {
       const term = q.trim().toLowerCase();
@@ -13899,7 +14389,18 @@ Include ALL tracks. Use null for unknown fields.`;
           if (!blobUrl || _stale()) return;
           const artEl = content.querySelector(`.artist-radio-art[data-art-idx="${i}"]`);
           if (artEl && !artEl.querySelector('img')) {
-            artEl.innerHTML = `<img src="${blobUrl}" alt="${a.name}" style="width:100%;height:100%;object-fit:cover;display:block;">`;
+            const _aImg = document.createElement('img');
+            _aImg.src = blobUrl;
+            _aImg.alt = a.name;
+            _aImg.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;border-radius:50%;';
+            _aImg.onerror = () => {
+              // Evict dead blob from cache so next render re-fetches
+              if (this._wikiBlobCache?.has(a.name)) this._wikiBlobCache.delete(a.name);
+              if (this._castPhotoCache?.has(a.name)) this._castPhotoCache.delete(a.name);
+              artEl.innerHTML = '<svg viewBox="0 0 24 24" style="width:22px;height:22px;fill:rgba(255,255,255,0.3)"><path d="M12,4A4,4 0 0,1 16,8A4,4 0 0,1 12,12A4,4 0 0,1 8,8A4,4 0 0,1 12,4M12,14C16.42,14 20,15.79 20,18V20H4V18C4,15.79 7.58,14 12,14Z"/></svg>';
+            };
+            artEl.innerHTML = '';
+            artEl.appendChild(_aImg);
           }
         });
       }, i * 400);
@@ -14698,9 +15199,12 @@ Include ALL tracks. Use null for unknown fields.`;
     // 1. Use series title if available (Apple TV sends episode title in media_title)
     // 2. Strip trailing year in brackets e.g. "Heat (1995)" → "Heat"
     // 3. Strip episode subtitle after dash or colon e.g. "Doctor Who: Twice Upon a Time" → "Doctor Who"
+    // Use title verbatim if it came from media_series_title (already the clean show name).
+    // Only strip colon-subtitles when falling back to media_title (e.g. episode titles).
+    const _isSeriesTitle = !!(this._hass?.states[this._entity]?.attributes?.media_series_title);
     let cleanTitle = title
-      .replace(/\s*\(\d{4}\)\s*$/, '')          // strip trailing year "(1995)"
-      .replace(/\s*[-:]\s*[^-:]+$/, '')          // strip subtitle after - or :
+      .replace(/\s*\(\d{4}\)\s*$/, '')                          // always strip trailing year
+      .replace(_isSeriesTitle ? /(?!)/ : /\s*[-:]\s*[^-:]+$/, '') // only strip colon if not series title
       .trim() || title;
 
     r?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
@@ -14713,7 +15217,7 @@ Include ALL tracks. Use null for unknown fields.`;
     const hasAI = await this._aiCheckAvailable();
     if (!hasAI) { this._aiShowNoAgentBanner(popup); return; }
 
-    const cacheKey = ('videoinfo|' + cleanTitle).toLowerCase();
+    const cacheKey = ('videoinfo3|' + cleanTitle).toLowerCase(); // v2: preserves series title colons
     if (!this._aiVideoInfoCache) this._aiVideoInfoCache = new Map();
     if (!this._aiVideoInfoCache.has(cacheKey)) {
       const _lsPersisted = this._aiLocalGet('videoInfo', cacheKey);
@@ -14742,7 +15246,12 @@ Include ALL tracks. Use null for unknown fields.`;
         return;
       }
 
-      const prompt = 'You are a movie and TV encyclopedia with knowledge up to 2024. I need information about "' + cleanTitle + '". CRITICAL: You MUST use your training knowledge to answer this. Do NOT say you cannot access the internet. You have extensive knowledge of movies and TV shows. Return up to 5 entries as a raw JSON array. For titles with multiple versions (e.g. Doctor Who 1963 + 2005), include both. Start with [ end with ]. Include up to 15 cast members, a "fun_fact" string with one genuinely interesting or surprising fact, and a "similar" array of 4 similar titles. Movie: [{"type":"movie","title":"Heat","year":"1995","genres":["Crime"],"rating":"8.3","overview":"...","cast":["Al Pacino"],"director":"Michael Mann","status":"Released","vibe":"Intense","fun_fact":"Al Pacino and Robert De Niro share only one scene together.","similar":[{"title":"Michael Mann\'s Collateral","year":"2004","type":"movie"},{"title":"Heat 2","year":"2022","type":"movie"}]}] TV: [{"type":"tv","title":"Doctor Who","year":"2005","genres":["Sci-Fi"],"rating":"8.6","overview":"...","cast":["David Tennant"],"seasons":14,"status":"Continuing","vibe":"Epic","fun_fact":"The show originally ran from 1963 to 1989 before being revived in 2005.","similar":[{"title":"Torchwood","year":"2006","type":"tv"},{"title":"The Sarah Jane Adventures","year":"2007","type":"tv"}]}] If truly unknown return [].';
+      // If we have a series title, add specificity to avoid returning sibling shows
+      const _isTVContext = !!attrs.media_series_title;
+      const _exactInstruction = _isTVContext
+        ? 'IMPORTANT: Return ONLY the exact show "' + cleanTitle + '" — do NOT include other shows in the same franchise, spin-offs, or related series. Return exactly 1 entry.'
+        : 'For titles with multiple versions (e.g. Doctor Who 1963 + 2005), include both. Return up to 5 entries.';
+      const prompt = 'You are a movie and TV encyclopedia with knowledge up to 2024. I need information about "' + cleanTitle + '". CRITICAL: You MUST use your training knowledge to answer this. Do NOT say you cannot access the internet. ' + _exactInstruction + ' Return as a raw JSON array. Start with [ end with ]. Include up to 15 cast members, a "fun_fact" string with one genuinely interesting or surprising fact, and a "similar" array of 4 similar titles. Movie: [{"type":"movie","title":"Heat","year":"1995","genres":["Crime"],"rating":"8.3","overview":"...","cast":["Al Pacino"],"director":"Michael Mann","status":"Released","vibe":"Intense","fun_fact":"Al Pacino and Robert De Niro share only one scene together.","similar":[{"title":"Michael Mann\'s Collateral","year":"2004","type":"movie"},{"title":"Heat 2","year":"2022","type":"movie"}]}] TV: [{"type":"tv","title":"Doctor Who","year":"2005","genres":["Sci-Fi"],"rating":"8.6","overview":"...","cast":["David Tennant"],"seasons":14,"status":"Continuing","vibe":"Epic","fun_fact":"The show originally ran from 1963 to 1989 before being revived in 2005.","similar":[{"title":"Torchwood","year":"2006","type":"tv"},{"title":"The Sarah Jane Adventures","year":"2007","type":"tv"}]}] If truly unknown return [].' ;
 
       try {
         const resp = await this._hass.connection.sendMessagePromise({
@@ -14836,19 +15345,41 @@ Include ALL tracks. Use null for unknown fields.`;
     // Render immediately with placeholders so list is responsive
     renderList(null);
 
-    // Pre-fetch all artwork in parallel — all results fire simultaneously
-    const artUrls = await Promise.all(
-      results.map(r => this._fetchVideoArtWithWiki(r.title, r.year, r.type || 'movie').catch(() => null))
-    );
-
-    // If any artwork was found, re-render with images baked in
-    if (artUrls.some(u => u)) renderList(artUrls);
-    else {
-      // No immediate hits — use staggered retry on the placeholder list
-      results.forEach((r, i) => {
-        this._fetchVideoArtWithRetry(content, r.title, r.year, r.type || 'movie', `[id="picker-art-${i}"]`, 3, i * 400);
+    // Ask the AI for precise, unambiguous image search queries for each result
+    // then use those to fetch artwork — avoids franchise/disambiguation collisions
+    let artUrls = new Array(results.length).fill(null);
+    try {
+      const agentId = this._config?.ai_conversation_agent || '';
+      const pickerPrompt = 'For each of these movies/TV shows, give me the most specific and unambiguous Wikipedia article title that would show its poster/thumbnail. Return ONLY a JSON array of strings, one per item, in the same order. Example: ["Star Trek (film)", "Star Trek: The Next Generation", "Doctor Who (2005 TV series)"]. Items: '
+        + results.map((r, i) => `${i+1}. "${r.title}" (${r.year}, ${r.type === 'tv' ? 'TV series' : 'movie'})`).join(', ');
+      const resp = await this._hass.connection.sendMessagePromise({
+        type: 'conversation/process', text: pickerPrompt,
+        agent_id: agentId, language: navigator.language || 'en'
       });
+      const raw = resp?.response?.speech?.plain?.speech || '';
+      const start = raw.indexOf('['), end = raw.lastIndexOf(']');
+      if (start !== -1 && end > start) {
+        const queries = JSON.parse(raw.slice(start, end + 1));
+        if (Array.isArray(queries)) {
+          // Fetch artwork in parallel using AI-provided precise queries
+          artUrls = await Promise.all(
+            queries.map((q, i) => {
+              const r = results[i];
+              const searchTitle = (typeof q === 'string' && q) ? q : (r.title + (r.year ? ' (' + r.year + ')' : ''));
+              return this._fetchVideoArtWithWiki(searchTitle, r.year, r.type || 'movie').catch(() => null);
+            })
+          );
+        }
+      }
+    } catch(_) {
+      // AI query failed — fall back to standard title-based fetch
+      artUrls = await Promise.all(
+        results.map(r => this._fetchVideoArtWithWiki(r.title, r.year, r.type || 'movie').catch(() => null))
+      );
     }
+
+    // Re-render with artwork
+    if (artUrls.some(u => u)) renderList(artUrls);
 
     const self = this;
     content.querySelectorAll('.video-picker-item').forEach(el => {
@@ -14858,7 +15389,6 @@ Include ALL tracks. Use null for unknown fields.`;
           if (!this._aiVideoInfoSelectedCache) this._aiVideoInfoSelectedCache = new Map();
           this._aiVideoInfoSelectedCache.set(cacheKey, idx);
         }
-        // Use the pre-fetched art URL directly — no re-fetch needed
         const selectedArt = artUrls[idx] || artUrl;
         self._renderVideoInfoDetail(content, results[idx], selectedArt);
       });
@@ -14868,12 +15398,15 @@ Include ALL tracks. Use null for unknown fields.`;
   _renderVideoInfoDetail(content, data, artUrl) {
     content.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
     if (!data) return;
+    // Store for rewiring after back navigation from bio/seasons
+    content.dataset.videoDataJson = JSON.stringify(data);
+    content.dataset.videoArtUrl   = artUrl || '';
     const genreTags = (data.genres || []).slice(0, 3).map(g => `<span class="info-tag">${g}</span>`).join('');
     const _seasonsCount = data.type === 'tv' && data.seasons ? data.seasons : 0;
     const metaItems = [data.year, data.status].filter(Boolean);
     // Seasons rendered as a separate tappable button if available — see #tv-seasons-btn below
     const ratingHtml = data.rating ? `<div style="display:inline-flex;align-items:center;gap:6px;margin:4px 0;"><svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:#FFD60A"><path d="M12,17.27L18.18,21L16.54,13.97L22,9.24L14.81,8.62L12,2L9.19,8.62L2,9.24L7.46,13.97L5.82,21L12,17.27Z"/></svg><span style="font-size:13px;font-weight:600;color:#FFD60A">${data.rating}</span><span style="font-size:11px;color:${this._pt("dim")}">/ 10</span></div>` : '';
-    const directorHtml = data.director ? `<div id="video-director-link" data-director="${(data.director||'').replace(/"/g,'&quot;')}" style="font-size:11px;color:#63b3ed;margin-top:4px;cursor:pointer;-webkit-tap-highlight-color:transparent;">Dir. ${data.director}</div>` : '';
+    const directorHtml = data.director ? `<div style="margin-top:6px;width:fit-content;max-width:100%;"><div id="video-director-link" data-director="${(data.director||''). replace(/"/g,'&quot;')}" style="display:inline-flex;align-items:center;gap:5px;background:rgba(99,179,237,0.1);border:1px solid rgba(99,179,237,0.25);border-radius:20px;padding:3px 9px;cursor:pointer;-webkit-tap-highlight-color:transparent;max-width:100%;overflow:hidden;"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:#63b3ed;flex-shrink:0"><path d="M18 4l2 4h-3l-2-4h-2l2 4h-3l-2-4h-2l2 4H7L5 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V4h-4z"/></svg><span style="font-size:11px;color:#63b3ed;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Dir. ${data.director}</span></div></div>` : '';
 
     // Hero art — always start with a spinner; iTunes fetch replaces it with the
     // correct poster. Never use the entity picture as a placeholder because HA's
@@ -15119,12 +15652,12 @@ Include ALL tracks. Use null for unknown fields.`;
       img.src = blobUrl;
       img.alt = name;
       img.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:50%;';
-      img.addEventListener('error', () => {
-        // The cached blob URL is dead (likely revoked elsewhere) — evict it so
-        // a future lookup re-fetches instead of returning the same dead URL.
-        if (this._wikiBlobCache?.get(name) === blobUrl) this._wikiBlobCache.delete(name);
+      img.onerror = () => {
+        // The cached blob URL is dead — evict from all caches so next render re-fetches
+        if (this._wikiBlobCache?.has(name)) this._wikiBlobCache.delete(name);
+        if (this._castPhotoCache?.has(name)) this._castPhotoCache.delete(name);
         photoEl.innerHTML = _castFallbackSvg;
-      });
+      };
       photoEl.innerHTML = '';
       photoEl.appendChild(img);
       // Note: no lightbox tap here — these are cast GRID thumbnails, tapping
@@ -16141,6 +16674,18 @@ Include ALL tracks. Use null for unknown fields.`;
             <div style="font-size:10px;font-weight:700;color:#63b3ed;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:5px;">✨ Fun Fact</div>
             <div style="font-size:13px;color:${this._pt("text")};line-height:1.5;">${bio.fun_fact}</div>
           </div>` : ''}
+        <div id="bio-action-row" style="display:flex;gap:8px;margin:14px 0 8px;">
+          <button id="bio-ask-btn" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:9px 12px;border-radius:12px;background:${this._pt('btnBg')};border:1px solid ${this._pt('border')};color:${this._pt('text')};font-size:12px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;-webkit-tap-highlight-color:transparent;">
+            <svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:rgba(99,179,237,0.8);flex-shrink:0"><path d="M20,2H4A2,2 0 0,0 2,4V22L6,18H20A2,2 0 0,0 22,16V4A2,2 0 0,0 20,2M6,9H18V11H6V9M14,14H6V12H14V14M18,8H6V6H18V8Z"/></svg>
+            Ask
+          </button>
+          <button id="bio-trivia-btn" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:9px 12px;border-radius:12px;background:${this._pt('btnBg')};border:1px solid ${this._pt('border')};color:${this._pt('text')};font-size:12px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;-webkit-tap-highlight-color:transparent;">
+            <svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:rgba(99,179,237,0.8);flex-shrink:0"><path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"/></svg>
+            Trivia
+          </button>
+        </div>
+        <div id="bio-ask-panel" style="display:none;margin-bottom:12px;"></div>
+        <div id="bio-trivia-panel" style="display:none;margin-bottom:12px;"></div>
         ${bio?.known_for?.length ? `
           <div class="info-section-label">Known For</div>
           <div id="cast-known-for-list">
@@ -16176,18 +16721,6 @@ Include ALL tracks. Use null for unknown fields.`;
                 </div>`;
               }
             }).join('')}
-        <div id="bio-action-row" style="display:flex;gap:8px;margin:14px 0 8px;">
-          <button id="bio-ask-btn" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:9px 12px;border-radius:12px;background:${this._pt("btnBg")};border:1px solid ${this._pt("border")};color:${this._pt("text")};font-size:12px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;-webkit-tap-highlight-color:transparent;">
-            <svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:rgba(99,179,237,0.8);flex-shrink:0"><path d="M20,2H4A2,2 0 0,0 2,4V22L6,18H20A2,2 0 0,0 22,16V4A2,2 0 0,0 20,2M6,9H18V11H6V9M14,14H6V12H14V14M18,8H6V6H18V8Z"/></svg>
-            Ask
-          </button>
-          <button id="bio-trivia-btn" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:9px 12px;border-radius:12px;background:${this._pt("btnBg")};border:1px solid ${this._pt("border")};color:${this._pt("text")};font-size:12px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;-webkit-tap-highlight-color:transparent;">
-            <svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:rgba(99,179,237,0.8);flex-shrink:0"><path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"/></svg>
-            Trivia
-          </button>
-        </div>
-        <div id="bio-ask-panel" style="display:none;margin-bottom:12px;"></div>
-        <div id="bio-trivia-panel" style="display:none;margin-bottom:12px;"></div>
           </div>` : ''}`;
 
       content.querySelector('#cast-bio-back').addEventListener('click', () => {
@@ -16594,7 +17127,7 @@ Include ALL tracks. Use null for unknown fields.`;
       });
     }
 
-    // Re-wire artist name link (music AI panel)
+    // Re-wire artist name pill (music AI panel)
     const artistNameEl = content.querySelector('#ai-track-artist-name');
     if (artistNameEl) {
       let _artLpTimer = null, _artLpFired = false;
@@ -16610,6 +17143,50 @@ Include ALL tracks. Use null for unknown fields.`;
         if (_artLpFired) { _artLpFired = false; return; }
         self._showCastBio(content, artistNameEl.dataset.artist, showTitle, artUrl);
       });
+    }
+
+    // Re-wire album pill (music AI panel)
+    const albumPillEl = content.querySelector('#ai-track-album-btn');
+    if (albumPillEl) {
+      const r2 = self.shadowRoot;
+      const titleEl2 = r2?.getElementById('infoPopupTitle') || r2?.getElementById('infoTitle') || r2?.querySelector('.info-popup-title');
+      albumPillEl.addEventListener('click', () => {
+        const albumName   = albumPillEl.dataset.album;
+        const albumArtist = albumPillEl.dataset.artist;
+        if (!self._albumPillTapped) self._albumPillTapped = new Set();
+        self._albumPillTapped.add((albumName + '|' + albumArtist).toLowerCase());
+        const _savedContent2 = content.innerHTML;
+        const _savedTitle2   = titleEl2?.textContent || '✨ AI Info';
+        if (titleEl2) titleEl2.textContent = '💿 Album';
+        self._showAIAlbumTracks(content, albumName, albumArtist, artUrl, () => {
+          r2?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
+          content.innerHTML = _savedContent2;
+          if (titleEl2) titleEl2.textContent = _savedTitle2;
+          self._rewireCastClicks(content, showTitle, artUrl);
+        });
+      });
+    }
+
+    // Re-wire Ask / Meaning / Trivia action row + Year box (music AI panel)
+    const _storedTrack  = content.dataset.musicTrackTitle;
+    const _storedArtist = content.dataset.musicArtistName;
+    const _storedYear   = content.dataset.musicTrackYear || '';
+    if (_storedTrack && content.querySelector('#music-ask-btn')) {
+      const _storedData = { year: _storedYear };
+      self._wireMusicActionRow(content, _storedTrack, _storedArtist, _storedData);
+    }
+    if (_storedYear && content.querySelector('#music-year-box')) {
+      self._loadDayInMusicContext(content, _storedTrack, _storedArtist, _storedYear);
+    }
+
+    // Re-wire video info panel (director, seasons, cast, ratings, content warnings)
+    if (content.dataset.videoDataJson && !_storedTrack) {
+      try {
+        const _vData  = JSON.parse(content.dataset.videoDataJson);
+        const _vArt   = content.dataset.videoArtUrl || artUrl || '';
+        // Re-render fully — this rewires all interactive elements
+        self._renderVideoInfoDetail(content, _vData, _vArt);
+      } catch(_) {}
     }
   }
 
@@ -16879,7 +17456,13 @@ Include ALL tracks. Use null for unknown fields.`;
       // poller, reopening the panel) reuses it with zero network calls, instead
       // of re-downloading the same image bytes from Wikimedia's CDN each time.
       if (!this._wikiBlobCache) this._wikiBlobCache = new Map();
-      if (this._wikiBlobCache.has(name)) return this._wikiBlobCache.get(name);
+      if (this._wikiBlobCache.has(name)) {
+        const _cachedBlob = this._wikiBlobCache.get(name);
+        // Quick validity check — attempt to create an object URL test
+        // (null/undefined means it was evicted by an onerror handler)
+        if (_cachedBlob) return _cachedBlob;
+        this._wikiBlobCache.delete(name);
+      }
 
       // Cache the Wikipedia remote URL (step 1) separately so retries only
       // need to re-run the blob download (step 2) rather than both fetches.
@@ -17333,6 +17916,7 @@ Include ALL tracks. Use null for unknown fields.`;
 
 
   _buildTabActionBar(content, tab) {
+    if (tab === 'radio') return; // No action bar for radio — stations play individually
     const bar = document.createElement('div');
     bar.className = 'ma-drill-actions';
     const showMood = this._maEntityIds?.size > 0 && ['favourites','recommended','album','track'].includes(tab);
@@ -19105,7 +19689,7 @@ Include ALL tracks. Use null for unknown fields.`;
         service_data: { entity_id: resolvedEntity, media_id: uri, media_type: 'track', enqueue: enqueueMode, ...(enqueueMode === 'replace' && this._config?.ma_radio_mode ? { radio_mode: true } : {}) }
       });
       const _spkName2 = this._hass?.states[resolvedEntity]?.attributes?.friendly_name || resolvedEntity;
-      const labels = { add: `Added to queue on ${_spkName2}`, next: `Playing next on ${_spkName2}` };
+      const labels = { replace: `▶ Playing now on ${_spkName2}`, add: `Added to queue on ${_spkName2}`, next: `Playing next on ${_spkName2}` };
       if (labels[enqueueMode]) this._showToast(labels[enqueueMode]);
     } catch (err) {
       const msg = (err?.message || err?.error?.message || String(err)).toLowerCase();
@@ -19223,12 +19807,23 @@ Include ALL tracks. Use null for unknown fields.`;
 
   // Filters a track array against the queue + itself to remove duplicates.
   // Mutates nothing — returns a new array.
-  _dedupeTracksForQueue(tracks) {
+  _dedupeTracksForQueue(tracks, maxPerArtist = 3) {
     const existing = this._getQueueUriSet();
     const seen = new Set(existing);
+    const artistCounts = new Map();
+    const _getArtist = t => {
+      const a = (t?.artists?.[0]?.name || t?.artist?.name || t?.artist || '');
+      return typeof a === 'string' ? a.toLowerCase().trim() : '';
+    };
     return tracks.filter(t => {
       const uri = t?.uri || t?.item_id || '';
       if (!uri || seen.has(uri)) return false;
+      const artist = _getArtist(t);
+      if (artist) {
+        const count = artistCounts.get(artist) || 0;
+        if (count >= maxPerArtist) return false;
+        artistCounts.set(artist, count + 1);
+      }
       seen.add(uri);
       return true;
     });
@@ -19283,7 +19878,6 @@ Include ALL tracks. Use null for unknown fields.`;
 
     if (this._queueReorderMode) {
       this._setupQueueDrag(content);
-      this._resetReorderIdleTimer(); // start 7s idle timer
     } else {
       clearTimeout(this._reorderIdleTimer);
       this._reorderIdleTimer = null;
@@ -19476,6 +20070,7 @@ Include ALL tracks. Use null for unknown fields.`;
 
       var _gr = dragClone.querySelector('.queue-row');
       if (_gr) _gr.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 4px;width:100%;';
+      dragClone.id = 'queue-drag-clone-active';
       document.body.appendChild(dragClone);
     };
 
@@ -19488,7 +20083,7 @@ Include ALL tracks. Use null for unknown fields.`;
       content.style.touchAction = ''; // restore scroll
     };
 
-    const onUp = () => { if (dragging) onEnd(); };
+    const onUp = () => { if (dragging) onEnd(); else if (dragClone) { dragClone.remove(); dragClone = null; } };
 
     content.addEventListener('pointerdown',   onDown,   { passive: false });
     content.addEventListener('pointermove',   onMove,   { passive: true  });
@@ -19500,6 +20095,10 @@ Include ALL tracks. Use null for unknown fields.`;
   }
 
   _teardownQueueDrag(content) {
+    const _orphan = document.getElementById('queue-drag-clone-active');
+    if (_orphan) _orphan.remove();
+    if (content._dragVisHandler)  { document.removeEventListener('visibilitychange', content._dragVisHandler); content._dragVisHandler = null; }
+    if (content._dragBlurHandler) { window.removeEventListener('blur', content._dragBlurHandler); content._dragBlurHandler = null; }
     const L = content._dragListeners;
     if (!L) return;
     content.removeEventListener('pointerdown',   L.onDown);
@@ -19527,8 +20126,6 @@ Include ALL tracks. Use null for unknown fields.`;
 
     const _cleanup = () => {
       this._queueReordering = false;
-      // Reset the idle timer — user just finished a drag, give them another 7s
-      this._resetReorderIdleTimer();
     };
 
     if (!isMa) {
@@ -20708,7 +21305,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
         <div>
           <div class="section-title">Caches</div>
           <div class="card-block" style="padding:12px;">
-            <button id="clear-all-caches-btn" style="width:100%;padding:10px;font-size:13px;font-weight:600;color:#ff453a;background:rgba(255,69,58,0.08);border:1px solid rgba(255,69,58,0.25);border-radius:10px;cursor:pointer;font-family:inherit;margin-bottom:14px;">🗑 Clear All Caches</button>
+            <button id="clear-all-caches-btn" style="width:100%;padding:10px;font-size:13px;font-weight:600;color:#ff453a;background:rgba(255,69,58,0.08);border:1px solid rgba(255,69,58,0.25);border-radius:10px;cursor:pointer;font-family:inherit;margin-bottom:14px;">🗑 Clear Caches</button>
 
             <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,0.07);">
               <div>
@@ -21727,7 +22324,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       dayMusicCacheClearBtn.textContent = '✓'; setTimeout(() => { dayMusicCacheClearBtn.textContent = 'Clear'; }, 2000);
     });
 
-    // ── Clear All Caches ──────────────────────────────────────────────────────
+    // ── Clear Caches ──────────────────────────────────────────────────────────
     const clearAllBtn = root.getElementById('clear-all-caches-btn');
     if (clearAllBtn) {
       clearAllBtn.addEventListener('click', () => {
@@ -21756,7 +22353,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
             '_aiAlbumTracksCache', '_aiVideoInfoCache', '_aiVideoInfoSelectedCache',
             '_aiSimilarArtistsCache', '_aiSearchResultCache', '_aiPromptCache',
             '_tvEpCountCache', '_tvEpisodesCache', '_tvEpDetailCache', '_tvActorCache',
-            '_entityRegistryCache', '_deviceRegistryCache', '_areaRegistryCache',
+            // '_entityRegistryCache', '_deviceRegistryCache', '_areaRegistryCache', // handled explicitly below as null
             '_maLibMemCache', '_drillInCache', '_maImageCache', '_maRootCache', '_maTabRenderCache',
             '_lyricsCache', '_moodArtistUriCache', '_moodLibraryCache', '_queueDataCache', '_appIconCache',
             '_aiWtwCache', '_aiCwCache', '_aiMoodCache', '_aiTriviaCache', '_aiMusicTriviaCache',
@@ -21768,12 +22365,25 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
             _cacheKeys.forEach(k => { if (el[k]) el[k] = el[k] instanceof Map ? new Map() : {}; });
             el._aiAvailable = undefined;
             el._maConfigEntryId = null;
+            // Registry caches must be null (not empty Map) so the getter re-fetches
+            el._entityRegistryCache = null;
+            el._deviceRegistryCache = null;
+            el._areaRegistryCache   = null;
+            el._maConfigEntryId     = null;
           });
+
+          // Explicitly clear registry sessionStorage keys (belt-and-braces)
+          ['crow_entity_registry','crow_device_registry','crow_area_registry','crow_ma_config_entry_id'].forEach(k => {
+            try { sessionStorage.removeItem(k); } catch(_) {}
+          });
+          // Refresh the registry status display
+          const _regStatus = root.getElementById('registry-cache-status');
+          if (_regStatus) _regStatus.textContent = 'Not yet cached';
 
           clearAllBtn.textContent = `✓ Cleared ${n} cache entries`;
           clearAllBtn.style.cssText += ';color:#30d158;border-color:rgba(48,209,88,0.3);background:rgba(48,209,88,0.1);';
           setTimeout(() => {
-            clearAllBtn.textContent = '🗑 Clear All Caches';
+            clearAllBtn.textContent = '🗑 Clear Caches';
             clearAllBtn.style.color = '';
             clearAllBtn.style.borderColor = '';
             clearAllBtn.style.background = '';
