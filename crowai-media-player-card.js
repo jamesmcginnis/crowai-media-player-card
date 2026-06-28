@@ -151,6 +151,20 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       }
     } catch (_) {}
 
+    // Restore podcast now-playing from localStorage (survives page refresh)
+    try {
+      const _pnp = localStorage.getItem('crow_pc_now_playing');
+      if (_pnp) {
+        const parsed = JSON.parse(_pnp);
+        // Only restore if set within the last 24 hours — stale entries are useless
+        if (parsed?.ts && (Date.now() - parsed.ts) < 24 * 3600 * 1000) {
+          this._pcNowPlaying = parsed;
+        } else {
+          localStorage.removeItem('crow_pc_now_playing');
+        }
+      }
+    } catch(_) {}
+
 
     // Option 1: subscribe to mass_queue events as soon as hass + connection are ready
     if (!this._maQueueEventSub && this._hass?.connection &&
@@ -3396,6 +3410,14 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             </div>
           </div>
 
+          <!-- Podcast badge (top-left of artwork) — shown when a podcast episode is playing on MA -->
+          <div id="podcastBadge" style="display:none;position:absolute;top:10px;left:10px;z-index:21;cursor:pointer;-webkit-tap-highlight-color:transparent;">
+            <div style="display:inline-flex;align-items:center;gap:5px;background:rgba(0,0,0,0.58);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.18);border-radius:20px;padding:4px 9px 4px 7px;">
+              <svg viewBox="0 0 24 24" style="width:9px;height:9px;fill:#BF5AF2;flex-shrink:0;"><path d="M12,2A3,3 0 0,1 15,5V11A3,3 0 0,1 12,14A3,3 0 0,1 9,11V5A3,3 0 0,1 12,2M19,11C19,14.53 16.39,17.44 13,17.93V21H11V17.93C7.61,17.44 5,14.53 5,11H7A5,5 0 0,0 12,16A5,5 0 0,0 17,11H19Z"/></svg>
+              <span style="font-size:11px;font-weight:700;color:rgba(255,255,255,0.9);letter-spacing:0.5px;font-family:-apple-system,BlinkMacSystemFont,sans-serif;">PODCAST</span>
+            </div>
+          </div>
+
           <!-- Radio mode indicator (top-left of artwork) — shown when MA radio mode is active -->
           <div id="radioModeIndicator" style="display:none;position:absolute;top:10px;left:10px;z-index:20;width:28px;height:28px;border-radius:50%;background:rgba(0,0,0,0.55);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);border:1px solid rgba(255,255,255,0.25);align-items:center;justify-content:center;" title="Radio Mode On">
             <svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:${this._pt("text")};display:block;"><path d="M19,6.41L4.86,2.28L4.29,4.2L7,5V7H5A2,2 0 0,0 3,9V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V9A2,2 0 0,0 19,7H9V5.75L19,8.55V6.41M7,9A2,2 0 0,1 9,11A2,2 0 0,1 7,13A2,2 0 0,1 5,11A2,2 0 0,1 7,9M17,18H7V16H17V18M19,14H11V10H19V14Z"/></svg>
@@ -4255,7 +4277,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
                 this._config = { ...this._config, ma_radio_mode: newVal };
                 try { localStorage.setItem('crow_radio_mode', newVal ? '1' : '0'); } catch (_) {}
                 this.dispatchEvent(new CustomEvent('config-changed', { detail: { config: { ...this._config } }, bubbles: true, composed: true }));
-                this._updateRadioIndicator(); this._updateLiveStationBadge();
+                this._updateRadioIndicator(); this._updateLiveStationBadge(); this._updatePodcastBadge();
                 const _qb = this.shadowRoot?.getElementById('btnQueueOpen');
                 if (_qb) _qb.classList.toggle('active', !!newVal);
                 if (newVal) {
@@ -4275,7 +4297,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
                       this._config = { ...this._config, ma_radio_mode: false };
                       try { localStorage.setItem('crow_radio_mode', '0'); } catch (_) {}
                       this.dispatchEvent(new CustomEvent('config-changed', { detail: { config: { ...this._config } }, bubbles: true, composed: true }));
-                      this._updateRadioIndicator(); this._updateLiveStationBadge();
+                      this._updateRadioIndicator(); this._updateLiveStationBadge(); this._updatePodcastBadge();
                       const _qbOff = this.shadowRoot?.getElementById('btnQueueOpen');
                       if (_qbOff) _qbOff.classList.remove('active');
                       // Return to artwork panel and restore artwork
@@ -5187,7 +5209,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
                       this._config = { ...this._config, ma_radio_mode: false };
                       try { localStorage.setItem('crow_radio_mode', '0'); } catch (_) {}
                       this.dispatchEvent(new CustomEvent('config-changed', { detail: { config: { ...this._config } }, bubbles: true, composed: true }));
-                      this._updateRadioIndicator(); this._updateLiveStationBadge();
+                      this._updateRadioIndicator(); this._updateLiveStationBadge(); this._updatePodcastBadge();
                       const _qbOff = this.shadowRoot?.getElementById('btnQueueOpen');
                       if (_qbOff) _qbOff.classList.remove('active');
                       // Return to artwork panel and restore artwork
@@ -5203,7 +5225,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             }
           }
           // Show friendly notification overlay
-          this._updateRadioIndicator(); this._updateLiveStationBadge();
+          this._updateRadioIndicator(); this._updateLiveStationBadge(); this._updatePodcastBadge();
           const _qb3 = this.shadowRoot?.getElementById('btnQueueOpen');
           if (_qb3) _qb3.classList.toggle('active', !!newVal);
         });
@@ -5414,7 +5436,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           this._config = { ...this._config, ma_radio_mode: false };
           try { localStorage.setItem('crow_radio_mode', '0'); } catch (_) {}
           this.dispatchEvent(new CustomEvent('config-changed', { detail: { config: { ...this._config } }, bubbles: true, composed: true }));
-          this._updateRadioIndicator(); this._updateLiveStationBadge();
+          this._updateRadioIndicator(); this._updateLiveStationBadge(); this._updatePodcastBadge();
         });
         // Auto-dismiss after 6 seconds
         setTimeout(() => { if (r.getElementById('radioCancelConfirm')) dismiss(); }, 6000);
@@ -5545,7 +5567,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const isPlaying = state.state === 'playing';
 
     // Radio mode indicator icon
-    this._updateRadioIndicator(); this._updateLiveStationBadge();
+    this._updateRadioIndicator(); this._updateLiveStationBadge(); this._updatePodcastBadge();
+    this._pcCheckNowPlaying(this._hass?.states[this._entity]);
     // Queue/menu button tinted accent when radio mode is on
     const _qBtn = r.getElementById('btnQueueOpen');
     if (_qBtn) _qBtn.classList.toggle('active', !!(this._config?.ma_radio_mode));
@@ -7735,13 +7758,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         rr.getElementById('maTabs')?.setAttribute('style', 'display:none');
         rr.querySelector('.ma-search-row')?.setAttribute('style', 'display:none');
         // Only show iOS search bar for the four main searchable types
-        const _searchableTabs = new Set(['artist', 'album', 'track', 'playlist', 'radio']);
+        const _searchableTabs = new Set(['artist', 'album', 'track', 'playlist', 'radio', 'podcast']);
         const _iosBar = rr.getElementById('maIosSearchBar');
         if (_iosBar) _iosBar.classList.toggle('hidden', !_searchableTabs.has(tab));
         // Update placeholder to reflect whether full search is available
         const _iosInput = rr.getElementById('maIosSearchInput');
         if (_iosInput) {
-          _iosInput.placeholder = tab === 'radio' ? 'Search radio stations… (press Enter)' : _searchableTabs.has(tab) ? 'Search… (Enter to search all music)' : 'Search…';
+          _iosInput.placeholder = tab === 'radio' ? 'Search radio stations… (press Enter)' : tab === 'podcast' ? 'Search podcasts… (press Enter)' : _searchableTabs.has(tab) ? 'Search… (Enter to search all music)' : 'Search…';
           _iosInput._fullSearchEnabled = _searchableTabs.has(tab);
         }
         if (_iosBar) _iosBar.classList.remove('hidden');
@@ -8236,6 +8259,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       this._rbSaveStarred(starred);
       return false; // now unstarred
     } else {
+      if (starred.length >= 10) { this._showToast('Maximum 10 pinned stations — unpin one first'); return null; }
       starred.unshift(st); // add to top
       this._rbSaveStarred(starred);
       return true; // now starred
@@ -8320,6 +8344,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     row.addEventListener('pointermove',   () => clearTimeout(_rbLpTimer), { passive: true });
     row.addEventListener('click', () => {
       if (_rbLpFired) { _rbLpFired = false; return; }
+      self._rbCacheStation(st);
       self._showRbMoreInfo(st);
     });
 
@@ -8388,6 +8413,662 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     return null;
   }
 
+  // ════════════════════════════════════════════════════════════════════════════
+  // ITUNES PODCAST SEARCH & TOP CHARTS
+  // ════════════════════════════════════════════════════════════════════════════
+
+  _pcStarredKey()  { return 'crow_starred_podcasts'; }
+  _pcTopKey()      { return 'crow_itunes_top_podcasts'; }
+  _pcTopTTL()      { return 6 * 60 * 60 * 1000; } // 6 hours
+
+  _pcGetStarred() {
+    try { return JSON.parse(localStorage.getItem(this._pcStarredKey()) || '[]'); } catch(_) { return []; }
+  }
+  _pcSaveStarred(list) {
+    try { localStorage.setItem(this._pcStarredKey(), JSON.stringify(list)); } catch(_) {}
+  }
+  _pcIsStarred(pod) {
+    return this._pcGetStarred().some(p => p.collectionId === pod.collectionId);
+  }
+  _pcToggleStar(pod) {
+    let starred = this._pcGetStarred();
+    const idx = starred.findIndex(p => p.collectionId === pod.collectionId);
+    if (idx >= 0) { starred.splice(idx, 1); this._pcSaveStarred(starred); return false; }
+    if (starred.length >= 10) { this._showToast('Maximum 10 pinned podcasts — unpin one first'); return null; }
+    starred.unshift(pod); this._pcSaveStarred(starred); return true;
+  }
+
+  // Fetch iTunes Top 10 podcasts for GB — cached 6 hours in localStorage
+  async _pcFetchTop() {
+    try {
+      const stored = JSON.parse(localStorage.getItem(this._pcTopKey()) || 'null');
+      if (stored && stored.ts && (Date.now() - stored.ts) < this._pcTopTTL() && stored.items?.length) {
+        return stored.items;
+      }
+    } catch(_) {}
+    try {
+      const res = await fetch('https://rss.apple.com/api/v1/feed?feedType=top-podcasts&regionCode=gb&resultCount=10&explicit=false');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const json = await res.json();
+      const items = (json?.feed?.results || []).map(r => ({
+        collectionId:   r.id,
+        collectionName: r.name,
+        artistName:     r.artistName || '',
+        artworkUrl600:  r.artworkUrl100?.replace('100x100', '600x600') || r.artworkUrl100 || '',
+        artworkUrl100:  r.artworkUrl100 || '',
+        primaryGenreName: r.genres?.[0]?.name || '',
+        feedUrl:        null, // Apple charts API doesn't return feedUrl — resolved on tap
+        _fromChart:     true,
+      }));
+      if (items.length) {
+        try { localStorage.setItem(this._pcTopKey(), JSON.stringify({ items, ts: Date.now() })); } catch(_) {}
+      }
+      return items;
+    } catch(_) {
+      return [];
+    }
+  }
+
+  // Search iTunes for podcasts
+  async _pcSearch(query) {
+    const url = 'https://itunes.apple.com/search?term=' + encodeURIComponent(query) + '&media=podcast&entity=podcast&limit=20&country=gb';
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const json = await res.json();
+    return (json.results || []);
+  }
+
+  // Build a podcast row (search result or starred)
+  _pcMakeRow(pod, isStarred) {
+    const self = this;
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer;-webkit-tap-highlight-color:transparent;position:relative;';
+
+    const art = pod.artworkUrl100 || pod.artworkUrl600 || '';
+    const artHtml = art
+      ? '<img src="' + art + '" alt="" style="width:40px;height:40px;border-radius:8px;object-fit:cover;" onerror="this.style.display=\'none\'">'
+      : '<svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:rgba(255,255,255,0.3)"><path d="M12,2A3,3 0 0,1 15,5V11A3,3 0 0,1 12,14A3,3 0 0,1 9,11V5A3,3 0 0,1 12,2M19,11C19,14.53 16.39,17.44 13,17.93V21H11V17.93C7.61,17.44 5,14.53 5,11H7A5,5 0 0,0 12,16A5,5 0 0,0 17,11H19Z"/></svg>';
+    const sub = [pod.artistName, pod.primaryGenreName].filter(Boolean).join(' · ');
+
+    row.innerHTML =
+      '<div style="width:40px;height:40px;border-radius:8px;background:rgba(255,255,255,0.08);flex-shrink:0;overflow:hidden;display:flex;align-items:center;justify-content:center;">' + artHtml + '</div>' +
+      '<div style="flex:1;min-width:0;">' +
+        '<div style="font-size:13px;font-weight:600;color:var(--primary-text-color,#fff);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (pod.collectionName || 'Unknown') + '</div>' +
+        '<div style="font-size:11px;color:rgba(255,255,255,0.45);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + sub + '</div>' +
+      '</div>';
+
+    // Long-press context menu
+    let _lpTimer = null, _lpFired = false;
+    row.addEventListener('contextmenu', e => e.preventDefault());
+    row.addEventListener('pointerdown', () => {
+      _lpFired = false;
+      _lpTimer = setTimeout(() => { _lpFired = true; self._showPcContextMenu(row, pod); }, 480);
+    }, { passive: true });
+    row.addEventListener('pointerup',     () => clearTimeout(_lpTimer), { passive: true });
+    row.addEventListener('pointercancel', () => { clearTimeout(_lpTimer); _lpFired = false; }, { passive: true });
+    row.addEventListener('pointermove',   () => clearTimeout(_lpTimer), { passive: true });
+    row.addEventListener('click', () => {
+      if (_lpFired) { _lpFired = false; return; }
+      self._showPcMoreInfo(pod);
+    });
+
+    return row;
+  }
+
+  // Render the starred podcasts section (returns element or null)
+  _pcRenderStarredSection() {
+    const starred = this._pcGetStarred();
+    if (!starred.length) return null;
+    const section = document.createElement('div');
+    section.id = 'pc-starred-section';
+    const heading = document.createElement('div');
+    heading.style.cssText = 'font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.6px;padding:10px 4px 6px;';
+    heading.textContent = '📍 Pinned Podcasts';
+    section.appendChild(heading);
+    starred.forEach(pod => section.appendChild(this._pcMakeRow(pod, true)));
+    const divider = document.createElement('div');
+    divider.style.cssText = 'font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.6px;padding:10px 4px 6px;';
+    divider.textContent = 'Search Results';
+    section.appendChild(divider);
+    return section;
+  }
+
+  _pcRefreshPinnedUI() {
+    const maContent = this.shadowRoot?.getElementById('maContent');
+    if (!maContent) return;
+    const existing = maContent.querySelector('#pc-starred-section');
+    const newSection = this._pcRenderStarredSection();
+    // Find reference node — insert before top chart section or library section
+    const refNode = maContent.querySelector('#pc-top-section') || maContent.querySelector('#pc-library-section') || maContent.firstChild;
+    if (existing) {
+      if (newSection) existing.replaceWith(newSection);
+      else existing.remove();
+    } else if (newSection) {
+      maContent.insertBefore(newSection, refNode);
+    }
+  }
+
+  // Render top chart row of artwork tiles
+  async _pcRenderTopSection(container) {
+    const topItems = await this._pcFetchTop();
+    if (!topItems.length) return;
+
+    const self = this;
+    const section = document.createElement('div');
+    section.id = 'pc-top-section';
+
+    const heading = document.createElement('div');
+    heading.style.cssText = 'font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.6px;padding:10px 4px 6px;';
+    heading.textContent = '🏆 Top 10 in the UK';
+    section.appendChild(heading);
+
+    const strip = document.createElement('div');
+    strip.style.cssText = 'display:flex;gap:10px;overflow-x:auto;padding:0 0 10px 0;-webkit-overflow-scrolling:touch;scrollbar-width:none;';
+    strip.style.setProperty('&::-webkit-scrollbar', 'display:none');
+
+    topItems.forEach((pod, i) => {
+      const tile = document.createElement('div');
+      tile.style.cssText = 'flex-shrink:0;width:72px;cursor:pointer;-webkit-tap-highlight-color:transparent;';
+
+      const art = pod.artworkUrl100 || '';
+      const rankBadge = '<div style="position:absolute;top:3px;left:3px;width:17px;height:17px;border-radius:50%;background:rgba(0,0,0,0.65);display:flex;align-items:center;justify-content:center;"><span style="font-size:9px;font-weight:700;color:#fff;">' + (i + 1) + '</span></div>';
+
+      tile.innerHTML =
+        '<div style="position:relative;width:72px;height:72px;border-radius:10px;overflow:hidden;background:rgba(255,255,255,0.08);">' +
+          (art ? '<img src="' + art + '" alt="" style="width:100%;height:100%;object-fit:cover;" onerror="this.parentNode.style.background=\'rgba(255,255,255,0.1)\'">' : '') +
+          rankBadge +
+        '</div>' +
+        '<div style="font-size:10px;color:rgba(255,255,255,0.75);margin-top:5px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3;">' + (pod.collectionName || '') + '</div>';
+
+      // Long-press for context menu
+      let _tLpTimer = null, _tLpFired = false;
+      tile.addEventListener('contextmenu', e => e.preventDefault());
+      tile.addEventListener('pointerdown', () => {
+        _tLpFired = false;
+        _tLpTimer = setTimeout(() => { _tLpFired = true; self._showPcContextMenu(tile, pod); }, 480);
+      }, { passive: true });
+      tile.addEventListener('pointerup',     () => clearTimeout(_tLpTimer), { passive: true });
+      tile.addEventListener('pointercancel', () => { clearTimeout(_tLpTimer); _tLpFired = false; }, { passive: true });
+      tile.addEventListener('pointermove',   () => clearTimeout(_tLpTimer), { passive: true });
+      tile.addEventListener('click', () => {
+        if (_tLpFired) { _tLpFired = false; return; }
+        self._showPcMoreInfo(pod);
+      });
+
+      strip.appendChild(tile);
+    });
+
+    section.appendChild(strip);
+
+    const divider = document.createElement('div');
+    divider.style.cssText = 'height:1px;background:rgba(255,255,255,0.07);margin:4px 0 8px;';
+    section.appendChild(divider);
+
+    // Insert before library section if it exists, otherwise prepend
+    const libSection = container.querySelector('#pc-library-section');
+    if (libSection) container.insertBefore(section, libSection);
+    else container.insertBefore(section, container.querySelector('#pc-starred-section')?.nextSibling || container.firstChild);
+  }
+
+  // Inject starred + top chart sections into the podcast tab content
+  async _pcInjectSections(content) {
+    if (!content) return;
+    content.querySelector('#pc-starred-section')?.remove();
+    content.querySelector('#pc-top-section')?.remove();
+
+    // Insert starred at top
+    const starredSection = this._pcRenderStarredSection();
+    if (starredSection) content.insertBefore(starredSection, content.firstChild);
+
+    // Insert top charts below starred (async)
+    this._pcRenderTopSection(content);
+  }
+
+  // Context menu for a podcast tile/row
+  _showPcContextMenu(anchor, pod) {
+    const r = this.shadowRoot;
+    r.querySelectorAll('.enqueue-backdrop').forEach(el => el.remove());
+    r.querySelectorAll('.enqueue-menu').forEach(el => el.remove());
+
+    const backdrop = document.createElement('div');
+    backdrop.className = 'enqueue-backdrop';
+    const _openedAt = Date.now();
+    backdrop.addEventListener('pointerdown', () => { if (Date.now() - _openedAt < 200) return; backdrop.remove(); menu.remove(); });
+    r.appendChild(backdrop);
+
+    const menu = document.createElement('div');
+    menu.className = 'enqueue-menu';
+
+    const isPinned = this._pcIsStarred(pod);
+    const strategies = [
+      { mode: 'play_now',  label: 'Browse Episodes',                   icon: '<path d="M8 5v14l11-7z"/>' },
+      { mode: 'pin',       label: isPinned ? 'Unpin Podcast' : 'Pin Podcast', icon: '<path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/>' },
+      { mode: 'more_info', label: 'More Info',                         icon: '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/>' },
+    ];
+
+    menu.innerHTML = strategies.map(s =>
+      '<div class="enqueue-menu-item" data-mode="' + s.mode + '"><svg class="enqueue-menu-icon" viewBox="0 0 24 24">' + s.icon + '</svg><div class="enqueue-menu-label">' + s.label + '</div></div>'
+    ).join('');
+    r.appendChild(menu);
+
+    const anchorRect = anchor.getBoundingClientRect();
+    const cardRect   = r.host.getBoundingClientRect();
+    menu.style.top   = Math.min(anchorRect.bottom - cardRect.top + 4, cardRect.height - 180) + 'px';
+    menu.style.right = '12px';
+
+    const _menuOpenedAt = Date.now();
+    const _menuReady = () => Date.now() - _menuOpenedAt > 350;
+
+    menu.querySelectorAll('.enqueue-menu-item').forEach(el => {
+      el.addEventListener('click', e => {
+        e.stopPropagation();
+        if (!_menuReady()) return;
+        backdrop.remove(); menu.remove();
+        const mode = el.dataset.mode;
+        if (mode === 'play_now')  { this._showPcMoreInfo(pod); }
+        else if (mode === 'pin')  {
+          const nowPinned = this._pcToggleStar(pod);
+          if (nowPinned === null) return;
+          this._showToast(nowPinned ? '📍 Podcast pinned' : 'Podcast unpinned');
+          this._pcRefreshPinnedUI();
+        }
+        else if (mode === 'more_info') { this._showPcMoreInfo(pod); }
+      });
+    });
+  }
+
+  // Resolve feedUrl — iTunes search returns it; Apple chart API doesn't
+  async _pcResolveFeedUrl(pod) {
+    if (pod.feedUrl) return pod.feedUrl;
+    if (!pod.collectionId) return null;
+    try {
+      const res  = await fetch('https://itunes.apple.com/lookup?id=' + pod.collectionId + '&media=podcast&entity=podcast');
+      const json = await res.json();
+      const feed = json?.results?.[0]?.feedUrl || null;
+      if (feed) pod.feedUrl = feed;
+      return feed;
+    } catch(_) { return null; }
+  }
+
+  // Look up a cached pod object by episode URL — in-memory first, then localStorage
+  _pcCachedPod(episodeUrl) {
+    if (!episodeUrl) return null;
+    if (this._pcEpisodeCache?.has(episodeUrl)) return this._pcEpisodeCache.get(episodeUrl);
+    try {
+      const store = JSON.parse(localStorage.getItem('crow_pc_episode_cache') || '{}');
+      const entry = store[episodeUrl];
+      const TTL = 30 * 24 * 3600 * 1000;
+      if (entry && (Date.now() - (entry.ts || 0)) < TTL) {
+        if (!this._pcEpisodeCache) this._pcEpisodeCache = new Map();
+        this._pcEpisodeCache.set(episodeUrl, entry.pod);
+        return entry.pod;
+      }
+    } catch(_) {}
+    return null;
+  }
+
+  // Fetch RSS feed text — tries direct first, falls back to HA proxy, then CORS proxy
+  // Fetch RSS feed text — tries direct, then two CORS proxies in sequence.
+  // Uses Promise.race for timeouts (AbortSignal.timeout not reliable on older WKWebView).
+  // Returns { text, fromCache } or throws on failure.
+  async _pcFetchFeedText(feedUrl) {
+    // Check session cache first (keyed by feedUrl, TTL 10 min)
+    if (!this._pcFeedCache) this._pcFeedCache = new Map();
+    const _cached = this._pcFeedCache.get(feedUrl);
+    if (_cached && (Date.now() - _cached.ts) < 10 * 60 * 1000) return { text: _cached.text, fromCache: true };
+
+    const _timeout = (ms) => new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms));
+
+    const _tryFetch = async (url, ms) => {
+      const res = await Promise.race([fetch(url), _timeout(ms)]);
+      if (res.status === 401 || res.status === 403) throw Object.assign(new Error('auth'), { status: res.status });
+      if (res.status === 404) throw Object.assign(new Error('not found'), { status: 404 });
+      if (!res.ok) throw Object.assign(new Error('HTTP ' + res.status), { status: res.status });
+      return await Promise.race([res.text(), _timeout(ms)]);
+    };
+
+    // 1. Direct fetch
+    try {
+      const text = await _tryFetch(feedUrl, 8000);
+      this._pcFeedCache.set(feedUrl, { text, ts: Date.now() });
+      return { text, fromCache: false };
+    } catch(e) {
+      if (e.status === 401 || e.status === 403) throw e;
+      if (e.status === 404) throw e;
+    }
+    // 2. corsproxy.io
+    try {
+      const text = await _tryFetch('https://corsproxy.io/?' + encodeURIComponent(feedUrl), 10000);
+      this._pcFeedCache.set(feedUrl, { text, ts: Date.now() });
+      return { text, fromCache: false };
+    } catch(e) {
+      if (e.status === 401 || e.status === 403) throw e;
+    }
+    // 3. allorigins.win
+    try {
+      const aoRes = await Promise.race([fetch('https://api.allorigins.win/get?url=' + encodeURIComponent(feedUrl)), _timeout(12000)]);
+      if (!aoRes.ok) throw Object.assign(new Error('HTTP ' + aoRes.status), { status: aoRes.status });
+      const aoJson = await Promise.race([aoRes.json(), _timeout(12000)]);
+      const text = aoJson?.contents;
+      if (!text) throw new Error('empty');
+      this._pcFeedCache.set(feedUrl, { text, ts: Date.now() });
+      return { text, fromCache: false };
+    } catch(e) {
+      if (e.status === 401 || e.status === 403) throw e;
+    }
+    throw new Error('all sources failed');
+  }
+
+  // Fetch and parse RSS feed — returns array of { title, url, date, duration, description }
+  async _pcFetchEpisodes(feedUrl, limit) {
+    limit = limit || 5;
+    const { text } = await this._pcFetchFeedText(feedUrl);
+    const parser = new DOMParser();
+    const doc    = parser.parseFromString(text, 'text/xml');
+    const items  = Array.from(doc.querySelectorAll('item')).slice(0, limit);
+    return items.map(item => {
+      const enc  = item.querySelector('enclosure');
+      const dur  = item.querySelector('duration')?.textContent?.trim() || '';
+      let durFmt = '';
+      if (dur) {
+        if (dur.includes(':')) {
+          durFmt = dur.replace(/^0:/, '');
+        } else {
+          const s = parseInt(dur, 10);
+          if (!isNaN(s)) {
+            const m = Math.floor(s / 60), h = Math.floor(m / 60);
+            durFmt = h > 0 ? h + 'h ' + (m % 60) + 'm' : m + ' min';
+          }
+        }
+      }
+      const rawDate = item.querySelector('pubDate')?.textContent?.trim() || '';
+      let dateFmt = '';
+      if (rawDate) {
+        try {
+          const d = new Date(rawDate);
+          dateFmt = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+        } catch(_) { dateFmt = rawDate.slice(0, 16); }
+      }
+      return {
+        title:       item.querySelector('title')?.textContent?.trim() || 'Episode',
+        url:         enc?.getAttribute('url') || '',
+        date:        dateFmt,
+        duration:    durFmt,
+        description: item.querySelector('description')?.textContent?.replace(/<[^>]+>/g, '').trim().slice(0, 140) || '',
+      };
+    }).filter(ep => ep.url);
+  }
+
+  // Play a direct episode MP3/AAC URL via media_player, bypassing Music Assistant
+  _pcPlayEpisode(episodeUrl, title, entity, pod) {
+    entity = entity || this._resolveMATargetEntity() || this._entity;
+    this._hass.callService('media_player', 'play_media', {
+      entity_id: entity,
+      media_content_id: episodeUrl,
+      media_content_type: 'music',
+    });
+    // Track that a podcast episode is playing so the badge can show
+    this._pcNowPlaying = { url: episodeUrl, title, ts: Date.now() };
+    try { localStorage.setItem('crow_pc_now_playing', JSON.stringify(this._pcNowPlaying)); } catch(_) {}
+    // Cache the pod object keyed by episode URL — same pattern as _rbCacheStation
+    if (!this._pcEpisodeCache) this._pcEpisodeCache = new Map();
+    this._pcEpisodeCache.set(episodeUrl, pod);
+    try {
+      const store = JSON.parse(localStorage.getItem('crow_pc_episode_cache') || '{}');
+      store[episodeUrl] = { pod, ts: Date.now() };
+      // Prune entries older than 30 days
+      const TTL = 30 * 24 * 3600 * 1000;
+      Object.keys(store).forEach(k => { if (Date.now() - (store[k].ts || 0) > TTL) delete store[k]; });
+      localStorage.setItem('crow_pc_episode_cache', JSON.stringify(store));
+    } catch(_) {}
+    this._showToast('\u25b6 ' + (title || 'Episode'));
+    this._closeInfoPopup();
+    this._closeMABrowser();
+    // Update badge immediately
+    setTimeout(() => { this._updatePodcastBadge(); }, 300);
+  }
+  // More info panel for a podcast — radio-style layout with episode picker + AI bio
+  async _showPcMoreInfo(pod) {
+    const r       = this.shadowRoot;
+    const popup   = r.getElementById('infoPopup');
+    const content = r.getElementById('infoContent');
+    const titleEl = r.getElementById('infoPopupTitle');
+    if (!popup || !content) return;
+
+    popup.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
+    popup.style.setProperty('backdrop-filter', 'none');
+    popup.style.setProperty('-webkit-backdrop-filter', 'none');
+    popup.classList.add('visible');
+    this._infoPopupOpenedAt = Date.now();
+    if (titleEl) titleEl.textContent = pod.collectionName || 'Podcast';
+
+    const _rbo = r.getElementById('queueMenuBtn');
+    if (_rbo) _rbo.classList.add('hidden');
+
+    const _pcShare = r.getElementById('infoShareBtn');
+    if (_pcShare) _pcShare.classList.add('hidden');
+
+    const _pcPin    = r.getElementById('infoPinBtn');
+    const _pcPinSvg = r.getElementById('infoPinSvg');
+    const _updatePinBtn = () => {
+      if (!_pcPin || !_pcPinSvg) return;
+      const pinned = this._pcIsStarred(pod);
+      _pcPinSvg.style.fill = pinned ? '#FFD60A' : 'rgba(255,255,255,0.5)';
+      _pcPin.title = pinned ? 'Unpin Podcast' : 'Pin Podcast';
+    };
+    if (_pcPin) {
+      _pcPin.classList.remove('hidden');
+      _updatePinBtn();
+      _pcPin.onclick = () => {
+        const nowPinned = this._pcToggleStar(pod);
+        if (nowPinned === null) return;
+        _updatePinBtn();
+        this._showToast(nowPinned ? '\u{1F4CD} Podcast pinned' : 'Podcast unpinned');
+        const svg   = content.querySelector('#pc-info-star-svg');
+        const label = content.querySelector('#pc-info-star-label');
+        if (svg)   svg.style.fill    = nowPinned ? '#FFD60A' : 'rgba(255,255,255,0.4)';
+        if (label) label.textContent = nowPinned ? 'Pinned' : 'Pin Podcast';
+        this._pcRefreshPinnedUI();
+      };
+    }
+
+    const _pt = (k) => this._pt(k);
+    const art600 = pod.artworkUrl600 || pod.artworkUrl100 || '';
+    const artHtml = art600
+      ? '<img src="' + art600 + '" alt="" style="width:72px;height:72px;border-radius:12px;object-fit:cover;display:block;" onerror="this.style.display=\'none\'">'
+      : '<div style="width:72px;height:72px;border-radius:12px;background:rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:center;"><svg viewBox="0 0 24 24" style="width:32px;height:32px;fill:rgba(255,255,255,0.3)"><path d="M12,2A3,3 0 0,1 15,5V11A3,3 0 0,1 12,14A3,3 0 0,1 9,11V5A3,3 0 0,1 12,2M19,11C19,14.53 16.39,17.44 13,17.93V21H11V17.93C7.61,17.44 5,14.53 5,11H7A5,5 0 0,0 12,16A5,5 0 0,0 17,11H19Z"/></svg></div>';
+
+    // Meta grid — same pattern as radio (Format, Country, Language, Votes)
+    const lastDate = pod.releaseDate
+      ? new Date(pod.releaseDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+      : '';
+    const advisory = pod.contentAdvisoryRating && pod.contentAdvisoryRating !== 'cleaned'
+      ? pod.contentAdvisoryRating : '';
+    const metaItems = [
+      pod.trackCount  && ['Episodes',   pod.trackCount.toLocaleString()],
+      lastDate        && ['Latest',     lastDate],
+      pod.country     && ['Country',    pod.country],
+      advisory        && ['Advisory',   advisory],
+    ].filter(Boolean);
+
+    const metaGridHtml = metaItems.length ? `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:14px;">
+        ${metaItems.map(([l,v]) => `
+          <div style="background:${_pt('bg')};border-radius:8px;padding:7px 10px;">
+            <div style="font-size:9px;font-weight:700;color:${_pt('dim')};text-transform:uppercase;letter-spacing:0.4px;margin-bottom:2px">${l}</div>
+            <div style="font-size:12px;color:${_pt('text')};font-weight:500">${v}</div>
+          </div>`).join('')}
+      </div>` : '';
+
+    // Genre pill — clickable, same as radio tag pills
+    const genreHtml = pod.primaryGenreName
+      ? `<button class="pc-genre-pill" data-genre="${pod.primaryGenreName.replace(/"/g,'&quot;')}" style="background:rgba(191,90,242,0.15);border:1px solid rgba(191,90,242,0.3);border-radius:20px;padding:3px 10px;font-size:11px;font-weight:600;color:rgba(191,90,242,0.9);cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;">${pod.primaryGenreName}</button>`
+      : '';
+
+    content.innerHTML =
+      '<div style="display:flex;gap:14px;align-items:flex-start;margin-bottom:16px;">' +
+        artHtml +
+        '<div style="flex:1;min-width:0;">' +
+          '<div style="font-size:16px;font-weight:700;color:' + _pt('text') + ';line-height:1.3;margin-bottom:4px;">' + (pod.collectionName || '') + '</div>' +
+          (pod.artistName ? '<div style="font-size:12px;color:' + _pt('dim') + ';margin-bottom:8px;">' + pod.artistName + '</div>' : '') +
+          '<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">' +
+
+            '<button id="pc-info-star-btn" style="display:inline-flex;align-items:center;gap:5px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:20px;padding:4px 10px;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;">' +
+              '<svg id="pc-info-star-svg" viewBox="0 0 24 24" style="width:11px;height:11px;fill:' + (this._pcIsStarred(pod) ? '#FFD60A' : 'rgba(255,255,255,0.4)') + ';flex-shrink:0;transition:fill 0.15s;"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg>' +
+              '<span id="pc-info-star-label" style="font-size:11px;font-weight:600;color:' + _pt('dim') + ';">' + (this._pcIsStarred(pod) ? 'Pinned' : 'Pin Podcast') + '</span>' +
+            '</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+      metaGridHtml +
+      (genreHtml ? '<div style="margin-bottom:14px;display:flex;flex-wrap:wrap;gap:6px;">' + genreHtml + '</div>' : '') +
+      '<div id="pc-ai-bio" style="margin-bottom:14px;">' +
+        '<div style="display:flex;align-items:center;gap:7px;opacity:0.5;padding:4px 0;">' +
+          '<div style="width:12px;height:12px;border:1.5px solid rgba(191,90,242,0.3);border-top-color:#BF5AF2;border-radius:50%;animation:ma-spin 0.8s linear infinite;flex-shrink:0;"></div>' +
+          '<span style="font-size:12px;color:' + _pt('dim') + ';">Loading podcast info\u2026</span>' +
+        '</div>' +
+      '</div>' +
+      '<div id="pc-episode-section">' +
+        '<div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:8px;">Latest Episodes</div>' +
+        '<div id="pc-episode-list">' +
+          '<div style="display:flex;align-items:center;gap:8px;padding:10px 0;opacity:0.5;">' +
+            '<div style="width:12px;height:12px;border:1.5px solid rgba(191,90,242,0.3);border-top-color:#BF5AF2;border-radius:50%;animation:ma-spin 0.8s linear infinite;flex-shrink:0;"></div>' +
+            '<span style="font-size:12px;color:' + _pt('dim') + ';">Loading episodes\u2026</span>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+
+    // Wire Episodes button — toggles episode section
+    content.querySelector('#pc-info-play-btn')?.addEventListener('click', () => {
+      const sec = content.querySelector('#pc-episode-section');
+      if (!sec) return;
+      const shown = sec.style.display !== 'none';
+      sec.style.display = shown ? 'none' : '';
+      const lbl = content.querySelector('#pc-info-play-btn span');
+      if (lbl) lbl.textContent = shown ? 'Episodes' : 'Hide';
+    });
+
+    // Wire star button
+    content.querySelector('#pc-info-star-btn')?.addEventListener('click', () => {
+      const nowStarred = this._pcToggleStar(pod);
+      if (nowStarred === null) return;
+      const svg   = content.querySelector('#pc-info-star-svg');
+      const label = content.querySelector('#pc-info-star-label');
+      if (svg)   svg.style.fill    = nowStarred ? '#FFD60A' : 'rgba(255,255,255,0.4)';
+      if (label) label.textContent = nowStarred ? 'Pinned' : 'Pin Podcast';
+      this._showToast(nowStarred ? '\u{1F4CD} Podcast pinned' : 'Podcast unpinned');
+      _updatePinBtn();
+      this._pcRefreshPinnedUI();
+    });
+
+    // Wire genre pill — same bottom-sheet AI pattern as radio tag pills
+    content.querySelector('.pc-genre-pill')?.addEventListener('click', async () => {
+      const genre = pod.primaryGenreName;
+      if (!genre) return;
+      document.querySelectorAll('.rb-tag-sheet').forEach(el => el.remove());
+      const sheet = document.createElement('div');
+      sheet.className = 'rb-tag-sheet';
+      sheet.style.cssText = 'position:absolute;z-index:99999;display:flex;align-items:flex-end;justify-content:center;background:rgba(0,0,0,0.5);left:0;top:' + window.scrollY + 'px;width:' + document.documentElement.clientWidth + 'px;height:' + window.innerHeight + 'px;';
+      sheet.innerHTML = '<div style="width:100%;max-width:480px;background:var(--crow-panel-bg,#13131a);border-radius:20px 20px 0 0;padding:20px 20px 40px;box-shadow:0 -8px 40px rgba(0,0,0,0.6);">'
+        + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">'
+        + '<span style="font-size:15px;font-weight:700;color:' + _pt('text') + ';">' + genre + '</span>'
+        + '<button class="rb-tag-sheet-close" style="width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,0.1);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;"><svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:' + _pt('text') + '"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>'
+        + '</div>'
+        + '<div class="rb-tag-sheet-body" style="font-size:13px;color:' + _pt('text') + ';line-height:1.6;display:flex;align-items:center;gap:8px;opacity:0.6;"><div style="width:14px;height:14px;border:2px solid rgba(191,90,242,0.25);border-top-color:#BF5AF2;border-radius:50%;animation:ma-spin 0.8s linear infinite;flex-shrink:0;"></div>Loading\u2026</div>'
+        + '</div>';
+      document.body.appendChild(sheet);
+      const _closeSheet = () => sheet.remove();
+      sheet.addEventListener('click', e => { if (e.target === sheet) _closeSheet(); });
+      sheet.querySelector('.rb-tag-sheet-close')?.addEventListener('click', _closeSheet);
+      if (!this._rbTagCache) this._rbTagCache = new Map();
+      let desc = this._rbTagCache.get('pcgenre|' + genre);
+      if (!desc) {
+        const hasAI = await this._aiCheckAvailable();
+        if (sheet.isConnected && hasAI) {
+          const raw = await this._aiConverse('In 1-2 sentences, describe the "' + genre + '" podcast genre. Be concise and factual.');
+          desc = raw || 'No description available.';
+          this._rbTagCache.set('pcgenre|' + genre, desc);
+        } else { desc = 'No description available.'; }
+      }
+      const bodyEl = sheet.querySelector('.rb-tag-sheet-body');
+      if (bodyEl && sheet.isConnected) bodyEl.innerHTML = desc;
+    });
+
+    const entity = this._resolveMATargetEntity() || this._entity;
+    const feedUrlProm = this._pcResolveFeedUrl(pod);
+
+    // AI bio — lazy loaded
+    (async () => {
+      const bioCacheKey = 'pcbio|' + (pod.collectionId || pod.collectionName || '').toString().toLowerCase();
+      const _bioEl = content.querySelector('#pc-ai-bio');
+      if (!this._rbTagCache) this._rbTagCache = new Map();
+      let cachedBio = this._rbTagCache.get(bioCacheKey) || this._aiSessionGet('pcBio', bioCacheKey);
+      if (cachedBio) {
+        if (_bioEl && _bioEl.isConnected) _bioEl.innerHTML = '<div style="font-size:12px;color:' + _pt('dim') + ';line-height:1.6;">' + cachedBio + '</div>';
+      } else {
+        const hasAI = await this._aiCheckAvailable();
+        if (_bioEl && _bioEl.isConnected && hasAI) {
+          const genreCtx = pod.primaryGenreName ? ' in the ' + pod.primaryGenreName + ' genre' : '';
+          const raw = await this._aiConverse('In 2 sentences, describe the podcast "' + (pod.collectionName || '') + '" by ' + (pod.artistName || 'unknown') + genreCtx + '. Be factual and concise.');
+          this._rbTagCache.set(bioCacheKey, raw || '');
+          if (raw) this._aiSessionSet('pcBio', bioCacheKey, raw);
+          if (_bioEl && _bioEl.isConnected) _bioEl.innerHTML = raw ? '<div style="font-size:12px;color:' + _pt('dim') + ';line-height:1.6;">' + raw + '</div>' : '';
+        } else if (_bioEl && _bioEl.isConnected) {
+          _bioEl.innerHTML = '';
+        }
+      }
+    })();
+
+    // Episodes — loaded when section is first shown
+    const _loadEpisodes = async () => {
+      const epList = content.querySelector('#pc-episode-list');
+      if (!epList) return;
+      try {
+        const feedUrl = await feedUrlProm;
+        if (!feedUrl) throw new Error('no feed');
+        const episodes = await this._pcFetchEpisodes(feedUrl, 5);
+        if (!epList.isConnected) return;
+        if (!episodes.length) {
+          epList.innerHTML = '<div style="font-size:12px;color:' + _pt('dim') + ';padding:8px 0;">No episodes found.</div>';
+          return;
+        }
+        epList.innerHTML = '';
+        episodes.forEach((ep, i) => {
+          const row = document.createElement('div');
+          row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer;-webkit-tap-highlight-color:transparent;';
+          const metaHtml = (ep.date || ep.duration)
+            ? '<div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:2px;">' + [ep.date, ep.duration].filter(Boolean).join(' \u00b7 ') + '</div>'
+            : '';
+          row.innerHTML =
+            '<div style="width:22px;text-align:center;flex-shrink:0;font-size:12px;font-weight:700;color:rgba(255,255,255,0.25);">' + (i + 1) + '</div>' +
+            '<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:600;color:' + _pt('text') + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + ep.title + '</div>' + metaHtml + '</div>' +
+            '<div style="flex-shrink:0;width:30px;height:30px;border-radius:50%;background:rgba(191,90,242,0.15);border:1px solid rgba(191,90,242,0.3);display:flex;align-items:center;justify-content:center;"><svg viewBox="0 0 24 24" style="width:12px;height:12px;fill:#BF5AF2;margin-left:1px;"><path d="M8 5v14l11-7z"/></svg></div>';
+          row.addEventListener('click', () => { this._pcPlayEpisode(ep.url, ep.title, entity, pod); });
+          epList.appendChild(row);
+        });
+      } catch(err) {
+        if (!epList || !epList.isConnected) return;
+        const errBox = document.createElement('div');
+        errBox.style.cssText = 'background:rgba(255,149,0,0.1);border:1px solid rgba(255,149,0,0.2);border-radius:10px;padding:12px;margin-top:4px;';
+        errBox.innerHTML = '<div style="font-size:12px;font-weight:600;color:rgba(255,180,50,0.9);margin-bottom:6px;">\u26a0\ufe0f Could not load episodes</div>' +
+          '<div style="font-size:11px;color:rgba(255,255,255,0.55);line-height:1.5;margin-bottom:10px;">Sorry, this podcast isn\u2019t available right now.</div>';
+        const retryBtn = document.createElement('button');
+        retryBtn.textContent = 'Try Again';
+        retryBtn.style.cssText = 'padding:5px 14px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:8px;color:#fff;font-size:12px;font-family:inherit;cursor:pointer;-webkit-tap-highlight-color:transparent;';
+        retryBtn.addEventListener('click', () => {
+          if (this._pcFeedCache) this._pcFeedCache.delete(feedUrl || '');
+          epList.innerHTML = '<div style="display:flex;align-items:center;gap:8px;padding:10px 0;opacity:0.5;"><div style="width:12px;height:12px;border:1.5px solid rgba(191,90,242,0.3);border-top-color:#BF5AF2;border-radius:50%;animation:ma-spin 0.8s linear infinite;flex-shrink:0;"></div><span style="font-size:12px;color:' + _pt('dim') + ';">Retrying\u2026</span></div>';
+          _loadEpisodes();
+        });
+        errBox.appendChild(retryBtn);
+        epList.innerHTML = '';
+        epList.appendChild(errBox);
+      }
+    };
+
+    // Load episodes immediately on panel open
+    _loadEpisodes();
+  }
   // ════════════════════════════════════════════════════════════════════════════
   // RADIO BROWSER — Context menu + More Info panel
   // ════════════════════════════════════════════════════════════════════════════
@@ -8469,6 +9150,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           this._closeMABrowser();
         } else if (mode === 'pin') {
           const nowPinned = this._rbToggleStar(st);
+          if (nowPinned === null) return;
           this._showToast(nowPinned ? '📍 Station pinned' : 'Station unpinned');
           this._rbRefreshPinnedUI();
         } else if (mode === 'share') {
@@ -8527,6 +9209,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       _updatePinBtn();
       _rbPin.onclick = () => {
         const nowPinned = this._rbToggleStar(st);
+        if (nowPinned === null) return;
         _updatePinBtn();
         this._showToast(nowPinned ? '📍 Station pinned' : 'Station unpinned');
         // Also sync the in-content pin button if visible
@@ -8653,6 +9336,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (_starBtn) {
       _starBtn.addEventListener('click', () => {
         const nowStarred = this._rbToggleStar(st);
+        if (nowStarred === null) return;
         const svg   = content.querySelector('#rb-info-star-svg');
         const label = content.querySelector('#rb-info-star-label');
         if (svg)   svg.style.fill    = nowStarred ? '#FFD60A' : 'rgba(255,255,255,0.4)';
@@ -8850,6 +9534,43 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         closeBtn.textContent = 'Go back';
         closeBtn.style.cssText = 'margin-top:12px;padding:6px 14px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:8px;color:#fff;font-size:12px;font-family:inherit;cursor:pointer;';
         closeBtn.addEventListener('click', () => { this._maInSearchResults = false; this.shadowRoot?.querySelectorAll('.ma-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'radio')); this._loadMATab('radio'); });
+        errDiv.appendChild(closeBtn);
+        content.appendChild(errDiv);
+      }
+      return;
+    }
+
+    // Podcast tab: search iTunes instead of MA library
+    if (activeTabKey === 'podcast' || this._maCurrentTab === 'podcast') {
+      this.shadowRoot?.getElementById('maContent')?.querySelector('.ma-drill-actions')?.remove();
+      content.innerHTML = this._psLoading('Searching podcasts…');
+      try {
+        const results = await this._pcSearch(query);
+        if (!results.length) {
+          content.innerHTML = this._psAutoClose(this._psEmpty('M9.5,3A6.5,6.5 0 0,1 16,9.5C16,11.11 15.41,12.59 14.44,13.73L14.71,14H15.5L20.5,19L19,20.5L14,15.5V14.71L13.73,14.44C12.59,15.41 11.11,16 9.5,16A6.5,6.5 0 0,1 3,9.5A6.5,6.5 0 0,1 9.5,3M9.5,5C7,5 5,7 5,9.5C5,12 7,14 9.5,14C12,14 14,12 14,9.5C14,7 12,5 9.5,5Z', 'No podcasts found', 'Nothing matched "' + query + '" — try a different search'), null, 8000, 'pcNoResBtn', 'pcNoResRing');
+          this._psAutoCloseStart(this.shadowRoot, null, () => { this._maInSearchResults = false; this.shadowRoot?.querySelectorAll('.ma-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'podcast')); this._loadMATab('podcast'); }, 8000, 'pcNoResBtn', 'pcNoResRing');
+          return;
+        }
+        this.shadowRoot.querySelectorAll('.ma-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'podcast'));
+        content.innerHTML = '';
+
+        const list = document.createElement('div');
+        list.style.cssText = 'display:flex;flex-direction:column;';
+        results.forEach(pod => list.appendChild(this._pcMakeRow(pod, false)));
+
+        // Prepend starred section above search results — same pattern as radio
+        const starredSection = this._pcRenderStarredSection();
+        if (starredSection) content.appendChild(starredSection);
+        content.appendChild(list);
+      } catch(e) {
+        content.innerHTML = '';
+        const errDiv = document.createElement('div');
+        errDiv.style.cssText = 'margin:16px 4px;background:rgba(255,165,0,0.1);border:1px solid rgba(255,165,0,0.3);border-radius:12px;padding:14px;';
+        errDiv.innerHTML = '<div style="font-size:13px;font-weight:600;color:rgba(255,165,0,0.9);margin-bottom:6px;">🎙 Can\'t reach iTunes</div><div style="font-size:12px;color:rgba(255,255,255,0.6);line-height:1.5;">Podcast search uses the iTunes Search API. Your device can\'t reach it right now.</div>';
+        const closeBtn = document.createElement('button');
+        closeBtn.textContent = 'Go back';
+        closeBtn.style.cssText = 'margin-top:12px;padding:6px 14px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:8px;color:#fff;font-size:12px;font-family:inherit;cursor:pointer;';
+        closeBtn.addEventListener('click', () => { this._maInSearchResults = false; this.shadowRoot?.querySelectorAll('.ma-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'podcast')); this._loadMATab('podcast'); });
         errDiv.appendChild(closeBtn);
         content.appendChild(errDiv);
       }
@@ -9916,7 +10637,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         this._config = { ...this._config, ma_radio_mode: false };
         try { localStorage.setItem('crow_radio_mode', '0'); } catch (_) {}
         this.dispatchEvent(new CustomEvent('config-changed', { detail: { config: { ...this._config } }, bubbles: true, composed: true }));
-        this._updateRadioIndicator(); this._updateLiveStationBadge();
+        this._updateRadioIndicator(); this._updateLiveStationBadge(); this._updatePodcastBadge();
       }
     }
     if (!selectedVal || selectedVal === '__multicast__') return;
@@ -9979,6 +10700,21 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // Returns true when the current media is a continuous stream with no fixed
   // duration — e.g. internet radio, live streams. Discogs and lyrics are not
   // meaningful for streams so both features gate on this check.
+  // Clear podcast now-playing tracking when media changes away from our episode
+  _pcCheckNowPlaying(state) {
+    if (!this._pcNowPlaying) return;
+    // Grace period — ignore state changes for 8s after episode starts (buffering/idle transitions)
+    if (this._pcNowPlaying.ts && (Date.now() - this._pcNowPlaying.ts) < 8000) return;
+    // Clear only when player settles to idle/off, or switches to radio/flow
+    const attrs = state?.attributes || {};
+    const isRadio = attrs.mass_media_type === 'radio' || attrs.mass_media_type === 'flow';
+    if (state?.state === 'idle' || state?.state === 'off' || isRadio) {
+      this._pcNowPlaying = null;
+      try { localStorage.removeItem('crow_pc_now_playing'); } catch(_) {}
+      this._updatePodcastBadge();
+    }
+  }
+
   _isLiveStream(state) {
     if (!state) return false;
     const attrs = state.attributes;
@@ -10976,6 +11712,58 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         }
 
         this._showToast('Station not found — search for it in the Radio tab first');
+      });
+    }
+  }
+
+  _updatePodcastBadge() {
+    const badge = this.shadowRoot?.getElementById('podcastBadge');
+    if (!badge) return;
+    const state  = this._hass?.states[this._entity];
+    const attrs  = state?.attributes || {};
+    const isMa   = this._maEntityIds?.has(this._entity);
+    const isActive = state?.state === 'playing' || state?.state === 'paused' || state?.state === 'buffering';
+    // Detect podcast: MA sets mass_media_type='podcast', or we track it ourselves via _pcNowPlaying
+    const isPodcast = attrs.mass_media_type === 'podcast' || !!(isActive && this._pcNowPlaying);
+    const shouldShow = isMa && isPodcast && isActive;
+
+    // Never show alongside LIVE — podcast and live are mutually exclusive
+    const liveBadge = this.shadowRoot?.getElementById('liveStationBadge');
+    const liveShowing = liveBadge && liveBadge.style.display !== 'none';
+    if (shouldShow && !liveShowing) {
+      badge.style.display = 'block';
+    } else {
+      badge.style.display = 'none';
+    }
+
+    if (!badge._pcClickWired) {
+      badge._pcClickWired = true;
+      badge.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        // Strategy 1: use cached pod from episode play — instant, exact match
+        const _nowUrl = this._pcNowPlaying?.url;
+        const _cached = this._pcCachedPod(_nowUrl);
+        if (_cached) { this._showPcMoreInfo(_cached); return; }
+
+        // Strategy 2: check pinned podcasts by name
+        const _attrs = this._hass?.states[this._entity]?.attributes || {};
+        let podName = _attrs.media_album_name || _attrs.media_artist || _attrs.media_title || '';
+        if (podName) {
+          const pinned = this._pcGetStarred();
+          const pinnedMatch = pinned.find(p => (p.collectionName || '').toLowerCase() === podName.toLowerCase());
+          if (pinnedMatch) { this._showPcMoreInfo(pinnedMatch); return; }
+        }
+
+        // Strategy 3: search iTunes by name
+        if (!podName) { this._showToast('Search for this podcast in the Podcasts tab'); return; }
+        this._showLoadingToast('Looking up podcast…');
+        try {
+          const results = await this._pcSearch(podName);
+          this._hideLoadingToast();
+          const match = results.find(p => (p.collectionName || '').toLowerCase() === podName.toLowerCase()) || results[0];
+          if (match) { this._showPcMoreInfo(match); return; }
+        } catch(_) { this._hideLoadingToast(); }
+        this._showToast('Podcast not found — search for it in the Podcasts tab');
       });
     }
   }
@@ -18018,6 +18806,14 @@ Include ALL tracks. Use null for unknown fields.`;
       this._renderMAGrid(_memEntry.items, tab, content);
       this._buildTabActionBar(content, tab);
       if (tab === 'radio') this._rbInjectStarredSection(content);
+      if (tab === 'podcast') this._pcInjectSections(content);
+      return;
+    }
+
+    // Podcast tab: skip MA library entirely — show pinned + top charts only
+    if (tab === 'podcast') {
+      content.innerHTML = '';
+      this._pcInjectSections(content);
       return;
     }
 
@@ -18032,6 +18828,7 @@ Include ALL tracks. Use null for unknown fields.`;
       }
       this._buildTabActionBar(content, tab);
       if (tab === 'radio') this._rbInjectStarredSection(content);
+      if (tab === 'podcast') this._pcInjectSections(content);
       if (tab === 'favourites') return;
       // For standard library tabs, fall through to refresh in background silently
     } else {
@@ -18228,9 +19025,13 @@ Include ALL tracks. Use null for unknown fields.`;
         this._buildTabActionBar(content, tab);
         // For radio tab, prepend starred section above the MA library grid
         if (tab === 'radio') this._rbInjectStarredSection(content);
+        if (tab === 'podcast') this._pcInjectSections(content);
       } else if (tab === 'radio') {
         // No MA library stations yet — still show starred if any
         this._rbInjectStarredSection(content);
+      } else if (tab === 'podcast') {
+        // No MA library podcasts yet — still show pinned + top charts
+        this._pcInjectSections(content);
       }
 
       // If first page was full, fan out remaining pages in parallel
@@ -18248,6 +19049,7 @@ Include ALL tracks. Use null for unknown fields.`;
             this._renderMAGrid(allItems, tab, content);
             this._buildTabActionBar(content, tab);
             if (tab === 'radio') this._rbInjectStarredSection(content);
+            if (tab === 'podcast') this._pcInjectSections(content);
           }
 
           // Stop if last batch returned less than a full page
@@ -18258,7 +19060,7 @@ Include ALL tracks. Use null for unknown fields.`;
       }
 
       if (!allItems.length) {
-        if (!_cached || !_cached.length) content.innerHTML = '<div class="ma-empty">No ' + tab + 's found in your library.</div>';
+        if (tab !== 'podcast' && (!_cached || !_cached.length)) content.innerHTML = '<div class="ma-empty">No ' + tab + 's found in your library.</div>';
         return;
       }
       // De-duplicate by URI — MA can return the same item from multiple providers
@@ -18282,6 +19084,7 @@ Include ALL tracks. Use null for unknown fields.`;
         this._renderMAGrid(_dedupedItems, tab, content);
         this._buildTabActionBar(content, tab);
         if (tab === 'radio') this._rbInjectStarredSection(content);
+        if (tab === 'podcast') this._pcInjectSections(content);
       }
     } catch (e) {
       console.error('[MA] get_library error:', e);
@@ -18367,6 +19170,7 @@ Include ALL tracks. Use null for unknown fields.`;
 
   _buildTabActionBar(content, tab) {
     if (tab === 'radio') return; // No action bar for radio — stations play individually
+    if (tab === 'podcast') return; // No action bar for podcasts — episodes play individually
     const bar = document.createElement('div');
     bar.className = 'ma-drill-actions';
     const showMood = this._maEntityIds?.size > 0 && ['favourites','recommended','album','track'].includes(tab);
