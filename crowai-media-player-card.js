@@ -2225,6 +2225,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         }
         @keyframes ma-spin { to { transform: rotate(360deg); } }
         @keyframes crow-intro-fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes crow-live-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.75); } }
 
         /* ── Queue reorder mode ──────────────────────────────────────────── */
         .ma-loading { display: flex; align-items: center; justify-content: center; min-height: 100px; color: var(--crow-panel-text-dim,rgba(255,255,255,0.35)); font-size: 13px; gap: 8px; }
@@ -3387,7 +3388,15 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             </div>
           </div>
 
-          <!-- Radio mode indicator (top-left of artwork) -->
+          <!-- Live station badge (top-left of artwork) — shown when a radio station is playing -->
+          <div id="liveStationBadge" style="display:none;position:absolute;top:10px;left:10px;z-index:21;cursor:pointer;-webkit-tap-highlight-color:transparent;">
+            <div style="display:inline-flex;align-items:center;gap:5px;background:rgba(0,0,0,0.58);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.18);border-radius:20px;padding:4px 9px 4px 7px;">
+              <span style="width:6px;height:6px;border-radius:50%;background:#ff3b30;flex-shrink:0;animation:crow-live-pulse 1.8s ease-in-out infinite;"></span>
+              <span style="font-size:11px;font-weight:700;color:rgba(255,255,255,0.9);letter-spacing:0.5px;font-family:-apple-system,BlinkMacSystemFont,sans-serif;">LIVE</span>
+            </div>
+          </div>
+
+          <!-- Radio mode indicator (top-left of artwork) — shown when MA radio mode is active -->
           <div id="radioModeIndicator" style="display:none;position:absolute;top:10px;left:10px;z-index:20;width:28px;height:28px;border-radius:50%;background:rgba(0,0,0,0.55);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);border:1px solid rgba(255,255,255,0.25);align-items:center;justify-content:center;" title="Radio Mode On">
             <svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:${this._pt("text")};display:block;"><path d="M19,6.41L4.86,2.28L4.29,4.2L7,5V7H5A2,2 0 0,0 3,9V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V9A2,2 0 0,0 19,7H9V5.75L19,8.55V6.41M7,9A2,2 0 0,1 9,11A2,2 0 0,1 7,13A2,2 0 0,1 5,11A2,2 0 0,1 7,9M17,18H7V16H17V18M19,14H11V10H19V14Z"/></svg>
           </div>
@@ -3567,6 +3576,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
               <button class="queue-menu-btn hidden" id="infoShareBtn" title="Share">
                 <svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg>
               </button>
+              <button class="queue-menu-btn hidden" id="infoPinBtn" title="Pin Station">
+                <svg id="infoPinSvg" viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg>
+              </button>
               <button class="info-popup-close" id="infoClose">
                 <svg viewBox="0 0 24 24"><path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/></svg>
               </button>
@@ -3709,6 +3721,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     cardOuter.addEventListener('contextmenu', _blockVideoLongPress, { capture: true });
     cardOuter.addEventListener('pointerdown', _blockVideoLongPress, { capture: true });
     const artLongPressStart = (e) => {
+      if (e.target.closest('#liveStationBadge')) return;
       _artLongPressed = false;
       if (_isVideoMedia()) return;
       _artLongPressTimer = setTimeout(() => {
@@ -3731,6 +3744,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     artEl.addEventListener('pointercancel', artLongPressEnd);
     artEl.addEventListener('pointermove', artLongPressEnd);
     artEl.onclick = (e) => {
+      // Ignore clicks that originated from the live station badge or its children
+      if (e.target.closest('#liveStationBadge')) return;
       if (_artLongPressed) {
         _artLongPressed = false;
         e.stopImmediatePropagation();
@@ -4240,7 +4255,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
                 this._config = { ...this._config, ma_radio_mode: newVal };
                 try { localStorage.setItem('crow_radio_mode', newVal ? '1' : '0'); } catch (_) {}
                 this.dispatchEvent(new CustomEvent('config-changed', { detail: { config: { ...this._config } }, bubbles: true, composed: true }));
-                this._updateRadioIndicator();
+                this._updateRadioIndicator(); this._updateLiveStationBadge();
                 const _qb = this.shadowRoot?.getElementById('btnQueueOpen');
                 if (_qb) _qb.classList.toggle('active', !!newVal);
                 if (newVal) {
@@ -4260,7 +4275,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
                       this._config = { ...this._config, ma_radio_mode: false };
                       try { localStorage.setItem('crow_radio_mode', '0'); } catch (_) {}
                       this.dispatchEvent(new CustomEvent('config-changed', { detail: { config: { ...this._config } }, bubbles: true, composed: true }));
-                      this._updateRadioIndicator();
+                      this._updateRadioIndicator(); this._updateLiveStationBadge();
                       const _qbOff = this.shadowRoot?.getElementById('btnQueueOpen');
                       if (_qbOff) _qbOff.classList.remove('active');
                       // Return to artwork panel and restore artwork
@@ -5172,7 +5187,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
                       this._config = { ...this._config, ma_radio_mode: false };
                       try { localStorage.setItem('crow_radio_mode', '0'); } catch (_) {}
                       this.dispatchEvent(new CustomEvent('config-changed', { detail: { config: { ...this._config } }, bubbles: true, composed: true }));
-                      this._updateRadioIndicator();
+                      this._updateRadioIndicator(); this._updateLiveStationBadge();
                       const _qbOff = this.shadowRoot?.getElementById('btnQueueOpen');
                       if (_qbOff) _qbOff.classList.remove('active');
                       // Return to artwork panel and restore artwork
@@ -5188,7 +5203,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             }
           }
           // Show friendly notification overlay
-          this._updateRadioIndicator();
+          this._updateRadioIndicator(); this._updateLiveStationBadge();
           const _qb3 = this.shadowRoot?.getElementById('btnQueueOpen');
           if (_qb3) _qb3.classList.toggle('active', !!newVal);
         });
@@ -5399,7 +5414,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           this._config = { ...this._config, ma_radio_mode: false };
           try { localStorage.setItem('crow_radio_mode', '0'); } catch (_) {}
           this.dispatchEvent(new CustomEvent('config-changed', { detail: { config: { ...this._config } }, bubbles: true, composed: true }));
-          this._updateRadioIndicator();
+          this._updateRadioIndicator(); this._updateLiveStationBadge();
         });
         // Auto-dismiss after 6 seconds
         setTimeout(() => { if (r.getElementById('radioCancelConfirm')) dismiss(); }, 6000);
@@ -5530,7 +5545,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const isPlaying = state.state === 'playing';
 
     // Radio mode indicator icon
-    this._updateRadioIndicator();
+    this._updateRadioIndicator(); this._updateLiveStationBadge();
     // Queue/menu button tinted accent when radio mode is on
     const _qBtn = r.getElementById('btnQueueOpen');
     if (_qBtn) _qBtn.classList.toggle('active', !!(this._config?.ma_radio_mode));
@@ -8195,10 +8210,191 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
 
   // ════════════════════════════════════════════════════════════════════════════
+  // STARRED RADIO STATIONS
+  // ════════════════════════════════════════════════════════════════════════════
+
+  _rbStarredKey() { return 'crow_starred_stations'; }
+
+  _rbGetStarred() {
+    try { return JSON.parse(localStorage.getItem(this._rbStarredKey()) || '[]'); } catch(_) { return []; }
+  }
+
+  _rbSaveStarred(list) {
+    try { localStorage.setItem(this._rbStarredKey(), JSON.stringify(list)); } catch(_) {}
+  }
+
+  _rbIsStarred(st) {
+    const starred = this._rbGetStarred();
+    return starred.some(s => s.stationuuid === st.stationuuid || (s.name === st.name && s.url_resolved === st.url_resolved));
+  }
+
+  _rbToggleStar(st) {
+    let starred = this._rbGetStarred();
+    const idx = starred.findIndex(s => s.stationuuid === st.stationuuid || (s.name === st.name && s.url_resolved === st.url_resolved));
+    if (idx >= 0) {
+      starred.splice(idx, 1);
+      this._rbSaveStarred(starred);
+      return false; // now unstarred
+    } else {
+      starred.unshift(st); // add to top
+      this._rbSaveStarred(starred);
+      return true; // now starred
+    }
+  }
+
+
+  // Refresh the pinned stations section in maContent after a pin/unpin.
+  // Handles three cases: replace existing section, insert new one if absent,
+  // or remove it when the last station is unpinned.
+  _rbRefreshPinnedUI() {
+    const maContent = this.shadowRoot?.getElementById('maContent');
+    if (!maContent) return;
+    const rbEntity = this._resolveMATargetEntity() || this._entity;
+    const existing = maContent.querySelector('#rb-starred-section');
+    const newSection = this._rbRenderStarredSection(rbEntity);
+    if (existing) {
+      if (newSection) existing.replaceWith(newSection);
+      else existing.remove();
+    } else if (newSection) {
+      maContent.insertBefore(newSection, maContent.firstChild);
+    }
+  }
+
+  // Render a starred stations section into a container element.
+  // Returns the section div (or null if no starred stations).
+  _rbRenderStarredSection(rbEntity) {
+    const starred = this._rbGetStarred();
+    if (!starred.length) return null;
+    const self = this;
+
+    const section = document.createElement('div');
+    section.id = 'rb-starred-section';
+
+    const heading = document.createElement('div');
+    heading.style.cssText = 'font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.6px;padding:10px 4px 6px;';
+    heading.textContent = '📍 Pinned Stations';
+    section.appendChild(heading);
+
+    starred.forEach(st => {
+      section.appendChild(this._rbMakeStationRow(st, rbEntity, true));
+    });
+
+    const divider = document.createElement('div');
+    divider.style.cssText = 'font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.6px;padding:10px 4px 6px;';
+    divider.textContent = 'Library';
+    section.appendChild(divider);
+
+    return section;
+  }
+
+  // Build a single station row (shared between search results, starred section, radio tab)
+  _rbMakeStationRow(st, rbEntity, isStarredSection = false) {
+    const self = this;
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer;-webkit-tap-highlight-color:transparent;position:relative;';
+
+    const fav = st.favicon
+      ? '<img src="' + st.favicon + '" alt="" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display=\'none\'">'
+      : '<svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:rgba(255,255,255,0.3)"><path d="M12 1c-4.97 0-9 4.03-9 9v7c0 1.66 1.34 3 3 3h3v-8H5v-2c0-3.87 3.13-7 7-7s7 3.13 7 7v2h-4v8h3c1.66 0 3-1.34 3-3v-7c0-4.97-4.03-9-9-9z"/></svg>';
+    const tags = [st.tags?.split(',')[0], st.countrycode, st.codec ? (st.codec + (st.bitrate ? ' · ' + st.bitrate + 'kbps' : '')) : null].filter(Boolean).join(' · ');
+
+    row.innerHTML =
+      '<div style="width:40px;height:40px;border-radius:8px;background:rgba(255,255,255,0.08);flex-shrink:0;overflow:hidden;display:flex;align-items:center;justify-content:center;">' + fav + '</div>' +
+      '<div style="flex:1;min-width:0;">' +
+        '<div style="font-size:13px;font-weight:600;color:var(--primary-text-color,#fff);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (st.name || 'Unknown') + '</div>' +
+        '<div style="font-size:11px;color:rgba(255,255,255,0.45);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + tags + '</div>' +
+      '</div>';
+
+    // Long-press context menu
+    let _rbLpTimer = null, _rbLpFired = false;
+    row.addEventListener('contextmenu', e => e.preventDefault());
+    row.addEventListener('pointerdown', () => {
+      _rbLpFired = false;
+      _rbLpTimer = setTimeout(() => {
+        _rbLpFired = true;
+        self._showRbContextMenu(row, st, rbEntity);
+      }, 480);
+    }, { passive: true });
+    row.addEventListener('pointerup',     () => clearTimeout(_rbLpTimer), { passive: true });
+    row.addEventListener('pointercancel', () => { clearTimeout(_rbLpTimer); _rbLpFired = false; }, { passive: true });
+    row.addEventListener('pointermove',   () => clearTimeout(_rbLpTimer), { passive: true });
+    row.addEventListener('click', () => {
+      if (_rbLpFired) { _rbLpFired = false; return; }
+      self._showRbMoreInfo(st);
+    });
+
+    return row;
+  }
+
+  // Inject starred section at top of maContent, above any existing MA grid
+  _rbInjectStarredSection(content) {
+    if (!content) return;
+    // Remove any existing starred section first to avoid duplicates
+    content.querySelector('#rb-starred-section')?.remove();
+    const rbEntity = this._resolveMATargetEntity() || this._entity;
+    const section = this._rbRenderStarredSection(rbEntity);
+    if (!section) return;
+    content.insertBefore(section, content.firstChild);
+  }
+
+  // Cache a radio-browser station object keyed by its stream URLs.
+  // Called whenever we have a full st object — on long-press or on play.
+  // Persisted to localStorage with a 30-day TTL.
+  _rbCacheStation(st) {
+    if (!st || !st.name) return;
+    // Also keep in-memory for fast lookups this session
+    if (!this._rbStationCache) this._rbStationCache = new Map();
+    const urls = [st.url_resolved, st.url].filter(Boolean);
+    urls.forEach(u => this._rbStationCache.set(u.toLowerCase(), st));
+    // Persist to localStorage
+    try {
+      const store = JSON.parse(localStorage.getItem('crow_rb_station_cache') || '{}');
+      const entry = { st, ts: Date.now() };
+      urls.forEach(u => { store[u.toLowerCase()] = entry; });
+      // Prune entries older than 30 days to avoid unbounded growth
+      const TTL = 30 * 24 * 3600 * 1000;
+      Object.keys(store).forEach(k => { if (Date.now() - (store[k].ts || 0) > TTL) delete store[k]; });
+      localStorage.setItem('crow_rb_station_cache', JSON.stringify(store));
+    } catch (_) {}
+  }
+
+  // Look up a cached station by stream URL (tries both http/https variants).
+  // Checks in-memory cache first, falls back to localStorage.
+  _rbCachedStation(url) {
+    if (!url) return null;
+    const u = url.toLowerCase();
+    const variants = [u, u.replace('http://', 'https://'), u.replace('https://', 'http://')];
+    // In-memory first
+    if (this._rbStationCache) {
+      for (const v of variants) {
+        const hit = this._rbStationCache.get(v);
+        if (hit) return hit;
+      }
+    }
+    // localStorage fallback
+    try {
+      const store = JSON.parse(localStorage.getItem('crow_rb_station_cache') || '{}');
+      const TTL = 30 * 24 * 3600 * 1000;
+      for (const v of variants) {
+        const entry = store[v];
+        if (entry && (Date.now() - (entry.ts || 0)) < TTL) {
+          // Warm the in-memory cache
+          if (!this._rbStationCache) this._rbStationCache = new Map();
+          this._rbStationCache.set(v, entry.st);
+          return entry.st;
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
   // RADIO BROWSER — Context menu + More Info panel
   // ════════════════════════════════════════════════════════════════════════════
 
   _showRbContextMenu(anchor, st, entity) {
+    // Cache the full st object whenever we have it
+    this._rbCacheStation(st);
     // Use same pattern as _showEnqueueMenu — append to shadow root, position relative to card
     const r = this.shadowRoot;
     r.querySelectorAll('.enqueue-backdrop').forEach(el => el.remove());
@@ -8216,10 +8412,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const menu = document.createElement('div');
     menu.className = 'enqueue-menu';
 
+    const isPinned = this._rbIsStarred(st);
     const strategies = [
-      { mode: 'play_now',   label: 'Play Now',  icon: '<path d="M8 5v14l11-7z"/>' },
-      { mode: 'share',      label: 'Share',     icon: '<path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z"/>' },
-      { mode: 'more_info',  label: 'More Info', icon: '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/>' },
+      { mode: 'play_now',   label: 'Play Now',                        icon: '<path d="M8 5v14l11-7z"/>' },
+      { mode: 'pin',        label: isPinned ? 'Unpin Station' : 'Pin Station', icon: '<path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/>' },
+      { mode: 'share',      label: 'Share',                           icon: '<path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z"/>' },
+      { mode: 'more_info',  label: 'More Info',                       icon: '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/>' },
     ];
 
     menu.innerHTML = strategies.map(s =>
@@ -8231,7 +8429,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // Position relative to card, below anchor row
     const anchorRect = anchor.getBoundingClientRect();
     const cardRect   = r.host.getBoundingClientRect();
-    menu.style.top   = Math.min(anchorRect.bottom - cardRect.top + 4, cardRect.height - 180) + 'px';
+    menu.style.top   = Math.min(anchorRect.bottom - cardRect.top + 4, cardRect.height - 220) + 'px';
     menu.style.right = '12px';
 
     const _menuOpenedAt = Date.now();
@@ -8269,6 +8467,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             this._showToast('\u25b6 ' + st.name);
           });
           this._closeMABrowser();
+        } else if (mode === 'pin') {
+          const nowPinned = this._rbToggleStar(st);
+          this._showToast(nowPinned ? '📍 Station pinned' : 'Station unpinned');
+          this._rbRefreshPinnedUI();
         } else if (mode === 'share') {
           const parts = [st.name];
           if (st.homepage) parts.push(st.homepage);
@@ -8308,6 +8510,31 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         if (st.homepage) parts.push(st.homepage);
         if (st.url_resolved || st.url) parts.push('Stream: ' + (st.url_resolved || st.url));
         this._copyToClipboard(parts.join('\n'));
+      };
+    }
+
+    // Show pin button in header
+    const _rbPin = r.getElementById('infoPinBtn');
+    const _rbPinSvg = r.getElementById('infoPinSvg');
+    const _updatePinBtn = () => {
+      if (!_rbPin || !_rbPinSvg) return;
+      const _pinned = this._rbIsStarred(st);
+      _rbPinSvg.style.fill = _pinned ? '#FFD60A' : 'rgba(255,255,255,0.5)';
+      _rbPin.title = _pinned ? 'Unpin Station' : 'Pin Station';
+    };
+    if (_rbPin) {
+      _rbPin.classList.remove('hidden');
+      _updatePinBtn();
+      _rbPin.onclick = () => {
+        const nowPinned = this._rbToggleStar(st);
+        _updatePinBtn();
+        this._showToast(nowPinned ? '📍 Station pinned' : 'Station unpinned');
+        // Also sync the in-content pin button if visible
+        const _inContentSvg = content.querySelector('#rb-info-star-svg');
+        const _inContentLabel = content.querySelector('#rb-info-star-label');
+        if (_inContentSvg) _inContentSvg.style.fill = nowPinned ? '#FFD60A' : 'rgba(255,255,255,0.4)';
+        if (_inContentLabel) _inContentLabel.textContent = nowPinned ? 'Pinned' : 'Pin Station';
+        this._rbRefreshPinnedUI();
       };
     }
 
@@ -8364,12 +8591,25 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         </button>
       </div>` : '';
 
+    const _rbPlayTarget = this._resolveMATargetEntity() || this._entity;
+    const _rbHasMA = !!(this._maEntityIds?.has(_rbPlayTarget) || (this._maEntityIds?.size > 0));
+
     content.innerHTML = `
       <div style="display:flex;gap:14px;align-items:flex-start;margin-bottom:16px;">
         ${faviconHtml}
         <div style="flex:1;min-width:0;">
           <div style="font-size:16px;font-weight:700;color:${_pt('text')};line-height:1.3;margin-bottom:4px;">${st.name || ''}</div>
           ${st.country ? `<div style="font-size:12px;color:${_pt('dim')}">${_flag(st.countrycode)} ${st.country}</div>` : ''}
+          <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;">
+            <button id="rb-info-play-btn" style="display:inline-flex;align-items:center;gap:5px;background:rgba(99,179,237,0.15);border:1px solid rgba(99,179,237,0.3);border-radius:20px;padding:4px 10px;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;">
+              <svg viewBox="0 0 24 24" style="width:11px;height:11px;fill:#63b3ed;flex-shrink:0"><path d="M8 5v14l11-7z"/></svg>
+              <span style="font-size:11px;font-weight:600;color:#63b3ed;">Play</span>
+            </button>
+            <button id="rb-info-star-btn" style="display:inline-flex;align-items:center;gap:5px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:20px;padding:4px 10px;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;">
+              <svg id="rb-info-star-svg" viewBox="0 0 24 24" style="width:11px;height:11px;fill:${this._rbIsStarred(st) ? '#FFD60A' : 'rgba(255,255,255,0.4)'};flex-shrink:0;transition:fill 0.15s;"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg>
+              <span id="rb-info-star-label" style="font-size:11px;font-weight:600;color:${_pt('dim')};">${this._rbIsStarred(st) ? 'Pinned' : 'Pin Station'}</span>
+            </button>
+          </div>
         </div>
       </div>
       ${metaGridHtml}
@@ -8384,6 +8624,45 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           <span style="font-size:12px;color:${_pt('dim')};">Loading station info…</span>
         </div>
       </div>`;
+
+    // Wire Play Now button
+    content.querySelector('#rb-info-play-btn')?.addEventListener('click', () => {
+      const url = st.url_resolved || st.url;
+      if (!url) { this._showToast('No stream URL for this station'); return; }
+      if (_rbHasMA) {
+        this._hass.connection.sendMessagePromise({
+          type: 'call_service', domain: 'music_assistant', service: 'play_media',
+          service_data: { entity_id: _rbPlayTarget, media_id: url, media_type: 'radio', enqueue: 'replace' }
+        }).then(() => {
+          this._showToast('▶ ' + st.name);
+          this._closeInfoPopup();
+        }).catch(() => {
+          this._hass.callService('media_player', 'play_media', { entity_id: _rbPlayTarget, media_content_id: url, media_content_type: 'music' });
+          this._showToast('▶ ' + st.name);
+          this._closeInfoPopup();
+        });
+      } else {
+        this._hass.callService('media_player', 'play_media', { entity_id: this._entity, media_content_id: url, media_content_type: 'music' });
+        this._showToast('▶ ' + st.name);
+        this._closeInfoPopup();
+      }
+    });
+
+    // Wire star button in info panel
+    const _starBtn = content.querySelector('#rb-info-star-btn');
+    if (_starBtn) {
+      _starBtn.addEventListener('click', () => {
+        const nowStarred = this._rbToggleStar(st);
+        const svg   = content.querySelector('#rb-info-star-svg');
+        const label = content.querySelector('#rb-info-star-label');
+        if (svg)   svg.style.fill    = nowStarred ? '#FFD60A' : 'rgba(255,255,255,0.4)';
+        if (label) label.textContent = nowStarred ? 'Pinned' : 'Pin Station';
+        this._showToast(nowStarred ? '📍 Station pinned' : 'Station unpinned');
+        // Sync the header pin button
+        _updatePinBtn();
+        this._rbRefreshPinnedUI();
+      });
+    }
 
     // Wire homepage button
     content.querySelector('.rb-homepage-btn')?.addEventListener('click', () => {
@@ -8499,6 +8778,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         const _rbPlayStation = (st) => {
           const url = st.url_resolved || st.url;
           if (!url) { this._showToast('No stream URL for this station'); return; }
+          // Cache the full st object so the LIVE pill can find it
+          this._rbCacheStation(st);
           const _rbEntity = rbEntity;
           const _rbSelf = this;
           this._hass.connection.sendMessagePromise({
@@ -8547,31 +8828,18 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         };
 
         stations.forEach(st => {
-          const row = document.createElement('div');
-          row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer;-webkit-tap-highlight-color:transparent;position:relative;';
-          const fav = st.favicon ? '<img src="' + st.favicon + '" alt="" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display=\'none\'">' : '<svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:rgba(255,255,255,0.3)"><path d="M12 1c-4.97 0-9 4.03-9 9v7c0 1.66 1.34 3 3 3h3v-8H5v-2c0-3.87 3.13-7 7-7s7 3.13 7 7v2h-4v8h3c1.66 0 3-1.34 3-3v-7c0-4.97-4.03-9-9-9z"/></svg>';
-          const tags = [st.tags?.split(',')[0], st.countrycode, st.codec ? (st.codec + (st.bitrate ? ' · ' + st.bitrate + 'kbps' : '')) : null].filter(Boolean).join(' · ');
-          row.innerHTML = '<div style="width:40px;height:40px;border-radius:8px;background:rgba(255,255,255,0.08);flex-shrink:0;overflow:hidden;display:flex;align-items:center;justify-content:center;">' + fav + '</div><div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:600;color:var(--primary-text-color,#fff);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (st.name || 'Unknown') + '</div><div style="font-size:11px;color:rgba(255,255,255,0.45);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + tags + '</div></div>';
-
-          // Long-press context menu
-          let _rbLpTimer = null, _rbLpFired = false;
-          row.addEventListener('contextmenu', e => e.preventDefault());
-          row.addEventListener('pointerdown', () => {
-            _rbLpFired = false;
-            _rbLpTimer = setTimeout(() => {
-              _rbLpFired = true;
-              this._showRbContextMenu(row, st, rbEntity);
-            }, 480);
-          }, { passive: true });
-          row.addEventListener('pointerup',     () => clearTimeout(_rbLpTimer), { passive: true });
-          row.addEventListener('pointercancel', () => { clearTimeout(_rbLpTimer); _rbLpFired = false; }, { passive: true });
-          row.addEventListener('pointermove',   () => clearTimeout(_rbLpTimer), { passive: true });
-          row.addEventListener('click', () => {
-            if (_rbLpFired) { _rbLpFired = false; return; }
-            _rbPlayStation(st);
-          });
-          rbList.appendChild(row);
+          rbList.appendChild(this._rbMakeStationRow(st, rbEntity, false));
         });
+
+        // Prepend starred section above search results
+        const starredSection = this._rbRenderStarredSection(rbEntity);
+        if (starredSection) {
+          const starredHeading = document.createElement('div');
+          starredHeading.style.cssText = 'font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.6px;padding:10px 4px 6px;';
+          starredHeading.textContent = 'Search Results';
+          rbList.insertBefore(starredHeading, rbList.firstChild);
+          content.appendChild(starredSection);
+        }
         content.appendChild(rbList);
       } catch(e) {
         content.innerHTML = '';
@@ -9648,7 +9916,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         this._config = { ...this._config, ma_radio_mode: false };
         try { localStorage.setItem('crow_radio_mode', '0'); } catch (_) {}
         this.dispatchEvent(new CustomEvent('config-changed', { detail: { config: { ...this._config } }, bubbles: true, composed: true }));
-        this._updateRadioIndicator();
+        this._updateRadioIndicator(); this._updateLiveStationBadge();
       }
     }
     if (!selectedVal || selectedVal === '__multicast__') return;
@@ -10614,6 +10882,104 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     el.style.display = on ? 'flex' : 'none';
   }
 
+  _updateLiveStationBadge() {
+    const badge = this.shadowRoot?.getElementById('liveStationBadge');
+    if (!badge) return;
+    const state = this._hass?.states[this._entity];
+    const isLive = this._isLiveStream(state);
+    // Also show when paused — MA may drop mass_media_type when paused but it's still a radio station
+    const isPaused = state?.state === 'paused';
+    const isPlaying = state?.state === 'playing' || state?.state === 'buffering';
+    // Show if live stream, or if paused and we have a radio content_id (builtin://radio/...)
+    const _contentId = state?.attributes?.media_content_id || '';
+    const _isRadioContentId = /^builtin:\/\/radio\//i.test(_contentId);
+    const isMaEntity = this._maEntityIds?.has(this._entity);
+    const shouldShow = isMaEntity && (isLive || ((isPaused || isPlaying) && _isRadioContentId));
+    if (!shouldShow) {
+      badge.style.display = 'none';
+      // Reset radioModeIndicator position
+      const radioInd = this.shadowRoot?.getElementById('radioModeIndicator');
+      if (radioInd) radioInd.style.left = '10px';
+      return;
+    }
+
+    // Shift radioModeIndicator right if both are showing so they don't overlap
+    const radioInd = this.shadowRoot?.getElementById('radioModeIndicator');
+    if (radioInd && radioInd.style.display !== 'none') {
+      radioInd.style.left = (badge.offsetWidth + 14) + 'px';
+    } else if (radioInd) {
+      radioInd.style.left = '10px';
+    }
+
+    badge.style.display = 'block';
+
+    // Wire click — only attach once; reads fresh state on every tap
+    if (!badge._liveClickWired) {
+      badge._liveClickWired = true;
+      badge.addEventListener('click', async (e) => {
+        e.stopPropagation();
+
+        const _attrs = this._hass?.states[this._entity]?.attributes || {};
+
+        // Strategy 1: check pinned stations by name — instant, no network
+        // and check the session station cache by stream URL — populated when
+        // user plays or long-presses a station from the radio search results.
+        const _rawId = _attrs.media_content_id || '';
+        const _streamUrl = _rawId.replace(/^builtin:\/\/radio\//i, '');
+        if (_streamUrl) {
+          const _cached = this._rbCachedStation(_streamUrl);
+          if (_cached) { this._showRbMoreInfo(_cached); return; }
+        }
+
+        // Strategy 2: check pinned stations by name
+        let _stationName = '';
+        try {
+          const qRes = await this._hass.connection.sendMessagePromise({
+            type: 'call_service', domain: 'music_assistant', service: 'get_queue',
+            service_data: { entity_id: this._entity }, return_response: true
+          });
+          const qData = qRes?.response?.[this._entity] || qRes?.response || null;
+          _stationName = qData?.current_item?.name || qData?.current_item?.media_item?.name || '';
+        } catch (_) {}
+
+        if (!_stationName) {
+          _stationName = _attrs.media_album_name || _attrs.media_title || '';
+        }
+
+        if (_stationName) {
+          const _pinned = this._rbGetStarred();
+          const _pinnedMatch = _pinned.find(s => s.name?.toLowerCase() === _stationName.toLowerCase());
+          if (_pinnedMatch) { this._showRbMoreInfo(_pinnedMatch); return; }
+        }
+
+        // Strategy 3: radio-browser name search — same as the search results long-press
+        if (_stationName) {
+          try {
+            const res = await fetch(
+              'https://de1.api.radio-browser.info/json/stations/search?name='
+              + encodeURIComponent(_stationName) + '&limit=30&hidebroken=true&order=votes&reverse=true'
+            );
+            if (res.ok) {
+              const stations = await res.json();
+              if (stations && stations.length) {
+                const _nl = _stationName.toLowerCase();
+                const best = stations.find(s => s.name.toLowerCase() === _nl)
+                          || stations.find(s => s.name.toLowerCase().startsWith(_nl))
+                          || stations.find(s => _nl.startsWith(s.name.toLowerCase()))
+                          || stations[0];
+                this._rbCacheStation(best); // cache for next time
+                this._showRbMoreInfo(best);
+                return;
+              }
+            }
+          } catch (_) {}
+        }
+
+        this._showToast('Station not found — search for it in the Radio tab first');
+      });
+    }
+  }
+
   _showAnnounceConfirmation(text, speakerEids) {
     // Ensure card is expanded so the overlay is fully visible
     this._expandFromCompact();
@@ -10879,7 +11245,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   _renderAIInfo(content, data, entityPicture, artist, album) {
     const artUrl = (entityPicture || '').replace(/^http:\/\//i, 'https://');
     const genres = (data.genre || []).slice(0,5);
-    const tagsHtml = genres.map(g => `<span class="info-tag">${g}</span>`).join('');
+    const tagsHtml = genres.map(g => `<span class="info-tag bio-genre-tag" data-tag="${g.replace(/"/g,'&quot;')}">${g}</span>`).join('');
     const metaItems = [data.year, data.label, data.country].filter(Boolean);
     const rating = parseFloat(data.rating) || 0;
     const isMa = this._maEntityIds?.has(this._entity);
@@ -10963,6 +11329,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       ${tracklistHtml}
       <div style="height:8px;flex-shrink:0"></div>
     `;
+
+    // Wire genre tag clicks
+    this._wireGenreTagClicks(content);
 
     // Apply ambient glow to hero art if enabled
     const heroArt = content.querySelector('.info-hero-art');
@@ -11564,7 +11933,7 @@ Include ALL tracks. Use null for unknown fields.`;
     ].filter(Boolean);
 
     const genreTags = (data.genre || []).map(g =>
-      `<span style="background:${this._pt("bg")};border:1px solid ${this._pt("border")};border-radius:20px;padding:2px 8px;font-size:10px;color:${this._pt("dim")};font-weight:600;letter-spacing:0.2px;">${g}</span>`
+      `<span class="info-tag bio-genre-tag" data-tag="${g.replace(/"/g,'&quot;')}" style="background:${this._pt("bg")};border:1px solid ${this._pt("border")};border-radius:20px;padding:2px 8px;font-size:10px;color:${this._pt("dim")};font-weight:600;letter-spacing:0.2px;">${g}</span>`
     ).join('');
 
     const artHtml = artUrl
@@ -11592,9 +11961,9 @@ Include ALL tracks. Use null for unknown fields.`;
       </div>` : '';
 
     // Make album name clickable to view tracks
-    const _pillStyle = 'display:inline-flex;align-items:center;gap:5px;background:rgba(99,179,237,0.1);border:1px solid rgba(99,179,237,0.25);border-radius:20px;padding:4px 10px;flex-shrink:0;max-width:160px;overflow:hidden;';
+    const _pillStyle = 'display:inline-flex;align-items:center;gap:5px;background:rgba(99,179,237,0.1);border:1px solid rgba(99,179,237,0.25);border-radius:20px;padding:4px 10px;flex-shrink:0;max-width:160px;overflow:hidden;box-sizing:border-box;line-height:1;height:26px;';
     const albumClickHtml = data.album
-      ? `<button id="ai-track-album-btn" data-album="${(data.album||'').replace(/"/g,'&quot;')}" data-artist="${(artistName||'').replace(/"/g,'&quot;')}" style="background:none;border:none;padding:0;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;${_pillStyle}"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:#63b3ed;flex-shrink:0"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg><span style="font-size:11px;color:#63b3ed;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${data.album}</span><svg viewBox="0 0 24 24" style="width:9px;height:9px;fill:#63b3ed;opacity:0.6;flex-shrink:0"><path d="M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z"/></svg></button>`
+      ? `<button id="ai-track-album-btn" data-album="${(data.album||'').replace(/"/g,'&quot;')}" data-artist="${(artistName||'').replace(/"/g,'&quot;')}" style="background:rgba(99,179,237,0.1);border:1px solid rgba(99,179,237,0.25);border-radius:20px;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;${_pillStyle}"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:#63b3ed;flex-shrink:0"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg><span style="font-size:11px;color:#63b3ed;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${data.album}</span><svg viewBox="0 0 24 24" style="width:9px;height:9px;fill:#63b3ed;opacity:0.6;flex-shrink:0"><path d="M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z"/></svg></button>`
       : '';
 
     const isMaForBar = this._maEntityIds?.has(this._entity) || (this._maEntityIds?.size > 0);
@@ -11627,7 +11996,7 @@ Include ALL tracks. Use null for unknown fields.`;
         <div style="flex:1;min-width:0;">
           <div style="font-size:15px;font-weight:700;color:${this._pt('text')};letter-spacing:-0.3px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${trackTitle}</div>
           <div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:5px;align-items:center;">
-            <div id="ai-track-artist-name" data-artist="${(artistName||''). replace(/"/g,'&quot;')}" style="display:inline-flex;align-items:center;gap:5px;background:rgba(99,179,237,0.1);border:1px solid rgba(99,179,237,0.25);border-radius:20px;padding:4px 10px;cursor:pointer;-webkit-tap-highlight-color:transparent;flex-shrink:0;max-width:160px;overflow:hidden;"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:#63b3ed;flex-shrink:0"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg><span style="font-size:11px;color:#63b3ed;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${artistName}</span></div>
+            <div id="ai-track-artist-name" data-artist="${(artistName||''). replace(/"/g,'&quot;')}" style="display:inline-flex;align-items:center;gap:5px;background:rgba(99,179,237,0.1);border:1px solid rgba(99,179,237,0.25);border-radius:20px;padding:4px 10px;cursor:pointer;-webkit-tap-highlight-color:transparent;flex-shrink:0;max-width:160px;overflow:hidden;box-sizing:border-box;line-height:1;height:26px;"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:#63b3ed;flex-shrink:0"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg><span style="font-size:11px;color:#63b3ed;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${artistName}</span></div>
             ${albumClickHtml}
           </div>
 
@@ -11676,6 +12045,9 @@ Include ALL tracks. Use null for unknown fields.`;
       </div>` : ''}
       ${similarHtml}
 `;
+
+    // Wire genre tag clicks
+    this._wireGenreTagClicks(content);
 
     // Wire art thumbnail tap → lightbox (square for music)
     const _artImg = content.querySelector('.info-hero-art-img');
@@ -11847,10 +12219,7 @@ Include ALL tracks. Use null for unknown fields.`;
             img.addEventListener('error', () => {
               URL.revokeObjectURL(blobUrl);
               if (this._wikiBlobCache?.get(memberName) === blobUrl) this._wikiBlobCache.delete(memberName);
-              // Restore the placeholder SVG so a broken blob never shows as a question-mark icon
-              if (memberEl.contains(img)) {
-                memberEl.innerHTML = `<svg viewBox="0 0 24 24" style="width:22px;height:22px;fill:${this._pt('dim')}"><path d="M12,4A4,4 0 0,1 16,8A4,4 0 0,1 12,12A4,4 0 0,1 8,8A4,4 0 0,1 12,4M12,14C16.42,14 20,15.79 20,18V20H4V18C4,15.79 7.58,14 12,14Z"/></svg>`;
-              }
+              memberEl.innerHTML = `<svg viewBox="0 0 24 24" style="width:22px;height:22px;fill:${this._pt('dim')}"><path d="M12,4A4,4 0 0,1 16,8A4,4 0 0,1 12,12A4,4 0 0,1 8,8A4,4 0 0,1 12,4M12,14C16.42,14 20,15.79 20,18V20H4V18C4,15.79 7.58,14 12,14Z"/></svg>`;
             });
             memberEl.innerHTML = '';
             memberEl.appendChild(img);
@@ -15121,6 +15490,8 @@ Include ALL tracks. Use null for unknown fields.`;
     if (_rb2) _rb2.classList.add('hidden');
     const _shareHdr = r.getElementById('infoShareBtn');
     if (_shareHdr) { _shareHdr.classList.add('hidden'); _shareHdr.onclick = null; }
+    const _pinHdr = r.getElementById('infoPinBtn');
+    if (_pinHdr) { _pinHdr.classList.add('hidden'); _pinHdr.onclick = null; }
     if (_icReset) {
       _icReset.classList.remove('queue-reorder-mode');
       this._teardownQueueDrag(_icReset);
@@ -15401,7 +15772,7 @@ Include ALL tracks. Use null for unknown fields.`;
     // Store for rewiring after back navigation from bio/seasons
     content.dataset.videoDataJson = JSON.stringify(data);
     content.dataset.videoArtUrl   = artUrl || '';
-    const genreTags = (data.genres || []).slice(0, 3).map(g => `<span class="info-tag">${g}</span>`).join('');
+    const genreTags = (data.genres || []).slice(0, 3).map(g => `<span class="info-tag bio-genre-tag" data-tag="${g.replace(/"/g,'&quot;')}">${g}</span>`).join('');
     const _seasonsCount = data.type === 'tv' && data.seasons ? data.seasons : 0;
     const metaItems = [data.year, data.status].filter(Boolean);
     // Seasons rendered as a separate tappable button if available — see #tv-seasons-btn below
@@ -15441,6 +15812,7 @@ Include ALL tracks. Use null for unknown fields.`;
         </div>
       </div>
       ${data.overview ? `<div class="info-section-label">Overview</div><div class="info-overview">${data.overview}</div>` : ''}
+      ${genreTags ? `<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:8px;">${genreTags}</div>` : ''}
       ${(data.fun_fact || data.fact) ? `<div style="margin:10px 0;padding:10px 12px;background:rgba(99,179,237,0.07);border:1px solid rgba(99,179,237,0.14);border-radius:10px;"><div style="font-size:10px;font-weight:700;color:rgba(99,179,237,0.6);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:4px">✨ Fun Fact</div><div style="font-size:12px;color:${this._pt("text")};line-height:1.5">${data.fun_fact || data.fact}</div></div>` : ''}
       <div id="content-warning-section"></div>
       <div id="action-row" style="display:flex;gap:8px;margin:12px 0 8px;">
@@ -15487,6 +15859,9 @@ Include ALL tracks. Use null for unknown fields.`;
     this._loadContentWarning(content, data);
     this._loadWhereToWatch(content, data);
     this._wireVideoActionRow(content, data);
+
+    // Wire genre tag clicks
+    this._wireGenreTagClicks(content);
 
     // Always fetch the correct poster from iTunes by title+year.
     // If we have an overrideArt (e.g. from a similar-item click), show it immediately
@@ -16597,6 +16972,49 @@ Include ALL tracks. Use null for unknown fields.`;
     }
   }
 
+  // Wire genre tag pills (.bio-genre-tag[data-tag]) to show an AI description sheet
+  _wireGenreTagClicks(content) {
+    if (!this._rbTagCache) this._rbTagCache = new Map();
+    content.querySelectorAll('.bio-genre-tag').forEach(pill => {
+      pill.style.cursor = 'pointer';
+      pill.style.webkitTapHighlightColor = 'transparent';
+      pill.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const tag = pill.dataset.tag;
+        if (!tag) return;
+        const _pt2 = (k) => this._pt(k);
+        document.querySelectorAll('.rb-tag-sheet').forEach(el => el.remove());
+        const sheet = document.createElement('div');
+        sheet.className = 'rb-tag-sheet';
+        sheet.style.cssText = 'position:absolute;z-index:99999;display:flex;align-items:flex-end;justify-content:center;background:rgba(0,0,0,0.5);left:0;top:' + window.scrollY + 'px;width:' + document.documentElement.clientWidth + 'px;height:' + window.innerHeight + 'px;';
+        sheet.innerHTML = '<div style="width:100%;max-width:480px;background:var(--crow-panel-bg,#13131a);border-radius:20px 20px 0 0;padding:20px 20px 40px;box-shadow:0 -8px 40px rgba(0,0,0,0.6);">'
+          + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">'
+          + '<span style="font-size:15px;font-weight:700;color:' + _pt2('text') + ';">' + tag + '</span>'
+          + '<button class="rb-tag-sheet-close" style="width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,0.1);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;"><svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:' + _pt2('text') + '"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>'
+          + '</div>'
+          + '<div class="rb-tag-sheet-body" style="font-size:13px;color:' + _pt2('text') + ';line-height:1.6;display:flex;align-items:center;gap:8px;opacity:0.6;"><div style="width:14px;height:14px;border:2px solid rgba(99,179,237,0.25);border-top-color:#63b3ed;border-radius:50%;animation:ma-spin 0.8s linear infinite;flex-shrink:0;"></div>Loading…</div>'
+          + '</div>';
+        document.body.appendChild(sheet);
+        const _closeSheet = () => sheet.remove();
+        sheet.addEventListener('click', e => { if (e.target === sheet) _closeSheet(); });
+        sheet.querySelector('.rb-tag-sheet-close')?.addEventListener('click', _closeSheet);
+        let desc = this._rbTagCache.get(tag);
+        if (!desc) {
+          const hasAI = await this._aiCheckAvailable();
+          if (sheet.isConnected && hasAI) {
+            const raw = await this._aiConverse('In 1-2 sentences, describe the "' + tag + '" music genre or category. Be concise and factual.');
+            desc = raw || 'No description available.';
+            this._rbTagCache.set(tag, desc);
+          } else {
+            desc = 'No description available.';
+          }
+        }
+        const bodyEl = sheet.querySelector('.rb-tag-sheet-body');
+        if (bodyEl && sheet.isConnected) bodyEl.innerHTML = desc;
+      });
+    });
+  }
+
   // Show a bio panel for a cast member, with back button to return to the detail view
   async _showCastBio(content, name, showTitle, artUrl) {
     const savedHtml = content.innerHTML;
@@ -16627,7 +17045,7 @@ Include ALL tracks. Use null for unknown fields.`;
     // Show bio immediately with placeholder photo, then load async
     const renderBio = (imgUrl, isLoading) => {
       const photoHtml = imgUrl
-        ? `<img id="cast-bio-photo-img" src="${imgUrl}" alt="${name}" style="width:80px;height:80px;object-fit:cover;border-radius:50%;border:2px solid rgba(255,255,255,0.1);">`
+        ? `<img id="cast-bio-photo-img" src="${imgUrl}" alt="${name}" style="width:80px;height:80px;object-fit:cover;border-radius:50%;border:2px solid rgba(255,255,255,0.1);" onerror="this.style.display='none';this.parentNode.innerHTML='<div style=\\'width:80px;height:80px;border-radius:50%;background:rgba(255,255,255,0.06);border:2px solid rgba(255,255,255,0.1);display:flex;align-items:center;justify-content:center;\\'><svg viewBox=\\'0 0 24 24\\' style=\\'width:36px;height:36px;fill:rgba(255,255,255,0.2)\\'><path d=\\'M12,4A4,4 0 0,1 16,8A4,4 0 0,1 12,12A4,4 0 0,1 8,8A4,4 0 0,1 12,4M12,14C16.42,14 20,15.79 20,18V20H4V18C4,15.79 7.58,14 12,14Z\\'/></svg></div>'">`
         : `<div style="width:80px;height:80px;border-radius:50%;background:${this._pt("bg")};border:2px solid rgba(255,255,255,0.1);display:flex;align-items:center;justify-content:center;"><svg viewBox="0 0 24 24" style="width:36px;height:36px;fill:${this._pt("dim")}"><path d="M12,4A4,4 0 0,1 16,8A4,4 0 0,1 12,12A4,4 0 0,1 8,8A4,4 0 0,1 12,4M12,14C16.42,14 20,15.79 20,18V20H4V18C4,15.79 7.58,14 12,14Z"/></svg></div>`;
 
       const metaLine = [bio?.born ? 'b. ' + bio.born : null, bio?.nationality].filter(Boolean).join(' · ');
@@ -17208,6 +17626,9 @@ Include ALL tracks. Use null for unknown fields.`;
         self._renderVideoInfoDetail(content, _vData, _vArt);
       } catch(_) {}
     }
+
+    // Re-wire genre tag pills in any bio screen
+    self._wireGenreTagClicks(content);
   }
 
   // Fetch movie/TV poster from iTunes Search API
@@ -17596,6 +18017,7 @@ Include ALL tracks. Use null for unknown fields.`;
     if (_memEntry && (_now - _memEntry.ts) < 30000 && _memEntry.items?.length) {
       this._renderMAGrid(_memEntry.items, tab, content);
       this._buildTabActionBar(content, tab);
+      if (tab === 'radio') this._rbInjectStarredSection(content);
       return;
     }
 
@@ -17609,6 +18031,7 @@ Include ALL tracks. Use null for unknown fields.`;
         return;
       }
       this._buildTabActionBar(content, tab);
+      if (tab === 'radio') this._rbInjectStarredSection(content);
       if (tab === 'favourites') return;
       // For standard library tabs, fall through to refresh in background silently
     } else {
@@ -17803,6 +18226,11 @@ Include ALL tracks. Use null for unknown fields.`;
       if (firstPage.length) {
         this._renderMAGrid(allItems, tab, content);
         this._buildTabActionBar(content, tab);
+        // For radio tab, prepend starred section above the MA library grid
+        if (tab === 'radio') this._rbInjectStarredSection(content);
+      } else if (tab === 'radio') {
+        // No MA library stations yet — still show starred if any
+        this._rbInjectStarredSection(content);
       }
 
       // If first page was full, fan out remaining pages in parallel
@@ -17819,6 +18247,7 @@ Include ALL tracks. Use null for unknown fields.`;
           if (batchItems.length) {
             this._renderMAGrid(allItems, tab, content);
             this._buildTabActionBar(content, tab);
+            if (tab === 'radio') this._rbInjectStarredSection(content);
           }
 
           // Stop if last batch returned less than a full page
@@ -17852,6 +18281,7 @@ Include ALL tracks. Use null for unknown fields.`;
       if (_dedupedItems.length !== allItems.length) {
         this._renderMAGrid(_dedupedItems, tab, content);
         this._buildTabActionBar(content, tab);
+        if (tab === 'radio') this._rbInjectStarredSection(content);
       }
     } catch (e) {
       console.error('[MA] get_library error:', e);
@@ -18144,6 +18574,11 @@ Include ALL tracks. Use null for unknown fields.`;
       const type = item.media_type || (item._tab !== 'recommended' && item._tab !== 'recently_played' ? item._tab : '') || (tab !== 'recommended' && tab !== 'recently_played' ? tab : '');
       if (['album','artist','podcast','playlist'].includes(type) && !!(item.uri||item.media_content_id)) {
         this._maOpenCollectionTracks(item, tab);
+      } else if (type === 'track' || ['track','favourites','recommended','recently_played'].includes(tab)) {
+        const _title  = item.name || item.title || '';
+        const _artist = (item.artists && item.artists[0]?.name) || '';
+        if (_title || _artist) this._showAITrackInfo(_title, _artist, { fromSearch: true });
+        else this._playMAItem(item, tab);
       } else { this._playMAItem(item, tab); }
     });
 
@@ -21415,6 +21850,23 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
 
         <!-- Radio Mode -->
         <div>
+          <div class="section-title">Pinned Radio Stations</div>
+          <div class="card-block" style="padding:12px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+              <div>
+                <span id="starred-stations-status" style="font-size:12px;color:#888;">Calculating…</span>
+              </div>
+              <button id="starred-stations-clear-btn" style="font-size:12px;font-weight:500;color:#ff453a;background:rgba(255,69,58,0.12);border:1px solid rgba(255,69,58,0.3);border-radius:8px;padding:5px 12px;cursor:pointer;white-space:nowrap;">Clear Pinned</button>
+            </div>
+            <div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.07);display:flex;align-items:center;justify-content:space-between;gap:12px;">
+              <span id="rb-station-cache-status" style="font-size:12px;color:#888;">Calculating…</span>
+              <button id="rb-station-cache-clear-btn" style="font-size:12px;font-weight:500;color:#ff453a;background:rgba(255,69,58,0.12);border:1px solid rgba(255,69,58,0.3);border-radius:8px;padding:5px 12px;cursor:pointer;white-space:nowrap;">Clear Cache</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Radio Mode -->
+        <div>
           <div class="section-title">Lyrics Behaviour</div>
           <div class="card-block" style="padding:12px;">
             <div style="font-size:13px;font-weight:500;margin-bottom:10px;">Synced Lyric Line Style</div>
@@ -21959,6 +22411,47 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       if (cardEl?._maLibMemCache) cardEl._maLibMemCache = {};
       if (cardEl?._drillInCache)  cardEl._drillInCache  = new Map();
       updateMALibCacheStatus();
+    };
+
+    // ── Starred Radio Stations ───────────────────────────────────────────────
+    const starredStatus   = root.getElementById('starred-stations-status');
+    const starredClearBtn = root.getElementById('starred-stations-clear-btn');
+    const updateStarredStatus = () => {
+      try {
+        const list = JSON.parse(localStorage.getItem('crow_starred_stations') || '[]');
+        if (starredStatus) starredStatus.textContent = list.length === 0 ? 'No pinned stations' : list.length + ' station' + (list.length === 1 ? '' : 's') + ' pinned';
+      } catch (_) {
+        if (starredStatus) starredStatus.textContent = 'No pinned stations';
+      }
+    };
+    updateStarredStatus();
+    if (starredClearBtn) starredClearBtn.onclick = () => {
+      try { localStorage.removeItem('crow_starred_stations'); } catch (_) {}
+      updateStarredStatus();
+      this._showToast?.('Saved stations cleared');
+    };
+
+    // ── Radio station cache ──────────────────────────────────────────────────
+    const rbCacheStatus   = root.getElementById('rb-station-cache-status');
+    const rbCacheClearBtn = root.getElementById('rb-station-cache-clear-btn');
+    const updateRbCacheStatus = () => {
+      try {
+        const store = JSON.parse(localStorage.getItem('crow_rb_station_cache') || '{}');
+        const count = Object.keys(store).length;
+        if (rbCacheStatus) rbCacheStatus.textContent = count === 0 ? 'No stations cached' : count + ' station URL' + (count === 1 ? '' : 's') + ' cached';
+      } catch (_) {
+        if (rbCacheStatus) rbCacheStatus.textContent = 'No stations cached';
+      }
+    };
+    updateRbCacheStatus();
+    if (rbCacheClearBtn) rbCacheClearBtn.onclick = () => {
+      try { localStorage.removeItem('crow_rb_station_cache'); } catch (_) {}
+      // Also clear in-memory cache on the card element
+      const cardEl = document.querySelector('crowai-media-player-card') ||
+        document.querySelector('hui-card')?.querySelector('crowai-media-player-card') ||
+        [...document.querySelectorAll('*')].find(el => el.tagName?.toLowerCase() === 'crowai-media-player-card');
+      if (cardEl) cardEl._rbStationCache = new Map();
+      updateRbCacheStatus();
     };
 
     // ── AI Vibe History cache ────────────────────────────────────────────
