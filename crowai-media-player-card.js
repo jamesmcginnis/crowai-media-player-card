@@ -135,6 +135,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     if (!this.shadowRoot.innerHTML) {
+      // Pre-load starred/pinned keys into memory before render so they're available
+      // immediately when _loadMATab and _rbInjectStarredSection run
+      if (!this._starredMemCache) {
+        this._starredMemCache = {};
+        const _sk = ['crow_starred_stations','crow_starred_podcasts','crow_starred_audiobooks','crow_starred_track','crow_starred_artist','crow_starred_album'];
+        _sk.forEach(k => { try { const v = JSON.parse(localStorage.getItem(k) || '[]'); if (Array.isArray(v) && v.length) this._starredMemCache[k] = v; } catch(_) {} });
+      }
       this.render();
       this.setupListeners();
       this._applyStartupMode();
@@ -150,6 +157,19 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         this._config = { ...this._config, ma_radio_mode: _rm === '1' };
       }
     } catch (_) {}
+
+    // Restore audiobook now-playing from localStorage (survives page refresh)
+    try {
+      const _anp = localStorage.getItem('crow_ab_now_playing');
+      if (_anp) {
+        const parsed = JSON.parse(_anp);
+        if (parsed?.ts && (Date.now() - parsed.ts) < 24 * 3600 * 1000) {
+          this._abNowPlaying = parsed;
+        } else {
+          localStorage.removeItem('crow_ab_now_playing');
+        }
+      }
+    } catch(_) {}
 
     // Restore podcast now-playing from localStorage (survives page refresh)
     try {
@@ -709,6 +729,39 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     ['crow_ma_lib_store', 'crow_itunes_preferred'].forEach(key => {
       try { const r = localStorage.getItem(key); if (r) JSON.parse(r); }
       catch (_) { try { localStorage.removeItem(key); } catch (__) {} }
+    });
+
+    // Preload episode/chapter caches into memory so badge restoration works after app close
+    try {
+      const _pcEc = JSON.parse(localStorage.getItem('crow_pc_episode_cache') || '{}');
+      if (Object.keys(_pcEc).length) {
+        if (!this._pcEpisodeCache) this._pcEpisodeCache = new Map();
+        Object.entries(_pcEc).forEach(([url, entry]) => { if (entry?.pod) this._pcEpisodeCache.set(url, entry.pod); });
+      }
+    } catch(_) {}
+    try {
+      const _abCc = JSON.parse(localStorage.getItem('crow_ab_chapter_cache') || '{}');
+      if (Object.keys(_abCc).length) {
+        if (!this._abChapterCache) this._abChapterCache = new Map();
+        Object.entries(_abCc).forEach(([url, entry]) => { if (entry?.book) this._abChapterCache.set(url, entry.book); });
+      }
+    } catch(_) {}
+
+    // Starred/pinned keys — load into memory on connect so they survive WKWebView localStorage eviction.
+    // Pattern mirrors crow_itunes_preferred: memory is tier-1, localStorage is tier-2 write-through.
+    const _starredKeys = [
+      'crow_starred_stations', 'crow_starred_podcasts', 'crow_starred_audiobooks',
+      'crow_starred_track', 'crow_starred_artist', 'crow_starred_album', 'crow_starred_playlist',
+    ];
+    if (!this._starredMemCache) this._starredMemCache = {};
+    _starredKeys.forEach(key => {
+      try {
+        const raw = localStorage.getItem(key);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) this._starredMemCache[key] = parsed;
+        }
+      } catch(_) { try { localStorage.removeItem(key); } catch(__) {} }
     });
     this._maLibStoreValidated = true; // already validated above
     this._loadItunesPreferred();
@@ -3418,6 +3471,14 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             </div>
           </div>
 
+          <!-- Audiobook badge (top-left of artwork) — shown when a LibriVox chapter is playing -->
+          <div id="audiobookBadge" style="display:none;position:absolute;top:10px;left:10px;z-index:21;cursor:pointer;-webkit-tap-highlight-color:transparent;">
+            <div style="display:inline-flex;align-items:center;gap:5px;background:rgba(0,0,0,0.58);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.18);border-radius:20px;padding:4px 9px 4px 7px;">
+              <svg viewBox="0 0 24 24" style="width:9px;height:9px;fill:#FF9500;flex-shrink:0;"><path d="M21,5C19.89,4.65 18.67,4.5 17.5,4.5C15.55,4.5 13.45,4.9 12,6C10.55,4.9 8.45,4.5 6.5,4.5C4.55,4.5 2.45,4.9 1,6V20.65C1,20.9 1.25,21.15 1.5,21.15C1.6,21.15 1.65,21.1 1.75,21.1C3.1,20.45 5.05,20 6.5,20C8.45,20 10.55,20.4 12,21.5C13.35,20.65 15.8,20 17.5,20C19.15,20 20.85,20.3 22.25,21.1C22.35,21.15 22.4,21.15 22.5,21.15C22.75,21.15 23,20.9 23,20.65V6C22.4,5.55 21.75,5.25 21,5M21,18.5C19.9,18.15 18.7,18 17.5,18C15.8,18 13.35,18.65 12,19.5V8C13.35,7.15 15.8,6.5 17.5,6.5C18.7,6.5 19.9,6.65 21,7V18.5Z"/></svg>
+              <span style="font-size:11px;font-weight:700;color:rgba(255,255,255,0.9);letter-spacing:0.5px;font-family:-apple-system,BlinkMacSystemFont,sans-serif;">AUDIOBOOK</span>
+            </div>
+          </div>
+
           <!-- Radio mode indicator (top-left of artwork) — shown when MA radio mode is active -->
           <div id="radioModeIndicator" style="display:none;position:absolute;top:10px;left:10px;z-index:20;width:28px;height:28px;border-radius:50%;background:rgba(0,0,0,0.55);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);border:1px solid rgba(255,255,255,0.25);align-items:center;justify-content:center;" title="Radio Mode On">
             <svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:${this._pt("text")};display:block;"><path d="M19,6.41L4.86,2.28L4.29,4.2L7,5V7H5A2,2 0 0,0 3,9V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V9A2,2 0 0,0 19,7H9V5.75L19,8.55V6.41M7,9A2,2 0 0,1 9,11A2,2 0 0,1 7,13A2,2 0 0,1 5,11A2,2 0 0,1 7,9M17,18H7V16H17V18M19,14H11V10H19V14Z"/></svg>
@@ -3567,6 +3628,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             <button class="ma-tab" data-tab="track">Songs</button>
             <button class="ma-tab" data-tab="radio">Radio</button>
             <button class="ma-tab" data-tab="podcast">Podcasts</button>
+            <button class="ma-tab" data-tab="audiobook">Audiobooks</button>
             <button class="ma-tab" data-tab="audiobook">Audiobooks</button>
           </div>
           <!-- Persistent iOS library search bar — shown above maContent in iOS view mode -->
@@ -4277,7 +4339,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
                 this._config = { ...this._config, ma_radio_mode: newVal };
                 try { localStorage.setItem('crow_radio_mode', newVal ? '1' : '0'); } catch (_) {}
                 this.dispatchEvent(new CustomEvent('config-changed', { detail: { config: { ...this._config } }, bubbles: true, composed: true }));
-                this._updateRadioIndicator(); this._updateLiveStationBadge(); this._updatePodcastBadge();
+                this._updateRadioIndicator(); this._updateLiveStationBadge(); this._updatePodcastBadge(); this._updateAudiobookBadge();
                 const _qb = this.shadowRoot?.getElementById('btnQueueOpen');
                 if (_qb) _qb.classList.toggle('active', !!newVal);
                 if (newVal) {
@@ -4297,7 +4359,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
                       this._config = { ...this._config, ma_radio_mode: false };
                       try { localStorage.setItem('crow_radio_mode', '0'); } catch (_) {}
                       this.dispatchEvent(new CustomEvent('config-changed', { detail: { config: { ...this._config } }, bubbles: true, composed: true }));
-                      this._updateRadioIndicator(); this._updateLiveStationBadge(); this._updatePodcastBadge();
+                      this._updateRadioIndicator(); this._updateLiveStationBadge(); this._updatePodcastBadge(); this._updateAudiobookBadge();
                       const _qbOff = this.shadowRoot?.getElementById('btnQueueOpen');
                       if (_qbOff) _qbOff.classList.remove('active');
                       // Return to artwork panel and restore artwork
@@ -4877,7 +4939,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           maSearchClear.classList.add('hidden');
           this._maLastSearch = null;
           this._maInSearchResults = false;
-          const _tabPh = { radio: 'Search radio stations…', podcast: 'Search podcasts…', artist: 'Search artists…', album: 'Search albums…', track: 'Search songs…', playlist: 'Search playlists…' };
+          const _tabPh = { radio: 'Search radio stations…', podcast: 'Search podcasts…', audiobook: 'Search audiobooks…', artist: 'Search artists…', album: 'Search albums…', track: 'Search songs…', playlist: 'Search playlists…' };
           maSearchInput.placeholder = _tabPh[tab.dataset.tab] || 'Search library…';
           this._loadMATab(tab.dataset.tab);
         }
@@ -5209,7 +5271,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
                       this._config = { ...this._config, ma_radio_mode: false };
                       try { localStorage.setItem('crow_radio_mode', '0'); } catch (_) {}
                       this.dispatchEvent(new CustomEvent('config-changed', { detail: { config: { ...this._config } }, bubbles: true, composed: true }));
-                      this._updateRadioIndicator(); this._updateLiveStationBadge(); this._updatePodcastBadge();
+                      this._updateRadioIndicator(); this._updateLiveStationBadge(); this._updatePodcastBadge(); this._updateAudiobookBadge();
                       const _qbOff = this.shadowRoot?.getElementById('btnQueueOpen');
                       if (_qbOff) _qbOff.classList.remove('active');
                       // Return to artwork panel and restore artwork
@@ -5225,7 +5287,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             }
           }
           // Show friendly notification overlay
-          this._updateRadioIndicator(); this._updateLiveStationBadge(); this._updatePodcastBadge();
+          this._updateRadioIndicator(); this._updateLiveStationBadge(); this._updatePodcastBadge(); this._updateAudiobookBadge();
           const _qb3 = this.shadowRoot?.getElementById('btnQueueOpen');
           if (_qb3) _qb3.classList.toggle('active', !!newVal);
         });
@@ -5436,7 +5498,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           this._config = { ...this._config, ma_radio_mode: false };
           try { localStorage.setItem('crow_radio_mode', '0'); } catch (_) {}
           this.dispatchEvent(new CustomEvent('config-changed', { detail: { config: { ...this._config } }, bubbles: true, composed: true }));
-          this._updateRadioIndicator(); this._updateLiveStationBadge(); this._updatePodcastBadge();
+          this._updateRadioIndicator(); this._updateLiveStationBadge(); this._updatePodcastBadge(); this._updateAudiobookBadge();
         });
         // Auto-dismiss after 6 seconds
         setTimeout(() => { if (r.getElementById('radioCancelConfirm')) dismiss(); }, 6000);
@@ -5567,7 +5629,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const isPlaying = state.state === 'playing';
 
     // Radio mode indicator icon
-    this._updateRadioIndicator(); this._updateLiveStationBadge(); this._updatePodcastBadge();
+    this._updateRadioIndicator(); this._updateLiveStationBadge(); this._updatePodcastBadge(); this._updateAudiobookBadge();
     this._pcCheckNowPlaying(this._hass?.states[this._entity]);
     // Queue/menu button tinted accent when radio mode is on
     const _qBtn = r.getElementById('btnQueueOpen');
@@ -7758,13 +7820,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         rr.getElementById('maTabs')?.setAttribute('style', 'display:none');
         rr.querySelector('.ma-search-row')?.setAttribute('style', 'display:none');
         // Only show iOS search bar for the four main searchable types
-        const _searchableTabs = new Set(['artist', 'album', 'track', 'playlist', 'radio', 'podcast']);
+        const _searchableTabs = new Set(['artist', 'album', 'track', 'playlist', 'radio', 'podcast', 'audiobook']);
         const _iosBar = rr.getElementById('maIosSearchBar');
         if (_iosBar) _iosBar.classList.toggle('hidden', !_searchableTabs.has(tab));
         // Update placeholder to reflect whether full search is available
         const _iosInput = rr.getElementById('maIosSearchInput');
         if (_iosInput) {
-          _iosInput.placeholder = tab === 'radio' ? 'Search radio stations… (press Enter)' : tab === 'podcast' ? 'Search podcasts… (press Enter)' : _searchableTabs.has(tab) ? 'Search… (Enter to search all music)' : 'Search…';
+          _iosInput.placeholder = tab === 'radio' ? 'Search radio stations… (press Enter)' : tab === 'podcast' ? 'Search podcasts… (press Enter)' : tab === 'audiobook' ? 'Search audiobooks… (press Enter)' : _searchableTabs.has(tab) ? 'Search… (Enter to search all music)' : 'Search…';
           _iosInput._fullSearchEnabled = _searchableTabs.has(tab);
         }
         if (_iosBar) _iosBar.classList.remove('hidden');
@@ -7898,6 +7960,11 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     this._maLastSearch = null;
     this._maInSearchResults = false;
     this._loadMATab(prev.tab);
+    // Re-inject pinned section after loadMATab settles (covers async grid render)
+    setTimeout(() => {
+      const _content = this.shadowRoot?.getElementById('maContent');
+      if (_content) this._maLibInjectStarred(prev.tab, _content);
+    }, 300);
   }
 
   // Resolves the mass_queue integration config entry ID by trying the current
@@ -8023,6 +8090,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         if (browseTracks.length) {
           tracks = browseTracks;
           this._renderMAGrid(tracks, effectiveTab, content);
+          if (['track','artist','album'].includes(effectiveTab)) this._maLibInjectStarred(effectiveTab, content);
           if (titleEl) titleEl.textContent = item.name || item.title || '';
           this._drillInCache.set(cacheKey, { tracks, ts: Date.now() });
         }
@@ -8188,6 +8256,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         '</button>';
       content.insertBefore(_actionBar, content.firstChild);
 
+      // Pinned tracks sit above action bar
+      this._maLibInjectStarred('track', content);
+
       _actionBar.querySelectorAll('.ma-drill-action-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
           e.stopPropagation();
@@ -8239,11 +8310,16 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   _rbStarredKey() { return 'crow_starred_stations'; }
 
   _rbGetStarred() {
-    try { return JSON.parse(localStorage.getItem(this._rbStarredKey()) || '[]'); } catch(_) { return []; }
+    const k = this._rbStarredKey();
+    if (this._starredMemCache?.[k]) return this._starredMemCache[k];
+    try { const v = JSON.parse(localStorage.getItem(k) || '[]'); if (!this._starredMemCache) this._starredMemCache = {}; this._starredMemCache[k] = v; return v; } catch(_) { return []; }
   }
 
   _rbSaveStarred(list) {
-    try { localStorage.setItem(this._rbStarredKey(), JSON.stringify(list)); } catch(_) {}
+    const k = this._rbStarredKey();
+    if (!this._starredMemCache) this._starredMemCache = {};
+    this._starredMemCache[k] = list;
+    try { localStorage.setItem(k, JSON.stringify(list)); } catch(_) {}
   }
 
   _rbIsStarred(st) {
@@ -8422,10 +8498,15 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   _pcTopTTL()      { return 6 * 60 * 60 * 1000; } // 6 hours
 
   _pcGetStarred() {
-    try { return JSON.parse(localStorage.getItem(this._pcStarredKey()) || '[]'); } catch(_) { return []; }
+    const k = this._pcStarredKey();
+    if (this._starredMemCache?.[k]) return this._starredMemCache[k];
+    try { const v = JSON.parse(localStorage.getItem(k) || '[]'); if (!this._starredMemCache) this._starredMemCache = {}; this._starredMemCache[k] = v; return v; } catch(_) { return []; }
   }
   _pcSaveStarred(list) {
-    try { localStorage.setItem(this._pcStarredKey(), JSON.stringify(list)); } catch(_) {}
+    const k = this._pcStarredKey();
+    if (!this._starredMemCache) this._starredMemCache = {};
+    this._starredMemCache[k] = list;
+    try { localStorage.setItem(k, JSON.stringify(list)); } catch(_) {}
   }
   _pcIsStarred(pod) {
     return this._pcGetStarred().some(p => p.collectionId === pod.collectionId);
@@ -9073,6 +9154,582 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // RADIO BROWSER — Context menu + More Info panel
   // ════════════════════════════════════════════════════════════════════════════
 
+
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // MA LIBRARY PINS — tracks, artists, albums
+  // ════════════════════════════════════════════════════════════════════════════
+
+  _maLibStarredKey(tab) { return 'crow_starred_' + tab; }
+
+  _maLibGetStarred(tab) {
+    const k = this._maLibStarredKey(tab);
+    if (this._starredMemCache?.[k]) return this._starredMemCache[k];
+    try { const v = JSON.parse(localStorage.getItem(k) || '[]'); if (!this._starredMemCache) this._starredMemCache = {}; this._starredMemCache[k] = v; return v; } catch(_) { return []; }
+  }
+
+  _maLibSaveStarred(tab, list) {
+    const k = this._maLibStarredKey(tab);
+    if (!this._starredMemCache) this._starredMemCache = {};
+    this._starredMemCache[k] = list;
+    try { localStorage.setItem(k, JSON.stringify(list)); } catch(_) {}
+  }
+
+  _maLibIsStarred(item, tab) {
+    const key = item.uri || item.media_content_id || '';
+    return this._maLibGetStarred(tab).some(s => (s.uri || s.media_content_id || '') === key);
+  }
+
+  _maLibToggleStar(item, tab) {
+    const key = item.uri || item.media_content_id || '';
+    if (!key) { this._showToast('Cannot pin — item has no URI'); return null; }
+    let starred = this._maLibGetStarred(tab);
+    const idx = starred.findIndex(s => (s.uri || s.media_content_id || '') === key);
+    if (idx >= 0) {
+      starred.splice(idx, 1);
+      this._maLibSaveStarred(tab, starred);
+      return false;
+    }
+    if (starred.length >= 10) {
+      const label = tab === 'track' ? 'songs' : tab === 'playlist' ? 'playlists' : tab + 's';
+      this._showToast('Maximum 10 pinned ' + label + ' — unpin one first');
+      return null;
+    }
+    starred.unshift(item);
+    this._maLibSaveStarred(tab, starred);
+    return true;
+  }
+
+  _maLibRefreshPinnedUI(tab) {
+    const maContent = this.shadowRoot?.getElementById('maContent');
+    if (!maContent) return;
+    const _t = tab === 'favourites' ? 'track' : tab;
+    const sectionId = 'malib-starred-' + _t;
+    const existing  = maContent.querySelector('#' + sectionId);
+    const newSection = this._maLibRenderStarredSection(_t);
+    if (existing) {
+      if (newSection) existing.replaceWith(newSection);
+      else existing.remove();
+    } else if (newSection) {
+      const grid = maContent.querySelector('.ma-grid');
+      maContent.insertBefore(newSection, grid || maContent.firstChild);
+    }
+  }
+
+  _maLibRenderStarredSection(tab) {
+    const starred = this._maLibGetStarred(tab);
+    if (!starred.length) return null;
+    const self = this;
+
+    const label = tab === 'track' ? 'Songs' : tab === 'artist' ? 'Artists' : tab === 'playlist' ? 'Playlists' : 'Albums';
+    const section = document.createElement('div');
+    section.id = 'malib-starred-' + tab;
+    section.style.cssText = 'margin-bottom:4px;';
+
+    const heading = document.createElement('div');
+    heading.style.cssText = 'font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.6px;padding:10px 4px 6px;';
+    heading.textContent = '\ud83d\udccd Pinned ' + label;
+    section.appendChild(heading);
+
+    starred.forEach(item => {
+      const wrap = document.createElement('div');
+      wrap.className = 'ma-item-wrap';
+      const imgUrl = self._maImgUrl(item);
+      const title  = item.name || item.title || '';
+      const sub    = (item.artists ? item.artists.map(a => a.name).join(', ') : '') || '';
+      const el = document.createElement('div');
+      el.className = 'ma-item';
+      el.innerHTML =
+        '<div class="ma-item-art">' +
+          (imgUrl ? '<img src="' + imgUrl + '" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">' : '') +
+          '<svg viewBox="0 0 24 24" style="display:' + (imgUrl ? 'none' : 'flex') + '">' + self._maItemSvg(tab) + '</svg>' +
+        '</div>' +
+        '<div class="ma-item-info"><div class="ma-item-title">' + title + '</div>' +
+          (sub ? '<div class="ma-item-sub">' + sub + '</div>' : '') +
+        '</div>' +
+        '<div class="ma-item-chevron" style="' + (['artist','album','playlist'].includes(tab) ? '' : 'visibility:hidden') + '"><svg viewBox="0 0 24 24"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg></div>';
+      wrap.appendChild(el);
+      self._attachMAItemSwipe(wrap, item, tab);
+      section.appendChild(wrap);
+    });
+
+    const divider = document.createElement('div');
+    divider.style.cssText = 'font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.6px;padding:10px 4px 6px;';
+    divider.textContent = 'Library';
+    section.appendChild(divider);
+
+    return section;
+  }
+
+  _maLibInjectStarred(tab, content) {
+    if (!['track','artist','album','favourites','playlist'].includes(tab)) return;
+    const _t = tab === 'favourites' ? 'track' : tab;
+    const sectionId = 'malib-starred-' + _t;
+    content.querySelector('#' + sectionId)?.remove();
+    const section = this._maLibRenderStarredSection(_t);
+    if (!section) return;
+    const grid = content.querySelector('.ma-grid');
+    content.insertBefore(section, grid || content.firstChild);
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // AUDIOBOOKS (LibriVox)
+  // ════════════════════════════════════════════════════════════════════════════
+
+  _abStarredKey() { return 'crow_starred_audiobooks'; }
+  _abGetStarred() { const k = this._abStarredKey(); if (this._starredMemCache?.[k]) return this._starredMemCache[k]; try { const v = JSON.parse(localStorage.getItem(k) || '[]'); if (!this._starredMemCache) this._starredMemCache = {}; this._starredMemCache[k] = v; return v; } catch(_) { return []; } }
+  _abSaveStarred(list) { const k = this._abStarredKey(); if (!this._starredMemCache) this._starredMemCache = {}; this._starredMemCache[k] = list; try { localStorage.setItem(k, JSON.stringify(list)); } catch(_) {} }
+  _abIsStarred(book) { return this._abGetStarred().some(b => b.id === book.id); }
+  _abToggleStar(book) {
+    let starred = this._abGetStarred();
+    const idx = starred.findIndex(b => b.id === book.id);
+    if (idx >= 0) { starred.splice(idx, 1); this._abSaveStarred(starred); return false; }
+    if (starred.length >= 10) { this._showToast('Maximum 10 pinned audiobooks — unpin one first'); return null; }
+    starred.unshift(book); this._abSaveStarred(starred); return true;
+  }
+
+  // AI query interpretation — extracts title/author from natural language
+  async _abInterpretQuery(rawQuery) {
+    const hasAI = await this._aiCheckAvailable();
+    if (!hasAI) return { mode: 'all', query: rawQuery, suggestion: null };
+    try {
+      const raw = await this._aiConverse(
+        'The user is searching LibriVox for a public domain audiobook. Their query is: "' + rawQuery + '". ' +
+        'LibriVox only has pre-1928 public domain works. ' +
+        'Respond ONLY with JSON, no markdown: ' +
+        '{"title":"the most likely book title to search for","author":"author name if identifiable or empty string","q":"best general search term if neither title nor author is clear","suggestion":"corrected or full title to show user if query looks like a typo or partial title"} ' +
+        'Always populate suggestion with the most likely intended title. Example: "wind of worlds" -> suggestion: "War of the Worlds".'
+      );
+      const clean = (raw || '').replace(/```json|```/g, '').trim();
+      const parsed = JSON.parse(clean);
+      const suggestion = parsed.suggestion && parsed.suggestion.toLowerCase() !== rawQuery.toLowerCase() ? parsed.suggestion : null;
+      if (parsed.title && !parsed.author) return { mode: 'title', query: parsed.title, suggestion };
+      if (parsed.author && !parsed.title) return { mode: 'author', query: parsed.author, suggestion };
+      if (parsed.title && parsed.author)  return { mode: 'both', titleQuery: parsed.title, authorQuery: parsed.author, suggestion };
+      return { mode: 'all', query: parsed.q || rawQuery, suggestion };
+    } catch(_) {
+      return { mode: 'all', query: rawQuery, suggestion: null };
+    }
+  }
+
+  async _abFetchBooks(mode, query) {
+    const _t = ms => new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms));
+
+    // Use Internet Archive search API — full keyword search, open CORS, same data the LibriVox
+    // website uses. The native librivox.org API only does prefix/starts-with matching which
+    // returns nothing for queries like "Sherlock Holmes" (books start with "The Adventures of...").
+    let q;
+    if (mode === 'author') {
+      q = 'creator:(' + query + ') collection:librivoxaudio';
+    } else if (mode === 'title') {
+      q = 'title:(' + query + ') collection:librivoxaudio';
+    } else {
+      q = query + ' collection:librivoxaudio';
+    }
+
+    const url = 'https://archive.org/advancedsearch.php?q=' + encodeURIComponent(q) +
+      '&fl[]=identifier&fl[]=title&fl[]=creator&fl[]=description&fl[]=subject' +
+      '&output=json&rows=20&page=1';
+
+    let docs = [];
+    try {
+      const res = await Promise.race([fetch(url, { cache: 'no-store' }), _t(10000)]);
+      if (res.ok) {
+        const d = await Promise.race([res.json(), _t(10000)]);
+        docs = d?.response?.docs || [];
+      }
+    } catch(_) {}
+
+    return docs.map(b => ({
+      id:           b.identifier,
+      title:        b.title || 'Unknown Title',
+      author:       Array.isArray(b.creator) ? b.creator.join(', ') : (b.creator || ''),
+      description:  Array.isArray(b.description)
+                      ? b.description[0].replace(/<[^>]+>/g, '').trim().slice(0, 200)
+                      : (b.description || '').replace(/<[^>]+>/g, '').trim().slice(0, 200),
+      url_rss:      'https://librivox.org/rss/' + b.identifier,
+      url_librivox: 'https://librivox.org/' + b.identifier,
+      language:     null,
+      totaltime:    null,
+      genres:       Array.isArray(b.subject) ? b.subject : [],
+      num_sections: null,
+    }));
+  }
+
+  async _abSearch(query) {
+    // Search by title first, then author, then suggest via AI if nothing found
+    const titleResults = await this._abFetchBooks('title', query);
+    if (titleResults.length) return titleResults;
+
+    const authorResults = await this._abFetchBooks('author', query);
+    if (authorResults.length) return authorResults;
+
+    // Nothing found — ask AI for a suggestion
+    let suggestion = null;
+    try {
+      const hasAI = await this._aiCheckAvailable();
+      if (hasAI) {
+        const raw = await this._aiConverse(
+          'The user searched LibriVox for "' + query + '" but found nothing. ' +
+          'LibriVox only has public domain audiobooks. ' +
+          'Suggest the most likely intended public domain title in 1-5 words only. ' +
+          'Reply with ONLY the title, nothing else.'
+        );
+        const s = (raw || '').trim().replace(/^["']|["']$/g, '');
+        if (s && s.toLowerCase() !== query.toLowerCase()) suggestion = s;
+      }
+    } catch(_) {}
+
+    // Final fallback: try searching with the most unique word (prefer last words, skip common names/words)
+    const stopWords2 = new Set(['the','of','and','in','a','an','to','for','by','with','at','from','as',
+      'autobiography','volume','complete','adventures','story','tales','collection','selected','works',
+      'john','james','william','george','henry','charles','edward','thomas','robert','richard',
+      'mary','anne','elizabeth','jane','sarah','margaret','alice']);
+    const words2 = query.split(/\s+/).filter(w => w.length > 3 && !stopWords2.has(w.toLowerCase()));
+    // Try from the end — last words tend to be most specific (e.g. "Spurgeon" in "Charles H. Spurgeon")
+    const keyWords = [...words2].reverse();
+    for (const kw of keyWords) {
+      if (kw.toLowerCase() === query.toLowerCase()) continue;
+      const kwResults = await this._abFetchBooks('title', kw);
+      if (kwResults.length) return kwResults;
+      const kwAuthor = await this._abFetchBooks('author', kw);
+      if (kwAuthor.length) return kwAuthor;
+    }
+
+    return { empty: true, originalQuery: query, suggestion };
+  }
+
+  async _abFetchChapters(rssUrl, limit) {
+    limit = limit || 50;
+    const _t = (ms) => new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms));
+    let text = null;
+    try { const r = await Promise.race([fetch(rssUrl), _t(8000)]); if (r.ok) text = await Promise.race([r.text(), _t(8000)]); } catch(_) {}
+    if (!text) {
+      try { const r = await Promise.race([fetch('https://corsproxy.io/?' + encodeURIComponent(rssUrl)), _t(10000)]); if (r.ok) text = await Promise.race([r.text(), _t(10000)]); } catch(_) {}
+    }
+    if (!text) throw new Error('Could not fetch chapters');
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(text, 'text/xml');
+    return Array.from(doc.querySelectorAll('item')).slice(0, limit).map((item, i) => {
+      const enc = item.querySelector('enclosure');
+      const dur = item.querySelector('duration')?.textContent?.trim() || '';
+      let durFmt = '';
+      if (dur.includes(':')) { durFmt = dur.replace(/^0:/, ''); }
+      else { const s = parseInt(dur, 10); if (!isNaN(s)) { const m = Math.floor(s/60), h = Math.floor(m/60); durFmt = h > 0 ? h+'h '+(m%60)+'m' : m+' min'; } }
+      return { title: item.querySelector('title')?.textContent?.trim() || ('Chapter '+(i+1)), url: enc?.getAttribute('url')||'', duration: durFmt, num: i+1 };
+    }).filter(ch => ch.url);
+  }
+
+  _abPlayChapter(chapterUrl, title, entity, book) {
+    entity = entity || this._resolveMATargetEntity() || this._entity;
+    this._hass.callService('media_player', 'play_media', { entity_id: entity, media_content_id: chapterUrl, media_content_type: 'music' });
+    this._abNowPlaying = { url: chapterUrl, title, ts: Date.now() };
+    try { localStorage.setItem('crow_ab_now_playing', JSON.stringify(this._abNowPlaying)); } catch(_) {}
+    if (book) {
+      if (!this._abChapterCache) this._abChapterCache = new Map();
+      this._abChapterCache.set(chapterUrl, book);
+      try {
+        const store = JSON.parse(localStorage.getItem('crow_ab_chapter_cache') || '{}');
+        store[chapterUrl] = { book, ts: Date.now() };
+        const TTL = 30*24*3600*1000;
+        Object.keys(store).forEach(k => { if (Date.now()-(store[k].ts||0) > TTL) delete store[k]; });
+        localStorage.setItem('crow_ab_chapter_cache', JSON.stringify(store));
+      } catch(_) {}
+    }
+    this._showToast('\u25b6 ' + (title || 'Chapter'));
+    this._closeInfoPopup();
+    this._closeMABrowser();
+    setTimeout(() => { this._updateAudiobookBadge(); }, 300);
+  }
+
+  _abCachedBook(chapterUrl) {
+    if (!chapterUrl) return null;
+    if (this._abChapterCache?.has(chapterUrl)) return this._abChapterCache.get(chapterUrl);
+    try {
+      const store = JSON.parse(localStorage.getItem('crow_ab_chapter_cache') || '{}');
+      const entry = store[chapterUrl];
+      if (entry && (Date.now()-(entry.ts||0)) < 30*24*3600*1000) {
+        if (!this._abChapterCache) this._abChapterCache = new Map();
+        this._abChapterCache.set(chapterUrl, entry.book);
+        return entry.book;
+      }
+    } catch(_) {}
+    return null;
+  }
+
+  _abMakeRow(book, isStarred) {
+    const self = this;
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer;-webkit-tap-highlight-color:transparent;position:relative;';
+    const sub = [book.author, book.language, book.totaltime].filter(Boolean).join(' \u00b7 ');
+    row.innerHTML =
+      '<div style="width:40px;height:40px;border-radius:8px;background:rgba(255,149,0,0.15);flex-shrink:0;display:flex;align-items:center;justify-content:center;">' +
+        '<svg viewBox="0 0 24 24" style="width:20px;height:20px;fill:#FF9500;"><path d="M21,5C19.89,4.65 18.67,4.5 17.5,4.5C15.55,4.5 13.45,4.9 12,6C10.55,4.9 8.45,4.5 6.5,4.5C4.55,4.5 2.45,4.9 1,6V20.65C1,20.9 1.25,21.15 1.5,21.15C1.6,21.15 1.65,21.1 1.75,21.1C3.1,20.45 5.05,20 6.5,20C8.45,20 10.55,20.4 12,21.5C13.35,20.65 15.8,20 17.5,20C19.15,20 20.85,20.3 22.25,21.1C22.35,21.15 22.4,21.15 22.5,21.15C22.75,21.15 23,20.9 23,20.65V6C22.4,5.55 21.75,5.25 21,5M21,18.5C19.9,18.15 18.7,18 17.5,18C15.8,18 13.35,18.65 12,19.5V8C13.35,7.15 15.8,6.5 17.5,6.5C18.7,6.5 19.9,6.65 21,7V18.5Z"/></svg>' +
+      '</div>' +
+      '<div style="flex:1;min-width:0;">' +
+        '<div style="font-size:13px;font-weight:600;color:var(--primary-text-color,#fff);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (book.title||'Unknown') + '</div>' +
+        '<div style="font-size:11px;color:rgba(255,255,255,0.45);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + sub + '</div>' +
+      '</div>';
+    let _lpTimer = null, _lpFired = false;
+    row.addEventListener('contextmenu', e => e.preventDefault());
+    row.addEventListener('pointerdown', () => { _lpFired = false; _lpTimer = setTimeout(() => { _lpFired = true; self._showAbContextMenu(row, book); }, 480); }, { passive: true });
+    row.addEventListener('pointerup',     () => clearTimeout(_lpTimer), { passive: true });
+    row.addEventListener('pointercancel', () => { clearTimeout(_lpTimer); _lpFired = false; }, { passive: true });
+    row.addEventListener('pointermove',   () => clearTimeout(_lpTimer), { passive: true });
+    row.addEventListener('click', () => { if (_lpFired) { _lpFired = false; return; } self._showAbMoreInfo(book); });
+    return row;
+  }
+
+  _abRenderStarredSection() {
+    const starred = this._abGetStarred();
+    if (!starred.length) return null;
+    const section = document.createElement('div');
+    section.id = 'ab-starred-section';
+    const heading = document.createElement('div');
+    heading.style.cssText = 'font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.6px;padding:10px 4px 6px;';
+    heading.textContent = '\ud83d\udccd Pinned Audiobooks';
+    section.appendChild(heading);
+    starred.forEach(book => section.appendChild(this._abMakeRow(book, true)));
+    const divider = document.createElement('div');
+    divider.style.cssText = 'font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.6px;padding:10px 4px 6px;';
+    divider.textContent = 'Search Results';
+    section.appendChild(divider);
+    return section;
+  }
+
+  _abRefreshPinnedUI() {
+    const maContent = this.shadowRoot?.getElementById('maContent');
+    if (!maContent) return;
+    const existing = maContent.querySelector('#ab-starred-section');
+    const newSection = this._abRenderStarredSection();
+    if (existing) { if (newSection) existing.replaceWith(newSection); else existing.remove(); }
+    else if (newSection) maContent.insertBefore(newSection, maContent.firstChild);
+  }
+
+  _abInjectSections(content) {
+    if (!content) return;
+    content.querySelector('#ab-starred-section')?.remove();
+    content.querySelector('#ab-search-prompt')?.remove();
+    const starredSection = this._abRenderStarredSection();
+    if (starredSection) content.insertBefore(starredSection, content.firstChild);
+    const prompt = document.createElement('div');
+    prompt.id = 'ab-search-prompt';
+    prompt.style.cssText = 'padding:20px 4px;text-align:center;';
+    prompt.innerHTML = '<div style="font-size:13px;color:rgba(255,255,255,0.4);line-height:1.8;">Search above for free public domain audiobooks.\u000aPowered by LibriVox.</div>';
+    content.appendChild(prompt);
+  }
+
+  _showAbContextMenu(anchor, book) {
+    const r = this.shadowRoot;
+    r.querySelectorAll('.enqueue-backdrop').forEach(el => el.remove());
+    r.querySelectorAll('.enqueue-menu').forEach(el => el.remove());
+    const backdrop = document.createElement('div');
+    backdrop.className = 'enqueue-backdrop';
+    const _oa = Date.now();
+    backdrop.addEventListener('pointerdown', () => { if (Date.now()-_oa < 200) return; backdrop.remove(); menu.remove(); });
+    r.appendChild(backdrop);
+    const menu = document.createElement('div');
+    menu.className = 'enqueue-menu';
+    const isPinned = this._abIsStarred(book);
+    const strategies = [
+      { mode: 'more_info', label: 'Browse Chapters',                              icon: '<path d="M8 5v14l11-7z"/>' },
+      { mode: 'pin',       label: isPinned ? 'Unpin Audiobook' : 'Pin Audiobook', icon: '<path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/>' },
+      { mode: 'share',     label: 'Share',                                         icon: '<path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z"/>' },
+    ];
+    menu.innerHTML = strategies.map(s => '<div class="enqueue-menu-item" data-mode="' + s.mode + '"><svg class="enqueue-menu-icon" viewBox="0 0 24 24">' + s.icon + '</svg><div class="enqueue-menu-label">' + s.label + '</div></div>').join('');
+    r.appendChild(menu);
+    const aR = anchor.getBoundingClientRect(), cR = r.host.getBoundingClientRect();
+    menu.style.top = Math.min(aR.bottom - cR.top + 4, cR.height - 160) + 'px';
+    menu.style.right = '12px';
+    const _mOA = Date.now(), _mr = () => Date.now()-_mOA > 350;
+    menu.querySelectorAll('.enqueue-menu-item').forEach(el => {
+      el.addEventListener('click', e => {
+        e.stopPropagation(); if (!_mr()) return;
+        backdrop.remove(); menu.remove();
+        if (el.dataset.mode === 'more_info') { this._showAbMoreInfo(book); }
+        else if (el.dataset.mode === 'pin') {
+          const nowPinned = this._abToggleStar(book);
+          if (nowPinned === null) return;
+          this._showToast(nowPinned ? '\ud83d\udccd Audiobook pinned' : 'Audiobook unpinned');
+          this._abRefreshPinnedUI();
+        } else if (el.dataset.mode === 'share') {
+          const parts = [book.title];
+          if (book.author) parts.push('by ' + book.author);
+          if (book.url_librivox) parts.push(book.url_librivox);
+          this._copyToClipboard(parts.join('\n'));
+        }
+      });
+    });
+  }
+
+  async _showAbMoreInfo(book) {
+    const r = this.shadowRoot;
+    const popup   = r.getElementById('infoPopup');
+    const content = r.getElementById('infoContent');
+    const titleEl = r.getElementById('infoPopupTitle');
+    if (!popup || !content) return;
+    popup.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
+    popup.style.setProperty('backdrop-filter', 'none');
+    popup.style.setProperty('-webkit-backdrop-filter', 'none');
+    popup.classList.add('visible');
+    this._infoPopupOpenedAt = Date.now();
+    if (titleEl) titleEl.textContent = book.title || 'Audiobook';
+    r.getElementById('queueMenuBtn')?.classList.add('hidden');
+    const _abShareBtn = r.getElementById('infoShareBtn');
+    if (_abShareBtn) {
+      _abShareBtn.classList.remove('hidden');
+      _abShareBtn.onclick = () => {
+        const parts = [book.title];
+        if (book.author) parts.push('by ' + book.author);
+        if (book.url_librivox) parts.push(book.url_librivox);
+        this._copyToClipboard(parts.join('\n'));
+      };
+    }
+    const _abPin = r.getElementById('infoPinBtn'), _abPinSvg = r.getElementById('infoPinSvg');
+    const _updatePinBtn = () => {
+      if (!_abPin || !_abPinSvg) return;
+      _abPinSvg.style.fill = this._abIsStarred(book) ? '#FFD60A' : 'rgba(255,255,255,0.5)';
+      _abPin.title = this._abIsStarred(book) ? 'Unpin Audiobook' : 'Pin Audiobook';
+    };
+    if (_abPin) {
+      _abPin.classList.remove('hidden'); _updatePinBtn();
+      _abPin.onclick = () => {
+        const nowPinned = this._abToggleStar(book);
+        if (nowPinned === null) return;
+        _updatePinBtn();
+        this._showToast(nowPinned ? '\ud83d\udccd Audiobook pinned' : 'Audiobook unpinned');
+        const svg = content.querySelector('#ab-info-star-svg'), label = content.querySelector('#ab-info-star-label');
+        if (svg)   svg.style.fill    = nowPinned ? '#FFD60A' : 'rgba(255,255,255,0.4)';
+        if (label) label.textContent = nowPinned ? 'Pinned' : 'Pin Audiobook';
+        this._abRefreshPinnedUI();
+      };
+    }
+    const _pt = k => this._pt(k);
+    const metaItems = [
+      book.num_sections && ['Chapters', String(book.num_sections)],
+      book.totaltime    && ['Duration', book.totaltime],
+      book.language     && ['Language', book.language.charAt(0).toUpperCase() + book.language.slice(1)],
+      book.genres?.length && ['Genre',  book.genres[0]],
+    ].filter(Boolean);
+    const metaGridHtml = metaItems.length
+      ? '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:14px;">' +
+        metaItems.map(([l,v]) => '<div style="background:' + _pt('bg') + ';border-radius:8px;padding:7px 10px;"><div style="font-size:9px;font-weight:700;color:' + _pt('dim') + ';text-transform:uppercase;letter-spacing:0.4px;margin-bottom:2px">' + l + '</div><div style="font-size:12px;color:' + _pt('text') + ';font-weight:500">' + v + '</div></div>').join('') + '</div>'
+      : '';
+    content.innerHTML =
+      '<div style="display:flex;gap:14px;align-items:flex-start;margin-bottom:16px;">' +
+        '<div style="width:72px;height:72px;border-radius:12px;background:rgba(255,149,0,0.15);flex-shrink:0;display:flex;align-items:center;justify-content:center;">' +
+          '<svg viewBox="0 0 24 24" style="width:36px;height:36px;fill:#FF9500;"><path d="M21,5C19.89,4.65 18.67,4.5 17.5,4.5C15.55,4.5 13.45,4.9 12,6C10.55,4.9 8.45,4.5 6.5,4.5C4.55,4.5 2.45,4.9 1,6V20.65C1,20.9 1.25,21.15 1.5,21.15C1.6,21.15 1.65,21.1 1.75,21.1C3.1,20.45 5.05,20 6.5,20C8.45,20 10.55,20.4 12,21.5C13.35,20.65 15.8,20 17.5,20C19.15,20 20.85,20.3 22.25,21.1C22.35,21.15 22.4,21.15 22.5,21.15C22.75,21.15 23,20.9 23,20.65V6C22.4,5.55 21.75,5.25 21,5M21,18.5C19.9,18.15 18.7,18 17.5,18C15.8,18 13.35,18.65 12,19.5V8C13.35,7.15 15.8,6.5 17.5,6.5C18.7,6.5 19.9,6.65 21,7V18.5Z"/></svg>' +
+        '</div>' +
+        '<div style="flex:1;min-width:0;">' +
+          '<div style="font-size:16px;font-weight:700;color:' + _pt('text') + ';line-height:1.3;margin-bottom:4px;">' + (book.title||'') + '</div>' +
+          (book.author ? '<div style="font-size:12px;color:' + _pt('dim') + ';margin-bottom:8px;">' + book.author + '</div>' : '') +
+          '<div style="display:flex;flex-wrap:wrap;gap:6px;">' +
+            '<button id="ab-info-star-btn" style="display:inline-flex;align-items:center;gap:5px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:20px;padding:4px 10px;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;">' +
+              '<svg id="ab-info-star-svg" viewBox="0 0 24 24" style="width:11px;height:11px;fill:' + (this._abIsStarred(book) ? '#FFD60A' : 'rgba(255,255,255,0.4)') + ';flex-shrink:0;transition:fill 0.15s;"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg>' +
+              '<span id="ab-info-star-label" style="font-size:11px;font-weight:600;color:' + _pt('dim') + ';">' + (this._abIsStarred(book) ? 'Pinned' : 'Pin Audiobook') + '</span>' +
+            '</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+      metaGridHtml +
+      (book.url_librivox ? '<div style="margin-bottom:12px;"><button id="ab-homepage-btn" style="display:inline-flex;align-items:center;gap:6px;background:rgba(255,149,0,0.1);border:1px solid rgba(255,149,0,0.25);border-radius:20px;padding:5px 12px;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;"><svg viewBox="0 0 24 24" style="width:12px;height:12px;fill:#FF9500;flex-shrink:0"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zm6.93 6h-2.95c-.32-1.25-.78-2.45-1.38-3.56 1.84.63 3.37 1.91 4.33 3.56zM12 4.04c.83 1.2 1.48 2.53 1.91 3.96h-3.82c.43-1.43 1.08-2.76 1.91-3.96zM4.26 14C4.1 13.36 4 12.69 4 12s.1-1.36.26-2h3.38c-.08.66-.14 1.32-.14 2s.06 1.34.14 2H4.26zm.82 2h2.95c.32 1.25.78 2.45 1.38 3.56-1.84-.63-3.37-1.9-4.33-3.56zm2.95-8H5.08c.96-1.66 2.49-2.93 4.33-3.56C8.81 5.55 8.35 6.75 8.03 8zM12 19.96c-.83-1.2-1.48-2.53-1.91-3.96h3.82c-.43 1.43-1.08 2.76-1.91 3.96zM14.34 14H9.66c-.09-.66-.16-1.32-.16-2s.07-1.35.16-2h4.68c.09.65.16 1.32.16 2s-.07 1.34-.16 2zm.25 5.56c.6-1.11 1.06-2.31 1.38-3.56h2.95c-.96 1.65-2.49 2.93-4.33 3.56zM16.36 14c.08-.66.14-1.32.14-2s-.06-1.34-.14-2h3.38c.16.64.26 1.31.26 2s-.1 1.36-.26 2h-3.38z"/></svg><span style="font-size:12px;color:#FF9500;font-weight:600;">View on LibriVox</span></button></div>' : '') +
+      (book.description ? '<div style="font-size:12px;color:' + _pt('dim') + ';line-height:1.6;margin-bottom:14px;">' + book.description + '\u2026</div>' : '') +
+      '<div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:8px;">Chapters</div>' +
+      '<div id="ab-chapter-list"><div style="display:flex;align-items:center;gap:8px;padding:10px 0;opacity:0.5;"><div style="width:12px;height:12px;border:1.5px solid rgba(255,149,0,0.3);border-top-color:#FF9500;border-radius:50%;animation:ma-spin 0.8s linear infinite;flex-shrink:0;"></div><span style="font-size:12px;color:' + _pt('dim') + ';">Loading chapters\u2026</span></div></div>';
+    content.querySelector('#ab-homepage-btn')?.addEventListener('click', () => {
+      if (book.url_librivox) window.open(book.url_librivox, '_blank');
+    });
+    content.querySelector('#ab-info-star-btn')?.addEventListener('click', () => {
+      const nowStarred = this._abToggleStar(book);
+      if (nowStarred === null) return;
+      const svg = content.querySelector('#ab-info-star-svg'), label = content.querySelector('#ab-info-star-label');
+      if (svg)   svg.style.fill    = nowStarred ? '#FFD60A' : 'rgba(255,255,255,0.4)';
+      if (label) label.textContent = nowStarred ? 'Pinned' : 'Pin Audiobook';
+      this._showToast(nowStarred ? '\ud83d\udccd Audiobook pinned' : 'Audiobook unpinned');
+      _updatePinBtn(); this._abRefreshPinnedUI();
+    });
+    const entity = this._resolveMATargetEntity() || this._entity;
+    const chList = content.querySelector('#ab-chapter-list');
+    if (!book.url_rss) { if (chList) chList.innerHTML = '<div style="font-size:12px;color:' + _pt('dim') + ';padding:8px 0;">No chapter feed available.</div>'; return; }
+    try {
+      const chapters = await this._abFetchChapters(book.url_rss, 50);
+      if (!chList || !chList.isConnected) return;
+      if (!chapters.length) { chList.innerHTML = '<div style="font-size:12px;color:' + _pt('dim') + ';padding:8px 0;">No chapters found.</div>'; return; }
+      chList.innerHTML = '';
+      chapters.forEach(ch => {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer;-webkit-tap-highlight-color:transparent;';
+        const metaHtml = ch.duration ? '<div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:2px;">' + ch.duration + '</div>' : '';
+        row.innerHTML =
+          '<div style="width:22px;text-align:center;flex-shrink:0;font-size:12px;font-weight:700;color:rgba(255,255,255,0.25);">' + ch.num + '</div>' +
+          '<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:600;color:' + _pt('text') + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + ch.title + '</div>' + metaHtml + '</div>' +
+          '<div style="flex-shrink:0;width:30px;height:30px;border-radius:50%;background:rgba(255,149,0,0.15);border:1px solid rgba(255,149,0,0.3);display:flex;align-items:center;justify-content:center;"><svg viewBox="0 0 24 24" style="width:12px;height:12px;fill:#FF9500;margin-left:1px;"><path d="M8 5v14l11-7z"/></svg></div>';
+        row.addEventListener('click', () => { this._abPlayChapter(ch.url, ch.title, entity, book); });
+        chList.appendChild(row);
+      });
+    } catch(err) {
+      if (!chList || !chList.isConnected) return;
+      chList.innerHTML = '<div style="font-size:12px;color:' + _pt('dim') + ';padding:8px 0;">Sorry, this audiobook isn\u2019t available right now.</div>';
+    }
+  }
+
+  _updateAudiobookBadge() {
+    const badge = this.shadowRoot?.getElementById('audiobookBadge');
+    if (!badge) return;
+    const state    = this._hass?.states[this._entity];
+    const isMa     = this._maEntityIds?.has(this._entity);
+    const isActive = state?.state === 'playing' || state?.state === 'paused' || state?.state === 'buffering';
+    // Restore _abNowPlaying from HA state if lost (app close/reopen wipes memory)
+    if (isActive && !this._abNowPlaying) {
+      const _contentId = (state?.attributes?.media_content_id) || '';
+      if (_contentId) {
+        const _bookCached = this._abCachedBook(_contentId);
+        if (_bookCached) {
+          this._abNowPlaying = { url: _contentId, title: state?.attributes?.media_title || '', ts: Date.now() };
+        }
+      }
+    }
+    const isAudiobook = !!(isActive && this._abNowPlaying);
+    const liveBadge = this.shadowRoot?.getElementById('liveStationBadge');
+    const pcBadge   = this.shadowRoot?.getElementById('podcastBadge');
+    const liveShowing = liveBadge && liveBadge.style.display !== 'none';
+    const pcShowing   = pcBadge   && pcBadge.style.display   !== 'none';
+    if (isMa && isAudiobook && !liveShowing && !pcShowing) {
+      badge.style.display = 'block';
+    } else {
+      badge.style.display = 'none';
+    }
+    if (this._abNowPlaying && (state?.state === 'idle' || state?.state === 'off')) {
+      if (!this._abNowPlaying.ts || (Date.now() - this._abNowPlaying.ts) >= 8000) {
+        this._abNowPlaying = null;
+        try { localStorage.removeItem('crow_ab_now_playing'); } catch(_) {}
+        badge.style.display = 'none';
+      }
+    }
+    if (!badge._abClickWired) {
+      badge._abClickWired = true;
+      badge.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const _cached = this._abCachedBook(this._abNowPlaying?.url);
+        if (_cached) { this._showAbMoreInfo(_cached); return; }
+        const _attrs = this._hass?.states[this._entity]?.attributes || {};
+        const bookName = _attrs.media_album_name || _attrs.media_title || '';
+        if (!bookName) { this._showToast('Search for this audiobook in the Audiobooks tab'); return; }
+        const pinned = this._abGetStarred();
+        const pinnedMatch = pinned.find(b => (b.title||'').toLowerCase() === bookName.toLowerCase());
+        if (pinnedMatch) { this._showAbMoreInfo(pinnedMatch); return; }
+        this._showLoadingToast('Looking up audiobook\u2026');
+        try {
+          const results = await this._abSearch(bookName);
+          this._hideLoadingToast();
+          const match = results.find(b => (b.title||'').toLowerCase() === bookName.toLowerCase()) || results[0];
+          if (match) { this._showAbMoreInfo(match); return; }
+        } catch(_) { this._hideLoadingToast(); }
+        this._showToast('Audiobook not found \u2014 search for it in the Audiobooks tab');
+      });
+    }
+  }
+
   _showRbContextMenu(anchor, st, entity) {
     // Cache the full st object whenever we have it
     this._rbCacheStation(st);
@@ -9572,6 +10229,101 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         closeBtn.style.cssText = 'margin-top:12px;padding:6px 14px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:8px;color:#fff;font-size:12px;font-family:inherit;cursor:pointer;';
         closeBtn.addEventListener('click', () => { this._maInSearchResults = false; this.shadowRoot?.querySelectorAll('.ma-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'podcast')); this._loadMATab('podcast'); });
         errDiv.appendChild(closeBtn);
+        content.appendChild(errDiv);
+      }
+      return;
+    }
+
+    // Audiobook tab: search LibriVox instead of MA library
+    if (activeTabKey === 'audiobook' || this._maCurrentTab === 'audiobook') {
+      this.shadowRoot?.getElementById('maContent')?.querySelector('.ma-drill-actions')?.remove();
+      content.innerHTML = this._psLoading('Searching audiobooks…');
+      const _abGoBack = () => { this._maInSearchResults = false; this.shadowRoot?.querySelectorAll('.ma-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'audiobook')); this._loadMATab('audiobook'); };
+      try {
+        const results = await this._abSearch(query);
+
+        // Handle "did you mean" signal from _abSearch
+        if (results && results.empty) {
+          const suggestedQuery = results.suggestion
+            || (results.interpreted?.mode === 'both' ? (results.interpreted.titleQuery || results.interpreted.authorQuery) : null)
+            || (results.interpreted?.query && results.interpreted.query.toLowerCase() !== query.toLowerCase() ? results.interpreted.query : null);
+          content.innerHTML = '';
+          const noRes = document.createElement('div');
+          noRes.style.cssText = 'padding:16px 4px;';
+          noRes.innerHTML = '<div style="font-size:14px;font-weight:600;color:var(--primary-text-color,#fff);margin-bottom:8px;">No audiobooks found</div>' +
+            '<div style="font-size:13px;color:rgba(255,255,255,0.55);line-height:1.6;margin-bottom:' + (suggestedQuery ? '14px' : '0') + ';">LibriVox only has public domain titles.</div>';
+          if (suggestedQuery) {
+            const dym = document.createElement('div');
+            dym.style.cssText = 'background:rgba(255,149,0,0.08);border:1px solid rgba(255,149,0,0.25);border-radius:12px;padding:12px;';
+            dym.innerHTML =
+              '<div style="font-size:12px;color:rgba(255,255,255,0.5);margin-bottom:6px;">Did you mean…</div>' +
+              '<button id="ab-dym-btn" style="font-size:14px;font-weight:600;color:#FF9500;background:none;border:none;cursor:pointer;font-family:inherit;padding:0;-webkit-tap-highlight-color:transparent;">' + suggestedQuery + '</button>';
+            noRes.appendChild(dym);
+          }
+          content.appendChild(noRes);
+          content.querySelector('#ab-dym-btn')?.addEventListener('click', async () => {
+            // Update search box to show the corrected query
+            const _si = this.shadowRoot?.getElementById('maIosSearchInput') || this.shadowRoot?.getElementById('maSearchInput');
+            if (_si) _si.value = suggestedQuery;
+            content.innerHTML = this._psLoading('Searching audiobooks…');
+            try {
+              // Route through _abSearch which has validation built in
+              const dymResults = await this._abSearch(suggestedQuery);
+              if (!dymResults || dymResults.empty || !dymResults.length) {
+                content.innerHTML = '';
+                const nr = document.createElement('div');
+                nr.style.cssText = 'padding:16px 4px;';
+                nr.innerHTML = '<div style="font-size:14px;font-weight:600;color:var(--primary-text-color,#fff);margin-bottom:8px;">No audiobooks found</div><div style="font-size:13px;color:rgba(255,255,255,0.55);line-height:1.6;">LibriVox only has public domain titles.</div>';
+                content.appendChild(nr);
+                return;
+              }
+              this.shadowRoot.querySelectorAll('.ma-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'audiobook'));
+              content.innerHTML = '';
+              const list2 = document.createElement('div');
+              list2.style.cssText = 'display:flex;flex-direction:column;';
+              dymResults.forEach(book => list2.appendChild(this._abMakeRow(book, false)));
+              const ss2 = this._abRenderStarredSection();
+              if (ss2) content.appendChild(ss2);
+              content.appendChild(list2);
+            } catch(e) {
+              content.innerHTML = '<div style="padding:16px 4px;font-size:13px;color:rgba(255,255,255,0.55);">Could not reach LibriVox. Please try again.</div>';
+            }
+          });
+          return;
+        }
+
+        if (!results.length) {
+          content.innerHTML = '';
+          const noRes2 = document.createElement('div');
+          noRes2.style.cssText = 'padding:16px 4px;';
+          noRes2.innerHTML =
+            '<div style="font-size:14px;font-weight:600;color:var(--primary-text-color,#fff);margin-bottom:8px;">No audiobooks found</div>' +
+            '<div style="font-size:13px;color:rgba(255,255,255,0.55);line-height:1.6;">LibriVox only has public domain titles. Try a classic like Sherlock Holmes or War of the Worlds.</div>';
+          content.appendChild(noRes2);
+          return;
+        }
+
+        this.shadowRoot.querySelectorAll('.ma-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'audiobook'));
+        content.innerHTML = '';
+        const list = document.createElement('div');
+        list.style.cssText = 'display:flex;flex-direction:column;';
+        results.forEach(book => list.appendChild(this._abMakeRow(book, false)));
+        const starredSection = this._abRenderStarredSection();
+        if (starredSection) content.appendChild(starredSection);
+        // "Search Results" divider is baked into _abRenderStarredSection when pinned items exist
+        // Add it ourselves only when there are no pinned items
+        if (!starredSection) {
+          const rh = document.createElement('div');
+          rh.style.cssText = 'font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.6px;padding:10px 4px 6px;';
+          rh.textContent = 'Search Results';
+          list.insertBefore(rh, list.firstChild);
+        }
+        content.appendChild(list);
+      } catch(e) {
+        content.innerHTML = '';
+        const errDiv = document.createElement('div');
+        errDiv.style.cssText = 'margin:16px 4px;background:rgba(255,165,0,0.1);border:1px solid rgba(255,165,0,0.3);border-radius:12px;padding:14px;';
+        errDiv.innerHTML = '<div style="font-size:13px;font-weight:600;color:rgba(255,165,0,0.9);margin-bottom:6px;">📚 Can’t reach LibriVox</div><div style="font-size:12px;color:rgba(255,255,255,0.6);line-height:1.5;">Audiobook search uses the LibriVox API.</div>';
         content.appendChild(errDiv);
       }
       return;
@@ -10637,7 +11389,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         this._config = { ...this._config, ma_radio_mode: false };
         try { localStorage.setItem('crow_radio_mode', '0'); } catch (_) {}
         this.dispatchEvent(new CustomEvent('config-changed', { detail: { config: { ...this._config } }, bubbles: true, composed: true }));
-        this._updateRadioIndicator(); this._updateLiveStationBadge(); this._updatePodcastBadge();
+        this._updateRadioIndicator(); this._updateLiveStationBadge(); this._updatePodcastBadge(); this._updateAudiobookBadge();
       }
     }
     if (!selectedVal || selectedVal === '__multicast__') return;
@@ -11723,14 +12475,26 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const attrs  = state?.attributes || {};
     const isMa   = this._maEntityIds?.has(this._entity);
     const isActive = state?.state === 'playing' || state?.state === 'paused' || state?.state === 'buffering';
+    // Restore _pcNowPlaying from HA state if lost (app close/reopen wipes memory)
+    if (isActive && !this._pcNowPlaying) {
+      const _contentId = attrs.media_content_id || '';
+      if (_contentId) {
+        const _podCached = this._pcCachedPod(_contentId);
+        if (_podCached) {
+          this._pcNowPlaying = { url: _contentId, title: attrs.media_title || '', ts: Date.now() };
+        }
+      }
+    }
     // Detect podcast: MA sets mass_media_type='podcast', or we track it ourselves via _pcNowPlaying
     const isPodcast = attrs.mass_media_type === 'podcast' || !!(isActive && this._pcNowPlaying);
     const shouldShow = isMa && isPodcast && isActive;
 
-    // Never show alongside LIVE — podcast and live are mutually exclusive
+    // Only one badge at a time — live, podcast, audiobook are mutually exclusive
     const liveBadge = this.shadowRoot?.getElementById('liveStationBadge');
+    const abBadge   = this.shadowRoot?.getElementById('audiobookBadge');
     const liveShowing = liveBadge && liveBadge.style.display !== 'none';
-    if (shouldShow && !liveShowing) {
+    const abShowing   = abBadge   && abBadge.style.display   !== 'none';
+    if (shouldShow && !liveShowing && !abShowing) {
       badge.style.display = 'block';
     } else {
       badge.style.display = 'none';
@@ -18807,6 +19571,7 @@ Include ALL tracks. Use null for unknown fields.`;
       this._buildTabActionBar(content, tab);
       if (tab === 'radio') this._rbInjectStarredSection(content);
       if (tab === 'podcast') this._pcInjectSections(content);
+      this._maLibInjectStarred(tab, content);
       return;
     }
 
@@ -18814,6 +19579,12 @@ Include ALL tracks. Use null for unknown fields.`;
     if (tab === 'podcast') {
       content.innerHTML = '';
       this._pcInjectSections(content);
+      return;
+    }
+    // Audiobook tab: skip MA library entirely — show pinned + search prompt only
+    if (tab === 'audiobook') {
+      content.innerHTML = '';
+      this._abInjectSections(content);
       return;
     }
 
@@ -18829,6 +19600,7 @@ Include ALL tracks. Use null for unknown fields.`;
       this._buildTabActionBar(content, tab);
       if (tab === 'radio') this._rbInjectStarredSection(content);
       if (tab === 'podcast') this._pcInjectSections(content);
+      this._maLibInjectStarred(tab, content);
       if (tab === 'favourites') return;
       // For standard library tabs, fall through to refresh in background silently
     } else {
@@ -19026,6 +19798,7 @@ Include ALL tracks. Use null for unknown fields.`;
         // For radio tab, prepend starred section above the MA library grid
         if (tab === 'radio') this._rbInjectStarredSection(content);
         if (tab === 'podcast') this._pcInjectSections(content);
+        this._maLibInjectStarred(tab, content);
       } else if (tab === 'radio') {
         // No MA library stations yet — still show starred if any
         this._rbInjectStarredSection(content);
@@ -19050,6 +19823,7 @@ Include ALL tracks. Use null for unknown fields.`;
             this._buildTabActionBar(content, tab);
             if (tab === 'radio') this._rbInjectStarredSection(content);
             if (tab === 'podcast') this._pcInjectSections(content);
+            this._maLibInjectStarred(tab, content);
           }
 
           // Stop if last batch returned less than a full page
@@ -19085,6 +19859,7 @@ Include ALL tracks. Use null for unknown fields.`;
         this._buildTabActionBar(content, tab);
         if (tab === 'radio') this._rbInjectStarredSection(content);
         if (tab === 'podcast') this._pcInjectSections(content);
+        this._maLibInjectStarred(tab, content);
       }
     } catch (e) {
       console.error('[MA] get_library error:', e);
@@ -19171,6 +19946,7 @@ Include ALL tracks. Use null for unknown fields.`;
   _buildTabActionBar(content, tab) {
     if (tab === 'radio') return; // No action bar for radio — stations play individually
     if (tab === 'podcast') return; // No action bar for podcasts — episodes play individually
+    if (tab === 'audiobook') return; // No action bar for audiobooks — chapters play individually
     const bar = document.createElement('div');
     bar.className = 'ma-drill-actions';
     const showMood = this._maEntityIds?.size > 0 && ['favourites','recommended','album','track'].includes(tab);
@@ -20371,10 +21147,16 @@ Include ALL tracks. Use null for unknown fields.`;
       : '';
 
     const _itemArtist = (item.artists && item.artists[0]?.name) || item.artist || '';
+    // For pinning, always use the tab parameter — item.media_type is unreliable
+    // (MA often returns media_type:'track' for artists and albums)
+    const _pinTab     = ['track','artist','album'].includes(tab) ? tab : _menuItemType;
+    const _isPinnable = ['track','artist','album','playlist'].includes(_pinTab);
+    const _isPinned   = _isPinnable && this._maLibIsStarred(item, _pinTab);
     const strategies = [
       { mode: 'play_all', label: _isCollection ? 'Play All' : 'Play Now', icon: '<path d="M8 5v14l11-7z"/>' },
       { mode: 'next',     label: 'Play Next',                              icon: '<path d="M3 13h8V5H3v8zm0 8h8v-6H3v6zm10 0h8v-8h-8v8zm0-18v6h8V3h-8z"/>' },
       { mode: 'add',      label: 'Add to Queue',                           icon: '<path d="M19 11h-6V5h-2v6H5v2h6v6h2v-6h6z"/>' },
+      ...(_isPinnable ? [{ mode: 'pin', label: _isPinned ? 'Unpin' : 'Pin', icon: '<path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/>' }] : []),
       ...(_itemArtist ? [{ mode: 'artist_radio', label: 'AI Artist Radio', icon: '<path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6zm4 0v2h-2V3h2z"/>' }] : []),
       ...(!_isCollection ? [{ mode: 'copy_link', label: 'Share', icon: '<path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z"/>' }] : []),
       { mode: 'more_info', label: 'More Info', icon: '<path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/>' }
@@ -20418,7 +21200,13 @@ Include ALL tracks. Use null for unknown fields.`;
         if (!_menuReady()) return;
         var mode = el.dataset.mode;
         self._closeEnqueueMenu();
-        if (mode === 'copy_link') {
+        if (mode === 'pin') {
+          const pinTab = _pinTab;
+          const nowPinned = self._maLibToggleStar(item, pinTab);
+          if (nowPinned === null) return;
+          self._showToast(nowPinned ? '\ud83d\udccd Pinned' : 'Unpinned');
+          self._maLibRefreshPinnedUI(pinTab);
+        } else if (mode === 'copy_link') {
           const _clTitle  = item.name || item.title || '';
           const _clArtist = (item.artists && item.artists[0]?.name) || item.artist || '';
           self._copyToClipboard(_clTitle + ' by ' + _clArtist + '\n' + self._buildShareUrl(_clTitle, _clArtist));
@@ -22625,6 +23413,17 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
           </div>
         </div>
 
+        <!-- Pinned Items -->
+        <div>
+          <div class="section-title">Pinned Items</div>
+          <div class="card-block" style="padding:12px;">
+            <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.5;">Pins are saved on this device only. Use Clear to reset individual categories, or Clear All Pins to remove everything.</div>
+            <button id="clear-all-pins-btn" style="width:100%;padding:10px;font-size:13px;font-weight:600;color:#ff453a;background:rgba(255,69,58,0.08);border:1px solid rgba(255,69,58,0.25);border-radius:10px;cursor:pointer;font-family:inherit;margin-bottom:14px;">📌 Clear All Pins</button>
+            <div id="pins-rows"></div>
+          </div>
+        </div>
+
+
                 <!-- Startup View -->
         <div>
           <div class="section-title">Music Library Cache</div>
@@ -23361,6 +24160,69 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       if (_ce) { _ce._entityRegistryCache = null; _ce._deviceRegistryCache = null; _ce._areaRegistryCache = null; _ce._maConfigEntryId = null; }
       updateRegistryCacheStatus();
     };
+
+    // ── Pinned Items controls ────────────────────────────────────────────
+    const PIN_KEYS = [
+      { key: 'crow_starred_stations',   label: 'Radio Stations' },
+      { key: 'crow_starred_podcasts',   label: 'Podcasts' },
+      { key: 'crow_starred_audiobooks', label: 'Audiobooks' },
+      { key: 'crow_starred_track',      label: 'Songs' },
+      { key: 'crow_starred_artist',     label: 'Artists' },
+      { key: 'crow_starred_album',      label: 'Albums' },
+      { key: 'crow_starred_playlist',   label: 'Playlists' },
+    ];
+
+    const pinsRowsEl = root.getElementById('pins-rows');
+
+    const renderPinsRows = () => {
+      if (!pinsRowsEl) return;
+      pinsRowsEl.innerHTML = '';
+      PIN_KEYS.forEach(({ key, label }, i) => {
+        let count = 0;
+        try { count = JSON.parse(localStorage.getItem(key) || '[]').length; } catch(_) {}
+        const isLast = i === PIN_KEYS.length - 1;
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:12px;padding:' + (i === 0 ? '0 0 10px' : '10px 0') + ';' + (isLast ? '' : 'border-bottom:1px solid rgba(255,255,255,0.07);');
+        row.innerHTML =
+          '<div>' +
+            '<div style="font-size:13px;font-weight:500;margin-bottom:2px;">' + label + '</div>' +
+            '<span style="font-size:12px;color:#888;">' + (count === 0 ? 'Nothing pinned' : count + ' pinned') + '</span>' +
+          '</div>' +
+          (count > 0
+            ? '<button data-pin-key="' + key + '" class="pin-clear-btn" style="font-size:12px;font-weight:500;color:#ff453a;background:rgba(255,69,58,0.12);border:1px solid rgba(255,69,58,0.3);border-radius:8px;padding:5px 12px;cursor:pointer;white-space:nowrap;">Clear</button>'
+            : '<span style="font-size:12px;color:rgba(255,255,255,0.2);">—</span>'
+          );
+        pinsRowsEl.appendChild(row);
+      });
+
+      // Wire individual clear buttons
+      pinsRowsEl.querySelectorAll('.pin-clear-btn').forEach(btn => {
+        btn.onclick = () => {
+          const k = btn.dataset.pinKey;
+          try { localStorage.removeItem(k); } catch(_) {}
+          // Also clear from in-memory cache on live card
+          document.querySelectorAll('crowai-media-player-card').forEach(el => {
+            if (el._starredMemCache) delete el._starredMemCache[k];
+          });
+          renderPinsRows();
+        };
+      });
+    };
+
+    renderPinsRows();
+
+    const clearAllPinsBtn = root.getElementById('clear-all-pins-btn');
+    if (clearAllPinsBtn) {
+      clearAllPinsBtn.onclick = () => {
+        PIN_KEYS.forEach(({ key }) => {
+          try { localStorage.removeItem(key); } catch(_) {}
+        });
+        document.querySelectorAll('crowai-media-player-card').forEach(el => {
+          if (el._starredMemCache) el._starredMemCache = {};
+        });
+        renderPinsRows();
+      };
+    }
 
     const moodHistoryStatus   = root.getElementById('mood-history-status');
     const moodHistoryClearBtn = root.getElementById('mood-history-clear-btn');
