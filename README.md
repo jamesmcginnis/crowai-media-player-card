@@ -155,7 +155,7 @@ Repository: [github.com/droans/mass_queue](https://github.com/droans/mass_queue)
 ### AI Features
 
 - ✨ **AI Info Panel** — tap the artwork while music plays: year, label, length, fun fact, genre tags, band members / artist section, similar tracks; all AI-generated and cached per track
-- 💬 **Song Intro** — a short, intriguing one-line fact about the playing track appears below the artist name a few seconds after it starts, then fades away; always on, never shown for radio/streams
+- 💬 **Song Intro** — a short, intriguing one-line fact about the playing track appears below the artist name a few seconds after it starts, then fades away; always on
 - 🎭 **Vibe Queue Builder** — 100+ vibes across Energy, Calm, Focus, Mood, Social, Decades, Genre, Time, Seasons and Binaural & Noise; builds a themed MA queue instantly
 - 🔍 **AI Search** — natural language search across your MA library
 - 🌟 **Recommendations** — AI-curated track suggestions based on what's playing
@@ -221,6 +221,7 @@ Pin your favourites for one-tap access — pins live in a dedicated section at t
 - **Limit** — up to 10 pinned items per category
 - **Management** — view and clear pins individually or all at once from **Caches & Data → Pinned Items** in the visual editor
 - Pins are stored on-device only and aren't synced between browsers or devices
+- Clearing caches (individually or via Clear All Caches) clears pins too — there's no separate backup, so pins are lost if the cache they're stored in is cleared
 
 ### Synced Lyrics
 
@@ -278,7 +279,6 @@ Tabs: Recently Played, Recommended, Playlists, Artists, Albums, Songs, Radio, Po
 - Tap any item to play; drill into collections with a back button
 - Action bar: Play All, Add to Queue, Play Next
 - Long-press tracks for the enqueue menu
-- Progressive loading with localStorage cache (configurable TTL)
 - **Podcasts tab** — search iTunes directly; pin favourites
 - **Audiobooks tab** — search free, public-domain titles on LibriVox via the Archive.org catalogue, with AI-assisted query refinement and chapter-by-chapter playback; pin favourites
 
@@ -376,9 +376,6 @@ card_liquid_glass: true
 
 **Card feels sluggish or iPhone gets warm**
 - This is expected during intensive AI operations. Avoid triggering multiple AI features simultaneously. Subsequent loads of cached content are near-instant.
-
-**MA search returns "Search not supported"**
-- Update Music Assistant to the latest version.
 
 ---
 
