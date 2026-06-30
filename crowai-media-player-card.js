@@ -772,7 +772,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
     this._haNotificationInterceptor = (e) => {
       const msg = (e.detail?.message || '').toLowerCase();
-      if (msg.includes('no playable') || msg.includes('playable items')) {
+      if (
+        msg.includes('no playable') || msg.includes('playable items') ||
+        // media_player/play_media failures (e.g. "Failed to stream audio") are always
+        // caught and shown as a friendly toast by _playMediaDirect() — suppress HA's
+        // own raw technical banner so the user doesn't see both.
+        (msg.includes('play_media') && (msg.includes('failed') || msg.includes('stream')))
+      ) {
         e.stopImmediatePropagation();
       }
     };
@@ -904,6 +910,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     }
     if (this._timer) clearInterval(this._timer);
     if (this._alexaPulse) clearInterval(this._alexaPulse);
+    if (this._pillGraceTimer) clearTimeout(this._pillGraceTimer);
     if (this._haNotificationInterceptor) {
       window.removeEventListener('hass-notification', this._haNotificationInterceptor, true);
       this._haNotificationInterceptor = null;
@@ -1369,27 +1376,20 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const get = (v, fallback) => { const val = docStyle.getPropertyValue(v).trim(); return val || fallback; };
     const r = this.shadowRoot;
 
-    // Detect light vs dark HA theme — handle hex, rgb, hsl and named formats
+    // Detect light vs dark HA theme — background colour first (handles hex/rgb), used only
+    // as a fallback default for primaryText/secondaryText below.
     const bgColor = get("--primary-background-color", get("--card-background-color", "#ffffff"));
     const bgTrim = bgColor.replace(/\s/g,'');
-    let isLight = false;
+    let isLightFromBg = false;
     const rgbMatch = bgTrim.match(/rgb\((\d+),(\d+),(\d+)\)/);
     const hexMatch = bgTrim.match(/^#([0-9a-fA-F]{3,8})$/);
     if (rgbMatch) {
-      isLight = (+rgbMatch[1] + +rgbMatch[2] + +rgbMatch[3]) / 3 >= 128;
+      isLightFromBg = (+rgbMatch[1] + +rgbMatch[2] + +rgbMatch[3]) / 3 >= 128;
     } else if (hexMatch) {
       const h = hexMatch[1].length === 3
         ? hexMatch[1].split('').map(c => c+c).join('')
         : hexMatch[1].slice(0,6);
-      isLight = (parseInt(h.slice(0,2),16) + parseInt(h.slice(2,4),16) + parseInt(h.slice(4,6),16)) / 3 >= 128;
-    } else {
-      // Fallback: check text color — dark text = light background
-      const textCol = get("--primary-text-color","");
-      const textHex = textCol.replace(/\s/g,'').match(/^#([0-9a-fA-F]{6})$/);
-      if (textHex) {
-        const avg = (parseInt(textHex[1].slice(0,2),16) + parseInt(textHex[1].slice(2,4),16) + parseInt(textHex[1].slice(4,6),16)) / 3;
-        isLight = avg < 128; // dark text means light background
-      }
+      isLightFromBg = (parseInt(h.slice(0,2),16) + parseInt(h.slice(2,4),16) + parseInt(h.slice(4,6),16)) / 3 >= 128;
     }
 
     // Use user's custom accent if set, otherwise fall back to HA theme accent
@@ -1403,32 +1403,50 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     r.host.style.setProperty("--vol-accent", volAccent);
     this._applyControlsTheme();
 
-    const primaryText   = get("--primary-text-color",   isLight ? "#111111" : "#ffffff");
-    const secondaryText = get("--secondary-text-color",  isLight ? "rgba(0,0,0,0.55)" : "rgba(255,255,255,0.5)");
+    const primaryText   = get("--primary-text-color",   isLightFromBg ? "#111111" : "#ffffff");
+    const secondaryText = get("--secondary-text-color",  isLightFromBg ? "rgba(0,0,0,0.55)" : "rgba(255,255,255,0.5)");
 
-    // Card bg always transparent (shows dashboard through); controls bar respects glass toggle
+    // Use primaryText brightness as the most reliable isLight signal — HA always sets
+    // --primary-text-color to dark on light themes and light on dark themes. This is more
+    // robust than the background-colour check above, which can fail on iOS companion app
+    // (WKWebView sometimes doesn't expose --primary-background-color reliably). Falls back
+    // to the background-based detection if primaryText doesn't parse as hex/rgb.
+    const _ptCol = primaryText.replace(/\s/g,'');
+    const _ptHex = _ptCol.match(/^#([0-9a-fA-F]{6})$/);
+    const _ptRgb = _ptCol.match(/^rgba?\((\d+),(\d+),(\d+)/);
+    let isLight = isLightFromBg;
+    if (_ptHex) {
+      const avg = (parseInt(_ptHex[1].slice(0,2),16) + parseInt(_ptHex[1].slice(2,4),16) + parseInt(_ptHex[1].slice(4,6),16)) / 3;
+      isLight = avg < 128; // dark primary text = light background
+    } else if (_ptRgb) {
+      const avg = (+_ptRgb[1] + +_ptRgb[2] + +_ptRgb[3]) / 3;
+      isLight = avg < 128;
+    }
+
     const glassOn = this._config?.card_liquid_glass !== false;
     r.host.style.setProperty("--crow-card-bg", "transparent");
-    if (glassOn) {
+    if (glassOn && !isLight) {
+      // Dark HA theme + glass on: controls bar stays transparent over the dashboard/artwork
+      // backdrop, which is safe to pair with the light "over-art" text below.
       r.host.style.setProperty("--player-bg", "transparent");
     } else {
-      // Use HA's own card background — matches any theme automatically
+      // Light HA theme (regardless of the glass toggle), or glass off: use HA's own solid
+      // card background so theme-driven text colours stay readable. This intentionally
+      // overrides Card Liquid Glass for light themes — see displayPrimaryText below.
       r.host.style.setProperty("--player-bg", "var(--card-background-color, var(--ha-card-background, #1c1c1e))");
     }
 
     const divider = get("--divider-color", isLight ? "rgba(0,0,0,0.12)" : "rgba(255,255,255,0.18)");
     r.host.style.setProperty("--crow-card-border", "1px solid " + divider);
 
-    // When the card is in "liquid glass" mode (the default), the controls/title/artist sit on
-    // a transparent surface over the dashboard or album art — NOT over a solid panel that
-    // matches the HA theme's light/dark setting. Pairing a light HA theme's dark text with that
-    // unpredictable backdrop makes everything unreadable (e.g. dark text on dark artwork), so in
-    // glass mode we always use the same safe, light "over-art" palette the card uses without HA
-    // theming, regardless of whether the HA theme itself is light or dark. Theme-driven colours
-    // are only safe once liquid glass is switched off and --player-bg is a real, solid,
-    // theme-matched background (handled in the else branch above).
-    const displayPrimaryText   = glassOn ? "#ffffff"               : primaryText;
-    const displaySecondaryText = glassOn ? "rgba(255,255,255,0.7)" : secondaryText;
+    // When the card is in "liquid glass" mode over a DARK HA theme, the controls/title/artist
+    // sit on a transparent surface over the dashboard or album art — not a solid panel — so we
+    // use the same safe, light "over-art" palette the card uses without HA theming. For a LIGHT
+    // HA theme, glass mode is overridden above (solid --player-bg), so theme-driven colours are
+    // always safe and used directly instead of being forced white.
+    const useGlassPalette = glassOn && !isLight;
+    const displayPrimaryText   = useGlassPalette ? "#ffffff"               : primaryText;
+    const displaySecondaryText = useGlassPalette ? "rgba(255,255,255,0.7)" : secondaryText;
 
     // Button and icon colours adapt to light/dark — override theme vars for HA theme mode
     r.host.style.setProperty("--btn-color",      displayPrimaryText);
@@ -1442,7 +1460,18 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     r.host.style.setProperty("--btn-active-opacity","1");
     r.host.style.setProperty("--vol-pct-color",  displaySecondaryText);
     r.host.style.setProperty("--progress-time-color", displaySecondaryText);
-    r.host.style.setProperty("--progress-bar-bg", glassOn ? "rgba(255,255,255,0.12)" : divider);
+    r.host.style.setProperty("--progress-bar-bg", useGlassPalette ? "rgba(255,255,255,0.12)" : divider);
+
+    // Volume HUD — respect the Volume HUD Liquid Glass toggle (previously ignored entirely
+    // whenever Follow HA Theme was on). The HUD overlays the artwork/video, not the dashboard
+    // background, so a theme-independent dark/frosted treatment matches the non-HA-theme path.
+    if (this._config?.volume_hud_glass) {
+      r.host.style.setProperty('--hud-bg',       'rgba(255,255,255,0.08)');
+      r.host.style.setProperty('--hud-backdrop',  'blur(22px) saturate(160%)');
+    } else {
+      r.host.style.setProperty('--hud-bg',       'rgba(28,28,30,0.92)');
+      r.host.style.setProperty('--hud-backdrop',  'none');
+    }
 
     // Overlay button variables
     const overlayBg = isLight ? "rgba(0,0,0,0.07)" : "rgba(255,255,255,0.08)";
@@ -1454,7 +1483,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     r.host.style.setProperty("--crow-overlay-btn-border-active", get("--primary-color", divider));
 
     // Title and artist text — same glass-safe colours as the controls above, since they sit
-    // on the exact same transparent surface.
+    // on the exact same surface.
     const titleEl  = r.getElementById("tTitle");
     const artistEl = r.getElementById("tArtist");
     if (titleEl)  titleEl.style.color = displayPrimaryText;
@@ -1464,32 +1493,17 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const panelBg = get("--card-background-color", get("--ha-card-background", isLight ? "#ffffff" : "#13131a"));
     r.host.style.setProperty("--crow-panel-bg", panelBg);
 
-    // Use primaryText brightness as the most reliable isLight signal —
-    // HA always sets --primary-text-color to dark on light themes and light on dark themes
-    // This overrides the background-based detection which can fail on iOS companion app
-    const _ptCol = primaryText.replace(/\s/g,'');
-    const _ptHex = _ptCol.match(/^#([0-9a-fA-F]{6})$/);
-    const _ptRgb = _ptCol.match(/^rgba?\((\d+),(\d+),(\d+)/);
-    let _isLightFinal = isLight;
-    if (_ptHex) {
-      const avg = (parseInt(_ptHex[1].slice(0,2),16) + parseInt(_ptHex[1].slice(2,4),16) + parseInt(_ptHex[1].slice(4,6),16)) / 3;
-      _isLightFinal = avg < 128; // dark primary text = light background
-    } else if (_ptRgb) {
-      const avg = (+_ptRgb[1] + +_ptRgb[2] + +_ptRgb[3]) / 3;
-      _isLightFinal = avg < 128;
-    }
-
     // Panel text and icon colours — adapt to light/dark
-    const panelText    = _isLightFinal ? primaryText                    : "#ffffff";
-    const panelTextDim = _isLightFinal ? secondaryText                  : "rgba(255,255,255,0.4)";
-    const panelRowBg   = _isLightFinal ? "rgba(0,0,0,0.03)"            : "rgba(255,255,255,0.03)";
-    const panelRowBgA  = _isLightFinal ? "rgba(0,0,0,0.08)"            : "rgba(255,255,255,0.1)";
-    const panelRowBdr  = _isLightFinal ? "rgba(0,0,0,0.10)"            : "rgba(255,255,255,0.06)";
-    const panelIcon    = _isLightFinal ? "rgba(0,0,0,0.30)"            : "rgba(255,255,255,0.18)";
-    const panelIconDim = _isLightFinal ? "rgba(0,0,0,0.45)"            : "rgba(255,255,255,0.3)";
-    const panelDiv     = _isLightFinal ? "rgba(0,0,0,0.10)"            : "rgba(255,255,255,0.07)";
-    const panelBtnBg   = _isLightFinal ? "rgba(0,0,0,0.06)"            : "rgba(255,255,255,0.08)";
-    const panelBtnBdr  = _isLightFinal ? "rgba(0,0,0,0.14)"            : "rgba(255,255,255,0.13)";
+    const panelText    = isLight ? primaryText                    : "#ffffff";
+    const panelTextDim = isLight ? secondaryText                  : "rgba(255,255,255,0.4)";
+    const panelRowBg   = isLight ? "rgba(0,0,0,0.03)"            : "rgba(255,255,255,0.03)";
+    const panelRowBgA  = isLight ? "rgba(0,0,0,0.08)"            : "rgba(255,255,255,0.1)";
+    const panelRowBdr  = isLight ? "rgba(0,0,0,0.10)"            : "rgba(255,255,255,0.06)";
+    const panelIcon    = isLight ? "rgba(0,0,0,0.30)"            : "rgba(255,255,255,0.18)";
+    const panelIconDim = isLight ? "rgba(0,0,0,0.45)"            : "rgba(255,255,255,0.3)";
+    const panelDiv     = isLight ? "rgba(0,0,0,0.10)"            : "rgba(255,255,255,0.07)";
+    const panelBtnBg   = isLight ? "rgba(0,0,0,0.06)"            : "rgba(255,255,255,0.08)";
+    const panelBtnBdr  = isLight ? "rgba(0,0,0,0.14)"            : "rgba(255,255,255,0.13)";
     // Also set via JS for elements that cache variable values at render time
     r.host.style.setProperty("--crow-panel-text",       panelText);
     r.host.style.setProperty("--crow-panel-text-dim",   panelTextDim);
@@ -1502,9 +1516,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     r.host.style.setProperty("--crow-panel-btn-bg",     panelBtnBg);
     r.host.style.setProperty("--crow-panel-btn-border", panelBtnBdr);
     // Toggle CSS class — :host(.crow-light-theme) rules use !important to guarantee override
-    r.host.classList.toggle('crow-light-theme', _isLightFinal);
+    r.host.classList.toggle('crow-light-theme', isLight);
     // Store resolved panel colours on instance so JS-built panels can read them at render time
-    this._panelIsLight  = _isLightFinal;
+    this._panelIsLight  = isLight;
     this._panelText     = panelText;
     this._panelTextDim  = panelTextDim;
     this._panelRowBg    = panelRowBg;
@@ -1559,7 +1573,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         .volume-hud.visible {
           opacity: 1; transform: translate(-50%, -50%) scale(1);
         }
-        .volume-hud svg { width: 40px; height: 40px; fill:${this._pt("text")}; }
+        .volume-hud svg { width: 40px; height: 40px; fill:var(--crow-panel-text, #ffffff); }
         .volume-hud-bars {
           display: flex; gap: 3px; align-items: flex-end;
         }
@@ -1607,7 +1621,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         .mode-compact .info-row { padding-right: 0; }
         .mini-art { display: none; width: 54px; height: 54px; border-radius: 10px; overflow: hidden; background: rgba(40,40,45,0.6); display: flex; align-items: center; justify-content: center; border: 1px solid var(--crow-panel-row-border,rgba(255,255,255,0.1)); cursor: pointer; flex-shrink: 0; }
         .mini-art img { width: 100%; height: 100%; object-fit: cover; }
-        .track-title { font-size: 19px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: -0.3px; color:${this._pt("text")}; }
+        .track-title { font-size: 19px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: -0.3px; color:var(--crow-panel-text, #ffffff); }
         .track-artist { font-size: 15px; color: var(--crow-panel-text,rgba(255,255,255,0.7)); margin-bottom: 12px; font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         /* Volume percentage indicator */
         .vol-pct {
@@ -1852,7 +1866,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         }
         .info-track-info-btn svg { width: 14px; height: 14px; fill: var(--crow-panel-text,rgba(255,255,255,0.7)); display: block; }
         .info-track-info-btn:hover { opacity: 1; }
-        .info-track-info-btn:hover svg { fill:${this._pt("text")}; }
+        .info-track-info-btn:hover svg { fill:var(--crow-panel-text, #ffffff); }
         .info-track-info-btn:active { transform: scale(0.88); }
 
         /* ─── Speaker select in track confirm ─── */
@@ -1916,7 +1930,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         }
         .ma-search-input {
           width: 100%; background: var(--crow-panel-row-bg, rgba(255,255,255,0.08)); border: 1px solid var(--crow-panel-row-border, rgba(255,255,255,0.14));
-          border-radius: 10px; padding: 8px 32px 8px 12px; color:${this._pt("text")}; font-size: 13px;
+          border-radius: 10px; padding: 8px 32px 8px 12px; color:var(--crow-panel-text, #ffffff); font-size: 13px;
           font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
           outline: none;
         }
@@ -1933,7 +1947,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         .ma-search-clear:active { background: var(--crow-panel-row-bg-active,rgba(255,255,255,0.35)); }
         .ma-search-btn {
           background: #007AFF; border: none !important; border-radius: 10px !important;
-          color:${this._pt("text")}; font-size: 13px; font-weight: 600; padding: 8px 14px;
+          color:var(--crow-panel-text, #ffffff); font-size: 13px; font-weight: 600; padding: 8px 14px;
           cursor: pointer; white-space: nowrap; transition: all 0.15s ease;
           font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
         }
@@ -1983,8 +1997,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           width: 32px; height: 32px; border-radius: 8px; flex-shrink: 0;
           display: flex; align-items: center; justify-content: center;
         }
-        .ma-ios-cat-icon svg { width: 18px; height: 18px; fill:${this._pt("text")}; }
-        .ma-ios-cat-label { flex: 1; font-size: 16px; font-weight: 400; color:${this._pt("text")}; letter-spacing: -0.2px; }
+        .ma-ios-cat-icon svg { width: 18px; height: 18px; fill:var(--crow-panel-text, #ffffff); }
+        .ma-ios-cat-label { flex: 1; font-size: 16px; font-weight: 400; color:var(--crow-panel-text, #ffffff); letter-spacing: -0.2px; }
         .ma-ios-cat-chevron { width: 8px; height: 8px; border-right: 2px solid var(--crow-panel-icon-dim,rgba(255,255,255,0.3)); border-top: 2px solid var(--crow-panel-icon-dim,rgba(255,255,255,0.3)); transform: rotate(45deg); flex-shrink: 0; }
         /* Toggle view button in header */
         .ma-view-toggle {
@@ -2087,7 +2101,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         }
         .ma-item-more svg { width: 16px; height: 16px; fill: var(--crow-panel-icon-dim, rgba(255,255,255,0.3)); display: block; }
         .ma-item-more:active { background: var(--crow-panel-row-bg-active,rgba(255,255,255,0.12)); }
-        .ma-item-more:active svg { fill:${this._pt("text")}; }
+        .ma-item-more:active svg { fill:var(--crow-panel-text, #ffffff); }
         /* ── Custom entity selector popup ── */
         .entity-menu-popup {
           position: absolute;
@@ -2134,7 +2148,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         .enqueue-backdrop { position: absolute; inset: 0; z-index: 49; background: transparent; }
         .enqueue-menu {
           position: absolute; z-index: 50;
-          background: rgba(36,36,40,0.78);
+          background: var(--crow-panel-bg, rgba(36,36,40,0.92));
           backdrop-filter: blur(20px) saturate(150%); -webkit-backdrop-filter: blur(20px) saturate(150%);
           border: 1px solid var(--crow-panel-row-border,rgba(255,255,255,0.18)); border-radius: 16px; overflow: hidden;
           box-shadow: 0 16px 48px rgba(0,0,0,0.3), 0 1px 0 var(--crow-panel-divider, rgba(255,255,255,0.06)) inset;
@@ -2163,14 +2177,14 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         .enqueue-menu-speaker-chip {
           display: inline-flex; align-items: center; gap: 5px;
           padding: 4px 10px; border-radius: 20px !important;
-          background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12) !important;
-          color: rgba(255,255,255,0.55); font-size: 12px; font-weight: 500;
+          background: var(--crow-panel-btn-bg, rgba(255,255,255,0.07)); border: 1px solid var(--crow-panel-btn-border, rgba(255,255,255,0.12)) !important;
+          color: var(--crow-panel-text-dim, rgba(255,255,255,0.55)); font-size: 12px; font-weight: 500;
           cursor: pointer; font-family: inherit; transition: all 0.15s ease; white-space: nowrap;
         }
         .enqueue-menu-speaker-chip svg { width: 11px; height: 11px; fill: var(--crow-panel-icon-dim, rgba(255,255,255,0.35)); flex-shrink: 0; }
         .enqueue-menu-speaker-chip.active {
           background: rgba(var(--accent-rgb,0,122,255),0.2);
-          border-color: var(--accent,#007AFF) !important; color:${this._pt("text")};
+          border-color: var(--accent,#007AFF) !important; color:var(--crow-panel-text, #ffffff);
         }
         .enqueue-menu-speaker-chip.active svg { fill: var(--accent,#007AFF); }
           width: 16px; height: 16px; flex-shrink: 0; opacity: 0.45;
@@ -2184,7 +2198,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         }
         .ma-item-discogs svg { width: 14px; height: 14px; fill: var(--crow-panel-text,rgba(255,255,255,0.7)); display: block; }
         .ma-item-discogs:hover { opacity: 1; background: none !important; }
-        .ma-item-discogs:hover svg { fill:${this._pt("text")}; }
+        .ma-item-discogs:hover svg { fill:var(--crow-panel-text, #ffffff); }
         .ma-item-discogs:active { transform: scale(0.88); background: none !important; }
 
         /* Search result grouping — clickable section headings */
@@ -2196,7 +2210,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           margin-bottom: 2px; transition: color 0.15s ease;
         }
         .ma-section-heading:first-child { padding-top: 2px; }
-        .ma-section-heading:hover .ma-section-heading-label { color:${this._pt("text")}; }
+        .ma-section-heading:hover .ma-section-heading-label { color:var(--crow-panel-text, #ffffff); }
         .ma-section-heading:active { opacity: 0.7; }
         .ma-section-heading-label {
           font-size: 11px; font-weight: 700; color: rgba(255,255,255,0.45);
@@ -2229,7 +2243,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         .panel-state-body  { font-size: 12px; color: var(--crow-panel-text-dim,rgba(255,255,255,0.38)); line-height: 1.6; max-width: 260px; }
         .panel-state-btn {
           margin-top: 2px; padding: 7px 22px; border-radius: 20px; border: none;
-          background: var(--accent, #007AFF); color:${this._pt("text")}; font-size: 13px; font-weight: 600;
+          background: var(--accent, #007AFF); color:var(--crow-panel-text, #ffffff); font-size: 13px; font-weight: 600;
           cursor: pointer; font-family: inherit; transition: opacity 0.15s;
           display: block; margin-left: auto; margin-right: auto;
         }
@@ -2300,58 +2314,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         .ma-empty { display: flex; align-items: center; justify-content: center; min-height: 100px; color: var(--crow-panel-text-dim,rgba(255,255,255,0.3)); font-size: 13px; text-align: center; padding: 20px; }
         .ma-error { display: flex; align-items: center; justify-content: center; min-height: 100px; color: rgba(255,100,100,0.7); font-size: 12px; text-align: center; padding: 20px; line-height: 1.5; }
 
-        /* ─── Enqueue context menu (Feature 8) ─── */
-        .enqueue-menu {
-          position: absolute; z-index: 50;
-          background: rgba(36,36,40,0.78);
-          backdrop-filter: blur(20px) saturate(150%); -webkit-backdrop-filter: blur(20px) saturate(150%);
-          border: 1px solid rgba(255,255,255,0.18);
-          border-radius: 16px;
-          overflow: hidden;
-          box-shadow: 0 16px 48px rgba(0,0,0,0.55), 0 1px 0 rgba(255,255,255,0.06) inset;
-          min-width: 210px;
-          transform-origin: top right;
-          animation: enqueue-in 0.2s cubic-bezier(0.34,1.28,0.64,1) forwards;
-        }
-        @keyframes enqueue-in {
-          from { opacity: 0; transform: scale(0.88); }
-          to   { opacity: 1; transform: scale(1); }
-        }
-        .enqueue-menu-header { display: none; }
-        .enqueue-menu-item {
-          display: flex; align-items: center; gap: 12px;
-          padding: 14px 18px;
-          cursor: pointer; transition: background 0.1s ease;
-          border-bottom: 0.5px solid rgba(255,255,255,0.08);
-        }
-        .enqueue-menu-item:last-child { border-bottom: none; }
-        .enqueue-menu-item:active { background: var(--crow-panel-row-bg-active, rgba(255,255,255,0.13)); }
-        .enqueue-menu-item--disabled { opacity: 0.35; pointer-events: none; cursor: default; }
-        .enqueue-menu-item--disabled:active { background: transparent !important; }
-        .enqueue-menu-icon { width: 18px; height: 18px; flex-shrink: 0; fill: var(--crow-panel-icon-dim, rgba(255,255,255,0.45)); }
-        .enqueue-menu-text { display: block; flex: 1; }
-        .enqueue-menu-label { display: block; font-size: 15px; font-weight: 400; color: var(--crow-panel-text,rgba(255,255,255,0.95)); letter-spacing: -0.2px; }
-        .enqueue-menu-sub   { display: none; }
-        .enqueue-menu-speakers {
-          display: flex; flex-wrap: wrap; gap: 6px;
-          padding: 12px 14px 10px; border-bottom: 0.5px solid rgba(255,255,255,0.1);
-        }
-        .enqueue-menu-speaker-chip {
-          display: inline-flex; align-items: center; gap: 5px;
-          padding: 4px 10px; border-radius: 20px !important;
-          background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12) !important;
-          color: rgba(255,255,255,0.55); font-size: 12px; font-weight: 500;
-          cursor: pointer; font-family: inherit; transition: all 0.15s ease; white-space: nowrap;
-        }
-        .enqueue-menu-speaker-chip svg { width: 11px; height: 11px; fill: var(--crow-panel-icon-dim,rgba(255,255,255,0.35)); flex-shrink: 0; }
-        .enqueue-menu-speaker-chip.active {
-          background: rgba(var(--accent-rgb,0,122,255),0.2);
-          border-color: var(--accent,#007AFF) !important; color:${this._pt("text")};
-        }
-        .enqueue-menu-speaker-chip.active svg { fill: var(--accent,#007AFF); }
-          position: fixed; inset: 0; z-index: 49; background: transparent;
-        }
-
         /* ─── Dedicated Search Card mode (Feature 7) ─── */
         .crow-search-card {
           display: flex; flex-direction: column; height: 100%;
@@ -2362,7 +2324,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           padding: 14px 14px 0; flex-shrink: 0;
         }
         .crow-search-title {
-          font-size: 15px; font-weight: 700; color:${this._pt("text")}; letter-spacing: -0.2px; flex: 1;
+          font-size: 15px; font-weight: 700; color:var(--crow-panel-text, #ffffff); letter-spacing: -0.2px; flex: 1;
         }
         .crow-search-input-wrap {
           display: flex; gap: 8px; padding: 10px 14px 0; flex-shrink: 0;
@@ -2373,7 +2335,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         .crow-search-input {
           width: 100%;
           background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14);
-          border-radius: 10px; padding: 8px 32px 8px 12px; color:${this._pt("text")}; font-size: 13px;
+          border-radius: 10px; padding: 8px 32px 8px 12px; color:var(--crow-panel-text, #ffffff); font-size: 13px;
           font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
           outline: none;
         }
@@ -2388,7 +2350,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         .crow-search-clear svg { width: 10px; height: 10px; fill: var(--crow-panel-text,rgba(255,255,255,0.8)); }
         .crow-search-btn {
           background: var(--accent, #007AFF); border: none; border-radius: 10px;
-          color:${this._pt("text")}; font-size: 13px; font-weight: 600;
+          color:var(--crow-panel-text, #ffffff); font-size: 13px; font-weight: 600;
           padding: 8px 14px; cursor: pointer; flex-shrink: 0; white-space: nowrap;
           font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
           transition: opacity 0.15s ease;
@@ -2406,7 +2368,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
           transition: color 0.15s ease;
         }
-        .crow-search-tab.active { color:${this._pt("text")}; border-bottom-color: var(--accent, #007AFF); }
+        .crow-search-tab.active { color:var(--crow-panel-text, #ffffff); border-bottom-color: var(--accent, #007AFF); }
         .crow-search-tab:active { color: var(--crow-panel-text,rgba(255,255,255,0.7)); }
         .crow-search-content {
           flex: 1; overflow-y: auto; padding: 0;
@@ -2427,7 +2389,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         .crow-search-np-art svg { width: 18px; height: 18px; fill: var(--crow-panel-icon,rgba(255,255,255,0.25)); }
         .crow-search-np-info { flex: 1; min-width: 0; }
         .crow-search-np-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--accent, #007AFF); margin-bottom: 1px; }
-        .crow-search-np-title { font-size: 13px; font-weight: 600; color:${this._pt("text")}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .crow-search-np-title { font-size: 13px; font-weight: 600; color:var(--crow-panel-text, #ffffff); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .crow-search-np-artist { font-size: 11px; color: var(--crow-panel-text-dim,rgba(255,255,255,0.45)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
         /* ─── Info popup (same structure as MA popup) ─── */
@@ -2513,7 +2475,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           padding: 2px 8px; border-radius: 20px; flex-shrink: 0;
         }
         .queue-dropdown-state.state-on {
-          background: var(--accent, #007AFF); color:${this._pt("text")};
+          background: var(--accent, #007AFF); color:var(--crow-panel-text, #ffffff);
         }
         .queue-dropdown-state.state-off {
           background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.4);
@@ -2575,7 +2537,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         a.info-hero-art:active { opacity: 0.55; }
         .info-hero-art svg { width: 40px; height: 40px; fill: var(--crow-panel-icon,rgba(255,255,255,0.2)); }
         .info-hero-meta { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 4px; min-width: 0; overflow: hidden; }
-        .info-hero-title { font-size: 15px; font-weight: 700; color:${this._pt("text")}; letter-spacing: -0.3px; line-height: 1.25; }
+        .info-hero-title { font-size: 15px; font-weight: 700; color:var(--crow-panel-text, #ffffff); letter-spacing: -0.3px; line-height: 1.25; }
         .info-hero-sub { font-size: 12px; color: var(--crow-panel-text-dim,rgba(255,255,255,0.55)); }
         .info-hero-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
         .info-tag {
@@ -2596,9 +2558,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           position: absolute; inset: 0;
           display: flex; flex-direction: column; align-items: center; justify-content: center;
         }
-        .info-rating-ring-pct  { font-size: 13px; font-weight: 700; color:${this._pt("text")}; line-height: 1; letter-spacing: -0.5px; }
+        .info-rating-ring-pct  { font-size: 13px; font-weight: 700; color:var(--crow-panel-text, #ffffff); line-height: 1; letter-spacing: -0.5px; }
         .info-rating-meta { display: flex; flex-direction: column; gap: 2px; }
-        .info-rating-val   { font-size: 12px; font-weight: 600; color:${this._pt("text")}; }
+        .info-rating-val   { font-size: 12px; font-weight: 600; color:var(--crow-panel-text, #ffffff); }
         .info-rating-count { font-size: 10px; color: var(--crow-panel-text-dim,rgba(255,255,255,0.38)); }
 
         /* Track listing */
@@ -2702,7 +2664,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         .queue-search-icon { width: 15px; height: 15px; fill: var(--crow-panel-icon-dim, rgba(255,255,255,0.35)); flex-shrink: 0; }
         .queue-search-input {
           flex: 1; background: none; border: none; outline: none;
-          color:${this._pt("text")}; font-size: 14px; font-family: inherit;
+          color:var(--crow-panel-text, #ffffff); font-size: 14px; font-family: inherit;
           padding: 8px 0; min-width: 0;
         }
         .queue-search-input::placeholder { color: var(--crow-panel-text-dim, rgba(255,255,255,0.3)); }
@@ -2819,7 +2781,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           letter-spacing: 0.8px; text-transform: uppercase; margin-bottom: 8px;
         }
         .track-confirm-title {
-          font-size: 16px; font-weight: 700; color:${this._pt("text")}; letter-spacing: -0.3px;
+          font-size: 16px; font-weight: 700; color:var(--crow-panel-text, #ffffff); letter-spacing: -0.3px;
           text-align: center; line-height: 1.3; margin-bottom: 4px;
           max-width: 100%; overflow: hidden; text-overflow: ellipsis;
           display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
@@ -2846,11 +2808,11 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         .track-confirm-play {
           flex: 2; padding: 11px; border-radius: 12px !important;
           background: var(--accent); border: none !important;
-          color:${this._pt("text")}; font-size: 14px; font-weight: 700;
+          color:var(--crow-panel-text, #ffffff); font-size: 14px; font-weight: 700;
           cursor: pointer; font-family: inherit; transition: all 0.15s ease;
           display: flex; align-items: center; justify-content: center; gap: 6px;
         }
-        .track-confirm-play svg { width: 14px; height: 14px; fill:${this._pt("text")}; }
+        .track-confirm-play svg { width: 14px; height: 14px; fill:var(--crow-panel-text, #ffffff); }
         .track-confirm-play:active { opacity: 0.85; transform: scale(0.97); }
         .track-confirm-play:disabled { opacity: 0.5; cursor: default; }
 
@@ -2872,7 +2834,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         .tc-speaker-chip.active {
           background: rgba(var(--accent-rgb, 0,122,255), 0.18);
           border-color: var(--accent, #007AFF) !important;
-          color:${this._pt("text")};
+          color:var(--crow-panel-text, #ffffff);
         }
         .tc-speaker-chip.active svg { fill: var(--accent, #007AFF); }
 
@@ -3010,7 +2972,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         }
         .track-confirm-eq-btn:active { background: var(--crow-panel-row-bg-active,rgba(255,255,255,0.12)); transform: scale(0.98); }
         .track-confirm-eq-text { display: block; }
-        .track-confirm-eq-label { display: block; font-size: 13px; font-weight: 600; color:${this._pt("text")}; }
+        .track-confirm-eq-label { display: block; font-size: 13px; font-weight: 600; color:var(--crow-panel-text, #ffffff); }
         .track-confirm-eq-sub   { display: block; font-size: 11px; color: var(--crow-panel-text-dim,rgba(255,255,255,0.38)); margin-top: 1px; }
         /* track-confirm-countdown kept for backwards compat; ring hidden — button-fill used instead */
         .track-confirm-countdown { display: none; }
@@ -3106,7 +3068,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         .remote-toggle-btn svg { width: 15px; height: 15px; fill: rgba(255,255,255,0.9); filter: drop-shadow(0 1px 2px rgba(0,0,0,0.7)); transition: fill 0.2s ease; }
         .remote-toggle-btn:active, .remote-toggle-btn.pressed { background: var(--crow-overlay-btn-bg-active, rgba(255,255,255,0.18)); transform: scale(0.9); }
         .remote-btn-active { background: var(--crow-overlay-btn-bg-active, rgba(255,255,255,0.18)) !important; border-color: rgba(255,255,255,0.5) !important; }
-        .remote-btn-active svg { fill:${this._pt("text")} !important; }
+        .remote-btn-active svg { fill:var(--crow-panel-text, #ffffff) !important; }
         /* Remote btn: expanded Apple TV only */
         #cardOuter:not(.mode-compact):not(.no-remote):not(.ma-entity):not(.remote-btn-hidden) .remote-toggle-btn {
           display: flex !important;
@@ -8791,11 +8753,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // Play a direct episode MP3/AAC URL via media_player, bypassing Music Assistant
   _pcPlayEpisode(episodeUrl, title, entity, pod) {
     entity = entity || this._resolveMATargetEntity() || this._entity;
-    this._hass.callService('media_player', 'play_media', {
-      entity_id: entity,
-      media_content_id: episodeUrl,
-      media_content_type: 'music',
-    });
+    this._playMediaDirect(entity, episodeUrl, 'music', title);
     // Track that a podcast episode is playing so the badge can show
     this._pcNowPlaying = { url: episodeUrl, title, ts: Date.now() };
     try { localStorage.setItem('crow_pc_now_playing', JSON.stringify(this._pcNowPlaying)); } catch(_) {}
@@ -9362,7 +9320,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
   _abPlayChapter(chapterUrl, title, entity, book) {
     entity = entity || this._resolveMATargetEntity() || this._entity;
-    this._hass.callService('media_player', 'play_media', { entity_id: entity, media_content_id: chapterUrl, media_content_type: 'music' });
+    this._playMediaDirect(entity, chapterUrl, 'music', title);
     this._abNowPlaying = { url: chapterUrl, title, ts: Date.now() };
     try { localStorage.setItem('crow_ab_now_playing', JSON.stringify(this._abNowPlaying)); } catch(_) {}
     if (book) {
@@ -9619,7 +9577,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (!this._config?.show_media_type_pill) { badge.style.display = 'none'; return; }
     const state    = this._hass?.states[this._entity];
     const isMa     = this._maEntityIds?.has(this._entity);
-    const isActive = state?.state === 'playing' || state?.state === 'paused' || state?.state === 'buffering';
+    const { rawState, attemptOk } = this._pillAttemptStatus();
+    const isActive = rawState === 'playing' || ((rawState === 'paused' || rawState === 'buffering') && attemptOk);
     // Restore _abNowPlaying from HA state if lost (app close/reopen wipes memory)
     if (isActive && !this._abNowPlaying) {
       const _contentId = (state?.attributes?.media_content_id) || '';
@@ -9742,7 +9701,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
               if (_rbCmChecks >= 8) clearInterval(_rbCmInterval);
             }, 500);
           }).catch(() => {
-            this._hass.callService('media_player', 'play_media', { entity_id: entity, media_content_id: url, media_content_type: 'music' });
+            this._playMediaDirect(entity, url, 'music', st.name);
             this._showToast('\u25b6 ' + st.name);
           });
           this._closeMABrowser();
@@ -9918,12 +9877,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           this._showToast('▶ ' + st.name);
           this._closeInfoPopup();
         }).catch(() => {
-          this._hass.callService('media_player', 'play_media', { entity_id: _rbPlayTarget, media_content_id: url, media_content_type: 'music' });
+          this._playMediaDirect(_rbPlayTarget, url, 'music', st.name);
           this._showToast('▶ ' + st.name);
           this._closeInfoPopup();
         });
       } else {
-        this._hass.callService('media_player', 'play_media', { entity_id: this._entity, media_content_id: url, media_content_type: 'music' });
+        this._playMediaDirect(this._entity, url, 'music', st.name);
         this._showToast('▶ ' + st.name);
         this._closeInfoPopup();
       }
@@ -10103,7 +10062,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             // Safety timeout — stop monitoring after 8s regardless
             setTimeout(() => { _rbSuccess(); }, 8000);
           }).catch(() => {
-            this._hass.callService('media_player', 'play_media', { entity_id: _rbEntity, media_content_id: url, media_content_type: 'music' });
+            this._playMediaDirect(_rbEntity, url, 'music', st.name);
             this._showToast('▶ ' + st.name);
           });
           this._closeMABrowser();
@@ -12369,20 +12328,57 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     el.style.display = on ? 'flex' : 'none';
   }
 
+  // ── Live/Podcast/Audiobook pill "confirmed playing" gate ───────────────────
+  // A pill should never appear just because MA optimistically reports
+  // buffering/radio attrs the instant a station/episode is selected — only once
+  // playback is actually confirmed, or a short grace window has elapsed without
+  // ever reaching 'playing' (covers a stream that gets permanently stuck
+  // buffering, e.g. a geo-blocked station). Tracked per (entity, content_id) so
+  // switching stations/episodes resets the grace window for the new attempt.
+  _pillGraceMs() { return 6000; }
+  _pillAttemptStatus() {
+    const state = this._hass?.states[this._entity];
+    const rawState = state?.state;
+    const contentId = state?.attributes?.media_content_id || '';
+    const key = this._entity + '|' + contentId;
+    if (!this._pillAttempt || this._pillAttempt.key !== key) {
+      this._pillAttempt = { key, startTs: Date.now(), confirmed: rawState === 'playing' };
+      // Force a re-check once the grace window elapses, even if no further hass update
+      // arrives in the meantime — otherwise a stream stuck in 'buffering' forever (e.g.
+      // geo-blocked) would keep showing the pill it was optimistically given at the start.
+      clearTimeout(this._pillGraceTimer);
+      if (!this._pillAttempt.confirmed) {
+        this._pillGraceTimer = setTimeout(() => {
+          if (this._pillAttempt?.key !== key || this._pillAttempt?.confirmed) return;
+          this._updateLiveStationBadge();
+          this._updatePodcastBadge();
+          this._updateAudiobookBadge();
+        }, this._pillGraceMs() + 50);
+      }
+    } else if (rawState === 'playing') {
+      this._pillAttempt.confirmed = true;
+    }
+    const elapsed = Date.now() - this._pillAttempt.startTs;
+    const attemptOk = this._pillAttempt.confirmed || elapsed < this._pillGraceMs();
+    return { rawState, contentId, attemptOk };
+  }
+
   _updateLiveStationBadge() {
     const badge = this.shadowRoot?.getElementById('liveStationBadge');
     if (!badge) return;
     if (!this._config?.show_media_type_pill) { badge.style.display = 'none'; return; }
     const state = this._hass?.states[this._entity];
     const isLive = this._isLiveStream(state);
-    // Also show when paused — MA may drop mass_media_type when paused but it's still a radio station
-    const isPaused = state?.state === 'paused';
-    const isPlaying = state?.state === 'playing' || state?.state === 'buffering';
-    // Show if live stream, or if paused and we have a radio content_id (builtin://radio/...)
+    const { rawState, attemptOk } = this._pillAttemptStatus();
+    // Active means actually playing, or paused/buffering within the confirmed-or-grace window —
+    // this is what stops the pill appearing the instant MA optimistically marks a station as
+    // 'radio' before the stream has actually connected (e.g. a geo-blocked station stuck buffering).
+    const isActive = rawState === 'playing' || ((rawState === 'paused' || rawState === 'buffering') && attemptOk);
+    // Show if live stream, or if we have a radio content_id (builtin://radio/...)
     const _contentId = state?.attributes?.media_content_id || '';
     const _isRadioContentId = /^builtin:\/\/radio\//i.test(_contentId);
     const isMaEntity = this._maEntityIds?.has(this._entity);
-    const shouldShow = isMaEntity && (isLive || ((isPaused || isPlaying) && _isRadioContentId));
+    const shouldShow = isMaEntity && isActive && (isLive || _isRadioContentId);
     if (!shouldShow) {
       badge.style.display = 'none';
       // Reset radioModeIndicator position
@@ -12475,7 +12471,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const state  = this._hass?.states[this._entity];
     const attrs  = state?.attributes || {};
     const isMa   = this._maEntityIds?.has(this._entity);
-    const isActive = state?.state === 'playing' || state?.state === 'paused' || state?.state === 'buffering';
+    const { rawState, attemptOk } = this._pillAttemptStatus();
+    const isActive = rawState === 'playing' || ((rawState === 'paused' || rawState === 'buffering') && attemptOk);
     // Restore _pcNowPlaying from HA state if lost (app close/reopen wipes memory)
     if (isActive && !this._pcNowPlaying) {
       const _contentId = attrs.media_content_id || '';
@@ -13686,9 +13683,7 @@ Include ALL tracks. Use null for unknown fields.`;
             this._showToast(_act === 'replace' ? '▶ Playing' : _act === 'next' ? 'Playing next' : 'Added to queue');
             if (_act === 'replace') { this._closeInfoPopup(); this._closeMABrowser(); }
           } catch(_) {
-            this._hass.callService('media_player', 'play_media', {
-              entity_id: _fbTarget, media_content_id: _fb.title, media_content_type: 'music'
-            });
+            this._playMediaDirect(_fbTarget, _fb.title, 'music', _fb.title);
           }
         });
       });
@@ -20702,6 +20697,28 @@ Include ALL tracks. Use null for unknown fields.`;
     }, duration);
   }
 
+  // Calls media_player.play_media directly (bypassing Music Assistant — used as a fallback
+  // when MA itself can't handle a URL, or for sources that don't go through MA at all).
+  // HA's own frontend shows a raw, technical banner ("Failed to perform the action
+  // media_player/play_media. Failed to stream audio") whenever this kind of service call
+  // rejects and nothing else catches it — this wraps the call so we always catch it
+  // ourselves and show a friendly toast instead. Returns the underlying promise in case a
+  // caller wants to chain off a successful call.
+  _playMediaDirect(entityId, contentId, contentType, friendlyName) {
+    return this._hass.callService('media_player', 'play_media', {
+      entity_id: entityId, media_content_id: contentId, media_content_type: contentType
+    }).catch((err) => {
+      const msg = (err?.message || err?.error?.message || String(err)).toLowerCase();
+      const what = friendlyName ? `"${friendlyName}"` : 'This';
+      const friendly =
+        msg.includes('stream')      ? `${what} couldn't be streamed — it may be unavailable or region-locked` :
+        msg.includes('unavailable') ? 'Speaker is unavailable right now' :
+        msg.includes('no playable') || msg.includes('playable items') ? `${what} isn't available to play` :
+        `${what} couldn't be played`;
+      this._showToast('\u26a0\ufe0f ' + friendly, 4500);
+    });
+  }
+
   _showLoadingToast(message) {
     const toast  = this.shadowRoot?.getElementById('crowToast');
     const textEl = this.shadowRoot?.getElementById('crowToastText');
@@ -22973,6 +22990,44 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
     // Dim colour pickers when HA theme mode is active
     const colourGrid = root.getElementById('colour-grid');
     const haThemeWarn = root.getElementById('ha-theme-colour-warn');
+    // Detect light vs dark HA theme — same robust (text-colour-based, bg-based fallback)
+    // method used at runtime in _applyHaTheme(), so the editor and the live card always agree.
+    const _editorDetectIsLight = () => {
+      const docStyle = getComputedStyle(document.body);
+      const get = (v, fallback) => { const val = docStyle.getPropertyValue(v).trim(); return val || fallback; };
+      const bgTrim = get("--primary-background-color", get("--card-background-color", "#ffffff")).replace(/\s/g,'');
+      let isLightFromBg = false;
+      const rgbMatch = bgTrim.match(/rgb\((\d+),(\d+),(\d+)\)/);
+      const hexMatch = bgTrim.match(/^#([0-9a-fA-F]{3,8})$/);
+      if (rgbMatch) {
+        isLightFromBg = (+rgbMatch[1] + +rgbMatch[2] + +rgbMatch[3]) / 3 >= 128;
+      } else if (hexMatch) {
+        const h = hexMatch[1].length === 3 ? hexMatch[1].split('').map(c => c+c).join('') : hexMatch[1].slice(0,6);
+        isLightFromBg = (parseInt(h.slice(0,2),16) + parseInt(h.slice(2,4),16) + parseInt(h.slice(4,6),16)) / 3 >= 128;
+      }
+      const primaryText = get("--primary-text-color", isLightFromBg ? "#111111" : "#ffffff").replace(/\s/g,'');
+      const ptHex = primaryText.match(/^#([0-9a-fA-F]{6})$/);
+      const ptRgb = primaryText.match(/^rgba?\((\d+),(\d+),(\d+)/);
+      if (ptHex) {
+        const avg = (parseInt(ptHex[1].slice(0,2),16) + parseInt(ptHex[1].slice(2,4),16) + parseInt(ptHex[1].slice(4,6),16)) / 3;
+        return avg < 128;
+      }
+      if (ptRgb) return ((+ptRgb[1] + +ptRgb[2] + +ptRgb[3]) / 3) < 128;
+      return isLightFromBg;
+    };
+    const cardGlassRow   = root.getElementById('cardGlassRow');
+    const cardGlassInput = root.getElementById('card_liquid_glass');
+    const cardGlassNote  = root.getElementById('cardGlassDisabledNote');
+    const _applyCardGlassAvailability = (haOn) => {
+      // Card Liquid Glass becomes a no-op whenever Follow HA Theme is on and the current HA
+      // theme is light — a solid theme-matched background is used instead for readability
+      // (see _applyHaTheme()). Grey the toggle out in that case rather than leaving it
+      // interactive with no visible effect.
+      const disable = haOn && _editorDetectIsLight();
+      if (cardGlassInput) cardGlassInput.disabled = disable;
+      if (cardGlassRow)   cardGlassRow.style.opacity = disable ? '0.45' : '1';
+      if (cardGlassNote)  cardGlassNote.style.display = disable ? 'block' : 'none';
+    };
     const _applyHaThemeUi = (on) => {
       if (colourGrid) {
         // When HA theme is on, only lock non-accent colour pickers.
@@ -22985,6 +23040,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
         });
       }
       if (haThemeWarn) haThemeWarn.style.display = on ? 'block' : 'none';
+      _applyCardGlassAvailability(on);
     };
     _applyHaThemeUi(this._config.use_ha_theme === true);
     const lyricsScrollMode = this._config.lyrics_scroll_mode || 'highlight';
@@ -23608,10 +23664,11 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
         <div>
           <div class="section-title">Visual Effects</div>
           <div class="card-block" style="padding:12px;">
-            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding-bottom:12px;border-bottom:1px solid rgba(255,255,255,0.07);">
+            <div id="cardGlassRow" style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding-bottom:12px;border-bottom:1px solid rgba(255,255,255,0.07);">
               <div>
                 <div style="font-size:14px;font-weight:500;">Card Liquid Glass</div>
                 <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Makes the card background transparent with a frosted-glass blur effect. On by default. Turn off to use a custom background colour.</div>
+                <div id="cardGlassDisabledNote" style="display:none;font-size:11px;color:rgba(255,159,10,0.9);margin-top:6px;line-height:1.4;">Disabled — your current Home Assistant theme is light, so a solid theme-matched background is used instead for readability.</div>
               </div>
               <label class="toggle-switch" style="flex-shrink:0"><input type="checkbox" id="card_liquid_glass" checked><span class="toggle-track"></span></label>
             </div>
