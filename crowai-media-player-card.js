@@ -23025,7 +23025,19 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
     const seg = root.getElementById('startup-mode-segmented');
     if (seg) seg.style.opacity = this._config.remember_view ? '0.4' : '1';
     const volEntityInput = root.getElementById('volume_entity');
-    if (volEntityInput) volEntityInput.value = this._config.volume_entity || '';
+    if (volEntityInput) {
+      const currentVe = this._config.volume_entity || '';
+      const veOpts = ['<option value="">Default (selected speaker)</option>'];
+      Object.keys(this._hass?.states || {})
+        .filter(eid => eid.startsWith('media_player.'))
+        .sort()
+        .forEach(eid => {
+          const friendly = this._hass.states[eid]?.attributes?.friendly_name || eid;
+          veOpts.push(`<option value="${eid}"${currentVe === eid ? ' selected' : ''}>${friendly}</option>`);
+        });
+      volEntityInput.innerHTML = veOpts.join('');
+      volEntityInput.value = currentVe;
+    }
     const remoteButtonsPos = this._config.remote_buttons_position || 'bottom';
     ['top', 'bottom'].forEach(v => {
       const el = root.getElementById('rbp_' + v);
@@ -23323,6 +23335,31 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                   </div>
                   <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="show_ma_library_button"><span class="toggle-track"></span></label>
                 </div>
+                <div class="toggle-item">
+                  <span class="toggle-label">Show Remote Button</span>
+                  <label class="toggle-switch"><input type="checkbox" id="show_remote_button" checked><span class="toggle-track"></span></label>
+                </div>
+                <div class="toggle-item" style="align-items:flex-start;gap:12px;">
+                  <div style="flex:1;">
+                    <div class="toggle-label">Default Radio Mode on Startup</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Starts MA Radio Mode on automatically whenever the card loads.</div>
+                  </div>
+                  <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="ma_radio_mode"><span class="toggle-track"></span></label>
+                </div>
+                <div class="toggle-item" style="align-items:flex-start;gap:12px;">
+                  <div style="flex:1;">
+                    <div class="toggle-label">iTunes Artwork Fallback</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Looks up album art on iTunes whenever a track has none.</div>
+                  </div>
+                  <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="itunes_art" checked><span class="toggle-track"></span></label>
+                </div>
+                <div class="toggle-item" style="align-items:flex-start;gap:12px;">
+                  <div style="flex:1;">
+                    <div class="toggle-label">Show Volume HUD</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Shows a brief overlay with the current level whenever volume changes.</div>
+                  </div>
+                  <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="volume_hud" checked><span class="toggle-track"></span></label>
+                </div>
                 <div class="toggle-item" style="align-items:flex-start;gap:12px;">
                   <div style="flex:1;">
                     <div class="toggle-label">Show Live/Podcast/Audiobook Pill</div>
@@ -23349,6 +23386,44 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                 <div class="toggle-item">
                   <span class="toggle-label">Cache Lyrics Locally</span>
                   <label class="toggle-switch"><input type="checkbox" id="lyrics_cache_enabled" checked><span class="toggle-track"></span></label>
+                </div>
+              </div>
+
+              <!-- Startup & Navigation -->
+              <div style="margin-top:16px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.07);">
+                <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;">Startup &amp; Navigation</div>
+
+                <div style="margin-bottom:14px;">
+                  <div style="font-size:13px;font-weight:500;margin-bottom:8px;">Startup View</div>
+                  <div class="segmented" id="startup-mode-segmented">
+                    <input type="radio" name="startup_mode" id="sm_compact"   value="compact"><label for="sm_compact">Compact</label>
+                    <input type="radio" name="startup_mode" id="sm_maximised" value="maximised"><label for="sm_maximised">Maximised</label>
+                    <input type="radio" name="startup_mode" id="sm_remote"    value="remote"><label for="sm_remote">Remote</label>
+                  </div>
+                </div>
+
+                <div class="toggle-item" style="align-items:flex-start;gap:12px;padding-left:0;padding-right:0;">
+                  <div style="flex:1;">
+                    <div class="toggle-label">Retain Current View</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Reopen in whichever view (Compact/Maximised/Remote) was last used, instead of the Startup View above.</div>
+                  </div>
+                  <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="remember_view"><span class="toggle-track"></span></label>
+                </div>
+
+                <div style="margin:14px 0;">
+                  <div style="font-size:13px;font-weight:500;margin-bottom:8px;">Remote Button Row Position</div>
+                  <div class="segmented" id="remote-position-segmented">
+                    <input type="radio" name="remote_buttons_position" id="rbp_bottom" value="bottom"><label for="rbp_bottom">Bottom</label>
+                    <input type="radio" name="remote_buttons_position" id="rbp_top"    value="top"><label for="rbp_top">Top</label>
+                  </div>
+                </div>
+
+                <div class="select-row" style="padding:0;">
+                  <label for="volume_entity" style="font-size:13px;font-weight:500;">Volume Entity</label>
+                  <div class="hint" style="margin-bottom:4px;">Route volume control to a different media player entity (e.g. an amp or receiver) instead of the selected speaker. Leave as Default to control the selected speaker directly.</div>
+                  <select id="volume_entity">
+                    <option value="">Default (selected speaker)</option>
+                  </select>
                 </div>
               </div>
             </div>
@@ -23549,6 +23624,46 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
               <label class="toggle-switch" style="flex-shrink:0"><input type="checkbox" id="remote_art_blur" checked><span class="toggle-track"></span></label>
             </div>
 
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid rgba(255,255,255,0.07);">
+              <div>
+                <div style="font-size:14px;font-weight:500;">Volume HUD Liquid Glass</div>
+                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Gives the volume overlay a frosted-glass look instead of a solid background.</div>
+              </div>
+              <label class="toggle-switch" style="flex-shrink:0"><input type="checkbox" id="volume_hud_glass"><span class="toggle-track"></span></label>
+            </div>
+
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid rgba(255,255,255,0.07);">
+              <div>
+                <div style="font-size:14px;font-weight:500;">Ambient Glow</div>
+                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Extracts the dominant colour from the artwork and applies a subtle glow behind it. Off by default.</div>
+              </div>
+              <label class="toggle-switch" style="flex-shrink:0"><input type="checkbox" id="ambient_glow"><span class="toggle-track"></span></label>
+            </div>
+
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid rgba(255,255,255,0.07);">
+              <div>
+                <div style="font-size:14px;font-weight:500;">Library &amp; Queue Row Glow</div>
+                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Adds a subtle accent-colour glow to rows in the library browser and queue panel. Off by default.</div>
+              </div>
+              <label class="toggle-switch" style="flex-shrink:0"><input type="checkbox" id="row_glow"><span class="toggle-track"></span></label>
+            </div>
+
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid rgba(255,255,255,0.07);">
+              <div>
+                <div style="font-size:14px;font-weight:500;">Artwork Crossfade</div>
+                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">A cinematic fade-to-black transition between track artwork changes. Off by default.</div>
+              </div>
+              <label class="toggle-switch" style="flex-shrink:0"><input type="checkbox" id="artwork_crossfade"><span class="toggle-track"></span></label>
+            </div>
+
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid rgba(255,255,255,0.07);">
+              <div>
+                <div style="font-size:14px;font-weight:500;">Resize Button Spin</div>
+                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Spins the compact/maximise icon when toggling between views. On by default.</div>
+              </div>
+              <label class="toggle-switch" style="flex-shrink:0"><input type="checkbox" id="resize_btn_spin" checked><span class="toggle-track"></span></label>
+            </div>
+
           </div>
         </div>
 
@@ -23660,6 +23775,21 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                   <option value="gold">Gold — classical &amp; burnished</option>
                   <option value="retro">Retro — teal &amp; magenta</option>
                   <option value="ember">Ember — autumn &amp; flame</option>
+                </select>
+              </div>
+              <!-- Player Icon Theme Picker -->
+              <div style="margin-bottom:16px;">
+                <div style="font-size:13px;font-weight:600;color:var(--secondary-text-color, rgba(0,0,0,0.5));letter-spacing:0.05em;text-transform:uppercase;margin-bottom:10px;">Player Icon Theme</div>
+                <div style="font-size:11px;color:#888;margin-bottom:8px;line-height:1.4;">Changes the shape and style of the media control icons themselves (separate from Controls Theme colours above).</div>
+                <select id="icon_theme" style="width:100%;background:var(--card-background-color,rgba(255,255,255,0.08));border:1px solid var(--divider-color,rgba(255,255,255,0.14));border-radius:10px;color:var(--primary-text-color, #111);font-size:13px;font-family:inherit;padding:10px 12px;outline:none;cursor:pointer;-webkit-appearance:none;appearance:none;">
+                  <option value="standard">Standard</option>
+                  <option value="modern">Modern</option>
+                  <option value="robot">Robot (default)</option>
+                  <option value="vhs">Chunky</option>
+                  <option value="retro_player">Retro Player</option>
+                  <option value="sharp">Sharp</option>
+                  <option value="pixel">Pixel</option>
+                  <option value="lcd">LCD</option>
                 </select>
               </div>
               <div class="colour-grid" id="colour-grid"></div>
@@ -24769,7 +24899,8 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       const seg = root.getElementById('startup-mode-segmented');
       if (seg) seg.style.opacity = e.target.checked ? '0.4' : '1';
     };
-    root.getElementById('volume_entity').onchange = (e) => this._updateConfig('volume_entity', e.target.value);
+    const volEntityEl = root.getElementById('volume_entity');
+    if (volEntityEl) volEntityEl.onchange = (e) => this._updateConfig('volume_entity', e.target.value);
     const startupVolInput = root.getElementById('startup_volume');
     if (startupVolInput) {
       startupVolInput.oninput = (e) => {

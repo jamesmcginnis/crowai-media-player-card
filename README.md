@@ -299,14 +299,12 @@ The editor includes a filter box at the top (search any setting by name) and a *
 | Section | Settings |
 |---------|---------|
 | Manage & Reorder Media Players | Drag-and-drop reorder; enable/disable; startup volume; MA speaker toggle — all per entity |
-| Appearance & Behaviour *(collapsible)* | Follow HA Theme, Auto Switch, Remember Last Speaker, Media Player Selector, Always Show Library Button, Live/Podcast/Audiobook Pill, Volume Buttons, Volume Percentage, Scroll Long Text, Lyrics persistence and caching |
+| Appearance & Behaviour *(collapsible)* | Follow HA Theme, Auto Switch, Remember Last Speaker, Media Player Selector, Always Show Library Button, Show Remote Button, Default Radio Mode on Startup, iTunes Artwork Fallback, Show Volume HUD, Live/Podcast/Audiobook Pill, Volume Buttons, Volume Percentage, Scroll Long Text, Lyrics persistence and caching, and a **Startup & Navigation** sub-section (Startup View, Retain Current View, Remote Button Row Position, Volume Entity) |
 | Caches & Data *(collapsible)* | AI caches (bios, trivia, where-to-watch, content warnings, year-in-music, vibe history, AI response cache), artwork caches (iTunes, Wikipedia), library & radio caches (MA library, radio stations, HA registry), lyrics cache & scroll style, and management of all pinned items |
-| Visual Effects | Card Liquid Glass, Remote Liquid Glass |
+| Visual Effects | Card Liquid Glass, Remote Liquid Glass, Volume HUD Liquid Glass, Ambient Glow, Library & Queue Row Glow, Artwork Crossfade, Resize Button Spin |
 | ✨ AI Settings | AI Agent selector, Share Track service (YouTube Music, Apple Music, Spotify, Tidal, Amazon Music, Deezer), Announce TTS Service |
 | AI Vibe Artist Seeds | Playlist search terms and radio fallback artist per vibe; fully customisable |
-| Colours & Themes *(collapsible)* | Controls Theme (12 presets), accent, volume accent, title, artist, button, +Add pill, volume %, custom background and lyrics colours, with live preview |
-
-> ⚠️ **Known issue:** a few advanced options — `volume_entity`, `icon_theme`, `startup_mode`, `ambient_glow`, `artwork_crossfade`, `ma_radio_mode`, `remote_buttons_position`, `show_remote_button`, `resize_btn_spin`, `itunes_art`, `volume_hud`, `row_glow` and `volume_hud_glass` — don't currently have controls in the visual editor. They still work and can be set in YAML (see Quick Start below); the editor's `volume_entity` wiring also throws on load, which can silently prevent some other editor fields from initialising. A fix is planned.
+| Colours & Themes *(collapsible)* | Controls Theme (12 presets), Player Icon Theme (8 sets), accent, volume accent, title, artist, button, +Add pill, volume %, custom background and lyrics colours, with live preview |
 
 ---
 
@@ -381,9 +379,6 @@ card_liquid_glass: true
 
 **MA search returns "Search not supported"**
 - Update Music Assistant to the latest version.
-
-**A visual editor toggle/dropdown isn't doing anything, or some settings seem missing from the editor**
-- See the Known Issue note in the Visual Editor section above — some advanced settings currently only work via YAML.
 
 ---
 

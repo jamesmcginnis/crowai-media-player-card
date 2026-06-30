@@ -232,14 +232,12 @@ Repository: [github.com/droans/mass_queue](https://github.com/droans/mass_queue)
 The editor includes a filter box at the top (search any setting by name) and a Reset All Settings to Defaults button. Several sections are collapsible.
 
 - **Manage & Reorder Media Players** — accordion list with drag-and-drop reordering; enable/disable per speaker; startup volume per speaker; MA Speaker toggle per speaker
-- **Appearance & Behaviour** *(collapsible)* — Follow HA Theme, Auto Switch, Remember Last Speaker, Media Player Selector, Always Show Library Button, Live/Podcast/Audiobook Pill, Volume Buttons, Volume Percentage, Scroll Long Text, Lyrics persistence and caching
+- **Appearance & Behaviour** *(collapsible)* — Follow HA Theme, Auto Switch, Remember Last Speaker, Media Player Selector, Always Show Library Button, Show Remote Button, Default Radio Mode on Startup, iTunes Artwork Fallback, Show Volume HUD, Live/Podcast/Audiobook Pill, Volume Buttons, Volume Percentage, Scroll Long Text, Lyrics persistence and caching, plus a Startup & Navigation sub-section (Startup View, Retain Current View, Remote Button Row Position, Volume Entity)
 - **Caches & Data** *(collapsible)* — AI caches (bios, trivia, where-to-watch, content warnings, year-in-music, vibe history, AI response cache), artwork caches (iTunes, Wikipedia), library & radio caches (MA library, radio stations, HA registry), lyrics cache & scroll style, and management of all pinned items
-- **Visual Effects** — Card Liquid Glass, Remote Liquid Glass
+- **Visual Effects** — Card Liquid Glass, Remote Liquid Glass, Volume HUD Liquid Glass, Ambient Glow, Library & Queue Row Glow, Artwork Crossfade, Resize Button Spin
 - **✨ AI Settings** — AI Agent selector (Google Gemini required), Share Track service (YouTube Music, Apple Music, Spotify, Tidal, Amazon Music, Deezer), Announce TTS Service
 - **AI Vibe Artist Seeds** — customisable playlist search terms and radio fallback artist per vibe category
-- **Colours & Themes** *(collapsible)* — Controls Theme (12 presets), accent, volume, title, artist, button, +Add pill, volume % and custom background/lyrics colours with live preview strip
-
-> ⚠️ **Known issue:** a few advanced options — `volume_entity`, `icon_theme`, `startup_mode`, `ambient_glow`, `artwork_crossfade`, `ma_radio_mode`, `remote_buttons_position`, `show_remote_button`, `resize_btn_spin`, `itunes_art`, `volume_hud`, `row_glow` and `volume_hud_glass` — don't currently have controls in the visual editor and must be set in YAML instead (see Quick Start below).
+- **Colours & Themes** *(collapsible)* — Controls Theme (12 presets), Player Icon Theme (8 sets), accent, volume, title, artist, button, +Add pill, volume % and custom background/lyrics colours with live preview strip
 
 ## Installation
 
