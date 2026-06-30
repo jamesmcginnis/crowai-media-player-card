@@ -33,7 +33,9 @@ CrowAI is a Home Assistant media player card built specifically for **iPhone**. 
 - **Album Artwork** — automatic iTunes artwork lookup when no artwork is provided
 - **Ambient Glow** — extracts dominant colour from album artwork and applies a subtle glow
 - **Radio Mode Indicator** — tap the radio icon to turn radio mode off immediately
+- **Live/Podcast/Audiobook Pill** — optional badge identifying what's currently playing (off by default)
 - **In-card Notifications** — toast alerts appear inside the card
+- **Controls Theme** — 12 colour presets for the control icons (Classic, Vivid, Warm, Ocean, Rose, Forest, Neon, Soft, Midnight, Gold, Retro, Ember)
 
 ## AI Features
 
@@ -44,12 +46,14 @@ All AI features are powered by **Google Gemini** (required) via Home Assistant's
 **Free tier limits (gemini-2.0-flash):** 1,500 requests/day · 15 requests/minute — sufficient for normal daily use.
 
 - **AI Info Panel** — single-tap the artwork while music plays: year, label, length, fun fact, genre tags, band members / artist section, album pill, similar tracks; all cached per track
+- **Song Intro** — a short, intriguing one-line fact about the playing track appears below the artist name a few seconds after it starts, then fades away; always on, never shown for radio/streams
 - **Vibe Queue Builder** — 100+ vibes across Energy, Calm, Focus, Mood, Social, Decades, Genre, Time, Seasons and Binaural & Noise; builds a themed MA queue instantly; artist exclusion prevents repeats
 - **AI Search** — natural language search across your MA library
 - **Recommendations** — AI-curated track suggestions based on what's playing
 - **AI Artist Radio** — continuous radio queue around any artist
 - **Announce AI Improve** — rewrites your announcement in a natural, friendly tone
 - **Send Message AI** — improves your notification text
+- **Audiobook search** — AI-assisted query refinement when searching LibriVox/Archive.org for public-domain audiobooks
 
 ## Quick Menu
 
@@ -82,6 +86,16 @@ Play the same audio on multiple MA speakers simultaneously:
 - **Sync volumes** — match all grouped speakers to the focused speaker's volume
 - **Add a speaker** — a **+ Add** pill appears when additional MA speakers are available
 - **Remove a speaker** — tap the × on any pill to remove that speaker from the group
+
+## Pinning (Library)
+
+Pin your favourites for one-tap access — pins live in a dedicated section at the top of each browser/search panel.
+
+- **What can be pinned** — radio stations, podcasts, audiobooks, and MA library tracks, artists, albums and playlists
+- **How to pin** — long-press any item (or use the pin icon in its info panel) and choose Pin/Unpin
+- **Limit** — up to 10 pinned items per category
+- **Management** — view and clear pins individually or all at once from the visual editor's Caches & Data section
+- Pins are stored on-device only and aren't synced between browsers or devices
 
 ## Synced Lyrics
 
@@ -158,6 +172,8 @@ Tabs: Recently Played, Recommended, Playlists, Artists, Albums, Songs, Radio, Po
 - Action bar on every drill-down: Play All, Add to Queue, Play Next
 - Long-press tracks for the enqueue menu
 - Progressive loading with localStorage cache (configurable TTL)
+- **Podcasts tab** — search iTunes directly; pin favourites
+- **Audiobooks tab** — search free, public-domain titles on LibriVox via the Archive.org catalogue, with AI-assisted query refinement and chapter-by-chapter playback; pin favourites
 
 ## Radio Mode
 
@@ -213,18 +229,17 @@ Repository: [github.com/droans/mass_queue](https://github.com/droans/mass_queue)
 
 ## Visual Configuration Editor
 
+The editor includes a filter box at the top (search any setting by name) and a Reset All Settings to Defaults button. Several sections are collapsible.
+
 - **Manage & Reorder Media Players** — accordion list with drag-and-drop reordering; enable/disable per speaker; startup volume per speaker; MA Speaker toggle per speaker
-- **Appearance & Behaviour** — Follow HA Theme, Auto Switch, Remember Last Speaker, Media Player Selector, Volume Buttons, Volume Percentage, Scroll Long Text, Lyrics persistence and caching
-- **Startup & Navigation** — Startup view (Compact/Maximised/Remote), Retain Current View
-- **Volume Entity** — route volume control to a different media player entity
-- **Music Assistant** — Radio Mode, Ambient Glow, Library & Queue Row Glow, Player Icon Theme, Artwork Crossfade, Show Remote/Library Buttons, Resize Button Spin, iTunes Artwork Fallback, Volume HUD, Volume HUD Liquid Glass, Card Liquid Glass
-- **Remote Control** — button row position (Bottom/Top)
-- **✨ AI Settings** — AI Agent selector (Google Gemini required), Share Track service (YouTube Music, Apple Music, Spotify, Tidal, Amazon Music, Deezer), AI Vibe History cache, AI Response cache
-- **AI Vibe Artist Seeds** — customisable playlist search terms and radio fallback artist per vibe category; Announce TTS Service selector
-- **Artwork Cache** — clear iTunes Artwork, Wikipedia Artwork, HA Registry Cache and Actor & Artist Bios individually, or Clear All Caches at once
-- **Music Library Cache** — toggle local caching of library tabs; choose retention (1/3/7/30 days); clear cache
-- **Lyrics Behaviour** — scroll mode, cache TTL
-- **Colours & Themes** — accent, volume, title and artist colours with live preview strip
+- **Appearance & Behaviour** *(collapsible)* — Follow HA Theme, Auto Switch, Remember Last Speaker, Media Player Selector, Always Show Library Button, Live/Podcast/Audiobook Pill, Volume Buttons, Volume Percentage, Scroll Long Text, Lyrics persistence and caching
+- **Caches & Data** *(collapsible)* — AI caches (bios, trivia, where-to-watch, content warnings, year-in-music, vibe history, AI response cache), artwork caches (iTunes, Wikipedia), library & radio caches (MA library, radio stations, HA registry), lyrics cache & scroll style, and management of all pinned items
+- **Visual Effects** — Card Liquid Glass, Remote Liquid Glass
+- **✨ AI Settings** — AI Agent selector (Google Gemini required), Share Track service (YouTube Music, Apple Music, Spotify, Tidal, Amazon Music, Deezer), Announce TTS Service
+- **AI Vibe Artist Seeds** — customisable playlist search terms and radio fallback artist per vibe category
+- **Colours & Themes** *(collapsible)* — Controls Theme (12 presets), accent, volume, title, artist, button, +Add pill, volume % and custom background/lyrics colours with live preview strip
+
+> ⚠️ **Known issue:** a few advanced options — `volume_entity`, `icon_theme`, `startup_mode`, `ambient_glow`, `artwork_crossfade`, `ma_radio_mode`, `remote_buttons_position`, `show_remote_button`, `resize_btn_spin`, `itunes_art`, `volume_hud`, `row_glow` and `volume_hud_glass` — don't currently have controls in the visual editor and must be set in YAML instead (see Quick Start below).
 
 ## Installation
 
@@ -249,8 +264,8 @@ ma_entities:
   - media_player.mass_living_room
 ai_conversation_agent: conversation.google_generative_ai
 accent_color: '#007AFF'
+controls_theme: classic
 startup_volume: 35
-video_lookup: auto
 use_ha_theme: false
 lyrics_scroll_mode: highlight
 lyrics_cache_enabled: true
@@ -263,6 +278,8 @@ artwork_crossfade: false
 ambient_glow: false
 row_glow: false
 show_remote_button: true
+show_media_type_pill: false
+song_intro_enabled: true
 card_liquid_glass: true
 ```
 

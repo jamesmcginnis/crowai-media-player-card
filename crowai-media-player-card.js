@@ -8501,8 +8501,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // ════════════════════════════════════════════════════════════════════════════
 
   _pcStarredKey()  { return 'crow_starred_podcasts'; }
-  _pcTopKey()      { return 'crow_itunes_top_podcasts'; }
-  _pcTopTTL()      { return 6 * 60 * 60 * 1000; } // 6 hours
 
   _pcGetStarred() {
     const k = this._pcStarredKey();
@@ -8524,37 +8522,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (idx >= 0) { starred.splice(idx, 1); this._pcSaveStarred(starred); return false; }
     if (starred.length >= 10) { this._showToast('Maximum 10 pinned podcasts — unpin one first'); return null; }
     starred.unshift(pod); this._pcSaveStarred(starred); return true;
-  }
-
-  // Fetch iTunes Top 10 podcasts for GB — cached 6 hours in localStorage
-  async _pcFetchTop() {
-    try {
-      const stored = JSON.parse(localStorage.getItem(this._pcTopKey()) || 'null');
-      if (stored && stored.ts && (Date.now() - stored.ts) < this._pcTopTTL() && stored.items?.length) {
-        return stored.items;
-      }
-    } catch(_) {}
-    try {
-      const res = await fetch('https://rss.apple.com/api/v1/feed?feedType=top-podcasts&regionCode=gb&resultCount=10&explicit=false');
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const json = await res.json();
-      const items = (json?.feed?.results || []).map(r => ({
-        collectionId:   r.id,
-        collectionName: r.name,
-        artistName:     r.artistName || '',
-        artworkUrl600:  r.artworkUrl100?.replace('100x100', '600x600') || r.artworkUrl100 || '',
-        artworkUrl100:  r.artworkUrl100 || '',
-        primaryGenreName: r.genres?.[0]?.name || '',
-        feedUrl:        null, // Apple charts API doesn't return feedUrl — resolved on tap
-        _fromChart:     true,
-      }));
-      if (items.length) {
-        try { localStorage.setItem(this._pcTopKey(), JSON.stringify({ items, ts: Date.now() })); } catch(_) {}
-      }
-      return items;
-    } catch(_) {
-      return [];
-    }
   }
 
   // Search iTunes for podcasts
@@ -8627,7 +8594,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const existing = maContent.querySelector('#pc-starred-section');
     const newSection = this._pcRenderStarredSection();
     // Find reference node — insert before top chart section or library section
-    const refNode = maContent.querySelector('#pc-top-section') || maContent.querySelector('#pc-library-section') || maContent.firstChild;
+    const refNode = maContent.querySelector('#pc-library-section') || maContent.firstChild;
     if (existing) {
       if (newSection) existing.replaceWith(newSection);
       else existing.remove();
@@ -8636,80 +8603,14 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     }
   }
 
-  // Render top chart row of artwork tiles
-  async _pcRenderTopSection(container) {
-    const topItems = await this._pcFetchTop();
-    if (!topItems.length) return;
-
-    const self = this;
-    const section = document.createElement('div');
-    section.id = 'pc-top-section';
-
-    const heading = document.createElement('div');
-    heading.style.cssText = 'font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.6px;padding:10px 4px 6px;';
-    heading.textContent = '🏆 Top 10 in the UK';
-    section.appendChild(heading);
-
-    const strip = document.createElement('div');
-    strip.style.cssText = 'display:flex;gap:10px;overflow-x:auto;padding:0 0 10px 0;-webkit-overflow-scrolling:touch;scrollbar-width:none;';
-    strip.style.setProperty('&::-webkit-scrollbar', 'display:none');
-
-    topItems.forEach((pod, i) => {
-      const tile = document.createElement('div');
-      tile.style.cssText = 'flex-shrink:0;width:72px;cursor:pointer;-webkit-tap-highlight-color:transparent;';
-
-      const art = pod.artworkUrl100 || '';
-      const rankBadge = '<div style="position:absolute;top:3px;left:3px;width:17px;height:17px;border-radius:50%;background:rgba(0,0,0,0.65);display:flex;align-items:center;justify-content:center;"><span style="font-size:9px;font-weight:700;color:#fff;">' + (i + 1) + '</span></div>';
-
-      tile.innerHTML =
-        '<div style="position:relative;width:72px;height:72px;border-radius:10px;overflow:hidden;background:rgba(255,255,255,0.08);">' +
-          (art ? '<img src="' + art + '" alt="" style="width:100%;height:100%;object-fit:cover;" onerror="this.parentNode.style.background=\'rgba(255,255,255,0.1)\'">' : '') +
-          rankBadge +
-        '</div>' +
-        '<div style="font-size:10px;color:rgba(255,255,255,0.75);margin-top:5px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3;">' + (pod.collectionName || '') + '</div>';
-
-      // Long-press for context menu
-      let _tLpTimer = null, _tLpFired = false;
-      tile.addEventListener('contextmenu', e => e.preventDefault());
-      tile.addEventListener('pointerdown', () => {
-        _tLpFired = false;
-        _tLpTimer = setTimeout(() => { _tLpFired = true; self._showPcContextMenu(tile, pod); }, 480);
-      }, { passive: true });
-      tile.addEventListener('pointerup',     () => clearTimeout(_tLpTimer), { passive: true });
-      tile.addEventListener('pointercancel', () => { clearTimeout(_tLpTimer); _tLpFired = false; }, { passive: true });
-      tile.addEventListener('pointermove',   () => clearTimeout(_tLpTimer), { passive: true });
-      tile.addEventListener('click', () => {
-        if (_tLpFired) { _tLpFired = false; return; }
-        self._showPcMoreInfo(pod);
-      });
-
-      strip.appendChild(tile);
-    });
-
-    section.appendChild(strip);
-
-    const divider = document.createElement('div');
-    divider.style.cssText = 'height:1px;background:rgba(255,255,255,0.07);margin:4px 0 8px;';
-    section.appendChild(divider);
-
-    // Insert before library section if it exists, otherwise prepend
-    const libSection = container.querySelector('#pc-library-section');
-    if (libSection) container.insertBefore(section, libSection);
-    else container.insertBefore(section, container.querySelector('#pc-starred-section')?.nextSibling || container.firstChild);
-  }
-
   // Inject starred + top chart sections into the podcast tab content
   async _pcInjectSections(content) {
     if (!content) return;
     content.querySelector('#pc-starred-section')?.remove();
-    content.querySelector('#pc-top-section')?.remove();
 
     // Insert starred at top
     const starredSection = this._pcRenderStarredSection();
     if (starredSection) content.insertBefore(starredSection, content.firstChild);
-
-    // Insert top charts below starred (async)
-    this._pcRenderTopSection(content);
   }
 
   // Context menu for a podcast tile/row
@@ -9554,7 +9455,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const prompt = document.createElement('div');
     prompt.id = 'ab-search-prompt';
     prompt.style.cssText = 'padding:20px 4px;text-align:center;';
-    prompt.innerHTML = '<div style="font-size:13px;color:rgba(255,255,255,0.4);line-height:1.8;">Search above for free public domain audiobooks.\u000aPowered by LibriVox.</div>';
+    prompt.innerHTML = '<div style="font-size:13px;color:rgba(255,255,255,0.4);line-height:1.8;">Search above for free public domain audiobooks.</div>';
     content.appendChild(prompt);
   }
 

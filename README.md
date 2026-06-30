@@ -146,13 +146,16 @@ Repository: [github.com/droans/mass_queue](https://github.com/droans/mass_queue)
 - 🎛️ **Player Icon Themes** — eight icon sets: Standard, Modern, Robot, Chunky, Retro, Sharp, Pixel and LCD
 - 🌈 **Ambient glow** — extracts dominant colour from artwork and applies a subtle glow
 - 📻 **Radio mode indicator** — tap the radio icon to turn radio mode off immediately
+- 🏷️ **Live/Podcast/Audiobook pill** — optional badge on the artwork screen identifying what's currently playing (off by default)
 - 📋 **Multi-device support** — manage Apple TV, HomePod and Music Assistant speakers from one card
 - 🎯 **Live progress tracking** — smooth real-time position updates
 - 💬 **In-card notifications** — toast alerts appear inside the card
+- 🎨 **Controls Theme** — 12 colour presets for the control icons (Classic, Vivid, Warm, Ocean, Rose, Forest, Neon, Soft, Midnight, Gold, Retro, Ember)
 
 ### AI Features
 
 - ✨ **AI Info Panel** — tap the artwork while music plays: year, label, length, fun fact, genre tags, band members / artist section, similar tracks; all AI-generated and cached per track
+- 💬 **Song Intro** — a short, intriguing one-line fact about the playing track appears below the artist name a few seconds after it starts, then fades away; always on, never shown for radio/streams
 - 🎭 **Vibe Queue Builder** — 100+ vibes across Energy, Calm, Focus, Mood, Social, Decades, Genre, Time, Seasons and Binaural & Noise; builds a themed MA queue instantly
 - 🔍 **AI Search** — natural language search across your MA library
 - 🌟 **Recommendations** — AI-curated track suggestions based on what's playing
@@ -161,6 +164,8 @@ Repository: [github.com/droans/mass_queue](https://github.com/droans/mass_queue)
 - 👥 **Band Members / Artist** — tap any member for their bio with photo, fun fact and Known For songs; tap the bio photo to zoom
 - 💬 **Announce AI Improve** — rewrites your announcement naturally (requires Gemini)
 - 📨 **Send Message AI** — improves your notification text (requires Gemini)
+- 📚 **Audiobook search** — find free, public-domain audiobooks via LibriVox/Archive.org, with AI-assisted query refinement (requires Gemini)
+- 🎙️ **Podcast search** — search iTunes for podcasts and pin your favourites
 
 ### Vibe Queue Builder
 
@@ -206,6 +211,16 @@ Decade moods search your MA library for chart compilations first, then fall back
 - **Independent volume** — tap any pill to focus and control that speaker
 - **Sync volumes** — match all grouped speakers to the focused speaker's volume
 - **+ Add** pill appears when additional MA speakers are available
+
+### Pinning (Library)
+
+Pin your favourites for one-tap access — pins live in a dedicated section at the top of each browser/search panel.
+
+- **What can be pinned** — radio stations, podcasts, audiobooks, and MA library tracks, artists, albums and playlists
+- **How to pin** — long-press any item (or use the pin icon in its info panel) and choose Pin/Unpin
+- **Limit** — up to 10 pinned items per category
+- **Management** — view and clear pins individually or all at once from **Caches & Data → Pinned Items** in the visual editor
+- Pins are stored on-device only and aren't synced between browsers or devices
 
 ### Synced Lyrics
 
@@ -264,6 +279,8 @@ Tabs: Recently Played, Recommended, Playlists, Artists, Albums, Songs, Radio, Po
 - Action bar: Play All, Add to Queue, Play Next
 - Long-press tracks for the enqueue menu
 - Progressive loading with localStorage cache (configurable TTL)
+- **Podcasts tab** — search iTunes directly; pin favourites
+- **Audiobooks tab** — search free, public-domain titles on LibriVox via the Archive.org catalogue, with AI-assisted query refinement and chapter-by-chapter playback; pin favourites
 
 ### Apple TV Remote
 
@@ -272,6 +289,24 @@ Tabs: Recently Played, Recommended, Playlists, Artists, Albums, Songs, Radio, Po
 | **Back** | Navigate back / menu |
 | **TV** | Home screen / wakes from sleep |
 | **Power Off** | Sends `suspend` to sleep the Apple TV |
+
+---
+
+## 🔧 Visual Editor
+
+The editor includes a filter box at the top (search any setting by name) and a **Reset All Settings to Defaults** button. Several sections are collapsible — tap the header to expand.
+
+| Section | Settings |
+|---------|---------|
+| Manage & Reorder Media Players | Drag-and-drop reorder; enable/disable; startup volume; MA speaker toggle — all per entity |
+| Appearance & Behaviour *(collapsible)* | Follow HA Theme, Auto Switch, Remember Last Speaker, Media Player Selector, Always Show Library Button, Live/Podcast/Audiobook Pill, Volume Buttons, Volume Percentage, Scroll Long Text, Lyrics persistence and caching |
+| Caches & Data *(collapsible)* | AI caches (bios, trivia, where-to-watch, content warnings, year-in-music, vibe history, AI response cache), artwork caches (iTunes, Wikipedia), library & radio caches (MA library, radio stations, HA registry), lyrics cache & scroll style, and management of all pinned items |
+| Visual Effects | Card Liquid Glass, Remote Liquid Glass |
+| ✨ AI Settings | AI Agent selector, Share Track service (YouTube Music, Apple Music, Spotify, Tidal, Amazon Music, Deezer), Announce TTS Service |
+| AI Vibe Artist Seeds | Playlist search terms and radio fallback artist per vibe; fully customisable |
+| Colours & Themes *(collapsible)* | Controls Theme (12 presets), accent, volume accent, title, artist, button, +Add pill, volume %, custom background and lyrics colours, with live preview |
+
+> ⚠️ **Known issue:** a few advanced options — `volume_entity`, `icon_theme`, `startup_mode`, `ambient_glow`, `artwork_crossfade`, `ma_radio_mode`, `remote_buttons_position`, `show_remote_button`, `resize_btn_spin`, `itunes_art`, `volume_hud`, `row_glow` and `volume_hud_glass` — don't currently have controls in the visual editor. They still work and can be set in YAML (see Quick Start below); the editor's `volume_entity` wiring also throws on load, which can silently prevent some other editor fields from initialising. A fix is planned.
 
 ---
 
@@ -287,8 +322,8 @@ ma_entities:
   - media_player.mass_living_room
 ai_conversation_agent: conversation.google_generative_ai
 accent_color: '#007AFF'
+controls_theme: classic
 startup_volume: 35
-video_lookup: auto
 use_ha_theme: false
 lyrics_scroll_mode: highlight
 lyrics_cache_enabled: true
@@ -301,6 +336,8 @@ artwork_crossfade: false
 ambient_glow: false
 row_glow: false
 show_remote_button: true
+show_media_type_pill: false
+song_intro_enabled: true
 card_liquid_glass: true
 ```
 
@@ -345,26 +382,8 @@ card_liquid_glass: true
 **MA search returns "Search not supported"**
 - Update Music Assistant to the latest version.
 
----
-
-## 🔧 Visual Editor
-
-All settings are configurable without touching YAML:
-
-| Section | Settings |
-|---------|---------|
-| Manage & Reorder Media Players | Drag-and-drop reorder; enable/disable; startup volume; MA speaker toggle — all per entity |
-| Appearance & Behaviour | Follow HA Theme, Auto Switch, Remember Last Speaker, Media Player Selector, Volume Buttons, Volume Percentage, Scroll Long Text, Lyrics persistence and caching |
-| Startup & Navigation | Startup view (Compact/Maximised/Remote), Retain Current View |
-| Volume Entity | Route volume control to a different media player entity |
-| Music Assistant | Radio Mode, Ambient Glow, Library & Queue Row Glow, Player Icon Theme, Artwork Crossfade, Show Remote/Library Buttons, Resize Button Spin, iTunes Artwork Fallback, Volume HUD, Volume HUD Liquid Glass, Card Liquid Glass |
-| Remote Control | Button row position (Bottom/Top) |
-| ✨ AI Settings | AI Agent selector, Share Track service (YouTube Music, Apple Music, Spotify, Tidal, Amazon Music, Deezer), AI Vibe History cache, AI Response cache |
-| AI Vibe Artist Seeds | Playlist search terms and radio fallback artist per vibe; Announce TTS Service selector; fully customisable |
-| Artwork Cache | Clear iTunes Artwork, Wikipedia Artwork, HA Registry Cache and Actor & Artist Bios individually, or **Clear All Caches** at once |
-| Music Library Cache | Toggle local caching of library tabs; choose retention (1/3/7/30 days); clear cache |
-| Lyrics Behaviour | Scroll mode, cache TTL |
-| Colours & Themes | Accent colour, volume colour, title colour, artist colour with live preview |
+**A visual editor toggle/dropdown isn't doing anything, or some settings seem missing from the editor**
+- See the Known Issue note in the Visual Editor section above — some advanced settings currently only work via YAML.
 
 ---
 
