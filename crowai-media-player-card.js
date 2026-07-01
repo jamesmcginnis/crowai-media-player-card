@@ -4811,7 +4811,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         iosClear.style.display = hasVal ? 'flex' : 'none';
         if (this._maFilterDebounce) clearTimeout(this._maFilterDebounce);
         const _activeTab = r.querySelector('.ma-tab.active')?.dataset?.tab || this._maCurrentTab;
-        const _maServerTabs = new Set(['track', 'album', 'artist', 'playlist']);
+        const _maServerTabs = new Set(['track', 'album', 'artist', 'playlist', 'recently_added']);
         if (_maServerTabs.has(_activeTab)) {
           const _q = iosInput.value.trim();
           if (_q.length >= 2) {
@@ -4868,7 +4868,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       maSearchClear.classList.toggle('hidden', !maSearchInput.value);
       if (this._maFilterDebounce) clearTimeout(this._maFilterDebounce);
       const _activeTab = r.querySelector('.ma-tab.active')?.dataset?.tab || this._maCurrentTab;
-      const _maServerTabs = new Set(['track', 'album', 'artist', 'playlist']);
+      const _maServerTabs = new Set(['track', 'album', 'artist', 'playlist', 'recently_added']);
       if (_maServerTabs.has(_activeTab)) {
         // These tabs route to MA server search for full library coverage.
         // Playlists are small but we keep them consistent so no-results stays open too.
@@ -4929,7 +4929,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           maSearchClear.classList.add('hidden');
           this._maLastSearch = null;
           this._maInSearchResults = false;
-          const _tabPh = { radio: 'Search radio stations…', podcast: 'Search podcasts…', audiobook: 'Search audiobooks…', artist: 'Search artists…', album: 'Search albums…', track: 'Search songs…', playlist: 'Search playlists…' };
+          const _tabPh = { radio: 'Search radio stations…', podcast: 'Search podcasts…', audiobook: 'Search audiobooks…', artist: 'Search artists…', album: 'Search albums…', track: 'Search songs…', playlist: 'Search playlists…', recently_added: 'Search recently added…' };
           maSearchInput.placeholder = _tabPh[tab.dataset.tab] || 'Search library…';
           this._loadMATab(tab.dataset.tab);
         }
@@ -6351,7 +6351,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // Caches full tab item lists to localStorage so re-opening the browser is
   // instant for library tabs. Excluded: recently_played (always fresh),
   // recommended (random/curated), search results.
-  _CACHEABLE_MA_TABS = new Set(['playlist','artist','album','track','radio','podcast','audiobook','favourites','recommended','recently_played']);
+  _CACHEABLE_MA_TABS = new Set(['playlist','artist','album','track','radio','podcast','audiobook','favourites','recommended','recently_played','recently_added']);
 
   _maLibCacheGet(tab) {
     if (this._config?.ma_library_cache_enabled === false) return null;
@@ -6400,7 +6400,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (!this._CACHEABLE_MA_TABS.has(tab)) return;
     const ts = Date.now();
     // Cap high-volume tabs to avoid localStorage quota issues (iPhone Safari ~5MB)
-    const CAP = { recently_played: 50, recommended: 50, track: 200, playlist: 200, artist: 200, album: 200 };
+    const CAP = { recently_played: 50, recently_added: 50, recommended: 50, track: 200, playlist: 200, artist: 200, album: 200 };
     const capped = CAP[tab] ? items.slice(0, CAP[tab]) : items;
     // Write to in-memory cache immediately (no serialisation cost)
     if (!this._maLibMemCache) this._maLibMemCache = {};
@@ -7393,7 +7393,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     }
   }
 
-  _fetchItunesArt(artist, album, track) {
+  _fetchItunesArt(artist, album, track, { skipStaleGuard = false } = {}) {
     if (!artist && !album && !track) return;
     if (!this._itunesArtCache) this._itunesArtCache = {};
     const cacheKey = [artist, album || track].filter(Boolean).join('|').toLowerCase();
@@ -7443,9 +7443,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         // Stale-track guard — verify the fetched key still matches the currently
         // playing track before caching. Rapid track changes can cause an earlier
         // fetch to resolve after the track has changed, writing wrong art.
-        const _curAttrs = this._hass?.states[this._entity]?.attributes || {};
-        const _curKey = [_curAttrs.media_artist || '', _curAttrs.media_album_name || _curAttrs.media_title || ''].filter(Boolean).join('|').toLowerCase();
-        if (_curKey && _curKey !== cacheKey) return; // track changed while fetching — discard
+        // Skipped when fetching art for tracks other than the current one (e.g.
+        // similar songs, recommendations) — those are never the current track.
+        if (!skipStaleGuard) {
+          const _curAttrs = this._hass?.states[this._entity]?.attributes || {};
+          const _curKey = [_curAttrs.media_artist || '', _curAttrs.media_album_name || _curAttrs.media_title || ''].filter(Boolean).join('|').toLowerCase();
+          if (_curKey && _curKey !== cacheKey) return; // track changed while fetching — discard
+        }
         this._itunesArtCache[cacheKey] = url;
         this._lastArtKey = null;
         this._saveItunesPreferred(); // persist to localStorage immediately
@@ -7669,7 +7673,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     this._maNavReset();
     // Dismiss any track confirm popup that may have been left open
     this._hideTrackConfirm();
+    // Remove any stray artwork/bio lightbox left over from a previous AI Info panel
     const r = this.shadowRoot;
+    r.getElementById('cardOuter')?.querySelectorAll('.crow-bio-lightbox').forEach(el => el.remove());
     const popup = r.getElementById('maPopup');
     this._maBrowserOpenedAt = Date.now(); // used by backdrop guard
     popup.classList.add('visible');
@@ -7759,6 +7765,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (!el) return;
 
     const CATS = [
+      { tab: 'recently_added', label: 'Recently Added', color: '#00C7BE', path: 'M13,3A9,9 0 0,0 4,12H1L4.89,15.89L4.96,16.03L9,12H6A7,7 0 0,1 13,5A7,7 0 0,1 20,12A7,7 0 0,1 13,19C11.07,19 9.32,18.21 8.06,16.94L6.64,18.36C8.27,19.99 10.52,21 13,21A9,9 0 0,0 22,12A9,9 0 0,0 13,3M14,8H12V13L16.28,15.54L17,14.33L13.5,12.25V8H14Z' },
       { tab: 'favourites',  label: 'Favourites',    color: '#FF9500', path: 'M12,17.27L18.18,21L16.54,13.97L22,9.24L14.81,8.62L12,2L9.19,8.62L2,9.24L7.45,13.97L5.82,21L12,17.27Z' },
       { tab: 'recommended', label: 'Made for You',  color: '#FF3B30', path: 'M12,21.35L10.55,20.03C5.4,15.36 2,12.27 2,8.5C2,5.41 4.42,3 7.5,3C9.24,3 10.91,3.81 12,5.08C13.09,3.81 14.76,3 16.5,3C19.58,3 22,5.41 22,8.5C22,12.27 18.6,15.36 13.45,20.03L12,21.35Z' },
       { tab: 'playlist',    label: 'Playlists',     color: '#FF9F0A', path: 'M15,6H3V8H15V6M15,10H3V12H15V10M3,16H11V14H3V16M17,6V14.18C16.69,14.07 16.35,14 16,14A4,4 0 0,0 12,18A4,4 0 0,0 16,22A4,4 0 0,0 20,18V8H23V6H17Z' },
@@ -7810,7 +7817,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         rr.getElementById('maTabs')?.setAttribute('style', 'display:none');
         rr.querySelector('.ma-search-row')?.setAttribute('style', 'display:none');
         // Only show iOS search bar for the four main searchable types
-        const _searchableTabs = new Set(['artist', 'album', 'track', 'playlist', 'radio', 'podcast', 'audiobook']);
+        const _searchableTabs = new Set(['artist', 'album', 'track', 'playlist', 'radio', 'podcast', 'audiobook', 'recently_added']);
         const _iosBar = rr.getElementById('maIosSearchBar');
         if (_iosBar) _iosBar.classList.toggle('hidden', !_searchableTabs.has(tab));
         // Update placeholder to reflect whether full search is available
@@ -10263,7 +10270,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     this.shadowRoot.querySelectorAll('.ma-tab').forEach(t => t.classList.remove('active'));
 
     // Map tab key → MA search response key(s)
-    const tabToResponseKey = { playlist: 'playlists', artist: 'artists', album: 'albums', track: 'tracks', radio: 'radio', podcast: 'podcasts', audiobook: 'audiobooks', favourites: 'tracks' };
+    const tabToResponseKey = { playlist: 'playlists', artist: 'artists', album: 'albums', track: 'tracks', radio: 'radio', podcast: 'podcasts', audiobook: 'audiobooks', favourites: 'tracks', recently_added: 'tracks' };
     const filterKey = activeTabKey ? (tabToResponseKey[activeTabKey] || null) : null;
 
     const configEntryId = await this._getMAConfigEntryId();
@@ -10274,7 +10281,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       return;
     }
     try {
-      const _libraryOnlyTabs = new Set(['tracks', 'albums', 'artists', 'playlists']);
+      const _libraryOnlyTabs = new Set(['tracks', 'albums', 'artists', 'playlists', 'recently_added']);
       const msg = {
         type: 'call_service',
         domain: 'music_assistant',
@@ -10364,13 +10371,14 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       const totalCount = Object.values(grouped).reduce((s, arr) => s + arr.length, 0);
       if (!totalCount) {
         this.shadowRoot?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
-        const _stayOpenKeys = new Set(['tracks', 'albums', 'artists', 'playlists']);
+        const _stayOpenKeys = new Set(['tracks', 'albums', 'artists', 'playlists', 'recently_added']);
         if (filterKey && _stayOpenKeys.has(filterKey)) {
           // Library tabs — stay open so the user can immediately try a different query.
           this._maInSearchResults = false;
           const _noResLabel = filterKey === 'tracks' ? 'No songs found'
-            : filterKey === 'albums'    ? 'No albums found'
-            : filterKey === 'artists'   ? 'No artists found'
+            : filterKey === 'albums'          ? 'No albums found'
+            : filterKey === 'artists'         ? 'No artists found'
+            : filterKey === 'recently_added'  ? 'No recently added songs found'
             : 'No playlists found';
           content.innerHTML = this._psEmpty(
             'M9.5,3A6.5,6.5 0 0,1 16,9.5C16,11.11 15.41,12.59 14.44,13.73L14.71,14H15.5L20.5,19L19,20.5L14,15.5V14.71L13.73,14.44C12.59,15.41 11.11,16 9.5,16A6.5,6.5 0 0,1 3,9.5A6.5,6.5 0 0,1 9.5,3M9.5,5C7,5 5,7 5,9.5C5,12 7,14 9.5,14C12,14 14,12 14,9.5C14,7 12,5 9.5,5Z',
@@ -11103,7 +11111,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       // URL) so the iTunes cache is warm if/when the thumbnail fails to load.
       queueItems.forEach(item => {
         if (item.artist || item.title) {
-          this._fetchItunesArt(item.artist || '', item.album || '', item.title || '');
+          this._fetchItunesArt(item.artist || '', item.album || '', item.title || '', { skipStaleGuard: true });
         }
       });
       // Wire error handlers so broken thumbnails immediately use cached iTunes art
@@ -14653,7 +14661,7 @@ Include ALL tracks. Use null for unknown fields.`;
     }
 
     // Fire the same fetch as _fetchItunesArt and wait for it to populate the cache
-    this._fetchItunesArt(artist, '', title);
+    this._fetchItunesArt(artist, '', title, { skipStaleGuard: true });
 
     // Poll _itunesArtCache until the fetch resolves (max 8s)
     for (let i = 0; i < 16; i++) {
@@ -17318,6 +17326,9 @@ Include ALL tracks. Use null for unknown fields.`;
 
   _closeInfoPopup() {
     const r = this.shadowRoot;
+    // Remove any artwork/bio lightbox that was opened from within this panel —
+    // it mounts on cardOuter and would otherwise persist across panel changes.
+    r.getElementById('cardOuter')?.querySelectorAll('.crow-bio-lightbox').forEach(el => el.remove());
     // Cancel any in-progress batch queue building
     this._maBatchLoading = false;
     clearTimeout(this._maBatchLoadingTimer);
@@ -19902,7 +19913,7 @@ Include ALL tracks. Use null for unknown fields.`;
     if (_earlyCached && _earlyCached.length) {
       this._renderMAGrid(_earlyCached, tab, content);
       // For slow-fetching tabs, return early — no background refresh needed
-      if (tab === 'recommended' || tab === 'recently_played') {
+      if (tab === 'recommended' || tab === 'recently_played' || tab === 'recently_added') {
         if (tab === 'recommended') this._buildTabActionBar(content, tab);
         return;
       }
@@ -19968,6 +19979,70 @@ Include ALL tracks. Use null for unknown fields.`;
         content.innerHTML = this._psEmpty('M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,17L7,12L8.41,10.58L12,14.17L15.59,10.58L17,12L12,17M12,10L7,5L8.41,3.58L12,7.17L15.59,3.58L17,5L12,10Z', 'Could not load recently played', 'Check your Music Assistant connection and try again.');
           this._maLastSearch = null; this._maInSearchResults = false; this._maErrorShowing = true;
           this._psAutoCloseStart(this.shadowRoot, null, () => { this._maErrorShowing = false; }, 10000, 'maRecentErrBtn', 'maRecentErrRing');
+      }
+      return;
+    }
+
+    // ── Recently Added ────────────────────────────────────────────────
+    if (tab === 'recently_added') {
+      try {
+        // Strategy 1: Find the "Recently Added Tracks" playlist by name in MA's
+        // library and load its contents — this is the most reliable approach since
+        // MA maintains this playlist itself in the correct order.
+        const playlistRes = await this._hass.connection.sendMessagePromise({
+          type: 'call_service',
+          domain: 'music_assistant',
+          service: 'get_library',
+          service_data: { config_entry_id: configEntryId, media_type: 'playlist', limit: 100 },
+          return_response: true
+        });
+        const playlists = playlistRes?.response?.items || [];
+        const _normName = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const _targets = ['recentlyaddedtracks', 'recentlyadded', 'newlyadded', 'newadditions'];
+        const recentPlaylist = playlists.find(p =>
+          _targets.some(t => _normName(p.name || p.title || '') === t)
+        );
+
+        if (recentPlaylist) {
+          // Found it — open it as a collection drill-in so we reuse all the
+          // existing track-loading, rendering, and action bar infrastructure.
+          // Set _maCurrentTab to '__ios_root__' before calling so the nav stack
+          // entry pushed inside _maOpenCollectionTracks is the root sentinel —
+          // meaning the back button returns to the Music Library category list,
+          // not back to recently_added (which would just re-trigger the lookup).
+          this._maCurrentTab = '__ios_root__';
+          const _fakeItem = {
+            ...recentPlaylist,
+            media_type: 'playlist',
+            _tab: 'playlist',
+          };
+          this._maOpenCollectionTracks(_fakeItem, 'playlist');
+          return;
+        }
+
+        // Strategy 2: Fall back to get_library with added_at_desc (supported on newer MA)
+        const res = await this._hass.connection.sendMessagePromise({
+          type: 'call_service',
+          domain: 'music_assistant',
+          service: 'get_library',
+          service_data: { config_entry_id: configEntryId, media_type: 'track', order_by: 'added_at_desc', limit: 50 },
+          return_response: true
+        });
+        const items = (res?.response?.items || []).map(item => ({ ...item, _tab: 'track' }));
+
+        if (!items.length) {
+          this.shadowRoot?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
+          content.innerHTML = '<div class="ma-empty">No recently added tracks found. Try adding a playlist named "Recently Added Tracks" in Music Assistant.</div>';
+          return;
+        }
+        this._maLibCacheSet('recently_added', items);
+        this._renderMAGrid(items, 'track', content);
+        if (!this._maTabRenderCache) this._maTabRenderCache = new Map();
+        this._maTabRenderCache.set('recently_added', { items, ts: Date.now() });
+      } catch (e) {
+        console.error('[MA] recently_added error:', e);
+        this.shadowRoot?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
+        content.innerHTML = this._psEmpty('M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,17L7,12L8.41,10.58L12,14.17L15.59,10.58L17,12L12,17M12,10L7,5L8.41,3.58L12,7.17L15.59,3.58L17,5L12,10Z', 'Could not load recently added', 'Check your Music Assistant connection and try again.');
       }
       return;
     }
