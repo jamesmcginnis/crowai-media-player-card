@@ -20400,9 +20400,13 @@ Include ALL tracks. Use null for unknown fields.`;
           const uri = item.uri || item.media_content_id;
           const mediaType = item.media_type || itemTab;
           if (!uri) { _onDone(false); return; }
+          const _isTrk = (mediaType === 'track' || itemTab === 'track' || itemTab === 'recently_added');
+          const _bName  = (item.name || item.title || '').trim();
+          const _bArt   = (item.artists && item.artists[0]?.name) || '';
+          const _bId    = (_isTrk && _bName) ? (_bName + (_bArt ? ' ' + _bArt : '')) : uri;
           this._hass.connection.sendMessagePromise({
             type: 'call_service', domain: 'music_assistant', service: 'play_media',
-            service_data: { entity_id: target, media_id: uri, media_type: mediaType, enqueue: mode,
+            service_data: { entity_id: target, media_id: _bId, media_type: mediaType, enqueue: mode,
               ...(mode === 'replace' && this._config?.ma_radio_mode ? { radio_mode: true } : {}) }
           }).then(() => _onDone(true)).catch(() => _onDone(false));
         };
@@ -20951,10 +20955,23 @@ Include ALL tracks. Use null for unknown fields.`;
     const mediaType  = item.media_type || tab;
     const self       = this;
     this._recordMAPlayStart(targetEntity);
+
+    // For individual tracks, always use name+artist as media_id — more reliable
+    // than internal library:// URI for provider stream resolution (esp. Apple Music).
+    // Collections still use URI since name-based search doesn't work for them.
+    const _isTrackPlay = (mediaType === 'track' || tab === 'track' || tab === 'recently_added' || tab === 'favourites' || tab === 'recently_played');
+    const _itemName   = item.name || item.title || '';
+    const _itemArtist = (item.artists && item.artists[0]?.name) || '';
+    const _nameId     = (_isTrackPlay && _itemName) ? (_itemName + (_itemArtist ? ' ' + _itemArtist : '')).trim() : null;
+
     const playViaMA = () => this._hass.connection.sendMessagePromise({
       type: 'call_service', domain: 'music_assistant', service: 'play_media',
-      service_data: { entity_id: targetEntity, media_id: uri, media_type: mediaType, enqueue: 'replace',
-        ...(this._config?.ma_radio_mode ? { radio_mode: true } : {}) }
+      service_data: {
+        entity_id: targetEntity,
+        media_id: _nameId || uri,
+        media_type: mediaType, enqueue: 'replace',
+        ...(this._config?.ma_radio_mode ? { radio_mode: true } : {})
+      }
     });
     const playViaMP = () => this._hass.connection.sendMessagePromise({
       type: 'call_service', domain: 'media_player', service: 'play_media',
@@ -20991,6 +21008,12 @@ Include ALL tracks. Use null for unknown fields.`;
     const primary    = entityIds[0];
     const secondaries = entityIds.slice(1);
     const self       = this;
+
+    // Same track-vs-collection logic as _playMAItemTo
+    const _isTrackPlayM = (mediaType === 'track' || tab === 'track' || tab === 'recently_added' || tab === 'favourites' || tab === 'recently_played');
+    const _mName    = item.name || item.title || '';
+    const _mArtist  = (item.artists && item.artists[0]?.name) || '';
+    const _mediaId  = (_isTrackPlayM && _mName) ? (_mName + (_mArtist ? ' ' + _mArtist : '')).trim() : uri;
 
     // Resolve FIRST — everything below depends on these values.
     const resolvedPrimary     = this._resolveMAEntity(primary);
@@ -21029,7 +21052,7 @@ Include ALL tracks. Use null for unknown fields.`;
     self._hass.connection.sendMessagePromise({
       type: 'call_service', domain: 'music_assistant', service: 'play_media',
       service_data: {
-        entity_id: resolvedPrimary, media_id: uri, media_type: mediaType, enqueue: 'replace',
+        entity_id: resolvedPrimary, media_id: _mediaId, media_type: mediaType, enqueue: 'replace',
         ...(self._config?.ma_radio_mode ? { radio_mode: true } : {})
       }
     }).catch(err => {
@@ -22147,6 +22170,10 @@ Include ALL tracks. Use null for unknown fields.`;
       }
 
       const uri = best.uri || best.media_content_id;
+      const _isTrk3   = (enqueueMode === 'replace' || true); // always name-based for tracks
+      const _tName3   = (best.name || best.title || '').trim();
+      const _tArtist3 = (best.artists && best.artists[0]?.name) || '';
+      const _tMediaId3 = _tName3 ? (_tName3 + (_tArtist3 ? ' ' + _tArtist3 : '')) : uri;
       // Only record MA play start (which switches the card's active entity) when
       // we're already on an MA entity. When playing from Apple TV or other non-MA
       // sources the MA speaker should play in the background without hijacking the card.
@@ -22154,7 +22181,7 @@ Include ALL tracks. Use null for unknown fields.`;
       if (enqueueMode === 'replace' && _curIsMA) this._recordMAPlayStart(resolvedEntity);
       await this._hass.connection.sendMessagePromise({
         type: 'call_service', domain: 'music_assistant', service: 'play_media',
-        service_data: { entity_id: resolvedEntity, media_id: uri, media_type: 'track', enqueue: enqueueMode, ...(enqueueMode === 'replace' && this._config?.ma_radio_mode ? { radio_mode: true } : {}) }
+        service_data: { entity_id: resolvedEntity, media_id: _tMediaId3, media_type: 'track', enqueue: enqueueMode, ...(enqueueMode === 'replace' && this._config?.ma_radio_mode ? { radio_mode: true } : {}) }
       });
       const _spkName2 = this._hass?.states[resolvedEntity]?.attributes?.friendly_name || resolvedEntity;
       const labels = { replace: `▶ Playing now on ${_spkName2}`, add: `Added to queue on ${_spkName2}`, next: `Playing next on ${_spkName2}` };
@@ -22895,6 +22922,15 @@ Include ALL tracks. Use null for unknown fields.`;
     var uri        = item.uri || item.media_content_id;
     var mediaType  = item.media_type || tab;
     var self       = this;
+    // For individual tracks, always use name+artist as media_id rather than the internal
+    // library:// URI. MA's name-based resolution path handles provider stream auth
+    // (including Apple Music token lifecycle) more robustly than direct URI lookup.
+    // Collections (albums, playlists, artists) still use their URI — name-based
+    // search doesn't work for those.
+    var _eName     = (item.name || item.title || '').trim();
+    var _eArtist   = (item.artists && item.artists[0]?.name) || item.artist || '';
+    var _isTrack   = (mediaType === 'track' || tab === 'track' || tab === 'recently_added' || tab === 'favourites' || tab === 'recently_played');
+    var _eId       = (_isTrack && _eName) ? (_eName + (_eArtist ? ' ' + _eArtist : '')) : uri;
     // If the caller supplied an explicit target (from the speaker chip picker),
     // use it directly. Otherwise fall back to the auto-resolution logic.
     var targetEntity;
@@ -22929,7 +22965,7 @@ Include ALL tracks. Use null for unknown fields.`;
 
     this._hass.connection.sendMessagePromise({
       type: 'call_service', domain: 'music_assistant', service: 'play_media',
-      service_data: { entity_id: targetEntity, media_id: uri, media_type: mediaType, enqueue: enqueueMode, ...(enqueueMode === 'replace' && this._config?.ma_radio_mode ? { radio_mode: true } : {}) }
+      service_data: { entity_id: targetEntity, media_id: _eId, media_type: mediaType, enqueue: enqueueMode, ...(enqueueMode === 'replace' && this._config?.ma_radio_mode ? { radio_mode: true } : {}) }
     }).then(function() {
       if (toastMsg) self._showToast(toastMsg);
     }).catch(function(err) {
