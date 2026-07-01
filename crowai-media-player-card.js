@@ -3622,7 +3622,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
               <button class="queue-menu-btn hidden" id="infoShareBtn" title="Share">
                 <svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg>
               </button>
-              <button class="queue-menu-btn hidden" id="infoPinBtn" title="Pin Station">
+              <button class="queue-menu-btn hidden" id="infoPinBtn" title="Pin">
                 <svg id="infoPinSvg" viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg>
               </button>
               <button class="info-popup-close" id="infoClose">
@@ -4809,8 +4809,18 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       iosInput.addEventListener('input', () => {
         const hasVal = !!iosInput.value;
         iosClear.style.display = hasVal ? 'flex' : 'none';
-        if (!this._maInSearchResults) {
-          if (this._maFilterDebounce) clearTimeout(this._maFilterDebounce);
+        if (this._maFilterDebounce) clearTimeout(this._maFilterDebounce);
+        const _activeTab = r.querySelector('.ma-tab.active')?.dataset?.tab || this._maCurrentTab;
+        const _maServerTabs = new Set(['track', 'album', 'artist', 'playlist']);
+        if (_maServerTabs.has(_activeTab)) {
+          const _q = iosInput.value.trim();
+          if (_q.length >= 2) {
+            this._maFilterDebounce = setTimeout(() => this._searchMA(_q), 500);
+          } else if (!_q) {
+            this._maInSearchResults = false;
+            this._filterMAGrid('');
+          }
+        } else if (!this._maInSearchResults) {
           this._maFilterDebounce = setTimeout(() => {
             this._filterMAGrid(iosInput.value.trim());
           }, 100);
@@ -4856,9 +4866,20 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     });
     maSearchInput.addEventListener('input', () => {
       maSearchClear.classList.toggle('hidden', !maSearchInput.value);
-      // Client-side filter when not in API search results mode
-      if (!this._maInSearchResults) {
-        if (this._maFilterDebounce) clearTimeout(this._maFilterDebounce);
+      if (this._maFilterDebounce) clearTimeout(this._maFilterDebounce);
+      const _activeTab = r.querySelector('.ma-tab.active')?.dataset?.tab || this._maCurrentTab;
+      const _maServerTabs = new Set(['track', 'album', 'artist', 'playlist']);
+      if (_maServerTabs.has(_activeTab)) {
+        // These tabs route to MA server search for full library coverage.
+        // Playlists are small but we keep them consistent so no-results stays open too.
+        const _q = maSearchInput.value.trim();
+        if (_q.length >= 2) {
+          this._maFilterDebounce = setTimeout(() => this._searchMA(_q), 500);
+        } else if (!_q) {
+          this._maInSearchResults = false;
+          this._filterMAGrid('');
+        }
+      } else if (!this._maInSearchResults) {
         this._maFilterDebounce = setTimeout(() => {
           this._filterMAGrid(maSearchInput.value.trim());
         }, 100);
@@ -8262,12 +8283,21 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   _filterMAGrid(query) {
     const content = this.shadowRoot?.getElementById('maContent');
     if (!content) return;
-    const q = (query || '').toLowerCase().trim();
+    // Normalise both query and titles — strip apostrophes/contractions so that
+    // "dont" matches "Don't", "its" matches "It's", etc.
+    const _norm = (s) => (s || '').toLowerCase()
+      .replace(/[\u2018\u2019\u02bc\u0060']/g, '') // strip smart quotes + apostrophe
+      .replace(/[^a-z0-9 ]/g, ' ')
+      .replace(/\s+/g, ' ').trim();
+    const q = _norm(query);
     content.querySelectorAll('.ma-item-wrap').forEach(wrap => {
       if (!q) { wrap.style.display = ''; return; }
-      const title = (wrap.querySelector('.ma-item-title')?.textContent || '').toLowerCase();
-      const sub   = (wrap.querySelector('.ma-item-sub')?.textContent   || '').toLowerCase();
-      wrap.style.display = (title.includes(q) || sub.includes(q)) ? '' : 'none';
+      const title = _norm(wrap.querySelector('.ma-item-title')?.textContent || '');
+      const sub   = _norm(wrap.querySelector('.ma-item-sub')?.textContent   || '');
+      // Match if query is a substring of the full title/sub, OR if any word
+      // in the title starts with the query (e.g. "ferry" matches "Don't Pay the Ferryman")
+      const _wordMatch = title.split(' ').some(w => w.startsWith(q));
+      wrap.style.display = (title.includes(q) || sub.includes(q) || _wordMatch) ? '' : 'none';
     });
   }
 
@@ -10244,11 +10274,17 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       return;
     }
     try {
+      const _libraryOnlyTabs = new Set(['tracks', 'albums', 'artists', 'playlists']);
       const msg = {
         type: 'call_service',
         domain: 'music_assistant',
         service: 'search',
-        service_data: { config_entry_id: configEntryId, name: query, limit: 25, library_only: false },
+        service_data: {
+          config_entry_id: configEntryId,
+          name: query,
+          limit: filterKey === 'tracks' ? 50 : 25,
+          library_only: filterKey ? _libraryOnlyTabs.has(filterKey) : false,
+        },
         return_response: true
       };
       const res = await this._hass.connection.sendMessagePromise(msg);
@@ -10328,8 +10364,23 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       const totalCount = Object.values(grouped).reduce((s, arr) => s + arr.length, 0);
       if (!totalCount) {
         this.shadowRoot?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
-        content.innerHTML = this._psAutoClose(this._psEmpty('M9.5,3A6.5,6.5 0 0,1 16,9.5C16,11.11 15.41,12.59 14.44,13.73L14.71,14H15.5L20.5,19L19,20.5L14,15.5V14.71L13.73,14.44C12.59,15.41 11.11,16 9.5,16A6.5,6.5 0 0,1 3,9.5A6.5,6.5 0 0,1 9.5,3M9.5,5C7,5 5,7 5,9.5C5,12 7,14 9.5,14C12,14 14,12 14,9.5C14,7 12,5 9.5,5Z', 'No results', 'Nothing matched "' + query + '" — try a different search'), null, 10000, 'maNoResBtn', 'maNoResRing');
-        this._psAutoCloseStart(this.shadowRoot, null, this._closeMABrowser.bind(this), 10000, 'maNoResBtn', 'maNoResRing');
+        const _stayOpenKeys = new Set(['tracks', 'albums', 'artists', 'playlists']);
+        if (filterKey && _stayOpenKeys.has(filterKey)) {
+          // Library tabs — stay open so the user can immediately try a different query.
+          this._maInSearchResults = false;
+          const _noResLabel = filterKey === 'tracks' ? 'No songs found'
+            : filterKey === 'albums'    ? 'No albums found'
+            : filterKey === 'artists'   ? 'No artists found'
+            : 'No playlists found';
+          content.innerHTML = this._psEmpty(
+            'M9.5,3A6.5,6.5 0 0,1 16,9.5C16,11.11 15.41,12.59 14.44,13.73L14.71,14H15.5L20.5,19L19,20.5L14,15.5V14.71L13.73,14.44C12.59,15.41 11.11,16 9.5,16A6.5,6.5 0 0,1 3,9.5A6.5,6.5 0 0,1 9.5,3M9.5,5C7,5 5,7 5,9.5C5,12 7,14 9.5,14C12,14 14,12 14,9.5C14,7 12,5 9.5,5Z',
+            _noResLabel,
+            'Nothing matched \u201c' + query + '\u201d \u2014 try a different search'
+          );
+        } else {
+          content.innerHTML = this._psAutoClose(this._psEmpty('M9.5,3A6.5,6.5 0 0,1 16,9.5C16,11.11 15.41,12.59 14.44,13.73L14.71,14H15.5L20.5,19L19,20.5L14,15.5V14.71L13.73,14.44C12.59,15.41 11.11,16 9.5,16A6.5,6.5 0 0,1 3,9.5A6.5,6.5 0 0,1 9.5,3M9.5,5C7,5 5,7 5,9.5C5,12 7,14 9.5,14C12,14 14,12 14,9.5C14,7 12,5 9.5,5Z', 'No results', 'Nothing matched "' + query + '" — try a different search'), null, 10000, 'maNoResBtn', 'maNoResRing');
+          this._psAutoCloseStart(this.shadowRoot, null, this._closeMABrowser.bind(this), 10000, 'maNoResBtn', 'maNoResRing');
+        }
         return;
       }
 
@@ -13919,6 +13970,40 @@ Include ALL tracks. Use null for unknown fields.`;
         const _shareUrl = this._buildShareUrl(trackTitle, artistName);
         _self._copyToClipboard(_shareText + '\n' + _shareUrl);
       };
+    }
+
+    // Wire pin button — builds a minimal track item from whatever URI we have:
+    // context.queueUri (library row long-press) → entity's media_content_id (artwork tap)
+    const _trackUri = context.queueUri
+      || this._hass?.states[this._entity]?.attributes?.media_content_id
+      || '';
+    const _pinBtn = r.getElementById('infoPinBtn');
+    const _pinSvg = r.getElementById('infoPinSvg');
+    if (_pinBtn && _pinSvg && _trackUri) {
+      const _pinItem = {
+        uri:          _trackUri,
+        name:         trackTitle,
+        artist:       artistName,
+        image:        specificArt || '',
+        media_type:   'track',
+      };
+      const _updateTrackPinBtn = () => {
+        const _pinned = this._maLibIsStarred(_pinItem, 'track');
+        _pinSvg.style.fill = _pinned ? '#FFD60A' : 'rgba(255,255,255,0.5)';
+        _pinBtn.title = _pinned ? 'Unpin Song' : 'Pin Song';
+      };
+      _pinBtn.classList.remove('hidden');
+      _updateTrackPinBtn();
+      _pinBtn.onclick = () => {
+        const nowPinned = this._maLibToggleStar(_pinItem, 'track');
+        if (nowPinned === null) return;
+        _updateTrackPinBtn();
+        this._showToast(nowPinned ? '📍 Song pinned' : 'Song unpinned');
+        this._maLibRefreshPinnedUI('track');
+      };
+    } else if (_pinBtn) {
+      _pinBtn.classList.add('hidden');
+      _pinBtn.onclick = null;
     }
 
     // Hide AI Mood button if it causes overflow (not enough room)
