@@ -4224,6 +4224,23 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           items.push({ id: 'qm_copy_link', label: 'Share', icon: '<path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z"/>', active: false });
         }
 
+        // Pin currently playing content — tracks, radio, podcasts and audiobooks
+        {
+          const _qmPin = this._currentMediaPinItem();
+          if (_qmPin) {
+            const _qmPinLabel = _qmPin.isPinned ? 'Unpin ' + _qmPin.label[1] : 'Pin ' + _qmPin.label[0];
+            items.push({ id: 'qm_pin', label: _qmPinLabel, icon: '<path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/>', active: false, _qmPinInfo: _qmPin });
+          } else if ((isMa || hasMA) && isPlaying && !isStream) {
+            const _qmUri = state?.attributes?.media_content_id || '';
+            const _qmTitle = state?.attributes?.media_title || '';
+            if (_qmUri && _qmTitle) {
+              const _qmPinItem = { uri: _qmUri, name: _qmTitle, artist: state?.attributes?.media_artist || '', media_type: 'track' };
+              const _qmPinned = this._maLibIsStarred(_qmPinItem, 'track');
+              items.push({ id: 'qm_pin', label: _qmPinned ? 'Unpin Song' : 'Pin Song', icon: '<path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/>', active: false, _qmPinItem });
+            }
+          }
+        }
+
         // More Info — has artwork
         if (hasArt) items.push({ id: 'qm_info', label: 'More Info', icon: SVG.info, active: false });
 
@@ -4366,6 +4383,15 @@ class CrowAIMediaPlayerCard extends HTMLElement {
               const _clT = state?.attributes?.media_title  || '';
               const _clA = state?.attributes?.media_artist || '';
               this._copyToClipboard(_clT + ' by ' + _clA + '\n' + this._buildShareUrl(_clT, _clA));
+            }
+            else if (item.id === 'qm_pin') {
+              if (item._qmPinInfo) {
+                const nowPinned = this._toggleCurrentMediaPin(item._qmPinInfo);
+                if (nowPinned !== null && nowPinned !== undefined) this._showToast(nowPinned ? '📍 ' + item._qmPinInfo.label[0] + ' pinned' : item._qmPinInfo.label[0] + ' unpinned');
+              } else if (item._qmPinItem) {
+                const nowPinned = this._maLibToggleStar(item._qmPinItem, 'track');
+                if (nowPinned !== null) { this._showToast(nowPinned ? '📍 Song pinned' : 'Song unpinned'); this._maLibRefreshPinnedUI('track'); }
+              }
             }
             else if (item.id === 'qm_info')     { expand().then(() => this._openInfoPopup()); }
           });
@@ -4832,7 +4858,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         if (_maServerTabs.has(_activeTab)) {
           const _q = iosInput.value.trim();
           if (_q.length >= 2) {
-            this._maFilterDebounce = setTimeout(() => this._searchMA(_q), 500);
+            this._maFilterDebounce = setTimeout(() => this._searchMA(_q, true), 500);
           } else if (!_q) {
             this._maInSearchResults = false;
             this._filterMAGrid('');
@@ -4891,7 +4917,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         // Playlists are small but we keep them consistent so no-results stays open too.
         const _q = maSearchInput.value.trim();
         if (_q.length >= 2) {
-          this._maFilterDebounce = setTimeout(() => this._searchMA(_q), 500);
+          this._maFilterDebounce = setTimeout(() => this._searchMA(_q, true), 500);
         } else if (!_q) {
           this._maInSearchResults = false;
           this._filterMAGrid('');
@@ -4907,6 +4933,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       maSearchClear.classList.add('hidden');
       this._maLastSearch = null;
       this._maInSearchResults = false;
+      this._maSavedSearch = null; // user explicitly cleared
       // Restore last active tab view
       const activeTab = r.querySelector('.ma-tab.active');
       if (activeTab) {
@@ -5084,6 +5111,23 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             label: 'Add Album',
             extraClass: ''
           });
+        }
+
+        // Pin currently playing content — tracks, radio, podcasts and audiobooks
+        {
+          const _qdPin = this._currentMediaPinItem();
+          if (_qdPin) {
+            const _qdPinLabel = _qdPin.isPinned ? 'Unpin ' + _qdPin.label[1] : 'Pin ' + _qdPin.label[0];
+            items.push({ id: 'qmPinTrack', _needsMA: false, icon: '<svg viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg>', label: _qdPinLabel, extraClass: '', _qdPinInfo: _qdPin });
+          } else if (isMa || hasMA) {
+            const _qdTrackUri   = this._hass?.states[this._entity]?.attributes?.media_content_id || '';
+            const _qdTrackTitle = this._hass?.states[this._entity]?.attributes?.media_title || '';
+            if (_qdTrackUri && _qdTrackTitle && !_qdStream && (_qdType === 'music' || _qdType === 'track' || _qdType === '')) {
+              const _qdPinItem = { uri: _qdTrackUri, name: _qdTrackTitle, artist: this._hass?.states[this._entity]?.attributes?.media_artist || '', media_type: 'track' };
+              const _qdPinned  = this._maLibIsStarred(_qdPinItem, 'track');
+              items.push({ id: 'qmPinTrack', _needsMA: !isMa && hasMA, icon: '<svg viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg>', label: _qdPinned ? 'Unpin Song' : 'Pin Song', extraClass: '', _qdPinItem });
+            }
+          }
         }
 
         // AI Artist Radio — MA only
@@ -5397,6 +5441,19 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         });
 
         // ── Announce ──
+        menu.querySelector('#qmPinTrack')?.addEventListener('click', () => {
+          if (!_menuReady()) return;
+          menu.remove(); backdrop?.remove();
+          const _pItem = items.find(i => i.id === 'qmPinTrack');
+          if (_pItem?._qdPinInfo) {
+            const nowPinned = this._toggleCurrentMediaPin(_pItem._qdPinInfo);
+            if (nowPinned !== null && nowPinned !== undefined) this._showToast(nowPinned ? '📍 ' + _pItem._qdPinInfo.label[0] + ' pinned' : _pItem._qdPinInfo.label[0] + ' unpinned');
+          } else if (_pItem?._qdPinItem) {
+            const nowPinned = this._maLibToggleStar(_pItem._qdPinItem, 'track');
+            if (nowPinned !== null) { this._showToast(nowPinned ? '📍 Song pinned' : 'Song unpinned'); this._maLibRefreshPinnedUI('track'); }
+          }
+        });
+
         menu.querySelector('#qmAnnounce')?.addEventListener('click', () => { if (!_menuReady()) return;
           closeMenu();
           // Close infoPopup (queue panel) first so maPopup shows on top
@@ -7268,16 +7325,19 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     }, 200);
   }
 
-  // Probes an artwork URL with an offscreen Image(), retrying with cache-busting
-  // suffixes on failure. Calls onSuccess(confirmedUrl) or onExhausted() — the
-  // visible img elements never receive a URL until this confirms it loads.
+  // Probes an artwork URL to confirm it's accessible before showing it.
+  // Always adds a cache-busting query param so the browser doesn't serve a
+  // stale cached response for a HA proxy URL that returns different content
+  // on each track (same URL, different image = browser cache poisoning).
   _probeArtUrl(url, baseUrl, attempt, abortCheck, onSuccess, onExhausted) {
+    const _bustUrl = url + (url.includes('?') ? '&' : '?') + '_r=' + Date.now();
     const probe = new Image();
     probe.onload = () => {
       // Remember the confirmed URL so navigation-back skips straight to it.
+      // Use the busted URL so the browser fetches fresh on the confirmed display too.
       if (!this._confirmedArtUrls) this._confirmedArtUrls = new Map();
-      this._confirmedArtUrls.set(baseUrl, url);
-      onSuccess(url);
+      this._confirmedArtUrls.set(baseUrl, _bustUrl);
+      onSuccess(_bustUrl);
     };
     probe.onerror = () => {
       const delays = [800, 1800, 3500, 6000];
@@ -7291,7 +7351,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         onExhausted();
       }
     };
-    probe.src = url;
+    probe.src = _bustUrl;
   }
 
   // Loads the iTunes-preferred track map from localStorage into memory.
@@ -7699,16 +7759,45 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     popup.classList.add('visible');
     const searchInput = r.getElementById('maSearchInput');
     const clearBtn    = r.getElementById('maSearchClear');
-    // Always open with a clean search box — never restore previous search
-    if (searchInput) searchInput.value = '';
-    if (clearBtn) clearBtn.classList.add('hidden');
-    this._maLastSearch = null;
-    this._maInSearchResults = false;
-    this._maCurrentTab = 'recently_played';
-    r.querySelectorAll('.ma-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'recently_played'));
-    this._syncMAViewToggle();
-    if (!this._maIosViewActive()) this._loadMATab('recently_played');
-    else this._renderMAIosView();
+
+    // Restore last search if there is one, otherwise open clean
+    if (this._maSavedSearch?.query) {
+      const { query, tab } = this._maSavedSearch;
+      if (searchInput) { searchInput.value = query; }
+      if (clearBtn) clearBtn.classList.remove('hidden');
+      this._maLastSearch = query;
+      this._maInSearchResults = true;
+      this._maCurrentTab = tab;
+      r.querySelectorAll('.ma-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+      // Bypass iOS category list and show content area directly — _syncMAViewToggle
+      // would call _renderMAIosView() which hides maContent, so _searchMA would
+      // render into a hidden element. Show maContent explicitly instead.
+      const _iosView   = r.getElementById('maIosView');
+      const _maContent = r.getElementById('maContent');
+      const _searchRow = r.querySelector('.ma-search-row');
+      const _backBtn   = r.getElementById('maBackBtn');
+      if (_iosView)   _iosView.classList.add('hidden');
+      if (_maContent) _maContent.style.display = '';
+      if (_searchRow) _searchRow.style.display = '';
+      // Show back button and push __ios_root__ sentinel so pressing back returns
+      // to the Music Library category list rather than having no way to navigate out.
+      if (_backBtn) _backBtn.classList.remove('hidden');
+      if (!this._maBrowserNavStack) this._maBrowserNavStack = [];
+      this._maBrowserNavStack.push({ tab: '__ios_root__', searchQuery: null, inSearchResults: false });
+      // Re-fire the search so results render immediately into the now-visible content area
+      this._searchMA(query);
+    } else {
+      if (searchInput) searchInput.value = '';
+      if (clearBtn) clearBtn.classList.add('hidden');
+      this._maLastSearch = null;
+      this._maInSearchResults = false;
+      this._maSavedSearch = null; // user explicitly cleared — don't restore on next open
+      this._maCurrentTab = 'recently_played';
+      r.querySelectorAll('.ma-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'recently_played'));
+      this._syncMAViewToggle();
+      if (!this._maIosViewActive()) this._loadMATab('recently_played');
+      else this._renderMAIosView();
+    }
   }
 
   _invalidateMATabCache(tab) {
@@ -7720,7 +7809,17 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // Remove any stray artwork/bio lightbox created while browsing
     this.shadowRoot?.getElementById('cardOuter')?.querySelectorAll('.crow-bio-lightbox').forEach(el => el.remove());
     this.shadowRoot.getElementById('maPopup').classList.remove('visible');
-    // Clear search input and state so it's clean on next open
+    // Save search state so it can be restored when the library reopens.
+    // Only save if there's an active search — navigating with no query means nothing to restore.
+    if (this._maLastSearch && this._maInSearchResults) {
+      this._maSavedSearch = {
+        query: this._maLastSearch,
+        tab:   this._maCurrentTab || 'recently_played',
+      };
+    } else {
+      this._maSavedSearch = null;
+    }
+    // Clear live search state (input is visually reset; saved copy is in _maSavedSearch)
     const _searchInput = this.shadowRoot.getElementById('maSearchInput');
     const _searchClear = this.shadowRoot.getElementById('maSearchClear');
     if (_searchInput) _searchInput.value = '';
@@ -7905,6 +8004,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (_sc) _sc.classList.add('hidden');
     this._maLastSearch = null;
     this._maInSearchResults = false;
+    this._maSavedSearch = null; // back = starting fresh, don't restore on next open
     // When returning to root level
     if (!this._maBrowserNavStack.length) {
       const _iosMode = this._config?.ma_ios_library === true;
@@ -8492,6 +8592,51 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     }, 2000);
   }
 
+  // Returns { item, type, isPinned, label } for pinning whatever is currently playing,
+  // or null if the current content can't be pinned from context menus.
+  _currentMediaPinItem() {
+    const state = this._hass?.states[this._entity];
+    const attrs = state?.attributes || {};
+    const contentId = attrs.media_content_id || '';
+
+    // Radio station
+    if (this._isLiveStream(state) && contentId) {
+      const st = this._rbCachedStation(contentId)
+        || (attrs.media_title ? { name: attrs.media_title, url: contentId, favicon: attrs.entity_picture || '' } : null);
+      if (!st) return null;
+      return { item: st, type: 'station', isPinned: this._rbIsStarred(st), label: ['Station', 'Radio Station'] };
+    }
+
+    // Podcast
+    if (this._pcNowPlaying?.url) {
+      const pod = this._pcNowPlaying.pod
+        || (this._pcNowPlaying.collectionId ? this._pcGetStarred().find(p => p.collectionId === this._pcNowPlaying.collectionId) : null)
+        || (this._pcEpisodeCache?.get(this._pcNowPlaying.url));
+      if (!pod) return null;
+      return { item: pod, type: 'podcast', isPinned: this._pcIsStarred(pod), label: ['Podcast', 'Podcast'] };
+    }
+
+    // Audiobook
+    if (this._abNowPlaying?.url) {
+      const book = this._abCachedBook(this._abNowPlaying.url);
+      if (!book) return null;
+      return { item: book, type: 'audiobook', isPinned: this._abIsStarred(book), label: ['Audiobook', 'Audiobook'] };
+    }
+
+    return null;
+  }
+
+  // Toggle pin for any content type using _currentMediaPinItem
+  _toggleCurrentMediaPin(pinInfo) {
+    if (!pinInfo) return false;
+    const { item, type } = pinInfo;
+    let nowPinned = null;
+    if (type === 'station')   nowPinned = this._rbToggleStar(item);
+    else if (type === 'podcast')   nowPinned = this._pcToggleStar(item);
+    else if (type === 'audiobook') nowPinned = this._abToggleStar(item);
+    return nowPinned;
+  }
+
   _rbStarredKey() { return 'crow_pin_stations'; }
 
   _rbGetStarred() {
@@ -8973,8 +9118,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     entity = entity || this._resolveMATargetEntity() || this._entity;
     this._playMediaDirect(entity, episodeUrl, 'music', title);
     // Track that a podcast episode is playing so the badge can show
-    this._pcNowPlaying = { url: episodeUrl, title, ts: Date.now() };
-    try { localStorage.setItem('crow_pc_now_playing', JSON.stringify(this._pcNowPlaying)); } catch(_) {}
+    this._pcNowPlaying = { url: episodeUrl, title, ts: Date.now(), collectionId: pod?.collectionId || null, pod: pod || null };
+    try { localStorage.setItem('crow_pc_now_playing', JSON.stringify({ url: episodeUrl, title, ts: Date.now(), collectionId: pod?.collectionId || null })); } catch(_) {}
     // Cache the pod object keyed by episode URL — same pattern as _rbCacheStation
     if (!this._pcEpisodeCache) this._pcEpisodeCache = new Map();
     this._pcEpisodeCache.set(episodeUrl, pod);
@@ -10205,7 +10350,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     }
   }
 
-  async _searchMA(query) {
+  async _searchMA(query, libraryOnly = false) {
     if (!query) return;
     this._maLastSearch = query;
     this._maInSearchResults = true;
@@ -10472,7 +10617,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           config_entry_id: configEntryId,
           name: query,
           limit: filterKey === 'tracks' ? 50 : 25,
-          library_only: filterKey ? _libraryOnlyTabs.has(filterKey) : false,
+          library_only: libraryOnly && (filterKey ? _libraryOnlyTabs.has(filterKey) : false),
         },
         return_response: true
       };
@@ -13170,7 +13315,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           cancelLP(); lpFired = true;
           const trackTitle  = row.dataset.trackTitle;
           const trackArtist = row.dataset.trackArtist;
-          if (trackTitle) this._showTrackEnqueueMenu(row, trackTitle, trackArtist || artist, '');
+          if (trackTitle) this._showTrackEnqueueMenu(row, trackTitle, trackArtist || artist, '', row.dataset.uri || '');
         }, 480);
       }, { passive: true });
 
@@ -13976,6 +14121,34 @@ Include ALL tracks. Use null for unknown fields.`;
           this._showBioPhotoLightbox(_fbArtImg.src || artUrl, `${trackTitle}${artistName ? ' · ' + artistName : ''}`, content, 'square');
         });
       }
+
+      // Wire pin button in the fallback panel — same logic as the full AI panel below
+      const _fbPinBtn = r.getElementById('infoPinBtn');
+      const _fbPinSvg = r.getElementById('infoPinSvg');
+      const _fbTrackUri = context.queueUri
+        || _qItem?.uri
+        || this._hass?.states[this._entity]?.attributes?.media_content_id
+        || '';
+      if (_fbPinBtn && _fbPinSvg && _fbTrackUri) {
+        const _fbPinItem = { uri: _fbTrackUri, name: trackTitle, artist: artistName, image: artUrl || '', media_type: 'track' };
+        const _fbUpdatePin = () => {
+          const _fbPinned = this._maLibIsStarred(_fbPinItem, 'track');
+          _fbPinSvg.style.fill = _fbPinned ? '#FFD60A' : 'rgba(255,255,255,0.5)';
+          _fbPinBtn.title = _fbPinned ? 'Unpin Song' : 'Pin Song';
+        };
+        _fbPinBtn.classList.remove('hidden');
+        _fbUpdatePin();
+        _fbPinBtn.onclick = () => {
+          const nowPinned = this._maLibToggleStar(_fbPinItem, 'track');
+          if (nowPinned === null) return;
+          _fbUpdatePin();
+          this._showToast(nowPinned ? '📍 Song pinned' : 'Song unpinned');
+          this._maLibRefreshPinnedUI('track');
+        };
+      } else if (_fbPinBtn) {
+        _fbPinBtn.classList.add('hidden');
+        _fbPinBtn.onclick = null;
+      }
       return;
     }
 
@@ -14148,7 +14321,10 @@ Include ALL tracks. Use null for unknown fields.`;
         // Play Now from queue context — never use 'replace' (clears queue).
         // Strategy: if MA has move_queue_item_next and we have a queueItemId, use it
         // (moves item to next slot then skips). Otherwise enqueue as 'next' then skip.
-        if (action === 'replace' && (context.queueUri || context.queueItemId)) {
+        // Only applies when opened FROM the queue panel (has queueItemId) — NOT when
+        // opened from the library (has queueUri but no queueItemId), where Play Now
+        // should just play directly via search like the other buttons.
+        if (action === 'replace' && context.queueItemId) {
           const _target = context.queueEntity || this._entity;
           const _hasMoveNext = !!(this._hass?.services?.mass_queue?.move_queue_item_next);
           try {
@@ -14157,14 +14333,8 @@ Include ALL tracks. Use null for unknown fields.`;
               await this._hass.callService('mass_queue', 'move_queue_item_next', {
                 entity: _target, queue_item_id: context.queueItemId
               });
-            } else if (context.queueUri) {
-              // Fallback: insert a copy of the track as next, then skip
-              await this._hass.connection.sendMessagePromise({
-                type: 'call_service', domain: 'music_assistant', service: 'play_media',
-                service_data: { entity_id: _target, media_id: context.queueUri, media_type: 'track', enqueue: 'next' }
-              });
             } else {
-              // No URI or item ID — search by title+artist and insert as next
+              // No move service — search by title+artist and insert as next then skip
               await this._hass.connection.sendMessagePromise({
                 type: 'call_service', domain: 'music_assistant', service: 'play_media',
                 service_data: { entity_id: _target, media_id: trackTitle + ' ' + artistName, media_type: 'track', enqueue: 'next' }
@@ -14417,7 +14587,7 @@ Include ALL tracks. Use null for unknown fields.`;
         lpFired = false;
         lpTimer = setTimeout(() => {
           cancelLP(); lpFired = true;
-          _simSelf._showTrackEnqueueMenu(row, row.dataset.title, row.dataset.artist, '');
+          _simSelf._showTrackEnqueueMenu(row, row.dataset.title, row.dataset.artist, '', row.dataset.uri || '');
         }, 480);
       }, { passive: true });
       row.addEventListener('pointerup',     () => cancelLP(), { passive: true });
@@ -14842,7 +15012,7 @@ Include ALL tracks. Use null for unknown fields.`;
         lpFired = false;
         lpTimer = setTimeout(() => {
           cancelLP(); lpFired = true;
-          self._showTrackEnqueueMenu(row, row.dataset.title, row.dataset.artist, '');
+          self._showTrackEnqueueMenu(row, row.dataset.title, row.dataset.artist, '', row.dataset.uri || '');
         }, 480);
       }, { passive: true });
       row.addEventListener('pointerup',     () => cancelLP(), { passive: true });
@@ -15130,7 +15300,7 @@ Include ALL tracks. Use null for unknown fields.`;
         lpFired = false;
         lpTimer = setTimeout(() => {
           cancelLP(); lpFired = true;
-          self._showTrackEnqueueMenu(row, row.dataset.title, row.dataset.artist, '');
+          self._showTrackEnqueueMenu(row, row.dataset.title, row.dataset.artist, '', row.dataset.uri || '');
         }, 480);
       }, { passive: true });
       row.addEventListener('pointerup',     () => cancelLP(), { passive: true });
@@ -17229,7 +17399,7 @@ Include ALL tracks. Use null for unknown fields.`;
           lpFired = false;
           lpTimer = setTimeout(() => {
             cancelLP(); lpFired = true;
-            self._showTrackEnqueueMenu(row, row.dataset.title, row.dataset.artist, '');
+            self._showTrackEnqueueMenu(row, row.dataset.title, row.dataset.artist, '', row.dataset.uri || '');
           }, 480);
         }, { passive: true });
         row.addEventListener('pointerup',     () => cancelLP(), { passive: true });
@@ -19360,7 +19530,7 @@ Include ALL tracks. Use null for unknown fields.`;
             lpFired = false;
             lpTimer = setTimeout(() => {
               cancelLP(); lpFired = true;
-              _self._showTrackEnqueueMenu(row, row.dataset.title, row.dataset.artist, '');
+              _self._showTrackEnqueueMenu(row, row.dataset.title, row.dataset.artist, '', row.dataset.uri || '');
             }, 480);
           }, { passive: true });
           row.addEventListener('pointerup',     () => cancelLP(), { passive: true });
@@ -19698,7 +19868,7 @@ Include ALL tracks. Use null for unknown fields.`;
         lpFired = false;
         lpTimer = setTimeout(() => {
           cancelLP(); lpFired = true;
-          self._showTrackEnqueueMenu(row, row.dataset.title, row.dataset.artist, '');
+          self._showTrackEnqueueMenu(row, row.dataset.title, row.dataset.artist, '', row.dataset.uri || '');
         }, 480);
       }, { passive: true });
       row.addEventListener('pointerup',     () => cancelLP(), { passive: true });
@@ -20555,6 +20725,13 @@ Include ALL tracks. Use null for unknown fields.`;
     if (tab === 'radio') return; // No action bar for radio — stations play individually
     if (tab === 'podcast') return; // No action bar for podcasts — episodes play individually
     if (tab === 'audiobook') return; // No action bar for audiobooks — chapters play individually
+    // No action bar on top-level browse tabs — Play All on thousands of tracks/artists/albums
+    // is almost never intentional and can overwhelm MA. The action bar belongs only on
+    // drill-in collection views (album, playlist, artist) where the set is finite and curated.
+    // _maOpenCollectionTracks injects its own dedicated bar after calling _renderMAGrid, so
+    // suppressing here doesn't affect those views at all.
+    const _topLevelTabs = new Set(['track','artist','album','playlist','recently_added','favourites','recommended','recently_played']);
+    if (_topLevelTabs.has(tab)) return;
     const bar = document.createElement('div');
     bar.className = 'ma-drill-actions';
     const showMood = this._maEntityIds?.size > 0 && ['favourites','recommended','album','track'].includes(tab);
@@ -20769,7 +20946,7 @@ Include ALL tracks. Use null for unknown fields.`;
       } else if (type === 'track' || ['track','favourites','recommended','recently_played'].includes(tab)) {
         const _title  = item.name || item.title || '';
         const _artist = (item.artists && item.artists[0]?.name) || '';
-        if (_title || _artist) this._showAITrackInfo(_title, _artist, { fromSearch: true });
+        if (_title || _artist) this._showAITrackInfo(_title, _artist, { fromSearch: true, queueUri: item.uri || item.media_content_id || '' });
         else this._playMAItem(item, tab);
       } else { this._playMAItem(item, tab); }
     });
@@ -21881,7 +22058,7 @@ Include ALL tracks. Use null for unknown fields.`;
         } else if (mode === 'more_info') {
           const _aiTitle  = item.name || item.title || '';
           const _aiArtist = (item.artists && item.artists[0]?.name) || item.artist || '';
-          self._showAITrackInfo(_aiTitle, _aiArtist);
+          self._showAITrackInfo(_aiTitle, _aiArtist, { queueUri: item.uri || item.media_content_id || '' });
         } else if (mode === 'artist_radio') {
           const _radioArtist = _itemArtist.split(/\s*[&,]\s*/)[0].trim() || _itemArtist;
           self._playArtistRadio(_radioArtist);
@@ -22220,7 +22397,7 @@ Include ALL tracks. Use null for unknown fields.`;
     return maSpeakers[0] || null;
   }
 
-  _showTrackEnqueueMenu(anchorEl, trackTitle, artistName, trackDiscogsUrl) {
+  _showTrackEnqueueMenu(anchorEl, trackTitle, artistName, trackDiscogsUrl, trackUri) {
     this._closeEnqueueMenu();
     const r    = this.shadowRoot;
     const self = this;
@@ -22264,6 +22441,7 @@ Include ALL tracks. Use null for unknown fields.`;
       { mode: 'replace',      label: 'Play Now',      icon: '<path d="M8 5v14l11-7z"/>' },
       { mode: 'next',         label: 'Play Next',     icon: '<path d="M3 13h8V5H3v8zm0 8h8v-6H3v6zm10 0h8v-8h-8v8zm0-18v6h8V3h-8z"/>' },
       { mode: 'add',          label: 'Add to Queue',  icon: '<path d="M19 11h-6V5h-2v6H5v2h6v6h2v-6h6z"/>' },
+      ...(trackUri ? [(() => { const _pi = { uri: trackUri, name: trackTitle, artist: artistName, media_type: 'track' }; return { mode: 'pin', label: this._maLibIsStarred(_pi, 'track') ? 'Unpin Song' : 'Pin Song', icon: '<path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/>' }; })()] : []),
       ...(artistName ? [{ mode: 'artist_radio', label: 'AI Artist Radio', icon: '<path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6zm4 0v2h-2V3h2z"/>' }] : []),
       { mode: 'copy_link',    label: 'Share',         icon: '<path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z"/>' },
       { mode: 'more_info',    label: 'More Info',     icon: '<path d="M11,9H13V7H11M12,20C7.59,20 4,16.41 4,12C4,7.59 7.59,4 12,4C16.41,4 20,7.59 20,12C20,16.41 16.41,20 12,20M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M11,17H13V11H11V17Z"/>' }
@@ -22303,8 +22481,15 @@ Include ALL tracks. Use null for unknown fields.`;
         self._closeEnqueueMenu();
         if (mode === 'copy_link') {
           self._copyToClipboard(trackTitle + ' by ' + artistName + '\n' + self._buildShareUrl(trackTitle, artistName));
+        } else if (mode === 'pin') {
+          if (!trackUri) return;
+          const _tPinItem = { uri: trackUri, name: trackTitle, artist: artistName, media_type: 'track' };
+          const nowPinned = self._maLibToggleStar(_tPinItem, 'track');
+          if (nowPinned === null) return;
+          self._showToast(nowPinned ? '📍 Song pinned' : 'Song unpinned');
+          self._maLibRefreshPinnedUI('track');
         } else if (mode === 'more_info') {
-          self._showAITrackInfo(trackTitle, artistName, { fromSearch: true });
+          self._showAITrackInfo(trackTitle, artistName, { fromSearch: true, queueUri: trackUri || '' });
         } else if (mode === 'artist_radio') {
           const _radioArtist = (artistName || '').split(/\s*[&,]\s*/)[0].trim() || artistName;
           self._playArtistRadio(_radioArtist);
@@ -22956,11 +23141,14 @@ Include ALL tracks. Use null for unknown fields.`;
     menu.className = 'enqueue-menu';
     menu.id = 'enqueueMenu';
 
+    var _qPinItem = uri ? { uri, name: title, artist, media_type: 'track' } : null;
+    var _qIsPinned = _qPinItem ? this._maLibIsStarred(_qPinItem, 'track') : false;
     var strategies = [
       ...(!isHistory ? [{ mode: 'reorder', label: 'Reorder Queue', icon: '<path d="M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V19Z"/>'}] : []),
       { mode: 'replace',      label: 'Play Now',           icon: '<path d="M8 5v14l11-7z"/>' },
       { mode: 'next',         label: 'Play Next',          icon: '<path d="M3 13h8V5H3v8zm0 8h8v-6H3v6zm10 0h8v-8h-8v8zm0-18v6h8V3h-8z"/>' },
       { mode: 'add',          label: 'Add to Queue',       icon: '<path d="M19 11h-6V5h-2v6H5v2h6v6h2v-6h6z"/>' },
+      ...(_qPinItem ? [{ mode: 'pin', label: _qIsPinned ? 'Unpin Song' : 'Pin Song', icon: '<path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/>' }] : []),
       ...(artist ? [{ mode: 'artist_radio', label: 'AI Artist Radio', icon: '<path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6zm4 0v2h-2V3h2z"/>'}] : []),
       ...(!isHistory ? [{ mode: 'remove', label: 'Remove from Queue', icon: '<path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/>', danger: true }] : []),
       { mode: 'copy_link',    label: 'Share', icon: '<path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z"/>' },
@@ -23000,8 +23188,17 @@ Include ALL tracks. Use null for unknown fields.`;
           return;
         }
 
+        if (mode === 'pin') {
+          if (!_qPinItem) return;
+          const nowPinned = self._maLibToggleStar(_qPinItem, 'track');
+          if (nowPinned === null) return;
+          self._showToast(nowPinned ? '📍 Song pinned' : 'Song unpinned');
+          self._maLibRefreshPinnedUI('track');
+          return;
+        }
+
         if (mode === 'more_info') {
-          self._showAITrackInfo(title, artist);
+          self._showAITrackInfo(title, artist, { queueUri: uri || '', queueItemId: queueItemId || '' });
           return;
         }
 
