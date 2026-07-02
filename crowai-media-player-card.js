@@ -5491,18 +5491,58 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             infoContent.scrollTop = _savedScrollTop;
           }, { once: true });
           infoContent.querySelector('#queueClearConfirm')?.addEventListener('click', async () => {
-            try {
-              await this._hass.callService('media_player', 'clear_playlist', { entity_id: this._entity });
-            } catch (err) {
-              console.error('[Queue clear]', err);
+            const _hasRemove = !!(this._hass?.services?.mass_queue?.remove_queue_item);
+            const _hasGetItems = !!(this._hass?.services?.mass_queue?.get_queue_items);
+
+            if (_hasRemove && _hasGetItems) {
+              // Preferred path: remove only upcoming items — current track keeps playing
+              try {
+                this._showToast('Clearing upcoming tracks…', 3000);
+                const mqRes = await this._hass.connection.sendMessagePromise({
+                  type: 'call_service', domain: 'mass_queue', service: 'get_queue_items',
+                  service_data: { entity: this._entity, limit_before: 0, limit_after: 9999 },
+                  return_response: true
+                });
+                const raw = mqRes?.response?.[this._entity] || mqRes?.response || [];
+                if (Array.isArray(raw) && raw.length) {
+                  // Find currently active item — skip it and all history
+                  const activeIdx = (() => {
+                    let idx = raw.findIndex(i => i.active === true || i.state === 'playing');
+                    if (idx === -1) {
+                      const curId = this._hass?.states[this._entity]?.attributes?.media_content_id;
+                      if (curId) idx = raw.findIndex(i => (i.media_content_id || i.uri) === curId);
+                    }
+                    if (idx === -1) {
+                      const curTitle = (this._hass?.states[this._entity]?.attributes?.media_title || '').toLowerCase();
+                      if (curTitle) idx = raw.findIndex(i => (i.media_title || i.name || '').toLowerCase() === curTitle);
+                    }
+                    return idx; // -1 means unknown — remove everything
+                  })();
+                  // Only remove items after the active one (upcoming, not history or current)
+                  const toRemove = raw
+                    .filter((_, i) => i > activeIdx)
+                    .map(i => i.queue_item_id)
+                    .filter(Boolean);
+                  // Remove in batches to avoid flooding the WebSocket
+                  for (const id of toRemove) {
+                    await this._hass.callService('mass_queue', 'remove_queue_item', {
+                      entity: this._entity, queue_item_id: id
+                    }).catch(() => {});
+                  }
+                }
+              } catch (err) {
+                console.error('[Queue clear]', err);
+              }
+            } else {
+              // Fallback for older MA versions without remove_queue_item
+              try {
+                await this._hass.callService('media_player', 'clear_playlist', { entity_id: this._entity });
+              } catch (err) { console.error('[Queue clear]', err); }
+              try {
+                await this._hass.callService('media_player', 'media_stop', { entity_id: this._entity });
+              } catch (err) { console.error('[Queue clear stop]', err); }
             }
-            // Also stop playback — clear_playlist only empties the upcoming
-            // queue, the current track keeps playing with no artwork shown.
-            try {
-              await this._hass.callService('media_player', 'media_stop', { entity_id: this._entity });
-            } catch (err) {
-              console.error('[Queue clear stop]', err);
-            }
+
             // Turn off radio mode when the queue is cleared — nothing to generate radio from
             if (this._config?.ma_radio_mode) {
               this._config = { ...this._config, ma_radio_mode: false };
@@ -5513,7 +5553,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
               }));
             }
             this._queueJustCleared = Date.now();
-    this._queueDataCache = null; // invalidate queue cache on explicit clear
+            this._queueDataCache = null;
             this._queuePanelDirection = null;
             this._closeInfoPopup();
           }, { once: true });
