@@ -27,7 +27,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   }
 
   static getStubConfig() {
-    return { entities: [], auto_switch: true, accent_color: '#007AFF', volume_accent: '#007AFF', title_color: '#ffffff', artist_color: '#ffffff', button_color: '#ffffff', player_bg: '#1c1c1e', player_bg_opacity: 100, show_entity_selector: true, volume_control: 'slider', startup_mode: 'compact', remember_view: false, volume_entity: '', ma_entities: [], show_vol_pct: true, vol_pct_color: 'rgba(255,255,255,0.45)', scroll_text: false, remember_last_entity: false, entity_startup_volumes: {}, lyrics_bg: '#0a0a0c', lyrics_text_color: '#ffffff', lyrics_scroll_mode: 'highlight', lyrics_persist: false, lyrics_cache_ttl: 7, lyrics_cache_enabled: true, ma_library_cache_enabled: true, ma_library_cache_ttl: 1, ma_radio_mode: false, show_ma_library_button: true, use_ha_theme: false, remote_buttons_position: 'bottom', ambient_glow: false, announce_tts_service: '', row_glow: false, show_remote_button: true, ma_ios_library: true, artwork_crossfade: false, icon_theme: 'robot', resize_btn_spin: true, remote_art_blur: true, volume_hud: true, itunes_art: true, controls_theme: 'classic', add_pill_color: '', card_liquid_glass: true, volume_hud_glass: false, ai_conversation_agent: '', share_service: 'youtube_music', song_intro_enabled: true, show_media_type_pill: false };
+    return { entities: [], auto_switch: true, accent_color: '#007AFF', volume_accent: '#007AFF', title_color: '#ffffff', artist_color: '#ffffff', button_color: '#ffffff', player_bg: '#1c1c1e', player_bg_opacity: 100, show_entity_selector: true, volume_control: 'slider', startup_mode: 'compact', remember_view: false, volume_entity: '', ma_entities: [], show_vol_pct: true, vol_pct_color: 'rgba(255,255,255,0.45)', scroll_text: false, remember_last_entity: false, entity_startup_volumes: {}, lyrics_bg: '#0a0a0c', lyrics_text_color: '#ffffff', lyrics_scroll_mode: 'highlight', lyrics_persist: false, lyrics_cache_ttl: 7, lyrics_cache_enabled: true, ma_library_cache_enabled: true, ma_library_cache_ttl: 1, ma_radio_mode: false, show_ma_library_button: true, use_ha_theme: false, remote_buttons_position: 'bottom', ambient_glow: false, announce_tts_service: '', row_glow: false, show_remote_button: true, ma_ios_library: true, artwork_crossfade: false, icon_theme: 'robot', resize_btn_spin: true, remote_art_blur: true, volume_hud: true, itunes_art: true, controls_theme: 'classic', add_pill_color: '', card_liquid_glass: true, volume_hud_glass: false, ai_conversation_agent: '', share_service: 'youtube_music', song_intro_enabled: false, show_media_type_pill: false };
   }
 
   setConfig(config) {
@@ -134,12 +134,15 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    // Load pins, AI cache and iTunes art from HA user data on first connection —
+    // this survives pull-to-refresh and WKWebView localStorage evictions.
+    if (!this._haStorageLoaded) this._haStorageLoad();
     if (!this.shadowRoot.innerHTML) {
       // Pre-load starred/pinned keys into memory before render so they're available
       // immediately when _loadMATab and _rbInjectStarredSection run
       if (!this._starredMemCache) {
         this._starredMemCache = {};
-        const _sk = ['crow_starred_stations','crow_starred_podcasts','crow_starred_audiobooks','crow_starred_track','crow_starred_artist','crow_starred_album'];
+        const _sk = ['crow_pin_stations','crow_pin_podcasts','crow_pin_audiobooks','crow_pin_track','crow_pin_artist','crow_pin_album'];
         _sk.forEach(k => { try { const v = JSON.parse(localStorage.getItem(k) || '[]'); if (Array.isArray(v) && v.length) this._starredMemCache[k] = v; } catch(_) {} });
       }
       this.render();
@@ -500,8 +503,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
                 // Also pre-fetch recs in background — makes opening recommendations instant
                 this._prefetchAIRecs(_pfTitle, _pfArtist, _cur?.media_album_name || '');
               }
-              // Song Intro — always on
-              this._showSongIntro(_pfTitle, _pfArtist);
+              // Song Intro — only if enabled in settings (off by default)
+              if (this._config?.song_intro_enabled === true) this._showSongIntro(_pfTitle, _pfArtist);
             }
           }, 5000); // 5s debounce — user is probably settled on this track
         }
@@ -750,10 +753,24 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // Starred/pinned keys — load into memory on connect so they survive WKWebView localStorage eviction.
     // Pattern mirrors crow_itunes_preferred: memory is tier-1, localStorage is tier-2 write-through.
     const _starredKeys = [
-      'crow_starred_stations', 'crow_starred_podcasts', 'crow_starred_audiobooks',
-      'crow_starred_track', 'crow_starred_artist', 'crow_starred_album', 'crow_starred_playlist',
+      'crow_pin_stations', 'crow_pin_podcasts', 'crow_pin_audiobooks',
+      'crow_pin_track', 'crow_pin_artist', 'crow_pin_album', 'crow_pin_playlist',
     ];
     if (!this._starredMemCache) this._starredMemCache = {};
+
+    // ── One-time migration: crow_starred_* → crow_pin_* ────────────────────────
+    // Pins were renamed so they survive Clear All Caches. Copy any existing data
+    // to the new key on first load after updating, then remove the old key.
+    const _migMap = {
+      'crow_starred_stations':'crow_pin_stations','crow_starred_podcasts':'crow_pin_podcasts',
+      'crow_starred_audiobooks':'crow_pin_audiobooks','crow_starred_track':'crow_pin_track',
+      'crow_starred_artist':'crow_pin_artist','crow_starred_album':'crow_pin_album',
+      'crow_starred_playlist':'crow_pin_playlist',
+    };
+    Object.entries(_migMap).forEach(([old, nw]) => {
+      try { const d = localStorage.getItem(old); if (d) { if (!localStorage.getItem(nw)) localStorage.setItem(nw, d); localStorage.removeItem(old); } } catch(_) {}
+    });
+
     _starredKeys.forEach(key => {
       try {
         const raw = localStorage.getItem(key);
@@ -7329,6 +7346,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         for (const [k] of evicted) delete out[k];
       }
       localStorage.setItem('crow_itunes_preferred', JSON.stringify(out));
+      this._haStorageSaveItunes();
     } catch (e) { /* localStorage unavailable */ }
   }
 
@@ -7564,7 +7582,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           img.style.display = 'block';
           const svg = artDiv.querySelector('svg');
           if (svg) svg.style.display = 'none';
-          this._applyRowGlow(cached, rowWrap, accentEl);
+          if (this._config?.row_glow === true) this._applyRowGlow(cached, rowWrap, accentEl);
         }
       }, { once: true });
     });
@@ -7699,6 +7717,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   }
 
   _closeMABrowser() {
+    // Remove any stray artwork/bio lightbox created while browsing
+    this.shadowRoot?.getElementById('cardOuter')?.querySelectorAll('.crow-bio-lightbox').forEach(el => el.remove());
     this.shadowRoot.getElementById('maPopup').classList.remove('visible');
     // Clear search input and state so it's clean on next open
     const _searchInput = this.shadowRoot.getElementById('maSearchInput');
@@ -7869,6 +7889,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   }
 
   _maNavBack() {
+    // Remove any stray artwork/bio lightbox before navigating back
+    this.shadowRoot?.getElementById('cardOuter')?.querySelectorAll('.crow-bio-lightbox').forEach(el => el.remove());
     // Cancel any in-flight drill-in fetch
     this._drillInToken = (this._drillInToken || 0) + 1;
     if (!this._maBrowserNavStack || !this._maBrowserNavStack.length) return;
@@ -8313,7 +8335,164 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // STARRED RADIO STATIONS
   // ════════════════════════════════════════════════════════════════════════════
 
-  _rbStarredKey() { return 'crow_starred_stations'; }
+  // ── HA Persistent Storage ─────────────────────────────────────────────────
+  // Stores pins, AI local cache and iTunes preferred art in HA's own user-data
+  // database (frontend/get_user_data / frontend/set_user_data). This survives
+  // pull-to-refresh, app restarts and WKWebView localStorage evictions because
+  // it's stored server-side in HA's SQLite database, not in the browser.
+  //
+  // Architecture:
+  //  - localStorage is tier-1 (synchronous, used for instant cold-start reads)
+  //  - HA user data is tier-2 (async, loaded once on connect, wins on conflict)
+  //  - All writes go to BOTH tiers simultaneously (fire-and-forget for HA tier)
+  //
+  // Called once when _hass.connection is first available (set hass → first load).
+  async _haStorageLoad() {
+    if (this._haStorageLoaded) return;
+    this._haStorageLoaded = true;
+    const conn = this._hass?.connection;
+    if (!conn) return;
+
+    try {
+      // Batch-load all three HA user-data keys in parallel
+      const [pinsRes, aiRes, itunesRes, wikiRes] = await Promise.allSettled([
+        conn.sendMessagePromise({ type: 'frontend/get_user_data', key: 'crow_pins' }),
+        conn.sendMessagePromise({ type: 'frontend/get_user_data', key: 'crow_ai_local' }),
+        conn.sendMessagePromise({ type: 'frontend/get_user_data', key: 'crow_itunes_preferred' }),
+        conn.sendMessagePromise({ type: 'frontend/get_user_data', key: 'crow_wiki_urls' }),
+      ]);
+
+      // ── Pins ────────────────────────────────────────────────────────────────
+      if (pinsRes.status === 'fulfilled' && pinsRes.value?.value) {
+        const haPins = pinsRes.value.value;
+        // HA wins: overwrite localStorage and in-memory cache for each category
+        Object.entries(haPins).forEach(([cat, items]) => {
+          if (!Array.isArray(items)) return;
+          const lsKey = 'crow_pin_' + cat;
+          try { localStorage.setItem(lsKey, JSON.stringify(items)); } catch(_) {}
+          if (!this._starredMemCache) this._starredMemCache = {};
+          this._starredMemCache[lsKey] = items;
+        });
+      }
+
+      // ── AI local cache ──────────────────────────────────────────────────────
+      if (aiRes.status === 'fulfilled' && aiRes.value?.value) {
+        const haAi = aiRes.value.value;
+        // Merge HA data into localStorage: for each cacheName, merge HA entries
+        // over the top of whatever's already in localStorage (HA wins on conflict)
+        Object.entries(haAi).forEach(([cacheName, haStore]) => {
+          if (!haStore || typeof haStore !== 'object') return;
+          const lsKey = 'crow_ai_local_' + cacheName;
+          try {
+            const local = JSON.parse(localStorage.getItem(lsKey) || '{}');
+            // HA entries overwrite local ones (HA is the authoritative source)
+            const merged = { ...local, ...haStore };
+            localStorage.setItem(lsKey, JSON.stringify(merged));
+          } catch(_) {}
+        });
+      }
+
+      // ── iTunes preferred art ────────────────────────────────────────────────
+      if (itunesRes.status === 'fulfilled' && itunesRes.value?.value) {
+        const haItunes = itunesRes.value.value;
+        if (haItunes && typeof haItunes === 'object') {
+          try {
+            const local = JSON.parse(localStorage.getItem('crow_itunes_preferred') || '{}');
+            const merged = { ...local, ...haItunes };
+            localStorage.setItem('crow_itunes_preferred', JSON.stringify(merged));
+            if (this._itunesPreferred) Object.assign(this._itunesPreferred, haItunes);
+          } catch(_) {}
+        }
+      }
+
+      // ── Wikipedia photo URL cache ────────────────────────────────────────────
+      if (wikiRes.status === 'fulfilled' && wikiRes.value?.value) {
+        const haWiki = wikiRes.value.value;
+        if (haWiki && typeof haWiki === 'object') {
+          try {
+            const local = JSON.parse(localStorage.getItem('crow_wiki_urls') || '{}');
+            const merged = { ...local, ...haWiki };
+            localStorage.setItem('crow_wiki_urls', JSON.stringify(merged));
+            if (this._wikiThumbUrlCache) {
+              for (const [name, entry] of Object.entries(haWiki)) {
+                if (entry?.url && entry.url !== '__none__' && !this._wikiThumbUrlCache.has(name)) {
+                  this._wikiThumbUrlCache.set(name, entry.url);
+                }
+              }
+            }
+          } catch(_) {}
+        }
+      }
+    } catch(_) {}
+  }
+
+  // Write Wikipedia URL cache to HA user data (fire-and-forget, debounced)
+  _haStorageSaveWiki() {
+    const conn = this._hass?.connection;
+    if (!conn) return;
+    clearTimeout(this._haWikiSaveTimer);
+    this._haWikiSaveTimer = setTimeout(() => {
+      try {
+        const value = JSON.parse(localStorage.getItem('crow_wiki_urls') || '{}');
+        conn.sendMessagePromise({ type: 'frontend/set_user_data', key: 'crow_wiki_urls', value }).catch(() => {});
+      } catch(_) {}
+    }, 2000);
+  }
+
+  // Write pins to HA user data (fire-and-forget, called after every pin change)
+  _haStorageSavePins() {
+    const conn = this._hass?.connection;
+    if (!conn) return;
+    try {
+      const pinCats = ['stations','podcasts','audiobooks','track','artist','album','playlist'];
+      const value = {};
+      pinCats.forEach(cat => {
+        const lsKey = 'crow_pin_' + cat;
+        value[cat] = this._starredMemCache?.[lsKey] || [];
+      });
+      conn.sendMessagePromise({ type: 'frontend/set_user_data', key: 'crow_pins', value }).catch(() => {});
+    } catch(_) {}
+  }
+
+  // Write a single AI local cache store to HA user data (fire-and-forget)
+  _haStorageSaveAI(cacheName) {
+    const conn = this._hass?.connection;
+    if (!conn) return;
+    // Debounce: batch rapid sequential writes (e.g. loading 10 similar tracks at once)
+    // into a single HA write 2 seconds after the last one in this cacheName.
+    if (!this._haAISaveTimers) this._haAISaveTimers = {};
+    clearTimeout(this._haAISaveTimers[cacheName]);
+    this._haAISaveTimers[cacheName] = setTimeout(() => {
+      try {
+        const store = JSON.parse(localStorage.getItem('crow_ai_local_' + cacheName) || '{}');
+        // Read the full HA ai_local object, update just this cacheName, write back
+        conn.sendMessagePromise({ type: 'frontend/get_user_data', key: 'crow_ai_local' })
+          .then(res => {
+            const full = (res?.value && typeof res.value === 'object') ? res.value : {};
+            full[cacheName] = store;
+            conn.sendMessagePromise({ type: 'frontend/set_user_data', key: 'crow_ai_local', value: full }).catch(() => {});
+          }).catch(() => {
+            // If get fails, write just this cacheName anyway
+            conn.sendMessagePromise({ type: 'frontend/set_user_data', key: 'crow_ai_local', value: { [cacheName]: store } }).catch(() => {});
+          });
+      } catch(_) {}
+    }, 2000);
+  }
+
+  // Write iTunes preferred art map to HA user data (fire-and-forget, debounced)
+  _haStorageSaveItunes() {
+    const conn = this._hass?.connection;
+    if (!conn) return;
+    clearTimeout(this._haItunesSaveTimer);
+    this._haItunesSaveTimer = setTimeout(() => {
+      try {
+        const value = JSON.parse(localStorage.getItem('crow_itunes_preferred') || '{}');
+        conn.sendMessagePromise({ type: 'frontend/set_user_data', key: 'crow_itunes_preferred', value }).catch(() => {});
+      } catch(_) {}
+    }, 2000);
+  }
+
+  _rbStarredKey() { return 'crow_pin_stations'; }
 
   _rbGetStarred() {
     const k = this._rbStarredKey();
@@ -8326,6 +8505,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (!this._starredMemCache) this._starredMemCache = {};
     this._starredMemCache[k] = list;
     try { localStorage.setItem(k, JSON.stringify(list)); } catch(_) {}
+    this._haStorageSavePins();
   }
 
   _rbIsStarred(st) {
@@ -8499,7 +8679,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // ITUNES PODCAST SEARCH & TOP CHARTS
   // ════════════════════════════════════════════════════════════════════════════
 
-  _pcStarredKey()  { return 'crow_starred_podcasts'; }
+  _pcStarredKey()  { return 'crow_pin_podcasts'; }
 
   _pcGetStarred() {
     const k = this._pcStarredKey();
@@ -8511,6 +8691,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (!this._starredMemCache) this._starredMemCache = {};
     this._starredMemCache[k] = list;
     try { localStorage.setItem(k, JSON.stringify(list)); } catch(_) {}
+    this._haStorageSavePins();
   }
   _pcIsStarred(pod) {
     return this._pcGetStarred().some(p => p.collectionId === pod.collectionId);
@@ -9063,7 +9244,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // MA LIBRARY PINS — tracks, artists, albums
   // ════════════════════════════════════════════════════════════════════════════
 
-  _maLibStarredKey(tab) { return 'crow_starred_' + tab; }
+  _maLibStarredKey(tab) { return 'crow_pin_' + tab; }
 
   _maLibGetStarred(tab) {
     const k = this._maLibStarredKey(tab);
@@ -9076,6 +9257,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (!this._starredMemCache) this._starredMemCache = {};
     this._starredMemCache[k] = list;
     try { localStorage.setItem(k, JSON.stringify(list)); } catch(_) {}
+    this._haStorageSavePins();
   }
 
   _maLibIsStarred(item, tab) {
@@ -9179,9 +9361,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // AUDIOBOOKS (LibriVox)
   // ════════════════════════════════════════════════════════════════════════════
 
-  _abStarredKey() { return 'crow_starred_audiobooks'; }
+  _abStarredKey() { return 'crow_pin_audiobooks'; }
   _abGetStarred() { const k = this._abStarredKey(); if (this._starredMemCache?.[k]) return this._starredMemCache[k]; try { const v = JSON.parse(localStorage.getItem(k) || '[]'); if (!this._starredMemCache) this._starredMemCache = {}; this._starredMemCache[k] = v; return v; } catch(_) { return []; } }
-  _abSaveStarred(list) { const k = this._abStarredKey(); if (!this._starredMemCache) this._starredMemCache = {}; this._starredMemCache[k] = list; try { localStorage.setItem(k, JSON.stringify(list)); } catch(_) {} }
+  _abSaveStarred(list) { const k = this._abStarredKey(); if (!this._starredMemCache) this._starredMemCache = {}; this._starredMemCache[k] = list; try { localStorage.setItem(k, JSON.stringify(list)); } catch(_) {} this._haStorageSavePins(); }
   _abIsStarred(book) { return this._abGetStarred().some(b => b.id === book.id); }
   _abToggleStar(book) {
     let starred = this._abGetStarred();
@@ -12688,7 +12870,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         const isRateLimit = errText.includes('429') || errText.includes('RESOURCE_EXHAUSTED') ||
                             errText.includes('quota') || errText.includes('rate-limit');
         console.warn('[Crow AI] Error response:', errCode, errText.slice(0, 100));
-        if (isRateLimit) throw new Error('rate_limited');
+        if (isRateLimit) {
+          this._aiRateLimitUntil = Date.now() + 60000; // 60-second backoff
+          throw new Error('rate_limited');
+        }
         throw new Error('ai_error');
       }
       const text = resp?.response?.speech?.plain?.speech
@@ -12724,8 +12909,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       const store = JSON.parse(localStorage.getItem('crow_ai_local_' + cacheName) || '{}');
       const entry = store[key];
       if (!entry) return null;
-      // Expire after ttl days (default 30) — per-entry ttl field allows shorter expiry (e.g. 7 days for streaming availability)
-      const ttlDays = entry.ttl || 30;
+      // Per-entry TTL: _notFoundTTL (days) takes priority over default 30-day TTL
+      const ttlDays = entry.data?._notFoundTTL || entry.ttl || 30;
       if (Date.now() - entry.ts > ttlDays * 24 * 3600 * 1000) { delete store[key]; localStorage.setItem('crow_ai_local_' + cacheName, JSON.stringify(store)); return null; }
       return entry.data;
     } catch(_) { return null; }
@@ -12741,6 +12926,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       }
       store[key] = { data: value, ts: Date.now() };
       localStorage.setItem('crow_ai_local_' + cacheName, JSON.stringify(store));
+      this._haStorageSaveAI(cacheName);
     } catch(_) {}
   }
 
@@ -12799,6 +12985,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   /** Detect whether any conversation agent is available in HA */
   async _aiCheckAvailable() {
     if (!this._hass) return false;
+    // Session rate-limit backoff — if AI was rate-limited recently, don't retry
+    // until the backoff window clears (60 seconds after the last 429).
+    if (this._aiRateLimitUntil && Date.now() < this._aiRateLimitUntil) return false;
     // Check in-memory cache first
     if (this._aiAvailable !== undefined) return this._aiAvailable;
     // Check sessionStorage — avoids the agent/list call on every page refresh
@@ -12965,7 +13154,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       // Apply row glow to each track wrap if enabled
       if (this._config?.row_glow === true && artUrl) {
         const wrap = row.closest('.info-track-wrap');
-        if (wrap) this._applyRowGlow(artUrl, wrap, null);
+        if (this._config?.row_glow === true && wrap) this._applyRowGlow(artUrl, wrap, null);
       }
 
       const wrap = row.closest('.info-track-wrap');
@@ -13012,6 +13201,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         r.toLowerCase().includes('quota') || r.toLowerCase().includes('rate limit')) {
       // Extract a user-friendly message and throw so the caller shows a toast
       if (r.includes('429') || r.toLowerCase().includes('rate limit') || r.toLowerCase().includes('quota')) {
+        this._aiRateLimitUntil = Date.now() + 60000;
         throw new Error('rate_limited');
       }
       throw new Error('ai_error');
@@ -13072,6 +13262,18 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
     let text = this._aiIntroCache.get(cacheKey) || this._aiSessionGet('songIntro', cacheKey);
     if (!text) {
+      // Use the cached AI track info fact if available — avoids a Gemini call
+      // and keeps intro consistent with the AI Info panel's fact field.
+      const _tiKey = ('trackinfo3|' + artistName + '|' + trackTitle).toLowerCase();
+      const _cached = this._aiTrackInfoCache?.get(_tiKey) || this._aiLocalGet('trackInfo', _tiKey);
+      if (_cached?.fact && !_cached._notFound && !_cached._incomplete) {
+        const _words = _cached.fact.replace(/^["\u201c\u201d'\u2018\u2019\s]+|["\u201c\u201d'\u2018\u2019\s]+$/g,'').trim().split(/\s+/);
+        text = (_words.length > 14 ? _words.slice(0,12).join(' ') + '\u2026' : _words.join(' '));
+        this._aiIntroCache.set(cacheKey, text);
+        this._aiSessionSet('songIntro', cacheKey, text);
+      }
+    }
+    if (!text) {
       const hasAI = await this._aiCheckAvailable();
       const _cur = this._hass?.states[this._entity]?.attributes;
       if (_cur?.media_title !== trackTitle || _cur?.media_artist !== artistName) return;
@@ -13080,7 +13282,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       const _cur2 = this._hass?.states[this._entity]?.attributes;
       if (_cur2?.media_title !== trackTitle || _cur2?.media_artist !== artistName) return;
       if (!raw) return;
-      text = raw.replace(/^["'✨\s]+|["'\s]+$/g, '').trim();
+      text = raw.replace(/^["'\u2018\u2019\u201c\u201d\u2728\s]+|["'\s]+$/g, '').trim();
       this._aiIntroCache.set(cacheKey, text);
       this._aiSessionSet('songIntro', cacheKey, text);
     }
@@ -13521,12 +13723,17 @@ Include ALL tracks. Use null for unknown fields.`;
     const cacheKey = ('trackinfo3|' + artistName + '|' + trackTitle).toLowerCase();
     if (!this._aiTrackInfoCache) this._aiTrackInfoCache = new Map();
 
-    // Check sessionStorage before network
+    // Check localStorage/sessionStorage before network
     if (!this._aiTrackInfoCache.has(cacheKey)) {
-      const persisted = this._aiSessionGet('trackInfo', cacheKey);
-      if (persisted) this._aiTrackInfoCache.set(cacheKey, persisted);
+      const persisted = this._aiLocalGet('trackInfo', cacheKey)
+        || this._aiSessionGet('trackInfo', cacheKey);
+      // Only warm the in-session cache for complete, confident results.
+      // _incomplete: will retry AI now. _notFound within TTL: skip AI, show MA fallback.
+      if (persisted && !persisted._incomplete) this._aiTrackInfoCache.set(cacheKey, persisted);
     }
+    // Clear incomplete cached entry so we retry AI
     let data = this._aiTrackInfoCache.get(cacheKey);
+    if (data?._incomplete) { this._aiTrackInfoCache.delete(cacheKey); data = undefined; }
     if (!data) {
       // If artist contains multiple artists (e.g. "Aerosmith & YUNGBLUD"), try the
       // primary artist first — concatenated names often cause hallucinated results.
@@ -13553,9 +13760,23 @@ Include ALL tracks. Use null for unknown fields.`;
           || /no (such|official|known)|does not exist|nonexistent|not (a real|an actual)|cannot (find|confirm)|no record of/i.test(_factLower);
         if (_hallucinated) {
           data = { album: null, year: null, label: null, duration: null, vibe: null, fact: null, similar: [], _notFound: true };
+          // Persist _notFound with a short 7-day TTL so genuinely unknown tracks don't
+          // waste Gemini quota on every session — but still retry after a week in case
+          // the track becomes more widely known or the AI model improves.
+          this._aiLocalSet('trackInfo', cacheKey, { ...data, _notFoundTTL: 7 });
         } else {
-          // Only cache confident results
+          // Mark thin responses as incomplete so next panel open retries AI
+          // rather than serving a permanently empty members/similar/fact panel.
+          const _thin = (!data.members || data.members.length === 0)
+            && (!data.similar || data.similar.length === 0)
+            && !data.fact;
+          if (_thin) data._incomplete = true;
+          // Always cache in-session (prevents duplicate AI calls while panel is open)
           this._aiTrackInfoCache.set(cacheKey, data);
+          // Only persist to localStorage/HA for complete, confident results
+          if (!data._incomplete) {
+            this._aiLocalSet('trackInfo', cacheKey, data);
+          }
         }
       } catch(e) {
         if (_stale()) return;
@@ -19737,6 +19958,7 @@ Include ALL tracks. Use null for unknown fields.`;
         for (const [k, v] of Object.entries(existing)) out[k] = v;
       } catch(_) {}
       for (const [name, url] of this._wikiThumbUrlCache.entries()) {
+        if (url === '__none__') continue; // don't persist "no result" — retry on next session
         out[name] = { url, ts: now };
       }
       // Evict oldest if over cap
@@ -19745,8 +19967,10 @@ Include ALL tracks. Use null for unknown fields.`;
         entries.sort((a, b) => (a[1].ts || 0) - (b[1].ts || 0));
         const keep = Object.fromEntries(entries.slice(entries.length - MAX_ENTRIES));
         localStorage.setItem('crow_wiki_urls', JSON.stringify(keep));
+        this._haStorageSaveWiki();
       } else {
         localStorage.setItem('crow_wiki_urls', JSON.stringify(out));
+        this._haStorageSaveWiki();
       }
     } catch(e) {}
   }
@@ -23619,6 +23843,13 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                   </div>
                   <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="show_media_type_pill"><span class="toggle-track"></span></label>
                 </div>
+                <div class="toggle-item" style="align-items:flex-start;gap:12px;">
+                  <div style="flex:1;">
+                    <div class="toggle-label">Song Intro</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Shows a short AI-generated fact about the playing track below the artist name a few seconds after it starts, then fades away. Off by default.</div>
+                  </div>
+                  <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="song_intro_enabled"><span class="toggle-track"></span></label>
+                </div>
                 <div class="toggle-item">
                   <span class="toggle-label">Use Volume Buttons</span>
                   <label class="toggle-switch"><input type="checkbox" id="volume_control_btn"><span class="toggle-track"></span></label>
@@ -23849,6 +24080,11 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
 
                 <!-- Clear All -->
                 <button id="clear-all-caches-btn" style="width:100%;padding:10px;font-size:13px;font-weight:600;color:#ff453a;background:rgba(255,69,58,0.08);border:1px solid rgba(255,69,58,0.25);border-radius:10px;cursor:pointer;font-family:inherit;margin-top:16px;">&#x1F5D1; Clear All Caches</button>
+
+                <div style="margin-top:10px;padding:10px 0 2px;border-top:1px solid rgba(255,255,255,0.07);">
+                  <div style="font-size:11px;color:#888;line-height:1.5;margin-bottom:8px;">Persistent storage is saved to Home Assistant's database and survives app restarts and cache clears. This includes pins, AI info cache, iTunes artwork, Wikipedia photos and vibe history.</div>
+                  <button id="clear-ha-storage-btn" style="width:100%;padding:10px;font-size:13px;font-weight:600;color:#ff453a;background:rgba(255,69,58,0.08);border:1px solid rgba(255,69,58,0.25);border-radius:10px;cursor:pointer;font-family:inherit;">&#x1F5D1; Clear Persistent Storage</button>
+                </div>
 
               </div>
             </div>
@@ -24531,7 +24767,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
     const starredClearBtn = root.getElementById('starred-stations-clear-btn');
     const updateStarredStatus = () => {
       try {
-        const list = JSON.parse(localStorage.getItem('crow_starred_stations') || '[]');
+        const list = JSON.parse(localStorage.getItem('crow_pin_stations') || '[]');
         if (starredStatus) starredStatus.textContent = list.length === 0 ? 'No pinned stations' : list.length + ' station' + (list.length === 1 ? '' : 's') + ' pinned';
       } catch (_) {
         if (starredStatus) starredStatus.textContent = 'No pinned stations';
@@ -24539,7 +24775,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
     };
     updateStarredStatus();
     if (starredClearBtn) starredClearBtn.onclick = () => {
-      try { localStorage.removeItem('crow_starred_stations'); } catch (_) {}
+      try { localStorage.removeItem('crow_pin_stations'); } catch (_) {}
       updateStarredStatus();
       this._showToast?.('Saved stations cleared');
     };
@@ -24673,13 +24909,13 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
 
     // ── Pinned Items controls ────────────────────────────────────────────
     const PIN_KEYS = [
-      { key: 'crow_starred_stations',   label: 'Radio Stations' },
-      { key: 'crow_starred_podcasts',   label: 'Podcasts' },
-      { key: 'crow_starred_audiobooks', label: 'Audiobooks' },
-      { key: 'crow_starred_track',      label: 'Songs' },
-      { key: 'crow_starred_artist',     label: 'Artists' },
-      { key: 'crow_starred_album',      label: 'Albums' },
-      { key: 'crow_starred_playlist',   label: 'Playlists' },
+      { key: 'crow_pin_stations',   label: 'Radio Stations' },
+      { key: 'crow_pin_podcasts',   label: 'Podcasts' },
+      { key: 'crow_pin_audiobooks', label: 'Audiobooks' },
+      { key: 'crow_pin_track',      label: 'Songs' },
+      { key: 'crow_pin_artist',     label: 'Artists' },
+      { key: 'crow_pin_album',      label: 'Albums' },
+      { key: 'crow_pin_playlist',   label: 'Playlists' },
     ];
 
     const pinsRowsEl = root.getElementById('pins-rows');
@@ -24811,6 +25047,11 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
     if (showMediaTypePillEl) {
       showMediaTypePillEl.checked = this._config?.show_media_type_pill === true;
       showMediaTypePillEl.onchange = (e) => this._updateConfig('show_media_type_pill', e.target.checked);
+    const songIntroEl = root.getElementById('song_intro_enabled');
+    if (songIntroEl) {
+      songIntroEl.checked = this._config.song_intro_enabled === true;
+      songIntroEl.onchange = (e) => this._updateConfig('song_intro_enabled', e.target.checked);
+    }
     }
 
     const resizeBtnSpinEl = root.getElementById('resize_btn_spin');
@@ -25067,7 +25308,10 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
             const keys = [];
             for (let i = 0; i < storage.length; i++) {
               const k = storage.key(i);
-              if (k && (k.startsWith('crow_') || k.startsWith('crow-'))) keys.push(k);
+              // crow_pin_* keys are user pins — intentional data, not cache.
+              // They survive Clear All Caches and are only managed via the
+              // Pinned Items section in the editor.
+              if (k && (k.startsWith('crow_') || k.startsWith('crow-')) && !k.startsWith('crow_pin_')) keys.push(k);
             }
             keys.forEach(k => storage.removeItem(k));
             return keys.length;
@@ -25123,6 +25367,39 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
             clearAllBtn.style.background = '';
           }, 2500);
         } catch(_) {}
+      });
+    }
+
+    // ── Clear Persistent Storage ──────────────────────────────────────────────
+    const clearHaStorageBtn = root.getElementById('clear-ha-storage-btn');
+    if (clearHaStorageBtn) {
+      clearHaStorageBtn.addEventListener('click', async () => {
+        const conn = this._hass?.connection;
+        if (!conn) { this._showToast('⚠️ Not connected to Home Assistant'); return; }
+        try {
+          clearHaStorageBtn.textContent = 'Clearing…';
+          clearHaStorageBtn.disabled = true;
+          const keys = ['crow_pins', 'crow_ai_local', 'crow_itunes_preferred', 'crow_wiki_urls'];
+          await Promise.all(keys.map(k =>
+            conn.sendMessagePromise({ type: 'frontend/set_user_data', key: k, value: null }).catch(() => {})
+          ));
+          // Reset in-memory caches so cleared data isn't served from memory
+          this._starredMemCache   = {};
+          this._wikiThumbUrlCache = new Map();
+          this._haStorageLoaded   = false; // allow reload on next hass set
+          clearHaStorageBtn.textContent = '✓ Cleared';
+          clearHaStorageBtn.style.cssText += ';color:#30d158;border-color:rgba(48,209,88,0.3);background:rgba(48,209,88,0.1);';
+          setTimeout(() => {
+            clearHaStorageBtn.textContent = '🗑 Clear Persistent Storage';
+            clearHaStorageBtn.disabled = false;
+            clearHaStorageBtn.style.color = '';
+            clearHaStorageBtn.style.borderColor = '';
+            clearHaStorageBtn.style.background = '';
+          }, 2500);
+        } catch(_) {
+          clearHaStorageBtn.textContent = '⚠️ Failed — try again';
+          clearHaStorageBtn.disabled = false;
+        }
       });
     }
 
