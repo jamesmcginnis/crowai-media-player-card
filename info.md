@@ -41,12 +41,12 @@ CrowAI is a Home Assistant media player card built specifically for **iPhone**. 
 
 All AI features are powered by **Google Gemini** (required) via Home Assistant's conversation integration.
 
-**Setup:** Install the **Google Generative AI** integration in HA, select **`gemini-2.0-flash`** as the model, ensure the **Generative Language API** is enabled in [Google Cloud Console](https://console.cloud.google.com), then select **Google AI Conversation** as the AI Agent in the card's visual editor.
+**Setup:** Install the **Google Generative AI** integration in HA, select **`gemini-2.0-flash`** as the model, ensure the **Generative Language API** is enabled in [Google Cloud Console](https://console.cloud.google.com), then select **Google AI Conversation** as the AI Agent in the card's visual editor. Other conversation agents (Claude, OpenAI, Home Assistant's built-in AI, Ollama, etc.) may also work for general-knowledge features, but Gemini is recommended and best-tested.
 
 **Free tier limits (gemini-2.0-flash):** 1,500 requests/day · 15 requests/minute — sufficient for normal daily use.
 
 - **AI Info Panel** — single-tap the artwork while music plays: year, label, length, fun fact, genre tags, band members / artist section, album pill, similar tracks; all cached per track
-- **Song Intro** — a short, intriguing one-line fact about the playing track appears below the artist name a few seconds after it starts, then fades away; always on
+- **Song Intro** — a short, intriguing one-line fact about the playing track appears below the artist name a few seconds after it starts, then fades away; off by default, toggle in AI Settings
 - **Vibe Queue Builder** — 100+ vibes across Energy, Calm, Focus, Mood, Social, Decades, Genre, Time, Seasons and Binaural & Noise; builds a themed MA queue instantly; artist exclusion prevents repeats
 - **AI Search** — natural language search across your MA library
 - **Recommendations** — AI-curated track suggestions based on what's playing
@@ -95,8 +95,17 @@ Pin your favourites for one-tap access — pins live in a dedicated section at t
 - **How to pin** — long-press any item (or use the pin icon in its info panel) and choose Pin/Unpin
 - **Limit** — up to 10 pinned items per category
 - **Management** — view and clear pins individually or all at once from the visual editor's Caches & Data section
-- Pins are stored on-device only and aren't synced between browsers or devices
-- Clearing caches (individually or via Clear All Caches) clears pins too — there's no separate backup, so pins are lost if the cache they're stored in is cleared
+- Pins are stored on-device only by default and aren't synced between browsers or devices
+- Enable **Persistent Pin Storage** in Caches & Data to also save pins to Home Assistant's database, so they survive app restarts and cache clears
+- Clearing caches (individually or via Clear All Caches) still clears on-device pins — use **Clear Persistent Storage** to also remove the HA-side copy
+
+## Persistent Storage
+
+By default, pins, AI lookups, iTunes artwork, Wikipedia photos and lyrics are cached in the browser only, which means they can be lost to WKWebView cache evictions or app restarts. Each of these can individually be switched to persistent storage in Caches & Data, which saves them to Home Assistant's own database instead:
+
+- **iTunes Artwork**, **Wikipedia Artwork**, **Pinned Items**, **AI Info** (track info, bios, recommendations, etc.) and **Lyrics** each have their own Persistent Storage toggle
+- Persistent data is loaded once per session and merged with the on-device cache — Home Assistant's copy always wins on conflict
+- A **Clear Persistent Storage** button (separate from the regular cache-clear buttons) removes everything saved this way
 
 ## Synced Lyrics
 
@@ -233,9 +242,9 @@ The editor includes a filter box at the top (search any setting by name) and a R
 
 - **Manage & Reorder Media Players** — accordion list with drag-and-drop reordering; enable/disable per speaker; startup volume per speaker; MA Speaker toggle per speaker
 - **Appearance & Behaviour** *(collapsible)* — Follow HA Theme, Auto Switch, Remember Last Speaker, Media Player Selector, Always Show Library Button, Show Remote Button, Default Radio Mode on Startup, iTunes Artwork Fallback, Show Volume HUD, Live/Podcast/Audiobook Pill, Volume Buttons, Volume Percentage, Scroll Long Text, Lyrics persistence and caching, plus a Startup & Navigation sub-section (Startup View, Retain Current View, Remote Button Row Position, Volume Entity)
-- **Caches & Data** *(collapsible)* — AI caches (bios, trivia, where-to-watch, content warnings, year-in-music, vibe history, AI response cache), artwork caches (iTunes, Wikipedia), library & radio caches (MA library, radio stations, HA registry), lyrics cache & scroll style, and management of all pinned items
+- **Caches & Data** *(collapsible)* — AI caches (bios, trivia, where-to-watch, content warnings, year-in-music, vibe history, AI response cache), artwork caches (iTunes, Wikipedia) with Persistent Storage toggles, library & radio caches (MA library, radio stations, HA registry), lyrics cache & scroll style with its own Persistent Storage toggle, and management of all pinned items including a Persistent Pin Storage toggle and a Clear Persistent Storage button
 - **Visual Effects** — Card Liquid Glass, Remote Liquid Glass, Volume HUD Liquid Glass, Ambient Glow, Library & Queue Row Glow, Artwork Crossfade, Resize Button Spin
-- **✨ AI Settings** — AI Agent selector (Google Gemini required), Share Track service (YouTube Music, Apple Music, Spotify, Tidal, Amazon Music, Deezer), Announce TTS Service
+- **✨ AI Settings** — AI Agent selector (Google Gemini required), Share Track service (YouTube Music, Apple Music, Spotify, Tidal, Amazon Music, Deezer), Announce TTS Service, Song Intro toggle
 - **AI Vibe Artist Seeds** — customisable playlist search terms and radio fallback artist per vibe category
 - **Colours & Themes** *(collapsible)* — Controls Theme (12 presets), Player Icon Theme (8 sets), accent, volume, title, artist, button, +Add pill, volume % and custom background/lyrics colours with live preview strip
 
