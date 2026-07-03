@@ -27,7 +27,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   }
 
   static getStubConfig() {
-    return { entities: [], auto_switch: true, accent_color: '#007AFF', volume_accent: '#007AFF', title_color: '#ffffff', artist_color: '#ffffff', button_color: '#ffffff', player_bg: '#1c1c1e', player_bg_opacity: 100, show_entity_selector: true, volume_control: 'slider', startup_mode: 'compact', remember_view: false, volume_entity: '', ma_entities: [], show_vol_pct: true, vol_pct_color: 'rgba(255,255,255,0.45)', scroll_text: false, remember_last_entity: false, entity_startup_volumes: {}, lyrics_bg: '#0a0a0c', lyrics_text_color: '#ffffff', lyrics_scroll_mode: 'highlight', lyrics_persist: false, lyrics_cache_ttl: 7, lyrics_cache_enabled: true, lyrics_persistent_storage: false, pins_persistent_storage: false, ai_info_persistent_storage: false, ma_library_cache_enabled: true, ma_library_cache_ttl: 1, ma_radio_mode: false, show_ma_library_button: true, use_ha_theme: false, remote_buttons_position: 'bottom', ambient_glow: false, announce_tts_service: '', row_glow: false, show_remote_button: true, ma_ios_library: true, artwork_crossfade: false, icon_theme: 'robot', resize_btn_spin: true, remote_art_blur: true, volume_hud: true, itunes_art: true, controls_theme: 'classic', add_pill_color: '', card_liquid_glass: true, volume_hud_glass: false, ai_conversation_agent: '', share_service: 'youtube_music', song_intro_enabled: false, show_media_type_pill: false };
+    return { entities: [], auto_switch: true, accent_color: '#007AFF', volume_accent: '#007AFF', title_color: '#ffffff', artist_color: '#ffffff', button_color: '#ffffff', player_bg: '#1c1c1e', player_bg_opacity: 100, show_entity_selector: true, volume_control: 'slider', startup_mode: 'compact', remember_view: false, volume_entity: '', ma_entities: [], show_vol_pct: true, vol_pct_color: 'rgba(255,255,255,0.45)', scroll_text: false, remember_last_entity: false, entity_startup_volumes: {}, lyrics_bg: '#0a0a0c', lyrics_text_color: '#ffffff', lyrics_scroll_mode: 'highlight', lyrics_persist: false, lyrics_cache_ttl: 7, lyrics_cache_enabled: true, lyrics_persistent_storage: false, pins_persistent_storage: false, ai_info_persistent_storage: false, itunes_persistent_storage: false, wiki_persistent_storage: false, ma_library_cache_enabled: true, ma_library_cache_ttl: 1, ma_radio_mode: false, show_ma_library_button: true, use_ha_theme: false, remote_buttons_position: 'bottom', ambient_glow: false, announce_tts_service: '', row_glow: false, show_remote_button: true, ma_ios_library: true, artwork_crossfade: false, icon_theme: 'robot', resize_btn_spin: true, remote_art_blur: true, volume_hud: true, itunes_art: true, controls_theme: 'classic', add_pill_color: '', card_liquid_glass: true, volume_hud_glass: false, ai_conversation_agent: '', share_service: 'youtube_music', song_intro_enabled: false, show_media_type_pill: false };
   }
 
   setConfig(config) {
@@ -62,6 +62,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       lyrics_persistent_storage: false,
       pins_persistent_storage: false,
       ai_info_persistent_storage: false,
+      itunes_persistent_storage: false,
+      wiki_persistent_storage: false,
       use_ha_theme: false,
       remote_buttons_position: 'bottom',
       ambient_glow: false,
@@ -8499,7 +8501,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       }
 
       // ── iTunes preferred art ────────────────────────────────────────────────
-      if (itunesRes.status === 'fulfilled' && itunesRes.value?.value) {
+      if (this._config?.itunes_persistent_storage === true &&
+          itunesRes.status === 'fulfilled' && itunesRes.value?.value) {
         const haItunes = itunesRes.value.value;
         if (haItunes && typeof haItunes === 'object') {
           try {
@@ -8512,7 +8515,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       }
 
       // ── Wikipedia photo URL cache ────────────────────────────────────────────
-      if (wikiRes.status === 'fulfilled' && wikiRes.value?.value) {
+      if (this._config?.wiki_persistent_storage === true &&
+          wikiRes.status === 'fulfilled' && wikiRes.value?.value) {
         const haWiki = wikiRes.value.value;
         if (haWiki && typeof haWiki === 'object') {
           try {
@@ -8555,6 +8559,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
   // Write Wikipedia URL cache to HA user data (fire-and-forget, debounced)
   _haStorageSaveWiki() {
+    if (this._config?.wiki_persistent_storage !== true) return;
     const conn = this._hass?.connection;
     if (!conn) return;
     clearTimeout(this._haWikiSaveTimer);
@@ -8610,6 +8615,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
   // Write iTunes preferred art map to HA user data (fire-and-forget, debounced)
   _haStorageSaveItunes() {
+    if (this._config?.itunes_persistent_storage !== true) return;
     const conn = this._hass?.connection;
     if (!conn) return;
     clearTimeout(this._haItunesSaveTimer);
@@ -10171,11 +10177,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         if (nowPinned === null) return;
         _updatePinBtn();
         this._showToast(nowPinned ? '📍 Station pinned' : 'Station unpinned');
-        // Also sync the in-content pin button if visible
-        const _inContentSvg = content.querySelector('#rb-info-star-svg');
-        const _inContentLabel = content.querySelector('#rb-info-star-label');
-        if (_inContentSvg) _inContentSvg.style.fill = nowPinned ? '#FFD60A' : 'rgba(255,255,255,0.4)';
-        if (_inContentLabel) _inContentLabel.textContent = nowPinned ? 'Pinned' : 'Pin Station';
         this._rbRefreshPinnedUI();
       };
     }
@@ -10247,10 +10248,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
               <svg viewBox="0 0 24 24" style="width:11px;height:11px;fill:#63b3ed;flex-shrink:0"><path d="M8 5v14l11-7z"/></svg>
               <span style="font-size:11px;font-weight:600;color:#63b3ed;">Play</span>
             </button>
-            <button id="rb-info-star-btn" style="display:inline-flex;align-items:center;gap:5px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:20px;padding:4px 10px;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;">
-              <svg id="rb-info-star-svg" viewBox="0 0 24 24" style="width:11px;height:11px;fill:${this._rbIsStarred(st) ? '#FFD60A' : 'rgba(255,255,255,0.4)'};flex-shrink:0;transition:fill 0.15s;"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg>
-              <span id="rb-info-star-label" style="font-size:11px;font-weight:600;color:${_pt('dim')};">${this._rbIsStarred(st) ? 'Pinned' : 'Pin Station'}</span>
-            </button>
           </div>
         </div>
       </div>
@@ -10286,23 +10283,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         this._closeInfoPopup();
       }
     });
-
-    // Wire star button in info panel
-    const _starBtn = content.querySelector('#rb-info-star-btn');
-    if (_starBtn) {
-      _starBtn.addEventListener('click', () => {
-        const nowStarred = this._rbToggleStar(st);
-        if (nowStarred === null) return;
-        const svg   = content.querySelector('#rb-info-star-svg');
-        const label = content.querySelector('#rb-info-star-label');
-        if (svg)   svg.style.fill    = nowStarred ? '#FFD60A' : 'rgba(255,255,255,0.4)';
-        if (label) label.textContent = nowStarred ? 'Pinned' : 'Pin Station';
-        this._showToast(nowStarred ? '📍 Station pinned' : 'Station unpinned');
-        // Sync the header pin button
-        _updatePinBtn();
-        this._rbRefreshPinnedUI();
-      });
-    }
 
     // Wire homepage button
     content.querySelector('.rb-homepage-btn')?.addEventListener('click', () => {
@@ -14674,13 +14654,17 @@ Include ALL tracks. Use null for unknown fields.`;
 
     // Modal card
     const card = document.createElement('div');
-    card.style.cssText = 'background:#1c1c1e;border-radius:20px;padding:24px;display:flex;flex-direction:column;align-items:center;gap:14px;max-width:340px;width:85%;max-height:85%;box-sizing:border-box;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.8);position:relative;';
+    card.style.cssText = 'background:#1c1c1e;border-radius:20px;padding:16px 24px 24px;display:flex;flex-direction:column;align-items:center;gap:14px;max-width:340px;width:85%;max-height:85%;box-sizing:border-box;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.8);position:relative;';
 
-    // Close button
+    // Close button row — in normal document flow, above the image, so it
+    // can never visually overlap the artwork regardless of image size
+    const closeRow = document.createElement('div');
+    closeRow.style.cssText = 'display:flex;justify-content:flex-end;width:100%;';
     const closeBtn = document.createElement('button');
     closeBtn.textContent = '✕';
-    closeBtn.style.cssText = 'position:absolute;top:10px;right:10px;width:28px;height:28px;border-radius:50%;border:none;background:rgba(255,255,255,0.12);color:#fff;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;';
+    closeBtn.style.cssText = 'width:28px;height:28px;border-radius:50%;border:none;background:rgba(255,255,255,0.12);color:#fff;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;flex-shrink:0;';
     closeBtn.addEventListener('click', (e) => { e.stopPropagation(); backdrop.remove(); });
+    closeRow.appendChild(closeBtn);
 
     // Photo
     const img = document.createElement('img');
@@ -14692,7 +14676,7 @@ Include ALL tracks. Use null for unknown fields.`;
         ? 'width:min(280px, 100%);aspect-ratio:1/1;height:auto;border-radius:12px;object-fit:cover;'  // music: square
         : 'width:min(200px, 60%);aspect-ratio:1/1;height:auto;border-radius:50%;object-fit:cover;border:3px solid rgba(255,255,255,0.1);'; // person: circle
 
-    card.appendChild(closeBtn);
+    card.appendChild(closeRow);
     card.appendChild(img);
     if (name) {
       const label = document.createElement('div');
@@ -15216,7 +15200,7 @@ Include ALL tracks. Use null for unknown fields.`;
     const _albumBarAllMA = (() => { let ma = this._getValidMASpeakers(true); return ma; })();
     const _albumBarTarget = (_albumBarAllMA.includes(this._lastMAPlayTarget) ? this._lastMAPlayTarget : null) || this._resolveMATargetEntity() || _albumBarAllMA[0] || this._entity;
     const _genreHtml = (albumMeta.genre||[]).length
-      ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;">${(albumMeta.genre||[]).map(g=>`<span style="display:inline-block;padding:4px 10px;border-radius:20px;background:${this._pt("btnBg")};border:1px solid ${this._pt("border")};font-size:11px;color:${this._pt("text")};font-weight:500">${g}</span>`).join('')}</div>`
+      ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;">${(albumMeta.genre||[]).map(g=>`<span class="bio-genre-tag" data-tag="${g.replace(/"/g,'&quot;')}" style="display:inline-block;padding:4px 10px;border-radius:20px;background:${this._pt("btnBg")};border:1px solid ${this._pt("border")};font-size:11px;color:${this._pt("text")};font-weight:500">${g}</span>`).join('')}</div>`
       : '';
     const _metaCardsHtml = (albumMeta.year||albumMeta.label)
       ? `<div style="display:grid;grid-template-columns:${albumMeta.year&&albumMeta.label?'1fr 1fr':'1fr'};gap:8px;margin-bottom:10px;">
@@ -15280,6 +15264,9 @@ Include ALL tracks. Use null for unknown fields.`;
         this._showBioPhotoLightbox(_albumArtImg.src || artUrl, `${albumName}${artistName ? ' · ' + artistName : ''}`, body, 'square');
       });
     }
+
+    // Genre tag pills
+    this._wireGenreTagClicks(body);
 
     // Action bar
     body.querySelectorAll('.ai-album-action-btn').forEach(btn => {
@@ -20006,6 +19993,18 @@ Include ALL tracks. Use null for unknown fields.`;
       } catch(_) {}
     }
 
+    // Re-wire art thumbnail tap → lightbox (lost when content.innerHTML is restored)
+    const _artImg2 = content.querySelector('.info-hero-art-img');
+    if (_artImg2) {
+      _artImg2.style.pointerEvents = 'auto';
+      _artImg2.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const _tTitle  = content.dataset.musicTrackTitle  || '';
+        const _tArtist = content.dataset.musicArtistName || '';
+        self._showBioPhotoLightbox(_artImg2.src || artUrl, `${_tTitle}${_tArtist ? ' · ' + _tArtist : ''}`, content, 'square');
+      });
+    }
+
     // Re-wire genre tag pills in any bio screen
     self._wireGenreTagClicks(content);
   }
@@ -23737,6 +23736,8 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       lyrics_persistent_storage: false,
       pins_persistent_storage: false,
       ai_info_persistent_storage: false,
+      itunes_persistent_storage: false,
+      wiki_persistent_storage: false,
       ma_library_cache_enabled: true,
       ma_radio_mode: false, ambient_glow: false, row_glow: false,
       show_remote_button: true, ma_ios_library: true,
@@ -23860,6 +23861,10 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
     if (pinsPersistentStorageInput) pinsPersistentStorageInput.checked = this._config.pins_persistent_storage === true;
     const aiInfoPersistentStorageInput = root.getElementById('ai_info_persistent_storage');
     if (aiInfoPersistentStorageInput) aiInfoPersistentStorageInput.checked = this._config.ai_info_persistent_storage === true;
+    const itunesPersistentStorageInput = root.getElementById('itunes_persistent_storage');
+    if (itunesPersistentStorageInput) itunesPersistentStorageInput.checked = this._config.itunes_persistent_storage === true;
+    const wikiPersistentStorageInput = root.getElementById('wiki_persistent_storage');
+    if (wikiPersistentStorageInput) wikiPersistentStorageInput.checked = this._config.wiki_persistent_storage === true;
     // MA library cache initial state
     const maLibCacheEnabledInit = root.getElementById('ma_library_cache_enabled');
     if (maLibCacheEnabledInit) maLibCacheEnabledInit.checked = this._config.ma_library_cache_enabled !== false;
@@ -24162,6 +24167,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
               <svg id="appearanceChevron" viewBox="0 0 24 24" style="width:18px;height:18px;fill:var(--secondary-text-color, rgba(0,0,0,0.5));transition:transform 0.25s ease;flex-shrink:0;"><path d="M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z"/></svg>
             </div>
             <div id="appearanceBody" style="display:none;flex-direction:column;margin-top:10px;">
+              <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;">General</div>
               <div class="toggle-list">
                 <div class="toggle-item" style="align-items:flex-start;gap:12px;">
                   <div style="flex:1;">
@@ -24170,18 +24176,6 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                   </div>
                   <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="use_ha_theme"><span class="toggle-track"></span></label>
                 </div>
-                <div class="toggle-item">
-                  <span class="toggle-label">Auto Switch to Playing Device</span>
-                  <label class="toggle-switch"><input type="checkbox" id="auto_switch" checked><span class="toggle-track"></span></label>
-                </div>
-                <div class="toggle-item" id="remember_last_entity_row">
-                  <span class="toggle-label">Remember Last Selected Speaker</span>
-                  <label class="toggle-switch"><input type="checkbox" id="remember_last_entity"><span class="toggle-track"></span></label>
-                </div>
-                <div class="toggle-item">
-                  <span class="toggle-label">Show Media Player Selector</span>
-                  <label class="toggle-switch"><input type="checkbox" id="show_entity_selector" checked><span class="toggle-track"></span></label>
-                </div>
                 <div class="toggle-item" style="align-items:flex-start;gap:12px;">
                   <div style="flex:1;">
                     <div class="toggle-label">Always Show Library Button</div>
@@ -24189,9 +24183,12 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                   </div>
                   <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="show_ma_library_button"><span class="toggle-track"></span></label>
                 </div>
-                <div class="toggle-item">
-                  <span class="toggle-label">Show Remote Button</span>
-                  <label class="toggle-switch"><input type="checkbox" id="show_remote_button" checked><span class="toggle-track"></span></label>
+                <div class="toggle-item" style="align-items:flex-start;gap:12px;">
+                  <div style="flex:1;">
+                    <div class="toggle-label">Show Remote Button</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Shows the Apple TV-style remote control button on supported entities.</div>
+                  </div>
+                  <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="show_remote_button" checked><span class="toggle-track"></span></label>
                 </div>
                 <div class="toggle-item" style="align-items:flex-start;gap:12px;">
                   <div style="flex:1;">
@@ -24209,6 +24206,24 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                 </div>
                 <div class="toggle-item" style="align-items:flex-start;gap:12px;">
                   <div style="flex:1;">
+                    <div class="toggle-label">Show Live/Podcast/Audiobook Pill</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Shows a small badge on the artwork screen identifying radio, podcast, or audiobook content.</div>
+                  </div>
+                  <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="show_media_type_pill"><span class="toggle-track"></span></label>
+                </div>
+                <div class="toggle-item" style="align-items:flex-start;gap:12px;">
+                  <div style="flex:1;">
+                    <div class="toggle-label">Scroll Long Track / Artist Text</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Scrolls track and artist names that are too long to fit, instead of truncating them.</div>
+                  </div>
+                  <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="scroll_text"><span class="toggle-track"></span></label>
+                </div>
+              </div>
+
+              <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin:16px 0 10px;">Volume</div>
+              <div class="toggle-list">
+                <div class="toggle-item" style="align-items:flex-start;gap:12px;">
+                  <div style="flex:1;">
                     <div class="toggle-label">Show Volume HUD</div>
                     <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Shows a brief overlay with the current level whenever volume changes.</div>
                   </div>
@@ -24216,37 +24231,17 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                 </div>
                 <div class="toggle-item" style="align-items:flex-start;gap:12px;">
                   <div style="flex:1;">
-                    <div class="toggle-label">Show Live/Podcast/Audiobook Pill</div>
-                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Shows a small badge on the artwork screen identifying radio, podcast, or audiobook content. Off by default.</div>
+                    <div class="toggle-label">Use Volume Buttons</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Replaces the volume slider with tap-to-adjust buttons.</div>
                   </div>
-                  <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="show_media_type_pill"><span class="toggle-track"></span></label>
+                  <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="volume_control_btn"><span class="toggle-track"></span></label>
                 </div>
                 <div class="toggle-item" style="align-items:flex-start;gap:12px;">
                   <div style="flex:1;">
-                    <div class="toggle-label">Song Intro</div>
-                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Shows a short AI-generated fact about the playing track below the artist name a few seconds after it starts, then fades away. Off by default.</div>
+                    <div class="toggle-label">Show Volume Percentage</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Shows the exact volume percentage next to the volume control.</div>
                   </div>
-                  <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="song_intro_enabled"><span class="toggle-track"></span></label>
-                </div>
-                <div class="toggle-item">
-                  <span class="toggle-label">Use Volume Buttons</span>
-                  <label class="toggle-switch"><input type="checkbox" id="volume_control_btn"><span class="toggle-track"></span></label>
-                </div>
-                <div class="toggle-item">
-                  <span class="toggle-label">Show Volume Percentage</span>
-                  <label class="toggle-switch"><input type="checkbox" id="show_vol_pct" checked><span class="toggle-track"></span></label>
-                </div>
-                <div class="toggle-item">
-                  <span class="toggle-label">Scroll Long Track / Artist Text</span>
-                  <label class="toggle-switch"><input type="checkbox" id="scroll_text"><span class="toggle-track"></span></label>
-                </div>
-                <div class="toggle-item">
-                  <span class="toggle-label">Keep Lyrics Open Between Tracks</span>
-                  <label class="toggle-switch"><input type="checkbox" id="lyrics_persist"><span class="toggle-track"></span></label>
-                </div>
-                <div class="toggle-item">
-                  <span class="toggle-label">Cache Lyrics</span>
-                  <label class="toggle-switch"><input type="checkbox" id="lyrics_cache_enabled" checked><span class="toggle-track"></span></label>
+                  <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="show_vol_pct" checked><span class="toggle-track"></span></label>
                 </div>
               </div>
 
@@ -24254,7 +24249,31 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
               <div style="margin-top:16px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.07);">
                 <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;">Startup &amp; Navigation</div>
 
-                <div style="margin-bottom:14px;">
+                <div class="toggle-list">
+                  <div class="toggle-item" style="align-items:flex-start;gap:12px;">
+                    <div style="flex:1;">
+                      <div class="toggle-label">Auto Switch to Playing Device</div>
+                      <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Automatically switches the card to whichever configured speaker starts playing, so you don't have to select it manually.</div>
+                    </div>
+                    <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="auto_switch" checked><span class="toggle-track"></span></label>
+                  </div>
+                  <div class="toggle-item" id="remember_last_entity_row" style="align-items:flex-start;gap:12px;">
+                    <div style="flex:1;">
+                      <div class="toggle-label">Remember Last Selected Speaker</div>
+                      <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Reopens the card on the speaker you had selected last time, instead of the default.</div>
+                    </div>
+                    <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="remember_last_entity"><span class="toggle-track"></span></label>
+                  </div>
+                  <div class="toggle-item" style="align-items:flex-start;gap:12px;">
+                    <div style="flex:1;">
+                      <div class="toggle-label">Show Media Player Selector</div>
+                      <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Shows the speaker-switching row at the top of the card. Turn off if you only ever use one speaker.</div>
+                    </div>
+                    <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="show_entity_selector" checked><span class="toggle-track"></span></label>
+                  </div>
+                </div>
+
+                <div style="margin-bottom:14px;margin-top:14px;">
                   <div style="font-size:13px;font-weight:500;margin-bottom:8px;">Startup View</div>
                   <div class="segmented" id="startup-mode-segmented">
                     <input type="radio" name="startup_mode" id="sm_compact"   value="compact"><label for="sm_compact">Compact</label>
@@ -24367,42 +24386,62 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
 
                 <!-- Artwork Caches -->
                 <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin:14px 0 8px;">Artwork Caches</div>
-                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,0.07);">
-                  <div>
-                    <div style="font-size:13px;font-weight:500;margin-bottom:2px;">iTunes Artwork</div>
-                    <span style="font-size:12px;color:#888;" id="itunes-cache-status">Calculating…</span>
+                <div style="padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,0.07);">
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+                    <div>
+                      <div style="font-size:13px;font-weight:500;margin-bottom:2px;">iTunes Artwork</div>
+                      <span style="font-size:12px;color:#888;" id="itunes-cache-status">Calculating…</span>
+                    </div>
+                    <button id="itunes-cache-clear-btn" style="font-size:12px;font-weight:500;color:#ff453a;background:rgba(255,69,58,0.12);border:1px solid rgba(255,69,58,0.3);border-radius:8px;padding:5px 12px;cursor:pointer;white-space:nowrap;flex-shrink:0;">Clear</button>
                   </div>
-                  <button id="itunes-cache-clear-btn" style="font-size:12px;font-weight:500;color:#ff453a;background:rgba(255,69,58,0.12);border:1px solid rgba(255,69,58,0.3);border-radius:8px;padding:5px 12px;cursor:pointer;white-space:nowrap;">Clear</button>
+                  <div class="toggle-item" style="align-items:flex-start;gap:12px;padding:10px 0 0;">
+                    <div style="flex:1;">
+                      <div class="toggle-label">Persistent Storage</div>
+                      <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Off: cached on this device only. On: also saved permanently so it survives app restarts.</div>
+                    </div>
+                    <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="itunes_persistent_storage"><span class="toggle-track"></span></label>
+                  </div>
                 </div>
-                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.07);">
-                  <div>
-                    <div style="font-size:13px;font-weight:500;margin-bottom:2px;">Wikipedia Artwork</div>
-                    <span style="font-size:12px;color:#888;" id="wiki-cache-status">Calculating…</span>
+                <div style="padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.07);">
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+                    <div>
+                      <div style="font-size:13px;font-weight:500;margin-bottom:2px;">Wikipedia Artwork</div>
+                      <span style="font-size:12px;color:#888;" id="wiki-cache-status">Calculating…</span>
+                    </div>
+                    <button id="wiki-cache-clear-btn" style="font-size:12px;font-weight:500;color:#ff453a;background:rgba(255,69,58,0.12);border:1px solid rgba(255,69,58,0.3);border-radius:8px;padding:5px 12px;cursor:pointer;white-space:nowrap;flex-shrink:0;">Clear</button>
                   </div>
-                  <button id="wiki-cache-clear-btn" style="font-size:12px;font-weight:500;color:#ff453a;background:rgba(255,69,58,0.12);border:1px solid rgba(255,69,58,0.3);border-radius:8px;padding:5px 12px;cursor:pointer;white-space:nowrap;">Clear</button>
+                  <div class="toggle-item" style="align-items:flex-start;gap:12px;padding:10px 0 0;">
+                    <div style="flex:1;">
+                      <div class="toggle-label">Persistent Storage</div>
+                      <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Off: cached on this device only. On: also saved permanently so it survives app restarts.</div>
+                    </div>
+                    <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="wiki_persistent_storage"><span class="toggle-track"></span></label>
+                  </div>
                 </div>
 
                 <!-- Library & Radio -->
                 <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin:14px 0 8px;">Library &amp; Radio</div>
-                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,0.07);">
-                  <div style="flex:1;min-width:0;">
-                    <div style="font-size:13px;font-weight:500;margin-bottom:2px;">Music Library Cache</div>
-                    <div style="font-size:11px;color:#888;margin-bottom:6px;line-height:1.4;">Saves library tab contents for instant re-opens.</div>
-                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-                      <label class="toggle-switch" style="flex-shrink:0"><input type="checkbox" id="ma_library_cache_enabled" checked><span class="toggle-track"></span></label>
-                      <span style="font-size:12px;color:#888;">Enable</span>
+                <div style="padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,0.07);">
+                  <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;">
+                    <div style="flex:1;min-width:0;">
+                      <div style="font-size:13px;font-weight:500;margin-bottom:2px;">Music Library Cache</div>
+                      <div style="font-size:11px;color:#888;margin-bottom:6px;line-height:1.4;">Saves library tab contents for instant re-opens.</div>
                     </div>
-                    <div id="ma-library-cache-ttl-section">
-                      <div class="segmented" id="ma-library-cache-ttl-segmented" style="margin-bottom:6px;">
-                        <input type="radio" name="ma_library_cache_ttl" id="mlct_1"  value="1" ><label for="mlct_1">1 Day</label>
-                        <input type="radio" name="ma_library_cache_ttl" id="mlct_3"  value="3" ><label for="mlct_3">3 Days</label>
-                        <input type="radio" name="ma_library_cache_ttl" id="mlct_7"  value="7" ><label for="mlct_7">1 Week</label>
-                        <input type="radio" name="ma_library_cache_ttl" id="mlct_30" value="30"><label for="mlct_30">30 Days</label>
-                      </div>
-                    </div>
-                    <span style="font-size:12px;color:#888;" id="ma-library-cache-status">Calculating…</span>
+                    <button id="ma-library-cache-clear-btn" style="font-size:12px;font-weight:500;color:#ff453a;background:rgba(255,69,58,0.12);border:1px solid rgba(255,69,58,0.3);border-radius:8px;padding:5px 12px;cursor:pointer;white-space:nowrap;flex-shrink:0;">Clear</button>
                   </div>
-                  <button id="ma-library-cache-clear-btn" style="font-size:12px;font-weight:500;color:#ff453a;background:rgba(255,69,58,0.12);border:1px solid rgba(255,69,58,0.3);border-radius:8px;padding:5px 12px;cursor:pointer;white-space:nowrap;align-self:flex-start;flex-shrink:0;">Clear</button>
+                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                    <label class="toggle-switch" style="flex-shrink:0"><input type="checkbox" id="ma_library_cache_enabled" checked><span class="toggle-track"></span></label>
+                    <span style="font-size:12px;color:#888;">Enable</span>
+                  </div>
+                  <div id="ma-library-cache-ttl-section">
+                    <div class="segmented" id="ma-library-cache-ttl-segmented" style="margin-bottom:6px;">
+                      <input type="radio" name="ma_library_cache_ttl" id="mlct_1"  value="1" ><label for="mlct_1">1 Day</label>
+                      <input type="radio" name="ma_library_cache_ttl" id="mlct_3"  value="3" ><label for="mlct_3">3 Days</label>
+                      <input type="radio" name="ma_library_cache_ttl" id="mlct_7"  value="7" ><label for="mlct_7">1 Week</label>
+                      <input type="radio" name="ma_library_cache_ttl" id="mlct_30" value="30"><label for="mlct_30">30 Days</label>
+                    </div>
+                  </div>
+                  <span style="font-size:12px;color:#888;" id="ma-library-cache-status">Calculating…</span>
                 </div>
                 <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.07);">
                   <div>
@@ -24428,6 +24467,20 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                     <input type="radio" name="lyrics_scroll_mode" id="lsm_scroll"    value="scroll"   ><label for="lsm_scroll">Scroll Only</label>
                     <input type="radio" name="lyrics_scroll_mode" id="lsm_none"      value="none"     ><label for="lsm_none">Off</label>
                   </div>
+                </div>
+                <div class="toggle-item" style="align-items:flex-start;gap:12px;padding-top:10px;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,0.07);">
+                  <div style="flex:1;">
+                    <div class="toggle-label">Keep Lyrics Open Between Tracks</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Keeps the lyrics panel open when the track changes, instead of closing it automatically.</div>
+                  </div>
+                  <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="lyrics_persist"><span class="toggle-track"></span></label>
+                </div>
+                <div class="toggle-item" style="align-items:flex-start;gap:12px;padding-top:10px;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,0.07);">
+                  <div style="flex:1;">
+                    <div class="toggle-label">Cache Lyrics</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Caches fetched lyrics so repeat lookups for the same song are instant instead of re-fetching every time.</div>
+                  </div>
+                  <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="lyrics_cache_enabled" checked><span class="toggle-track"></span></label>
                 </div>
                 <div style="padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.07);">
                   <div style="font-size:13px;font-weight:500;margin-bottom:8px;">Save Lyrics For</div>
@@ -24498,7 +24551,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
             <div id="cardGlassRow" style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding-bottom:12px;border-bottom:1px solid rgba(255,255,255,0.07);">
               <div>
                 <div style="font-size:14px;font-weight:500;">Card Liquid Glass</div>
-                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Makes the card background transparent with a frosted-glass blur effect. On by default. Turn off to use a custom background colour.</div>
+                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Makes the card background transparent with a frosted-glass blur effect. Turn off to use a custom background colour.</div>
                 <div id="cardGlassDisabledNote" style="display:none;font-size:11px;color:rgba(255,159,10,0.9);margin-top:6px;line-height:1.4;">Disabled — your current Home Assistant theme is light, so a solid theme-matched background is used instead for readability.</div>
               </div>
               <label class="toggle-switch" style="flex-shrink:0"><input type="checkbox" id="card_liquid_glass" checked><span class="toggle-track"></span></label>
@@ -24507,7 +24560,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
             <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid rgba(255,255,255,0.07);">
               <div>
                 <div style="font-size:14px;font-weight:500;">Remote Liquid Glass</div>
-                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Show a blurred version of the movie/show artwork behind the Apple TV remote control pad. On by default.</div>
+                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Show a blurred version of the movie/show artwork behind the Apple TV remote control pad.</div>
               </div>
               <label class="toggle-switch" style="flex-shrink:0"><input type="checkbox" id="remote_art_blur" checked><span class="toggle-track"></span></label>
             </div>
@@ -24523,7 +24576,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
             <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid rgba(255,255,255,0.07);">
               <div>
                 <div style="font-size:14px;font-weight:500;">Ambient Glow</div>
-                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Extracts the dominant colour from the artwork and applies a subtle glow behind it. Off by default.</div>
+                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Extracts the dominant colour from the artwork and applies a subtle glow behind it.</div>
               </div>
               <label class="toggle-switch" style="flex-shrink:0"><input type="checkbox" id="ambient_glow"><span class="toggle-track"></span></label>
             </div>
@@ -24531,7 +24584,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
             <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid rgba(255,255,255,0.07);">
               <div>
                 <div style="font-size:14px;font-weight:500;">Library &amp; Queue Row Glow</div>
-                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Adds a subtle accent-colour glow to rows in the library browser and queue panel. Off by default.</div>
+                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Adds a subtle accent-colour glow to rows in the library browser and queue panel.</div>
               </div>
               <label class="toggle-switch" style="flex-shrink:0"><input type="checkbox" id="row_glow"><span class="toggle-track"></span></label>
             </div>
@@ -24539,7 +24592,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
             <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid rgba(255,255,255,0.07);">
               <div>
                 <div style="font-size:14px;font-weight:500;">Artwork Crossfade</div>
-                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">A cinematic fade-to-black transition between track artwork changes. Off by default.</div>
+                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">A cinematic fade-to-black transition between track artwork changes.</div>
               </div>
               <label class="toggle-switch" style="flex-shrink:0"><input type="checkbox" id="artwork_crossfade"><span class="toggle-track"></span></label>
             </div>
@@ -24547,7 +24600,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
             <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid rgba(255,255,255,0.07);">
               <div>
                 <div style="font-size:14px;font-weight:500;">Resize Button Spin</div>
-                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Spins the compact/maximise icon when toggling between views. On by default.</div>
+                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Spins the compact/maximise icon when toggling between views.</div>
               </div>
               <label class="toggle-switch" style="flex-shrink:0"><input type="checkbox" id="resize_btn_spin" checked><span class="toggle-track"></span></label>
             </div>
@@ -24588,6 +24641,13 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                 <option value="">Auto-detect</option>
               </select>
             </div>
+            <div class="toggle-item" style="align-items:flex-start;gap:12px;margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.07);">
+              <div style="flex:1;">
+                <div class="toggle-label">Song Intro</div>
+                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Shows a short AI-generated fact about the playing track below the artist name a few seconds after it starts, then fades away.</div>
+              </div>
+              <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="song_intro_enabled"><span class="toggle-track"></span></label>
+            </div>
           </div>
         </div>
 
@@ -24597,7 +24657,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
           <div class="card-block" style="padding:12px;">
 
             <!-- ── AI Mood Prompts ─────────────────────────────────────── -->
-            <div style="margin-top:16px;border-top:1px solid rgba(255,255,255,0.07);padding-top:14px;">
+            <div>
               <div id="moodPromptHeader" style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;-webkit-tap-highlight-color:transparent;padding-bottom:2px;">
                 <div style="display:flex;align-items:center;gap:10px;">
                   <div style="width:28px;height:28px;border-radius:8px;background:rgba(99,179,237,0.15);border:1px solid rgba(99,179,237,0.25);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
@@ -24620,8 +24680,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
           </div>
         </div>
 
-
-      </div>        <div>
+        <div>
           <div class="section-title">Colours &amp; Themes</div>
           <div class="card-block" style="padding:12px;">
             <div id="coloursHeader" style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;-webkit-tap-highlight-color:transparent;padding-bottom:2px;">
@@ -24687,6 +24746,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
 
         <!-- Media Info API Keys -->
 
+      </div>
     `;
     this._setupSearch();
     this._setupReordering();
@@ -25172,6 +25232,53 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       } else {
         // Just turned off — remove the HA copy but keep the local cache as-is
         this._hass?.connection?.sendMessagePromise({ type: 'frontend/set_user_data', key: 'crow_ai_local', value: null }).catch(() => {});
+      }
+    };
+    const itunesPersistentStorageEl = root.getElementById('itunes_persistent_storage');
+    if (itunesPersistentStorageEl) itunesPersistentStorageEl.onchange = async (e) => {
+      this._updateConfig('itunes_persistent_storage', e.target.checked);
+      if (e.target.checked) {
+        // Just turned on — pull down anything already saved, merge (HA wins), push back up
+        try {
+          const res = await this._hass?.connection?.sendMessagePromise({ type: 'frontend/get_user_data', key: 'crow_itunes_preferred' });
+          const haItunes = res?.value;
+          let merged = null;
+          if (haItunes && typeof haItunes === 'object') {
+            const local = JSON.parse(localStorage.getItem('crow_itunes_preferred') || '{}');
+            merged = { ...local, ...haItunes };
+            localStorage.setItem('crow_itunes_preferred', JSON.stringify(merged));
+            if (this._itunesPreferred) Object.assign(this._itunesPreferred, haItunes);
+          }
+        } catch (_) {}
+        this._haStorageSaveItunes();
+      } else {
+        // Just turned off — remove the HA copy but keep the local cache as-is
+        this._hass?.connection?.sendMessagePromise({ type: 'frontend/set_user_data', key: 'crow_itunes_preferred', value: null }).catch(() => {});
+      }
+    };
+    const wikiPersistentStorageEl = root.getElementById('wiki_persistent_storage');
+    if (wikiPersistentStorageEl) wikiPersistentStorageEl.onchange = async (e) => {
+      this._updateConfig('wiki_persistent_storage', e.target.checked);
+      if (e.target.checked) {
+        // Just turned on — pull down anything already saved, merge (HA wins), push back up
+        try {
+          const res = await this._hass?.connection?.sendMessagePromise({ type: 'frontend/get_user_data', key: 'crow_wiki_urls' });
+          const haWiki = res?.value;
+          if (haWiki && typeof haWiki === 'object') {
+            const local = JSON.parse(localStorage.getItem('crow_wiki_urls') || '{}');
+            const merged = { ...local, ...haWiki };
+            localStorage.setItem('crow_wiki_urls', JSON.stringify(merged));
+            if (this._wikiThumbUrlCache) {
+              Object.entries(haWiki).forEach(([name, entry]) => {
+                if (entry?.url && entry.url !== '__none__') this._wikiThumbUrlCache.set(name, entry.url);
+              });
+            }
+          }
+        } catch (_) {}
+        this._haStorageSaveWiki();
+      } else {
+        // Just turned off — remove the HA copy but keep the local cache as-is
+        this._hass?.connection?.sendMessagePromise({ type: 'frontend/set_user_data', key: 'crow_wiki_urls', value: null }).catch(() => {});
       }
     };
     const clearBtn    = root.getElementById('lyrics-cache-clear-btn');
@@ -26209,6 +26316,8 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       lyrics_persistent_storage: false,
       pins_persistent_storage: false,
       ai_info_persistent_storage: false,
+      itunes_persistent_storage: false,
+      wiki_persistent_storage: false,
       ma_library_cache_enabled: true,
       ma_radio_mode: false, ambient_glow: false, row_glow: false,
       show_remote_button: true, ma_ios_library: true,
