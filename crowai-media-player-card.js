@@ -27,7 +27,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   }
 
   static getStubConfig() {
-    return { entities: [], auto_switch: true, accent_color: '#007AFF', volume_accent: '#007AFF', title_color: '#ffffff', artist_color: '#ffffff', button_color: '#ffffff', player_bg: '#1c1c1e', player_bg_opacity: 100, show_entity_selector: true, volume_control: 'slider', startup_mode: 'compact', remember_view: false, volume_entity: '', ma_entities: [], show_vol_pct: true, vol_pct_color: 'rgba(255,255,255,0.45)', scroll_text: false, remember_last_entity: false, entity_startup_volumes: {}, lyrics_bg: '#0a0a0c', lyrics_text_color: '#ffffff', lyrics_scroll_mode: 'highlight', lyrics_persist: false, lyrics_cache_ttl: 7, lyrics_cache_enabled: true, ma_library_cache_enabled: true, ma_library_cache_ttl: 1, ma_radio_mode: false, show_ma_library_button: true, use_ha_theme: false, remote_buttons_position: 'bottom', ambient_glow: false, announce_tts_service: '', row_glow: false, show_remote_button: true, ma_ios_library: true, artwork_crossfade: false, icon_theme: 'robot', resize_btn_spin: true, remote_art_blur: true, volume_hud: true, itunes_art: true, controls_theme: 'classic', add_pill_color: '', card_liquid_glass: true, volume_hud_glass: false, ai_conversation_agent: '', share_service: 'youtube_music', song_intro_enabled: false, show_media_type_pill: false };
+    return { entities: [], auto_switch: true, accent_color: '#007AFF', volume_accent: '#007AFF', title_color: '#ffffff', artist_color: '#ffffff', button_color: '#ffffff', player_bg: '#1c1c1e', player_bg_opacity: 100, show_entity_selector: true, volume_control: 'slider', startup_mode: 'compact', remember_view: false, volume_entity: '', ma_entities: [], show_vol_pct: true, vol_pct_color: 'rgba(255,255,255,0.45)', scroll_text: false, remember_last_entity: false, entity_startup_volumes: {}, lyrics_bg: '#0a0a0c', lyrics_text_color: '#ffffff', lyrics_scroll_mode: 'highlight', lyrics_persist: false, lyrics_cache_ttl: 7, lyrics_cache_enabled: true, lyrics_persistent_storage: false, pins_persistent_storage: false, ai_info_persistent_storage: false, ma_library_cache_enabled: true, ma_library_cache_ttl: 1, ma_radio_mode: false, show_ma_library_button: true, use_ha_theme: false, remote_buttons_position: 'bottom', ambient_glow: false, announce_tts_service: '', row_glow: false, show_remote_button: true, ma_ios_library: true, artwork_crossfade: false, icon_theme: 'robot', resize_btn_spin: true, remote_art_blur: true, volume_hud: true, itunes_art: true, controls_theme: 'classic', add_pill_color: '', card_liquid_glass: true, volume_hud_glass: false, ai_conversation_agent: '', share_service: 'youtube_music', song_intro_enabled: false, show_media_type_pill: false };
   }
 
   setConfig(config) {
@@ -59,6 +59,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       lyrics_persist: false,
       lyrics_cache_ttl: 7,
       lyrics_cache_enabled: true,
+      lyrics_persistent_storage: false,
+      pins_persistent_storage: false,
+      ai_info_persistent_storage: false,
       use_ha_theme: false,
       remote_buttons_position: 'bottom',
       ambient_glow: false,
@@ -428,7 +431,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         if (this._moodLoadingEntity === this._entity) {
           this._moodLoadingEntity = null;
           if (this._moodLoadingLabel) {
-            this._showToast(`✓ ${this._moodLoadingLabel} playing`, 2500);
             this._moodLoadingLabel = null;
           }
         }
@@ -4349,7 +4351,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
                   const _rmUri    = _rmState?.attributes?.media_content_id;
                   const _rmTarget = this._resolveMATargetEntity() || this._entity;
                   if (_rmUri) {
-                    this._showToast('Radio mode on — restarting from current track…', 3000);
                     this._hass.connection.sendMessagePromise({
                       type: 'call_service', domain: 'music_assistant', service: 'play_media',
                       service_data: { entity_id: _rmTarget, media_id: _rmUri,
@@ -4372,8 +4373,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
                   } else {
                     this._showToast('Radio mode on — play a track to start.', 3000);
                   }
-                } else {
-                  this._showToast('Radio mode off', 2500);
                 }
               });
             }
@@ -5311,7 +5310,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
             if (newVal) {
               if (uri) {
-                this._showToast('Radio mode on \u2014 restarting from current track\u2026', 3000);
                 this._hass.connection.sendMessagePromise({
                   type: 'call_service', domain: 'music_assistant', service: 'play_media',
                   service_data: { entity_id: targetEntity, media_id: uri,
@@ -5333,8 +5331,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
               } else {
                 this._showToast('Radio mode on \u2014 play a track to start.', 3000);
               }
-            } else {
-              this._showToast('Radio mode off', 2500);
             }
           }
           // Show friendly notification overlay
@@ -5491,56 +5487,23 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             infoContent.scrollTop = _savedScrollTop;
           }, { once: true });
           infoContent.querySelector('#queueClearConfirm')?.addEventListener('click', async () => {
-            const _hasRemove = !!(this._hass?.services?.mass_queue?.remove_queue_item);
-            const _hasGetItems = !!(this._hass?.services?.mass_queue?.get_queue_items);
+            // Close the panel right away — the clear itself happens in the background
+            this._queueJustCleared = Date.now();
+            this._queueDataCache = null;
+            this._queuePanelDirection = null;
+            this._closeInfoPopup();
 
-            if (_hasRemove && _hasGetItems) {
-              // Preferred path: remove only upcoming items — current track keeps playing
-              try {
-                this._showToast('Clearing upcoming tracks…', 3000);
-                const mqRes = await this._hass.connection.sendMessagePromise({
-                  type: 'call_service', domain: 'mass_queue', service: 'get_queue_items',
-                  service_data: { entity: this._entity, limit_before: 0, limit_after: 9999 },
-                  return_response: true
-                });
-                const raw = mqRes?.response?.[this._entity] || mqRes?.response || [];
-                if (Array.isArray(raw) && raw.length) {
-                  // Find currently active item — skip it and all history
-                  const activeIdx = (() => {
-                    let idx = raw.findIndex(i => i.active === true || i.state === 'playing');
-                    if (idx === -1) {
-                      const curId = this._hass?.states[this._entity]?.attributes?.media_content_id;
-                      if (curId) idx = raw.findIndex(i => (i.media_content_id || i.uri) === curId);
-                    }
-                    if (idx === -1) {
-                      const curTitle = (this._hass?.states[this._entity]?.attributes?.media_title || '').toLowerCase();
-                      if (curTitle) idx = raw.findIndex(i => (i.media_title || i.name || '').toLowerCase() === curTitle);
-                    }
-                    return idx; // -1 means unknown — remove everything
-                  })();
-                  // Only remove items after the active one (upcoming, not history or current)
-                  const toRemove = raw
-                    .filter((_, i) => i > activeIdx)
-                    .map(i => i.queue_item_id)
-                    .filter(Boolean);
-                  // Remove in batches to avoid flooding the WebSocket
-                  for (const id of toRemove) {
-                    await this._hass.callService('mass_queue', 'remove_queue_item', {
-                      entity: this._entity, queue_item_id: id
-                    }).catch(() => {});
-                  }
-                }
-              } catch (err) {
-                console.error('[Queue clear]', err);
-              }
-            } else {
-              // Fallback for older MA versions without remove_queue_item
-              try {
-                await this._hass.callService('media_player', 'clear_playlist', { entity_id: this._entity });
-              } catch (err) { console.error('[Queue clear]', err); }
-              try {
-                await this._hass.callService('media_player', 'media_stop', { entity_id: this._entity });
-              } catch (err) { console.error('[Queue clear stop]', err); }
+            try {
+              await this._hass.callService('media_player', 'clear_playlist', { entity_id: this._entity });
+            } catch (err) {
+              console.error('[Queue clear]', err);
+            }
+            // Also stop playback — clear_playlist only empties the upcoming
+            // queue, the current track keeps playing with no artwork shown.
+            try {
+              await this._hass.callService('media_player', 'media_stop', { entity_id: this._entity });
+            } catch (err) {
+              console.error('[Queue clear stop]', err);
             }
 
             // Turn off radio mode when the queue is cleared — nothing to generate radio from
@@ -5552,10 +5515,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
                 bubbles: true, composed: true
               }));
             }
-            this._queueJustCleared = Date.now();
-            this._queueDataCache = null;
-            this._queuePanelDirection = null;
-            this._closeInfoPopup();
           }, { once: true });
         });
       });
@@ -6454,6 +6413,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       }
       store[cacheKey] = { ...data, ts: Date.now() };
       localStorage.setItem('crow_lyrics_store', JSON.stringify(store));
+      if (this._config?.lyrics_persistent_storage === true) this._haStorageSaveLyrics();
     } catch (_) {}
   }
 
@@ -7922,6 +7882,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const r = this.shadowRoot;
     const el = r.getElementById('maIosView');
     if (!el) return;
+    // Remove any stray lightbox — the root view is the safest catch-all since
+    // every navigation path that lands here eventually calls this function.
+    r.getElementById('cardOuter')?.querySelectorAll('.crow-bio-lightbox').forEach(e => e.remove());
 
     const CATS = [
       { tab: 'recently_added', label: 'Recently Added', color: '#00C7BE', path: 'M13,3A9,9 0 0,0 4,12H1L4.89,15.89L4.96,16.03L9,12H6A7,7 0 0,1 13,5A7,7 0 0,1 20,12A7,7 0 0,1 13,19C11.07,19 9.32,18.21 8.06,16.94L6.64,18.36C8.27,19.99 10.52,21 13,21A9,9 0 0,0 22,12A9,9 0 0,0 13,3M14,8H12V13L16.28,15.54L17,14.33L13.5,12.25V8H14Z' },
@@ -8494,16 +8457,18 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (!conn) return;
 
     try {
-      // Batch-load all three HA user-data keys in parallel
-      const [pinsRes, aiRes, itunesRes, wikiRes] = await Promise.allSettled([
+      // Batch-load all HA user-data keys in parallel
+      const [pinsRes, aiRes, itunesRes, wikiRes, lyricsRes] = await Promise.allSettled([
         conn.sendMessagePromise({ type: 'frontend/get_user_data', key: 'crow_pins' }),
         conn.sendMessagePromise({ type: 'frontend/get_user_data', key: 'crow_ai_local' }),
         conn.sendMessagePromise({ type: 'frontend/get_user_data', key: 'crow_itunes_preferred' }),
         conn.sendMessagePromise({ type: 'frontend/get_user_data', key: 'crow_wiki_urls' }),
+        conn.sendMessagePromise({ type: 'frontend/get_user_data', key: 'crow_lyrics' }),
       ]);
 
       // ── Pins ────────────────────────────────────────────────────────────────
-      if (pinsRes.status === 'fulfilled' && pinsRes.value?.value) {
+      if (this._config?.pins_persistent_storage === true &&
+          pinsRes.status === 'fulfilled' && pinsRes.value?.value) {
         const haPins = pinsRes.value.value;
         // HA wins: overwrite localStorage and in-memory cache for each category
         Object.entries(haPins).forEach(([cat, items]) => {
@@ -8516,7 +8481,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       }
 
       // ── AI local cache ──────────────────────────────────────────────────────
-      if (aiRes.status === 'fulfilled' && aiRes.value?.value) {
+      if (this._config?.ai_info_persistent_storage === true &&
+          aiRes.status === 'fulfilled' && aiRes.value?.value) {
         const haAi = aiRes.value.value;
         // Merge HA data into localStorage: for each cacheName, merge HA entries
         // over the top of whatever's already in localStorage (HA wins on conflict)
@@ -8563,6 +8529,27 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           } catch(_) {}
         }
       }
+
+      // ── Lyrics cache ─────────────────────────────────────────────────────────
+      if (this._config?.lyrics_persistent_storage === true &&
+          lyricsRes.status === 'fulfilled' && lyricsRes.value?.value) {
+        const haLyrics = lyricsRes.value.value;
+        if (haLyrics && typeof haLyrics === 'object') {
+          try {
+            const local = JSON.parse(localStorage.getItem('crow_lyrics_store') || '{}');
+            // HA entries win over local ones — but still respect TTL so stale
+            // entries from a long-idle HA store don't resurrect on merge
+            const ttlDays = this._config?.lyrics_cache_ttl ?? 7;
+            const ttlMs   = ttlDays * 24 * 60 * 60 * 1000;
+            const freshHaLyrics = {};
+            Object.entries(haLyrics).forEach(([key, entry]) => {
+              if (entry && (Date.now() - (entry.ts || 0)) <= ttlMs) freshHaLyrics[key] = entry;
+            });
+            const merged = { ...local, ...freshHaLyrics };
+            localStorage.setItem('crow_lyrics_store', JSON.stringify(merged));
+          } catch(_) {}
+        }
+      }
     } catch(_) {}
   }
 
@@ -8581,6 +8568,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
   // Write pins to HA user data (fire-and-forget, called after every pin change)
   _haStorageSavePins() {
+    if (this._config?.pins_persistent_storage !== true) return;
     const conn = this._hass?.connection;
     if (!conn) return;
     try {
@@ -8596,6 +8584,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
   // Write a single AI local cache store to HA user data (fire-and-forget)
   _haStorageSaveAI(cacheName) {
+    if (this._config?.ai_info_persistent_storage !== true) return;
     const conn = this._hass?.connection;
     if (!conn) return;
     // Debounce: batch rapid sequential writes (e.g. loading 10 similar tracks at once)
@@ -8628,6 +8617,19 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       try {
         const value = JSON.parse(localStorage.getItem('crow_itunes_preferred') || '{}');
         conn.sendMessagePromise({ type: 'frontend/set_user_data', key: 'crow_itunes_preferred', value }).catch(() => {});
+      } catch(_) {}
+    }, 2000);
+  }
+
+  // Write lyrics cache to HA user data (fire-and-forget, debounced)
+  _haStorageSaveLyrics() {
+    const conn = this._hass?.connection;
+    if (!conn) return;
+    clearTimeout(this._haLyricsSaveTimer);
+    this._haLyricsSaveTimer = setTimeout(() => {
+      try {
+        const value = JSON.parse(localStorage.getItem('crow_lyrics_store') || '{}');
+        conn.sendMessagePromise({ type: 'frontend/set_user_data', key: 'crow_lyrics', value }).catch(() => {});
       } catch(_) {}
     }, 2000);
   }
@@ -9171,7 +9173,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       Object.keys(store).forEach(k => { if (Date.now() - (store[k].ts || 0) > TTL) delete store[k]; });
       localStorage.setItem('crow_pc_episode_cache', JSON.stringify(store));
     } catch(_) {}
-    this._showToast('\u25b6 ' + (title || 'Episode'));
     this._closeInfoPopup();
     this._closeMABrowser();
     // Update badge immediately
@@ -9738,7 +9739,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         localStorage.setItem('crow_ab_chapter_cache', JSON.stringify(store));
       } catch(_) {}
     }
-    this._showToast('\u25b6 ' + (title || 'Chapter'));
     this._closeInfoPopup();
     this._closeMABrowser();
     setTimeout(() => { this._updateAudiobookBadge(); }, 300);
@@ -10090,7 +10090,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             type: 'call_service', domain: 'music_assistant', service: 'play_media',
             service_data: { entity_id: entity, media_id: url, media_type: 'radio', enqueue: 'replace' }
           }).then(() => {
-            this._showToast('\u25b6 ' + st.name);
             const _rbCmEntity = entity;
             let _rbCmChecks = 0;
             const _rbCmInterval = setInterval(() => {
@@ -10106,7 +10105,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             }, 500);
           }).catch(() => {
             this._playMediaDirect(entity, url, 'music', st.name);
-            this._showToast('\u25b6 ' + st.name);
           });
           this._closeMABrowser();
         } else if (mode === 'pin') {
@@ -10278,16 +10276,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           type: 'call_service', domain: 'music_assistant', service: 'play_media',
           service_data: { entity_id: _rbPlayTarget, media_id: url, media_type: 'radio', enqueue: 'replace' }
         }).then(() => {
-          this._showToast('▶ ' + st.name);
           this._closeInfoPopup();
         }).catch(() => {
           this._playMediaDirect(_rbPlayTarget, url, 'music', st.name);
-          this._showToast('▶ ' + st.name);
           this._closeInfoPopup();
         });
       } else {
         this._playMediaDirect(this._entity, url, 'music', st.name);
-        this._showToast('▶ ' + st.name);
         this._closeInfoPopup();
       }
     });
@@ -10431,7 +10426,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             type: 'call_service', domain: 'music_assistant', service: 'play_media',
             service_data: { entity_id: _rbEntity, media_id: url, media_type: 'radio', enqueue: 'replace' }
           }).then(async () => {
-            _rbSelf._showToast('\u25b6 ' + st.name);
             // Subscribe to state_changed to catch rapid idle transitions (geo-blocking etc.)
             let _rbUnsub = null;
             let _rbResolved = false;
@@ -10467,7 +10461,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             setTimeout(() => { _rbSuccess(); }, 8000);
           }).catch(() => {
             this._playMediaDirect(_rbEntity, url, 'music', st.name);
-            this._showToast('▶ ' + st.name);
           });
           this._closeMABrowser();
         };
@@ -12308,7 +12301,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
               textEl.value = improved;
               textEl.style.height = 'auto';
               textEl.style.height = Math.min(textEl.scrollHeight, 96) + 'px';
-        self._showToast('✨ Announcement improved');
             }
           } catch (e) {
             if (e?.message === 'rate_limited') {
@@ -13745,12 +13737,15 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   }
 
   async _prefetchAIAlbumTracks(albumName, artistName) {
-    if (!albumName || !artistName) return;
+    if (!albumName || !artistName) return null;
     if (!this._aiAlbumTracksCache) this._aiAlbumTracksCache = new Map();
     const cacheKey = (albumName + '|' + artistName).toLowerCase();
-    if (this._aiAlbumTracksCache.has(cacheKey)) return; // already cached
+    if (this._aiAlbumTracksCache.has(cacheKey)) {
+      const existing = this._aiAlbumTracksCache.get(cacheKey);
+      return existing?.empty ? false : true;
+    }
     const hasAI = await this._aiCheckAvailable();
-    if (!hasAI) return;
+    if (!hasAI) return null;
     try {
       const agentId = this._config?.ai_conversation_agent || 'conversation.home_assistant';
       const prompt = `You are a music encyclopedia. For the album "${albumName}" by "${artistName}", respond ONLY with a JSON object (no markdown):
@@ -13763,12 +13758,17 @@ Include ALL tracks. Use null for unknown fields.`;
       const raw = resp?.response?.speech?.plain?.speech || '';
       const stripped = raw.replace(/```json?\s*/gi,'').replace(/```/g,'');
       const s = stripped.indexOf('{'), e2 = stripped.lastIndexOf('}');
-      if (s === -1 || e2 <= s) return;
+      if (s === -1 || e2 <= s) { this._aiAlbumTracksCache.set(cacheKey, { tracks: [], meta: {}, empty: true }); return false; }
       const parsed = JSON.parse(stripped.slice(s, e2 + 1));
       const tracks = Array.isArray(parsed.tracks) ? parsed.tracks : (Array.isArray(parsed) ? parsed : []);
       const meta = Array.isArray(parsed) ? {} : { year: parsed.year || null, label: parsed.label || null, genre: parsed.genre || [], vibe: parsed.vibe || null, fact: parsed.fact || null };
-      if (tracks.length) this._aiAlbumTracksCache.set(cacheKey, { tracks, meta });
-    } catch(e) { /* silent — prefetch failures are non-critical */ }
+      if (tracks.length) {
+        this._aiAlbumTracksCache.set(cacheKey, { tracks, meta });
+        return true;
+      }
+      this._aiAlbumTracksCache.set(cacheKey, { tracks: [], meta: {}, empty: true });
+      return false;
+    } catch(e) { /* silent — prefetch failures are non-critical */ return null; }
   }
 
   /** — closable panel replacing Discogs everywhere.
@@ -14145,7 +14145,6 @@ Include ALL tracks. Use null for unknown fields.`;
                 media_id: _fb.title + (_fb.artist ? ' ' + _fb.artist : ''),
                 media_type: 'track', enqueue: _enq }
             });
-            this._showToast(_act === 'replace' ? '▶ Playing' : _act === 'next' ? 'Playing next' : 'Added to queue');
             if (_act === 'replace') { this._closeInfoPopup(); this._closeMABrowser(); }
           } catch(_) {
             this._playMediaDirect(_fbTarget, _fb.title, 'music', _fb.title);
@@ -14228,9 +14227,12 @@ Include ALL tracks. Use null for unknown fields.`;
         </div>
       </div>` : '';
 
-    // Make album name clickable to view tracks
+    // Make album name clickable to view tracks — but not if we already know
+    // (from a previous prefetch) that this album has no tracklist data
+    const _albumKnownEmpty = data.album && this._aiAlbumTracksCache?.get((data.album + '|' + artistName).toLowerCase())?.empty === true;
+    const _showAlbumPill = !!data.album && !_albumKnownEmpty;
     const _pillStyle = 'display:inline-flex;align-items:center;gap:5px;background:rgba(99,179,237,0.1);border:1px solid rgba(99,179,237,0.25);border-radius:20px;padding:4px 10px;flex-shrink:0;max-width:160px;overflow:hidden;box-sizing:border-box;line-height:1;height:26px;';
-    const albumClickHtml = data.album
+    const albumClickHtml = _showAlbumPill
       ? `<button id="ai-track-album-btn" data-album="${(data.album||'').replace(/"/g,'&quot;')}" data-artist="${(artistName||'').replace(/"/g,'&quot;')}" style="background:rgba(99,179,237,0.1);border:1px solid rgba(99,179,237,0.25);border-radius:20px;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;${_pillStyle}"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:#63b3ed;flex-shrink:0"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg><span style="font-size:11px;color:#63b3ed;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${data.album}</span><svg viewBox="0 0 24 24" style="width:9px;height:9px;fill:#63b3ed;opacity:0.6;flex-shrink:0"><path d="M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z"/></svg></button>`
       : '';
 
@@ -14249,7 +14251,7 @@ Include ALL tracks. Use null for unknown fields.`;
           <div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zm2-8.14L11.03 12 8 14.14V9.86zM16 6h2v12h-2z"/></svg></div>
           <span class="ma-drill-btn-label">Play Next</span>
         </button>
-        ${(isMaForBar && data.album) ? `<button class="ma-drill-action-btn ai-info-action-btn" data-action="play_album" data-album="${(data.album||''). replace(/"/g,'&quot;')}" data-artist="${(artistName||''). replace(/"/g,'&quot;')}">
+        ${(isMaForBar && _showAlbumPill) ? `<button class="ma-drill-action-btn ai-info-action-btn" data-action="play_album" data-album="${(data.album||''). replace(/"/g,'&quot;')}" data-artist="${(artistName||''). replace(/"/g,'&quot;')}">
           <div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/></svg></div>
           <span class="ma-drill-btn-label">Add Album</span>
         </button>` : ''}
@@ -14352,7 +14354,6 @@ Include ALL tracks. Use null for unknown fields.`;
             const _isStreamNow = this._isLiveStream(this._hass?.states[this._entity]);
             const _albumMode = _isStreamNow ? 'replace' : 'add';
             this._playAlbum(_alb, _art, _albumMode);
-            this._showToast(_isStreamNow ? '▶ Playing album' : 'Album added to queue');
           }
           return;
         }
@@ -14392,8 +14393,8 @@ Include ALL tracks. Use null for unknown fields.`;
         }
 
         this._lastMAPlayTarget = _barTarget;
-        this._playTrackViaMAToast(trackTitle, artistName, _barTarget, action);
-        if (action === 'replace') { this._closeInfoPopup(); this._closeMABrowser(); }
+        const _played = await this._playTrackViaMAToast(trackTitle, artistName, _barTarget, action);
+        if (action === 'replace' && _played) { this._closeInfoPopup(); this._closeMABrowser(); }
       });
     });
 
@@ -14473,9 +14474,17 @@ Include ALL tracks. Use null for unknown fields.`;
       });
     }
 
-    // Prefetch album tracks in background as soon as the panel renders
-    if (data.album && artistName) {
-      setTimeout(() => this._prefetchAIAlbumTracks(data.album, artistName), 500);
+    // Prefetch album tracks in background as soon as the panel renders — if it
+    // comes back empty, remove the pill/button so a dead-end tap isn't left showing
+    if (_showAlbumPill && artistName) {
+      const _albumForPrefetch = data.album;
+      setTimeout(() => {
+        this._prefetchAIAlbumTracks(_albumForPrefetch, artistName).then(hasData => {
+          if (hasData !== false || _stale()) return;
+          content.querySelector('#ai-track-album-btn')?.remove();
+          content.querySelector('.ai-info-action-btn[data-action="play_album"]')?.remove();
+        });
+      }, 500);
     }
 
     // Tap artist name → bio, long-press → artist radio
@@ -14665,7 +14674,7 @@ Include ALL tracks. Use null for unknown fields.`;
 
     // Modal card
     const card = document.createElement('div');
-    card.style.cssText = 'background:#1c1c1e;border-radius:20px;padding:24px;display:flex;flex-direction:column;align-items:center;gap:14px;max-width:260px;width:75%;box-shadow:0 20px 60px rgba(0,0,0,0.8);position:relative;';
+    card.style.cssText = 'background:#1c1c1e;border-radius:20px;padding:24px;display:flex;flex-direction:column;align-items:center;gap:14px;max-width:340px;width:85%;max-height:85%;box-sizing:border-box;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.8);position:relative;';
 
     // Close button
     const closeBtn = document.createElement('button');
@@ -14678,10 +14687,10 @@ Include ALL tracks. Use null for unknown fields.`;
     img.src = imgSrc;
     img.alt = name || '';
     img.style.cssText = isSquare === true
-      ? 'width:200px;height:280px;border-radius:12px;object-fit:cover;'    // movie: tall rectangle
+      ? 'width:min(280px, 100%);aspect-ratio:5/7;height:auto;border-radius:12px;object-fit:cover;'    // movie: tall rectangle
       : isSquare === 'square'
-        ? 'width:200px;height:200px;border-radius:12px;object-fit:cover;'  // music: square
-        : 'width:150px;height:150px;border-radius:50%;object-fit:cover;border:3px solid rgba(255,255,255,0.1);'; // person: circle
+        ? 'width:min(280px, 100%);aspect-ratio:1/1;height:auto;border-radius:12px;object-fit:cover;'  // music: square
+        : 'width:min(200px, 60%);aspect-ratio:1/1;height:auto;border-radius:50%;object-fit:cover;border:3px solid rgba(255,255,255,0.1);'; // person: circle
 
     card.appendChild(closeBtn);
     card.appendChild(img);
@@ -15140,6 +15149,21 @@ Include ALL tracks. Use null for unknown fields.`;
     let tracks = Array.isArray(_cachedEntry) ? _cachedEntry : (_cachedEntry?.tracks || []);
     let albumMeta = Array.isArray(_cachedEntry) ? {} : (_cachedEntry?.meta || {});
 
+    if (_cachedEntry?.empty) {
+      // Already confirmed on a previous visit that this album has no data
+      body.innerHTML = `
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;cursor:pointer;" id="ai-album-back-err">
+          <svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:${this._pt("dim")};flex-shrink:0"><path d="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z"/></svg>
+          <span style="font-size:12px;color:${this._pt("dim")}">Back</span>
+        </div>
+        <div style="padding:20px;text-align:center;font-size:12px;color:rgba(255,100,100,0.8)">
+          Couldn't find a tracklist for this one — the AI may not recognize this particular album.<br>
+          <span style="color:${this._pt("dim")};font-size:11px;margin-top:6px;display:block">${albumName}</span>
+        </div>`;
+      body.querySelector('#ai-album-back-err')?.addEventListener('click', () => { if (onBack) onBack(); else this._closeInfoPopup(); });
+      return;
+    }
+
     if (_cachedEntry) {
       // Skip the loading state and go straight to render
     } else {
@@ -15169,6 +15193,7 @@ Include ALL tracks. Use null for unknown fields.`;
       this._aiSessionSet('albumTracks', _albumCacheKey, { tracks, meta: albumMeta });
     } catch(e) {
       if (_albumStale()) return;
+      this._aiAlbumTracksCache.set(_albumCacheKey, { tracks: [], meta: {}, empty: true });
       body.innerHTML = `
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;cursor:pointer;" id="ai-album-back-err">
           <svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:${this._pt("dim")};flex-shrink:0"><path d="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z"/></svg>
@@ -17422,9 +17447,7 @@ Include ALL tracks. Use null for unknown fields.`;
           clearTimeout(self._maBatchLoadingTimer);
           self._pillPulse(0);
           const _spkName = self._hass?.states[_srchBarTarget]?.attributes?.friendly_name || 'speaker';
-          if (action === 'replace') {
-            self._showToast(`▶ Playing ${successCount} track${successCount !== 1 ? 's' : ''} on ${_spkName}`, 3500);
-          } else {
+          if (action !== 'replace') {
             const label = action === 'next' ? 'Playing next' : 'Added to queue';
             self._showToast(`${label} — ${successCount} track${successCount !== 1 ? 's' : ''} on ${_spkName}`, 3000);
           }
@@ -18080,7 +18103,15 @@ Include ALL tracks. Use null for unknown fields.`;
     const metaItems = [data.year, data.status].filter(Boolean);
     // Seasons rendered as a separate tappable button if available — see #tv-seasons-btn below
     const ratingHtml = data.rating ? `<div style="display:inline-flex;align-items:center;gap:6px;margin:4px 0;"><svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:#FFD60A"><path d="M12,17.27L18.18,21L16.54,13.97L22,9.24L14.81,8.62L12,2L9.19,8.62L2,9.24L7.46,13.97L5.82,21L12,17.27Z"/></svg><span style="font-size:13px;font-weight:600;color:#FFD60A">${data.rating}</span><span style="font-size:11px;color:${this._pt("dim")}">/ 10</span></div>` : '';
-    const directorHtml = data.director ? `<div style="margin-top:6px;width:fit-content;max-width:100%;"><div id="video-director-link" data-director="${(data.director||''). replace(/"/g,'&quot;')}" style="display:inline-flex;align-items:center;gap:5px;background:rgba(99,179,237,0.1);border:1px solid rgba(99,179,237,0.25);border-radius:20px;padding:3px 9px;cursor:pointer;-webkit-tap-highlight-color:transparent;max-width:100%;overflow:hidden;"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:#63b3ed;flex-shrink:0"><path d="M18 4l2 4h-3l-2-4h-2l2 4h-3l-2-4h-2l2 4H7L5 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V4h-4z"/></svg><span style="font-size:11px;color:#63b3ed;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Dir. ${data.director}</span></div></div>` : '';
+    const _directorKnownEmpty = (() => {
+      if (!data.director) return false;
+      const _bioCacheKey = ('bio|' + data.director).toLowerCase();
+      const _cached = this._castBioCache?.get(_bioCacheKey) || this._aiLocalGet?.('castBio', _bioCacheKey) || this._aiSessionGet?.('castBio', _bioCacheKey);
+      if (!_cached) return false;
+      return !(_cached.bio || _cached.fun_fact || _cached.known_for?.length);
+    })();
+    const _showDirectorPill = !!data.director && !_directorKnownEmpty;
+    const directorHtml = _showDirectorPill ? `<div style="margin-top:6px;width:fit-content;max-width:100%;"><div id="video-director-link" data-director="${(data.director||''). replace(/"/g,'&quot;')}" style="display:inline-flex;align-items:center;gap:5px;background:rgba(99,179,237,0.1);border:1px solid rgba(99,179,237,0.25);border-radius:20px;padding:3px 9px;cursor:pointer;-webkit-tap-highlight-color:transparent;max-width:100%;overflow:hidden;"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:#63b3ed;flex-shrink:0"><path d="M18 4l2 4h-3l-2-4h-2l2 4h-3l-2-4h-2l2 4H7L5 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V4h-4z"/></svg><span style="font-size:11px;color:#63b3ed;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Dir. ${data.director}</span></div></div>` : '';
 
     // Hero art — always start with a spinner; iTunes fetch replaces it with the
     // correct poster. Never use the entity picture as a placeholder because HA's
@@ -18394,6 +18425,15 @@ Include ALL tracks. Use null for unknown fields.`;
       directorLink.addEventListener('click', () => {
         self._showCastBio(content, directorLink.dataset.director, data.title || '', artUrl);
       });
+      // Prefetch the bio in background — remove the pill if it turns out empty
+      const _directorForPrefetch = directorLink.dataset.director;
+      setTimeout(() => {
+        self._prefetchCastBio(_directorForPrefetch, data.title || '').then(hasData => {
+          if (hasData !== false) return;
+          const _stillThere = content.querySelector('#video-director-link');
+          if (_stillThere && _stillThere.dataset.director === _directorForPrefetch) _stillThere.remove();
+        });
+      }, 500);
     }
 
     // Wire seasons button → seasons list panel
@@ -19319,6 +19359,42 @@ Include ALL tracks. Use null for unknown fields.`;
   }
 
   // Show a bio panel for a cast member, with back button to return to the detail view
+  // Lightweight bio prefetch — shares the exact cache key/storage with _showCastBio
+  // so a pill can be hidden once we know a name has no substantive bio content.
+  // Returns true (has content), false (confirmed empty), or null (couldn't check).
+  async _prefetchCastBio(name, showTitle) {
+    if (!name) return null;
+    if (!this._castBioCache) this._castBioCache = new Map();
+    const _bioCacheKey = ('bio|' + name).toLowerCase();
+    const _cached = this._castBioCache.get(_bioCacheKey)
+      || this._aiLocalGet('castBio', _bioCacheKey)
+      || this._aiSessionGet('castBio', _bioCacheKey);
+    if (_cached) {
+      this._castBioCache.set(_bioCacheKey, _cached);
+      return !!(_cached.bio || _cached.fun_fact || _cached.known_for?.length);
+    }
+    const hasAI = await this._aiCheckAvailable();
+    if (!hasAI) return null;
+    try {
+      const isMusicContext = this._detectMediaType(this._hass?.states[this._entity]) === 'music';
+      const agentId = this._config?.ai_conversation_agent || 'conversation.home_assistant';
+      const prompt = isMusicContext
+        ? 'Give me a short biography of the musician "' + name + '" known for their work with "' + (showTitle || '') + '". Reply ONLY with JSON: {"known_for":[{"title":"Song or Album 1","year":"YYYY","type":"song"},{"title":"Song or Album 2","year":"YYYY","type":"album"},{"title":"Song or Album 3","year":"YYYY","type":"song"}],"born":"1970","nationality":"American","bio":"2 sentence overview","fun_fact":"One surprising fact about them"}'
+        : 'Give me a short biography of the actor/actress "' + name + '" known for appearing in "' + (showTitle || '') + '". Reply ONLY with JSON: {"known_for":[{"title":"Work 1","year":"YYYY","type":"tv"},{"title":"Work 2","year":"YYYY","type":"movie"},{"title":"Work 3","year":"YYYY","type":"tv"}],"born":"1970","nationality":"American","bio":"2 sentence overview","fun_fact":"One surprising fact about them"}';
+      const resp = await this._hass.connection.sendMessagePromise({
+        type: 'conversation/process', text: prompt, agent_id: agentId, language: navigator.language || 'en'
+      });
+      const raw = resp?.response?.speech?.plain?.speech || '';
+      const start = raw.indexOf('{'), end = raw.lastIndexOf('}');
+      if (start === -1 || end <= start) return false;
+      const result = JSON.parse(raw.slice(start, end + 1));
+      this._castBioCache.set(_bioCacheKey, result);
+      this._aiSessionSet('castBio', _bioCacheKey, result);
+      this._aiLocalSet('castBio', _bioCacheKey, result);
+      return !!(result.bio || result.fun_fact || result.known_for?.length);
+    } catch (e) { return null; }
+  }
+
   async _showCastBio(content, name, showTitle, artUrl) {
     const savedHtml = content.innerHTML;
     const savedScroll = content.scrollTop;
@@ -20205,9 +20281,16 @@ Include ALL tracks. Use null for unknown fields.`;
       if (!this._wikiBlobCache) this._wikiBlobCache = new Map();
       if (this._wikiBlobCache.has(name)) {
         const _cachedBlob = this._wikiBlobCache.get(name);
-        // Quick validity check — attempt to create an object URL test
-        // (null/undefined means it was evicted by an onerror handler)
-        if (_cachedBlob) return _cachedBlob;
+        if (_cachedBlob) {
+          // Verify the cached blob is actually still alive. blob: URLs can go stale
+          // in WKWebView (app backgrounding, memory pressure) without ever triggering
+          // a JS-visible revocation — so a cached entry can look valid forever while
+          // silently being dead. fetch() on a dead blob: URL rejects or returns !ok.
+          try {
+            const _testResp = await fetch(_cachedBlob);
+            if (_testResp.ok) return _cachedBlob;
+          } catch (_) { /* stale — fall through and re-download below */ }
+        }
         this._wikiBlobCache.delete(name);
       }
 
@@ -21391,7 +21474,7 @@ Include ALL tracks. Use null for unknown fields.`;
   }
 
   // Extracted play logic — called by _playMAItem and _showMAPlayTargetPicker.
-  _playMAItemTo(item, tab, targetEntity, shuffle) {
+  async _playMAItemTo(item, tab, targetEntity, shuffle) {
     const uri        = item.uri || item.media_content_id;
     const mediaType  = item.media_type || tab;
     const self       = this;
@@ -21418,31 +21501,38 @@ Include ALL tracks. Use null for unknown fields.`;
       type: 'call_service', domain: 'media_player', service: 'play_media',
       service_data: { entity_id: targetEntity, media_content_id: uri, media_content_type: mediaType }
     });
-    playViaMA().catch(function(err) {
+    this._showLoadingToast('Starting playback…');
+    let _played = true;
+    try {
+      await playViaMA();
+    } catch (err) {
       const msg = (err?.message || err?.error?.message || String(err)).toLowerCase();
       if (msg.includes('no playable') || msg.includes('playable items')) {
         self._hideLoadingToast();
         self._showToast('Nothing to play \u2014 item may not be in your library');
-        return;
+        _played = false;
+      } else {
+        try {
+          await playViaMP();
+        } catch (err2) {
+          self._hideLoadingToast();
+          const m2 = (err2?.message || err2?.error?.message || String(err2)).toLowerCase();
+          self._showToast(m2.includes('no playable') || m2.includes('playable items')
+            ? 'Nothing to play \u2014 item may not be in your library' : 'Could not play this item');
+          _played = false;
+        }
       }
-      playViaMP().catch(function(err2) {
-        self._hideLoadingToast();
-        const m2 = (err2?.message || err2?.error?.message || String(err2)).toLowerCase();
-        self._showToast(m2.includes('no playable') || m2.includes('playable items')
-          ? 'Nothing to play \u2014 item may not be in your library' : 'Could not play this item');
-      });
-    });
-    this._showLoadingToast('Starting playback…');
+    }
     this._maRecentPlaySuccess = true;
     clearTimeout(this._maRecentPlaySuccessTimer);
     this._maRecentPlaySuccessTimer = setTimeout(() => { this._maRecentPlaySuccess = false; }, 5000);
-    this._closeMABrowser();
+    if (_played) this._closeMABrowser();
   }
   // Join secondaries to primary first, play on primary only.
   // MA's server-side sync ensures all joined speakers play the same content.
   // Group state is NEVER tracked in card memory — HA entity attributes
   // (group_members) are the authoritative source of truth.
-  _playMAItemToMultiple(item, tab, entityIds) {
+  async _playMAItemToMultiple(item, tab, entityIds) {
     if (!entityIds?.length) return;
     const uri        = item.uri || item.media_content_id;
     const mediaType  = item.media_type || tab;
@@ -21490,23 +21580,32 @@ Include ALL tracks. Use null for unknown fields.`;
     }
 
     // 2. Play on the resolved primary — MA propagates to all joined speakers
-    self._hass.connection.sendMessagePromise({
-      type: 'call_service', domain: 'music_assistant', service: 'play_media',
-      service_data: {
-        entity_id: resolvedPrimary, media_id: _mediaId, media_type: mediaType, enqueue: 'replace',
-        ...(self._config?.ma_radio_mode ? { radio_mode: true } : {})
-      }
-    }).catch(err => {
+    let _played = true;
+    try {
+      await self._hass.connection.sendMessagePromise({
+        type: 'call_service', domain: 'music_assistant', service: 'play_media',
+        service_data: {
+          entity_id: resolvedPrimary, media_id: _mediaId, media_type: mediaType, enqueue: 'replace',
+          ...(self._config?.ma_radio_mode ? { radio_mode: true } : {})
+        }
+      });
+    } catch (err) {
       const msg = (err?.message || err?.error?.message || String(err)).toLowerCase();
       if (!msg.includes('no playable') && !msg.includes('playable items')) {
-        self._hass.connection.sendMessagePromise({
-          type: 'call_service', domain: 'media_player', service: 'play_media',
-          service_data: { entity_id: resolvedPrimary, media_content_id: uri, media_content_type: mediaType }
-        }).catch(() => {});
+        try {
+          await self._hass.connection.sendMessagePromise({
+            type: 'call_service', domain: 'media_player', service: 'play_media',
+            service_data: { entity_id: resolvedPrimary, media_content_id: uri, media_content_type: mediaType }
+          });
+        } catch (_) {
+          _played = false;
+        }
+      } else {
+        _played = false;
       }
-    });
+    }
 
-    this._closeMABrowser();
+    if (_played) this._closeMABrowser();
     this._updateMulticastPills();
   }
 
@@ -21888,8 +21987,6 @@ Include ALL tracks. Use null for unknown fields.`;
           entity_id: eid, volume_level: sourceVol
         }).catch(() => {});
       });
-
-    this._showToast(`Volume synced to ${Math.round(sourceVol * 100)}%`, 1800);
   }
 
   _showAddSpeakerPicker(addable, currentMembers) {
@@ -22209,17 +22306,16 @@ Include ALL tracks. Use null for unknown fields.`;
 
     let _autoTimer = null;
 
-    const _doPlay = () => {
+    const _doPlay = async () => {
       clearTimeout(_autoTimer);
       _autoTimer = null;
       this._lastMAPlayTarget = selectedEntity; // remember for next time
       if (labelEl) labelEl.textContent = 'Play via Music Assistant';
       if (speakerWrap) speakerWrap.style.display = ''; // restore for other overlay uses
       this._hideTrackConfirm();
-      this._closeInfoPopup();
-      this._closeMABrowser();
       if (!selectedEntity) { this._showToast('No MA speaker found \u2014 add one in the card editor'); return; }
-      this._playTrackViaMAToast(trackTitle, artistName, selectedEntity, 'replace');
+      const _played = await this._playTrackViaMAToast(trackTitle, artistName, selectedEntity, 'replace');
+      if (_played) { this._closeInfoPopup(); this._closeMABrowser(); }
     };
 
     const _doCancel = () => {
@@ -22242,6 +22338,36 @@ Include ALL tracks. Use null for unknown fields.`;
   // fuzzy MA search to find the track URI, so it works for non-MA speakers
   // (HomePods, AirPlay targets, etc.) that don't have a direct MA URI.
   // ─────────────────────────────────────────────────────────────────────────
+
+  // Resolve the best-guess Music Assistant entity to target for playback /
+  // enqueue actions when no explicit entity is passed in. Prefers the card's
+  // main entity if it's itself an MA entity (same detection used elsewhere —
+  // see the "Full MA detection" block), otherwise falls back to whichever
+  // configured MA speaker is actively playing, then paused, then just the
+  // first configured one. Callers always OR the result with a further
+  // fallback (e.g. `this._resolveMATargetEntity() || this._entity`), so
+  // returning null/undefined here when nothing suitable is found is fine.
+  _resolveMATargetEntity() {
+    const attrs = this._hass?.states[this._entity]?.attributes || {};
+    const isMaByAttrs    = 'mass_player_id' in attrs || 'mass_is_group' in attrs ||
+      'mass_queue_index' in attrs ||
+      !!(attrs.platform && String(attrs.platform).toLowerCase().includes('music_assistant'));
+    const isMaByEntityId = (this._entity || '').startsWith('media_player.mass_');
+    const isMaByRegistry = this._maEntityIds !== null && this._maEntityIds?.has(this._entity);
+    const isMaByConfig   = Array.isArray(this._config?.ma_entities) && this._config.ma_entities.includes(this._entity);
+    const isMaByKnown    = this._knownMaEntities?.has(this._entity);
+    if (this._entity && (isMaByAttrs || isMaByEntityId || isMaByRegistry || isMaByConfig || isMaByKnown)) {
+      return this._entity;
+    }
+
+    const validMA = this._getValidMASpeakers(true);
+    if (!validMA.length) return null;
+    const playing = validMA.find(eid => this._hass?.states[eid]?.state === 'playing');
+    if (playing) return playing;
+    const paused = validMA.find(eid => this._hass?.states[eid]?.state === 'paused');
+    if (paused) return paused;
+    return validMA[0];
+  }
 
   _getValidMASpeakers(includeGroups = false) {
     // Return entities explicitly toggled as MA speakers in the card config.
@@ -22394,7 +22520,11 @@ Include ALL tracks. Use null for unknown fields.`;
       }).sort((x, y) => y.score - x.score);
 
       const best = scored[0]?.score > 0 ? scored[0].a : null;
-      if (!best) { this._showToast(`"${albumTitle}" isn\u2019t available in Music Assistant`); return; }
+      if (!best) {
+        this._maBatchLoading = false; clearTimeout(this._maBatchLoadingTimer);
+        this._showToast(`\u26a0\ufe0f Couldn\u2019t find \u201c${albumTitle}\u201d in your Music Assistant library \u2014 it may not be synced yet`, 5000);
+        return;
+      }
 
       const uri = best.uri || best.media_content_id;
       if (enqueueMode === 'replace') this._recordMAPlayStart(targetEntityId);
@@ -22411,13 +22541,11 @@ Include ALL tracks. Use null for unknown fields.`;
       const msg = (err?.message || err?.error?.message || String(err)).toLowerCase();
       this._showToast(
         msg.includes('no playable') || msg.includes('unavailable') || msg.includes('not available')
-          ? `"${albumTitle}" isn\u2019t available in Music Assistant`
-          : 'Could not play this album'
+          ? `\u26a0\ufe0f \u201c${albumTitle}\u201d isn\u2019t available to play \u2014 it may be region-locked or not synced`
+          : `\u26a0\ufe0f Couldn\u2019t add \u201c${albumTitle}\u201d \u2014 check your Music Assistant connection`,
+        5000
       );
     }
-  }
-
-  _resolveMATargetEntity() {
     const maSpeakers = Array.isArray(this._config.ma_entities) ? this._config.ma_entities : [];
     // If the current entity is explicitly configured as a multicast speaker, use it.
     if (maSpeakers.includes(this._entity)) return this._entity;
@@ -22572,11 +22700,11 @@ Include ALL tracks. Use null for unknown fields.`;
     const configEntryId = await this._getMAConfigEntryId();
     if (!configEntryId) {
       this._showToast('Music Assistant not found');
-      return;
+      return false;
     }
     if (!resolvedEntity) {
       this._showToast('No MA speaker found — add one in the card editor');
-      return;
+      return false;
     }
     try {
       const query = artistName ? `${trackTitle} ${artistName}` : trackTitle;
@@ -22615,7 +22743,7 @@ Include ALL tracks. Use null for unknown fields.`;
       const best = scored[0]?.score > 0 ? scored[0].t : null;
       if (!best) {
         this._showToast(`"${trackTitle}" isn't available in Music Assistant`);
-        return;
+        return false;
       }
 
       const uri = best.uri || best.media_content_id;
@@ -22633,8 +22761,9 @@ Include ALL tracks. Use null for unknown fields.`;
         service_data: { entity_id: resolvedEntity, media_id: _tMediaId3, media_type: 'track', enqueue: enqueueMode, ...(enqueueMode === 'replace' && this._config?.ma_radio_mode ? { radio_mode: true } : {}) }
       });
       const _spkName2 = this._hass?.states[resolvedEntity]?.attributes?.friendly_name || resolvedEntity;
-      const labels = { replace: `▶ Playing now on ${_spkName2}`, add: `Added to queue on ${_spkName2}`, next: `Playing next on ${_spkName2}` };
+      const labels = { add: `Added to queue on ${_spkName2}`, next: `Playing next on ${_spkName2}` };
       if (labels[enqueueMode]) this._showToast(labels[enqueueMode]);
+      return true;
     } catch (err) {
       const msg = (err?.message || err?.error?.message || String(err)).toLowerCase();
       this._showToast(
@@ -22642,6 +22771,7 @@ Include ALL tracks. Use null for unknown fields.`;
           ? `"${trackTitle}" isn't available in Music Assistant`
           : 'Could not play this track'
       );
+      return false;
     }
   }
 
@@ -23275,7 +23405,6 @@ Include ALL tracks. Use null for unknown fields.`;
                 _rowWrap.style.overflow = 'hidden';
                 setTimeout(() => _rowWrap.remove(), 260);
               }
-              self._showToast('✓ Removed from queue');
             } else if (isMa && !hasMassRem) {
               self._showToast('Install mass_queue integration to remove tracks');
             } else {
@@ -23341,8 +23470,6 @@ Include ALL tracks. Use null for unknown fields.`;
                 ? { entity_id: self._entity, media_id: uri, media_type: 'track', enqueue: mode }
                 : { entity_id: self._entity, media_content_id: uri, media_content_type: 'track', enqueue: mode }
             });
-            var toastMap = { add: '✓ Added to queue', next: '✓ Play Next' };
-            if (toastMap[mode]) self._showToast(toastMap[mode]);
           }
         } catch(err) {
           console.error('[Queue enqueue]', err);
@@ -23351,7 +23478,7 @@ Include ALL tracks. Use null for unknown fields.`;
     });
   }
 
-  _playMAItemEnqueue(item, tab, enqueueMode, targetOverride) {
+  async _playMAItemEnqueue(item, tab, enqueueMode, targetOverride) {
     var now = Date.now();
     // Only debounce 'replace' plays to prevent accidental double-play.
     // 'add' and 'next' should never be silently blocked — the user explicitly
@@ -23421,32 +23548,37 @@ Include ALL tracks. Use null for unknown fields.`;
     if (enqueueMode === 'replace') this._recordMAPlayStart(targetEntity);
 
     this._showLoadingToast('Starting playback…');
-    var toastLabels = { replace: null, add: 'Added to queue', next: 'Play Next' };
-    var toastMsg = toastLabels[enqueueMode];
 
-    this._hass.connection.sendMessagePromise({
-      type: 'call_service', domain: 'music_assistant', service: 'play_media',
-      service_data: { entity_id: targetEntity, media_id: _eId, media_type: mediaType, enqueue: enqueueMode, ...(enqueueMode === 'replace' && this._config?.ma_radio_mode ? { radio_mode: true } : {}) }
-    }).then(function() {
-      if (toastMsg) self._showToast(toastMsg);
-    }).catch(function(err) {
+    let _played = true;
+    try {
+      await this._hass.connection.sendMessagePromise({
+        type: 'call_service', domain: 'music_assistant', service: 'play_media',
+        service_data: { entity_id: targetEntity, media_id: _eId, media_type: mediaType, enqueue: enqueueMode, ...(enqueueMode === 'replace' && this._config?.ma_radio_mode ? { radio_mode: true } : {}) }
+      });
+    } catch (err) {
       var msg = (err && err.message ? err.message : String(err)).toLowerCase();
       if (msg.includes('no playable') || msg.includes('playable items')) {
         self._hideLoadingToast();
         self._showToast('Nothing to play — item may not be in your library');
-        return;
-      }
-      if (enqueueMode === 'replace') {
-        self._hass.connection.sendMessagePromise({
-          type: 'call_service', domain: 'media_player', service: 'play_media',
-          service_data: { entity_id: targetEntity, media_content_id: uri, media_content_type: mediaType }
-        }).catch(function() { self._hideLoadingToast(); self._showToast('Could not play this item'); });
+        _played = false;
+      } else if (enqueueMode === 'replace') {
+        try {
+          await this._hass.connection.sendMessagePromise({
+            type: 'call_service', domain: 'media_player', service: 'play_media',
+            service_data: { entity_id: targetEntity, media_content_id: uri, media_content_type: mediaType }
+          });
+        } catch (_) {
+          self._hideLoadingToast();
+          self._showToast('Could not play this item');
+          _played = false;
+        }
       } else {
         self._showToast('Enqueue not supported on this speaker');
+        _played = false;
       }
-    });
+    }
 
-    if (enqueueMode === 'replace') {
+    if (enqueueMode === 'replace' && _played) {
       this._closeMABrowser();
     }
   }
@@ -23602,6 +23734,9 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       auto_switch: true, show_entity_selector: true, show_vol_pct: true,
       scroll_text: false, use_ha_theme: false, remember_view: false,
       remember_last_entity: false, lyrics_persist: false, lyrics_cache_enabled: true,
+      lyrics_persistent_storage: false,
+      pins_persistent_storage: false,
+      ai_info_persistent_storage: false,
       ma_library_cache_enabled: true,
       ma_radio_mode: false, ambient_glow: false, row_glow: false,
       show_remote_button: true, ma_ios_library: true,
@@ -23719,6 +23854,12 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       const el = root.getElementById('lct_' + v);
       if (el) el.checked = lyricsCacheTtl === v;
     });
+    const lyricsPersistentStorageInput = root.getElementById('lyrics_persistent_storage');
+    if (lyricsPersistentStorageInput) lyricsPersistentStorageInput.checked = this._config.lyrics_persistent_storage === true;
+    const pinsPersistentStorageInput = root.getElementById('pins_persistent_storage');
+    if (pinsPersistentStorageInput) pinsPersistentStorageInput.checked = this._config.pins_persistent_storage === true;
+    const aiInfoPersistentStorageInput = root.getElementById('ai_info_persistent_storage');
+    if (aiInfoPersistentStorageInput) aiInfoPersistentStorageInput.checked = this._config.ai_info_persistent_storage === true;
     // MA library cache initial state
     const maLibCacheEnabledInit = root.getElementById('ma_library_cache_enabled');
     if (maLibCacheEnabledInit) maLibCacheEnabledInit.checked = this._config.ma_library_cache_enabled !== false;
@@ -24104,7 +24245,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                   <label class="toggle-switch"><input type="checkbox" id="lyrics_persist"><span class="toggle-track"></span></label>
                 </div>
                 <div class="toggle-item">
-                  <span class="toggle-label">Cache Lyrics Locally</span>
+                  <span class="toggle-label">Cache Lyrics</span>
                   <label class="toggle-switch"><input type="checkbox" id="lyrics_cache_enabled" checked><span class="toggle-track"></span></label>
                 </div>
               </div>
@@ -24301,10 +24442,23 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                     <button id="lyrics-cache-clear-btn" style="font-size:12px;font-weight:500;color:#ff453a;background:rgba(255,69,58,0.12);border:1px solid rgba(255,69,58,0.3);border-radius:8px;padding:5px 12px;cursor:pointer;white-space:nowrap;">Clear</button>
                   </div>
                 </div>
+                <div class="toggle-item" style="align-items:flex-start;gap:12px;">
+                  <div style="flex:1;">
+                    <div class="toggle-label">Persistent Lyrics Storage</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Off: cached on this device only. On: also saved permanently so lyrics survive app restarts.</div>
+                  </div>
+                  <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="lyrics_persistent_storage"><span class="toggle-track"></span></label>
+                </div>
 
                 <!-- Pinned Items -->
                 <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin:14px 0 8px;">Pinned Items</div>
-                <div style="font-size:12px;color:#888;margin-bottom:10px;line-height:1.5;">Pins are saved on this device only.</div>
+                <div class="toggle-item" style="align-items:flex-start;gap:12px;margin-bottom:10px;">
+                  <div style="flex:1;">
+                    <div class="toggle-label">Persistent Pin Storage</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Off: pins saved on this device only. On: also saved permanently so pins survive app restarts.</div>
+                  </div>
+                  <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="pins_persistent_storage"><span class="toggle-track"></span></label>
+                </div>
                 <div id="pins-rows"></div>
                 <button id="clear-all-pins-btn" style="width:100%;padding:9px;font-size:13px;font-weight:600;color:#ff453a;background:rgba(255,69,58,0.08);border:1px solid rgba(255,69,58,0.25);border-radius:10px;cursor:pointer;font-family:inherit;margin-top:10px;">&#x1F4CC; Clear All Pins</button>
                 <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.07);">
@@ -24315,11 +24469,19 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                   <button id="starred-stations-clear-btn" style="font-size:12px;font-weight:500;color:#ff453a;background:rgba(255,69,58,0.12);border:1px solid rgba(255,69,58,0.3);border-radius:8px;padding:5px 12px;cursor:pointer;white-space:nowrap;">Clear</button>
                 </div>
 
+                <div class="toggle-item" style="align-items:flex-start;gap:12px;margin-top:12px;">
+                  <div style="flex:1;">
+                    <div class="toggle-label">Persistent AI Info Storage</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Off: AI lookups (track info, recommendations, bios, etc.) cached on this device only. On: also saved permanently.</div>
+                  </div>
+                  <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="ai_info_persistent_storage"><span class="toggle-track"></span></label>
+                </div>
+
                 <!-- Clear All -->
                 <button id="clear-all-caches-btn" style="width:100%;padding:10px;font-size:13px;font-weight:600;color:#ff453a;background:rgba(255,69,58,0.08);border:1px solid rgba(255,69,58,0.25);border-radius:10px;cursor:pointer;font-family:inherit;margin-top:16px;">&#x1F5D1; Clear All Caches</button>
 
                 <div style="margin-top:10px;padding:10px 0 2px;border-top:1px solid rgba(255,255,255,0.07);">
-                  <div style="font-size:11px;color:#888;line-height:1.5;margin-bottom:8px;">Persistent storage is saved to Home Assistant's database and survives app restarts and cache clears. This includes pins, AI info cache, iTunes artwork, Wikipedia photos and vibe history.</div>
+                  <div style="font-size:11px;color:#888;line-height:1.5;margin-bottom:8px;">Persistent storage is saved to Home Assistant's database and survives app restarts and cache clears. Pins, AI info cache and lyrics are only included here if their toggles above are turned on — this also always includes iTunes artwork, Wikipedia photos and vibe history.</div>
                   <button id="clear-ha-storage-btn" style="width:100%;padding:10px;font-size:13px;font-weight:600;color:#ff453a;background:rgba(255,69,58,0.08);border:1px solid rgba(255,69,58,0.25);border-radius:10px;cursor:pointer;font-family:inherit;">&#x1F5D1; Clear Persistent Storage</button>
                 </div>
 
@@ -24919,6 +25081,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       if (!e.target.checked) {
         try { localStorage.removeItem('crow_lyrics_store'); } catch (_) {}
         if (this._lyricsCache) this._lyricsCache.clear();
+        this._hass?.connection?.sendMessagePromise({ type: 'frontend/set_user_data', key: 'crow_lyrics', value: null }).catch(() => {});
         updateCacheStatus();
       }
     };
@@ -24926,6 +25089,91 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       const el = root.getElementById('lct_' + v);
       if (el) el.onchange = () => this._updateConfig('lyrics_cache_ttl', v);
     });
+    const lyricsPersistentStorageEl = root.getElementById('lyrics_persistent_storage');
+    if (lyricsPersistentStorageEl) lyricsPersistentStorageEl.onchange = async (e) => {
+      this._updateConfig('lyrics_persistent_storage', e.target.checked);
+      if (e.target.checked) {
+        // Just turned on — pull down anything already saved from another device
+        // (HA wins on conflict, same as _haStorageLoad), then push the merged result up
+        try {
+          const res = await this._hass?.connection?.sendMessagePromise({ type: 'frontend/get_user_data', key: 'crow_lyrics' });
+          const haLyrics = res?.value;
+          if (haLyrics && typeof haLyrics === 'object') {
+            const local = JSON.parse(localStorage.getItem('crow_lyrics_store') || '{}');
+            const ttlDays = this._config?.lyrics_cache_ttl ?? 7;
+            const ttlMs   = ttlDays * 24 * 60 * 60 * 1000;
+            const freshHaLyrics = {};
+            Object.entries(haLyrics).forEach(([key, entry]) => {
+              if (entry && (Date.now() - (entry.ts || 0)) <= ttlMs) freshHaLyrics[key] = entry;
+            });
+            const merged = { ...local, ...freshHaLyrics };
+            localStorage.setItem('crow_lyrics_store', JSON.stringify(merged));
+            updateCacheStatus();
+          }
+        } catch (_) {}
+        this._haStorageSaveLyrics();
+      } else {
+        // Just turned off — remove the HA copy but keep the local cache as-is
+        this._hass?.connection?.sendMessagePromise({ type: 'frontend/set_user_data', key: 'crow_lyrics', value: null }).catch(() => {});
+      }
+    };
+    const pinsPersistentStorageEl = root.getElementById('pins_persistent_storage');
+    if (pinsPersistentStorageEl) pinsPersistentStorageEl.onchange = async (e) => {
+      this._updateConfig('pins_persistent_storage', e.target.checked);
+      if (e.target.checked) {
+        // Just turned on — pull down anything already saved, merge (HA wins), push back up
+        try {
+          const res = await this._hass?.connection?.sendMessagePromise({ type: 'frontend/get_user_data', key: 'crow_pins' });
+          const haPins = res?.value;
+          if (haPins && typeof haPins === 'object') {
+            Object.entries(haPins).forEach(([cat, items]) => {
+              if (!Array.isArray(items)) return;
+              const lsKey = 'crow_pin_' + cat;
+              try { localStorage.setItem(lsKey, JSON.stringify(items)); } catch (_) {}
+              if (!this._starredMemCache) this._starredMemCache = {};
+              this._starredMemCache[lsKey] = items;
+            });
+          }
+        } catch (_) {}
+        this._haStorageSavePins();
+      } else {
+        // Just turned off — remove the HA copy but keep the local pins as-is
+        this._hass?.connection?.sendMessagePromise({ type: 'frontend/set_user_data', key: 'crow_pins', value: null }).catch(() => {});
+      }
+    };
+    const aiInfoPersistentStorageEl = root.getElementById('ai_info_persistent_storage');
+    if (aiInfoPersistentStorageEl) aiInfoPersistentStorageEl.onchange = async (e) => {
+      this._updateConfig('ai_info_persistent_storage', e.target.checked);
+      if (e.target.checked) {
+        // Just turned on — pull down anything already saved, merge (HA wins) into
+        // each local subcache, then push the full merged set back up in one write
+        try {
+          const res = await this._hass?.connection?.sendMessagePromise({ type: 'frontend/get_user_data', key: 'crow_ai_local' });
+          const haAi = res?.value;
+          if (haAi && typeof haAi === 'object') {
+            Object.entries(haAi).forEach(([cacheName, haStore]) => {
+              if (!haStore || typeof haStore !== 'object') return;
+              const lsKey = 'crow_ai_local_' + cacheName;
+              try {
+                const local = JSON.parse(localStorage.getItem(lsKey) || '{}');
+                const merged = { ...local, ...haStore };
+                localStorage.setItem(lsKey, JSON.stringify(merged));
+              } catch (_) {}
+            });
+          }
+          // Push the merged result for every local subcache back up in one write
+          const full = {};
+          Object.keys(localStorage).filter(k => k.startsWith('crow_ai_local_')).forEach(k => {
+            const cacheName = k.slice('crow_ai_local_'.length);
+            try { full[cacheName] = JSON.parse(localStorage.getItem(k) || '{}'); } catch (_) {}
+          });
+          this._hass?.connection?.sendMessagePromise({ type: 'frontend/set_user_data', key: 'crow_ai_local', value: full }).catch(() => {});
+        } catch (_) {}
+      } else {
+        // Just turned off — remove the HA copy but keep the local cache as-is
+        this._hass?.connection?.sendMessagePromise({ type: 'frontend/set_user_data', key: 'crow_ai_local', value: null }).catch(() => {});
+      }
+    };
     const clearBtn    = root.getElementById('lyrics-cache-clear-btn');
     const cacheStatus = root.getElementById('lyrics-cache-status');
     const updateCacheStatus = () => {
@@ -24941,6 +25189,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
     if (clearBtn) clearBtn.onclick = () => {
       try { localStorage.removeItem('crow_lyrics_store'); } catch (_) {}
       if (this._lyricsCache) this._lyricsCache.clear();
+      this._hass?.connection?.sendMessagePromise({ type: 'frontend/set_user_data', key: 'crow_lyrics', value: null }).catch(() => {});
       updateCacheStatus();
     };
 
@@ -25616,13 +25865,14 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
         try {
           clearHaStorageBtn.textContent = 'Clearing…';
           clearHaStorageBtn.disabled = true;
-          const keys = ['crow_pins', 'crow_ai_local', 'crow_itunes_preferred', 'crow_wiki_urls'];
+          const keys = ['crow_pins', 'crow_ai_local', 'crow_itunes_preferred', 'crow_wiki_urls', 'crow_lyrics'];
           await Promise.all(keys.map(k =>
             conn.sendMessagePromise({ type: 'frontend/set_user_data', key: k, value: null }).catch(() => {})
           ));
           // Reset in-memory caches so cleared data isn't served from memory
           this._starredMemCache   = {};
           this._wikiThumbUrlCache = new Map();
+          this._lyricsCache       = new Map();
           this._haStorageLoaded   = false; // allow reload on next hass set
           clearHaStorageBtn.textContent = '✓ Cleared';
           clearHaStorageBtn.style.cssText += ';color:#30d158;border-color:rgba(48,209,88,0.3);background:rgba(48,209,88,0.1);';
@@ -25956,6 +26206,9 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       auto_switch: true, show_entity_selector: true, show_vol_pct: true,
       scroll_text: false, use_ha_theme: false, remember_view: false,
       remember_last_entity: false, lyrics_persist: false, lyrics_cache_enabled: true,
+      lyrics_persistent_storage: false,
+      pins_persistent_storage: false,
+      ai_info_persistent_storage: false,
       ma_library_cache_enabled: true,
       ma_radio_mode: false, ambient_glow: false, row_glow: false,
       show_remote_button: true, ma_ios_library: true,
