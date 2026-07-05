@@ -7972,6 +7972,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     this._maErrorShowing = false; // reset so stale tab value can't affect drill-in logic
     this._maInSearchResults = false;
     this._maLastSearch = null;
+    this._haRbActive = false;
+    this._haRbStack = [];
     const maSearchInput = this.shadowRoot?.getElementById('maSearchInput');
     const maSearchClear = this.shadowRoot?.getElementById('maSearchClear');
     const maIosInput    = this.shadowRoot?.getElementById('maIosSearchInput');
@@ -7993,6 +7995,20 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   }
 
   _maNavBack() {
+    // The HA Radio Browser browse tree uses its own stack, layered on top of
+    // the same shared back button/title — handle it first and return before
+    // touching the regular MA library nav stack below.
+    if (this._haRbActive) {
+      this._haRbClearSearchInputs();
+      const entity = this._resolveMATargetEntity() || this._entity;
+      if (this._haRbStack && this._haRbStack.length > 0) {
+        const prev = this._haRbStack.pop();
+        this._haRbBrowse(entity, prev.mediaContentId, prev.mediaContentType, prev.title);
+      } else {
+        this._haRbExitToRadioTab();
+      }
+      return;
+    }
     // Remove any stray artwork/bio lightbox before navigating back
     this.shadowRoot?.getElementById('cardOuter')?.querySelectorAll('.crow-bio-lightbox').forEach(el => el.remove());
     // Cancel any in-flight drill-in fetch
@@ -8714,12 +8730,22 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
   _rbIsStarred(st) {
     const starred = this._rbGetStarred();
-    return starred.some(s => s.stationuuid === st.stationuuid || (s.name === st.name && s.url_resolved === st.url_resolved) || (st._maUri && s._maUri === st._maUri) || (st._haMediaContentId && s._haMediaContentId === st._haMediaContentId));
+    return starred.some(s =>
+      (st.stationuuid && s.stationuuid === st.stationuuid) ||
+      (st.url_resolved && s.name === st.name && s.url_resolved === st.url_resolved) ||
+      (st._maUri && s._maUri === st._maUri) ||
+      (st._haMediaContentId && s._haMediaContentId === st._haMediaContentId)
+    );
   }
 
   _rbToggleStar(st) {
     let starred = this._rbGetStarred();
-    const idx = starred.findIndex(s => s.stationuuid === st.stationuuid || (s.name === st.name && s.url_resolved === st.url_resolved) || (st._maUri && s._maUri === st._maUri) || (st._haMediaContentId && s._haMediaContentId === st._haMediaContentId));
+    const idx = starred.findIndex(s =>
+      (st.stationuuid && s.stationuuid === st.stationuuid) ||
+      (st.url_resolved && s.name === st.name && s.url_resolved === st.url_resolved) ||
+      (st._maUri && s._maUri === st._maUri) ||
+      (st._haMediaContentId && s._haMediaContentId === st._haMediaContentId)
+    );
     if (idx >= 0) {
       starred.splice(idx, 1);
       this._rbSaveStarred(starred);
@@ -8783,13 +8809,19 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const row = document.createElement('div');
     row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer;-webkit-tap-highlight-color:transparent;position:relative;';
 
-    const fav = st.favicon
-      ? '<img src="' + st.favicon + '" alt="" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display=\'none\'">'
-      : '<svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:rgba(255,255,255,0.3)"><path d="M12 1c-4.97 0-9 4.03-9 9v7c0 1.66 1.34 3 3 3h3v-8H5v-2c0-3.87 3.13-7 7-7s7 3.13 7 7v2h-4v8h3c1.66 0 3-1.34 3-3v-7c0-4.97-4.03-9-9-9z"/></svg>';
+    // Always render the fallback radio icon first, then layer the real
+    // favicon on top if one exists. If the favicon fails to load (broken
+    // links are common in radio-browser.info's community-maintained data),
+    // onerror removes just the <img>, revealing the fallback icon underneath
+    // instead of leaving a blank box — which is what was happening before.
+    const _fallbackIcon = '<svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:rgba(255,255,255,0.3)"><path d="M12 1c-4.97 0-9 4.03-9 9v7c0 1.66 1.34 3 3 3h3v-8H5v-2c0-3.87 3.13-7 7-7s7 3.13 7 7v2h-4v8h3c1.66 0 3-1.34 3-3v-7c0-4.97-4.03-9-9-9z"/></svg>';
+    const fav = _fallbackIcon + (st.favicon
+      ? '<img src="' + st.favicon + '" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;" onerror="this.remove()">'
+      : '');
     const tags = [st.tags?.split(',')[0], st.countrycode, st.codec ? (st.codec + (st.bitrate ? ' · ' + st.bitrate + 'kbps' : '')) : null].filter(Boolean).join(' · ');
 
     row.innerHTML =
-      '<div style="width:40px;height:40px;border-radius:8px;background:rgba(255,255,255,0.08);flex-shrink:0;overflow:hidden;display:flex;align-items:center;justify-content:center;">' + fav + '</div>' +
+      '<div style="width:40px;height:40px;border-radius:8px;background:rgba(255,255,255,0.08);flex-shrink:0;overflow:hidden;display:flex;align-items:center;justify-content:center;position:relative;">' + fav + '</div>' +
       '<div style="flex:1;min-width:0;">' +
         '<div style="font-size:13px;font-weight:600;color:var(--primary-text-color,#fff);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (st.name || 'Unknown') + '</div>' +
         '<div style="font-size:11px;color:rgba(255,255,255,0.45);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + tags + '</div>' +
@@ -8839,6 +8871,46 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // Inserts a single tappable row at the very top of the radio tab that opens
   // the HA Radio Browser category tree. Safe to call repeatedly — replaces
   // any existing entry first.
+  // Clears the search bar(s) without triggering a reload — used whenever we
+  // navigate to a different level of the HA Radio Browser tree, so text
+  // typed to filter one level (e.g. "Germany" in a country list) doesn't
+  // stay in the box and silently hide everything in the next level, which
+  // won't contain that text at all.
+  _haRbClearSearchInputs() {
+    if (this._maFilterDebounce) { clearTimeout(this._maFilterDebounce); this._maFilterDebounce = null; }
+    // IMPORTANT: live-filtering only runs while this is false (a full Enter
+    // search sets it true, on purpose, so typing afterward doesn't fight
+    // with real search results). Nothing else in the browse-tree navigation
+    // resets it, so after doing one full search it stayed stuck true forever
+    // afterward — silently disabling live-filtering everywhere, which is
+    // exactly the regression this was causing.
+    this._maInSearchResults = false;
+    const r = this.shadowRoot;
+    const maSearchInput = r?.getElementById('maSearchInput');
+    const maSearchClear = r?.getElementById('maSearchClear');
+    if (maSearchInput) maSearchInput.value = '';
+    if (maSearchClear) maSearchClear.classList.add('hidden');
+    const iosInput = r?.getElementById('maIosSearchInput');
+    const iosClear = r?.getElementById('maIosSearchClear');
+    if (iosInput) iosInput.value = '';
+    if (iosClear) iosClear.style.display = 'none';
+  }
+
+  // Leaves the HA Radio Browser browse tree entirely and returns to the plain
+  // radio tab — restores the shared header (back button hidden, title back
+  // to "Radio") since we've been repurposing it while browsing.
+  _haRbExitToRadioTab() {
+    this._haRbActive = false;
+    this._haRbStack = [];
+    this._haRbClearSearchInputs();
+    const backBtn = this.shadowRoot?.getElementById('maBackBtn');
+    const titleEl = this.shadowRoot?.getElementById('maTitle');
+    if (backBtn) backBtn.classList.add('hidden');
+    if (titleEl) titleEl.textContent = 'Radio';
+    this.shadowRoot?.querySelectorAll('.ma-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'radio'));
+    this._loadMATab('radio');
+  }
+
   _haRbInjectBrowseEntry(content) {
     if (!content) return;
     content.querySelector('#ha-rb-browse-entry')?.remove();
@@ -8852,6 +8924,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       '<svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:rgba(255,255,255,0.3);flex-shrink:0;"><path d="M8.59,16.59L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.59Z"/></svg>';
     row.addEventListener('click', () => {
       this._haRbStack = [];
+      this._haRbActive = true;
+      this._haRbClearSearchInputs();
+      this.shadowRoot?.getElementById('maBackBtn')?.classList.remove('hidden');
       // The root of a media source is browsed as media_content_type "app" —
       // matching what HA's own media browser dialog sends for the first level.
       this._haRbBrowse(rbEntity, 'media-source://radio_browser', 'app', 'Radio Browser');
@@ -8869,6 +8944,18 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const content = this.shadowRoot.getElementById('maContent');
     if (!content) return;
     if (!this._haRbStack) this._haRbStack = [];
+    this._haRbActive = true;
+    // Repurpose the shared header (used everywhere else for MA library
+    // browsing) while we're in the HA browse tree — back button visible,
+    // title reflecting the current level.
+    this.shadowRoot?.getElementById('maBackBtn')?.classList.remove('hidden');
+    const _titleEl = this.shadowRoot?.getElementById('maTitle');
+    if (_titleEl) _titleEl.textContent = title || 'Radio Browser';
+    // Guards against a race with other async flows (like a search) writing
+    // into the same #maContent — if something newer has started by the time
+    // this resolves, this one silently backs off instead of clobbering it.
+    this._maContentGen = (this._maContentGen || 0) + 1;
+    const _myGen = this._maContentGen;
     content.innerHTML = this._psLoading('Browsing Home Assistant Radio Browser…');
     try {
       // IMPORTANT: media_player.browse_media (the service/action) calls the
@@ -8885,9 +8972,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         media_content_id: mediaContentId,
         media_content_type: mediaContentType,
       });
+      if (this._maContentGen !== _myGen) return;
       const children = result?.children || [];
+      if (_titleEl && !title && result?.title) _titleEl.textContent = result.title;
       this._haRbRenderBrowse(entity, mediaContentId, mediaContentType, title || result?.title || 'Radio Browser', children);
     } catch (e) {
+      if (this._maContentGen !== _myGen) return;
       console.error('[HA Radio Browser] browse failed:', e);
       content.innerHTML = '';
       const errDiv = document.createElement('div');
@@ -8899,7 +8989,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       const closeBtn = document.createElement('button');
       closeBtn.textContent = 'Back to search';
       closeBtn.style.cssText = 'margin-top:12px;padding:6px 14px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:8px;color:#fff;font-size:12px;font-family:inherit;cursor:pointer;';
-      closeBtn.addEventListener('click', () => { this._haRbStack = []; this._loadMATab('radio'); });
+      closeBtn.addEventListener('click', () => this._haRbExitToRadioTab());
       errDiv.appendChild(closeBtn);
       content.appendChild(errDiv);
     }
@@ -8913,26 +9003,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const content = this.shadowRoot.getElementById('maContent');
     if (!content) return;
     content.innerHTML = '';
-
-    const header = document.createElement('div');
-    header.style.cssText = 'display:flex;align-items:center;gap:8px;padding:4px 4px 10px;';
-    header.innerHTML =
-      '<button class="ma-back-btn" id="haRbBackBtn"><svg viewBox="0 0 24 24"><path d="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z"/></svg></button>' +
-      '<span class="ma-title" style="flex:1;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (currentTitle || 'Radio Browser') + '</span>' +
-      '<div style="width:28px;flex-shrink:0;"></div>';
-    content.appendChild(header);
-
-    // Same button either way — pops one level of the browse stack if there is
-    // one, otherwise exits back to the radio search/tab.
-    header.querySelector('#haRbBackBtn')?.addEventListener('click', () => {
-      if (this._haRbStack.length > 0) {
-        const prev = this._haRbStack.pop();
-        this._haRbBrowse(entity, prev.mediaContentId, prev.mediaContentType, prev.title);
-      } else {
-        this._haRbStack = [];
-        this._loadMATab('radio');
-      }
-    });
 
     if (!children.length) {
       const empty = document.createElement('div');
@@ -8959,6 +9029,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           '<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:600;color:var(--primary-text-color,#fff);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (child.title || 'Untitled') + '</div></div>' +
           '<svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:rgba(255,255,255,0.25);flex-shrink:0;"><path d="M8.59,16.59L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.59Z"/></svg>';
         row.addEventListener('click', () => {
+          this._haRbClearSearchInputs();
           this._haRbStack.push({ mediaContentId: currentId, mediaContentType: currentType, title: currentTitle });
           this._haRbBrowse(entity, child.media_content_id, child.media_content_type, child.title);
         });
@@ -9074,6 +9145,40 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           return entry.st;
         }
       }
+    } catch (_) {}
+    return null;
+  }
+
+  // Remember the station we just told a specific entity to play, persisted to
+  // localStorage (not just in-memory) so the LIVE pill can still identify it
+  // correctly after the app reloads. This matters because many stations
+  // overwrite media_title/media_album_name with the currently playing song
+  // once tuned in — permanently hiding the station's own name from HA's state
+  // — so an in-memory-only tracker works right after pressing Play, but goes
+  // blank (and falls back to a much less reliable name search) the moment
+  // WKWebView reloads the page.
+  _rbSaveLastPlayed(entityId, st) {
+    if (!entityId || !st) return;
+    this._lastPlayedRbStation = st;
+    try {
+      const store = JSON.parse(localStorage.getItem('crow_rb_last_played') || '{}');
+      store[entityId] = { st, ts: Date.now() };
+      localStorage.setItem('crow_rb_last_played', JSON.stringify(store));
+    } catch (_) {}
+  }
+
+  // Look up the last station we told this entity to play — in-memory first
+  // (instant, same session), falling back to localStorage (survives reloads).
+  // The persisted copy expires after a while so a station switched via voice
+  // or an automation days ago doesn't get shown as if it were still current.
+  _rbGetLastPlayed(entityId) {
+    if (this._lastPlayedRbStation) return this._lastPlayedRbStation;
+    if (!entityId) return null;
+    try {
+      const store = JSON.parse(localStorage.getItem('crow_rb_last_played') || '{}');
+      const entry = store[entityId];
+      const TTL = 12 * 3600 * 1000; // 12 hours
+      if (entry?.st && (Date.now() - (entry.ts || 0)) < TTL) return entry.st;
     } catch (_) {}
     return null;
   }
@@ -10302,7 +10407,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         if (mode === 'play_now') {
           const playCall = this._rbStationPlayCall(st, entity);
           if (!playCall) { this._showToast('No stream URL'); return; }
-          this._lastPlayedRbStation = st;
+          this._rbSaveLastPlayed(entity, st);
           this._hass.connection.sendMessagePromise({
             type: 'call_service', domain: playCall.domain, service: playCall.service,
             service_data: playCall.service_data
@@ -10365,6 +10470,38 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const _rbo = r.getElementById('queueMenuBtn');
     if (_rbo) _rbo.classList.add('hidden');
 
+    // HA Radio Browser stations arrive with only a name/thumbnail/media id —
+    // no stream URL, homepage, codec, country, etc. HA's leaf station ids use
+    // the exact same UUID scheme as radio-browser.info itself, so we can look
+    // up the full record from that same public database and merge it in,
+    // giving this panel everything a normal station's panel already shows.
+    if (st._haMediaContentId && !st.url_resolved && !st.url) {
+      const _uuid = String(st._haMediaContentId).split('/').pop();
+      if (_uuid && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(_uuid)) {
+        content.innerHTML = this._psLoading('Loading station details…');
+        try {
+          const _rbDetailRes = await fetch('https://de1.api.radio-browser.info/json/stations/byuuid/' + _uuid);
+          if (_rbDetailRes.ok) {
+            const _rbDetailArr = await _rbDetailRes.json();
+            const _real = _rbDetailArr?.[0];
+            if (_real) {
+              // Merge in everything except the identifiers that drive
+              // playback — those must keep pointing at the HA media source,
+              // not the raw stream URL, or playback would go through the
+              // wrong service (see _rbStationPlayCall).
+              const { _haMediaContentId, _haMediaContentType } = st;
+              Object.assign(st, _real);
+              st._haMediaContentId = _haMediaContentId;
+              st._haMediaContentType = _haMediaContentType;
+              this._rbCacheStation(st);
+            }
+          }
+        } catch (_) {
+          // Non-fatal — panel still works fine with just the name/artwork we already had.
+        }
+      }
+    }
+
     // Show share button in header
     const _rbShare = r.getElementById('infoShareBtn');
     if (_rbShare) {
@@ -10412,9 +10549,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       return cc.toUpperCase().replace(/./g, c => String.fromCodePoint(c.charCodeAt(0) + 127397));
     };
 
-    const faviconHtml = st.favicon
-      ? `<img src="${st.favicon}" alt="" style="width:72px;height:72px;border-radius:12px;object-fit:cover;display:block;" onerror="this.style.display='none'">`
-      : `<div style="width:72px;height:72px;border-radius:12px;background:rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:center;"><svg viewBox="0 0 24 24" style="width:32px;height:32px;fill:rgba(255,255,255,0.3)"><path d="M12 1c-4.97 0-9 4.03-9 9v7c0 1.66 1.34 3 3 3h3v-8H5v-2c0-3.87 3.13-7 7-7s7 3.13 7 7v2h-4v8h3c1.66 0 3-1.34 3-3v-7c0-4.97-4.03-9-9-9z"/></svg></div>`;
+    const faviconHtml = `<div style="width:72px;height:72px;border-radius:12px;background:rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden;">` +
+      `<svg viewBox="0 0 24 24" style="width:32px;height:32px;fill:rgba(255,255,255,0.3)"><path d="M12 1c-4.97 0-9 4.03-9 9v7c0 1.66 1.34 3 3 3h3v-8H5v-2c0-3.87 3.13-7 7-7s7 3.13 7 7v2h-4v8h3c1.66 0 3-1.34 3-3v-7c0-4.97-4.03-9-9-9z"/></svg>` +
+      (st.favicon ? `<img src="${st.favicon}" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;" onerror="this.remove()">` : '') +
+      `</div>`;
 
     const metaItems = [
       st.codec    && ['Format',   st.codec + (st.bitrate ? ' · ' + st.bitrate + 'kbps' : '')],
@@ -10485,7 +10623,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     content.querySelector('#rb-info-play-btn')?.addEventListener('click', () => {
       const playCall = this._rbStationPlayCall(st, _rbPlayTarget);
       if (!playCall) { this._showToast('No stream URL for this station'); return; }
-      this._lastPlayedRbStation = st;
+      this._rbSaveLastPlayed(_rbPlayTarget, st);
       // HA media-source stations always go through the core service — it
       // works on any media_player entity and doesn't need MA at all.
       if (playCall.domain === 'media_player' || _rbHasMA) {
@@ -10603,11 +10741,28 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (activeTabKey === 'radio' || this._maCurrentTab === 'radio') {
       // Clear the action bar — it doesn't apply to a radio station list
       this.shadowRoot?.getElementById('maContent')?.querySelector('.ma-drill-actions')?.remove();
+      // Guards against a race with other async flows (like HA browse tree
+      // navigation) writing into the same #maContent — if something newer
+      // has started by the time this resolves, this backs off silently
+      // instead of clobbering it (or getting silently clobbered itself).
+      this._maContentGen = (this._maContentGen || 0) + 1;
+      const _myGen = this._maContentGen;
       content.innerHTML = this._psLoading('Searching radio stations…');
       try {
-        const rbRes = await fetch('https://de1.api.radio-browser.info/json/stations/search?name=' + encodeURIComponent(query) + '&limit=30&hidebroken=true&order=votes&reverse=true');
+        // A bounded timeout guarantees this always resolves to something
+        // visible (results, "no results", or this error) rather than a
+        // spinner that can hang indefinitely if the request stalls.
+        const _rbAbort = new AbortController();
+        const _rbTimeout = setTimeout(() => _rbAbort.abort(), 12000);
+        let rbRes;
+        try {
+          rbRes = await fetch('https://de1.api.radio-browser.info/json/stations/search?name=' + encodeURIComponent(query) + '&limit=30&hidebroken=true&order=votes&reverse=true', { signal: _rbAbort.signal });
+        } finally {
+          clearTimeout(_rbTimeout);
+        }
         if (!rbRes.ok) throw new Error('HTTP ' + rbRes.status);
         const stations = await rbRes.json();
+        if (this._maContentGen !== _myGen) return;
         if (!stations?.length) {
           content.innerHTML = this._psAutoClose(this._psEmpty('M9.5,3A6.5,6.5 0 0,1 16,9.5C16,11.11 15.41,12.59 14.44,13.73L14.71,14H15.5L20.5,19L19,20.5L14,15.5V14.71L13.73,14.44C12.59,15.41 11.11,16 9.5,16A6.5,6.5 0 0,1 3,9.5A6.5,6.5 0 0,1 9.5,3M9.5,5C7,5 5,7 5,9.5C5,12 7,14 9.5,14C12,14 14,12 14,9.5C14,7 12,5 9.5,5Z', 'No stations found', 'Nothing matched "' + query + '" — try a different search'), null, 8000, 'rbNoResBtn', 'rbNoResRing');
           this._psAutoCloseStart(this.shadowRoot, null, () => { this._maInSearchResults = false; this.shadowRoot?.querySelectorAll('.ma-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'radio')); this._loadMATab('radio'); }, 8000, 'rbNoResBtn', 'rbNoResRing');
@@ -10632,10 +10787,16 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         content.appendChild(rbList);
         this._haRbInjectBrowseEntry(content);
       } catch(e) {
+        if (this._maContentGen !== _myGen) return;
+        console.error('[Radio search] failed:', e);
         content.innerHTML = '';
         const errDiv = document.createElement('div');
         errDiv.style.cssText = 'margin:16px 4px;background:rgba(255,165,0,0.1);border:1px solid rgba(255,165,0,0.3);border-radius:12px;padding:14px;';
-        errDiv.innerHTML = '<div style="font-size:13px;font-weight:600;color:rgba(255,165,0,0.9);margin-bottom:6px;">📡 Can\'t reach Radio Browser</div><div style="font-size:12px;color:rgba(255,255,255,0.6);line-height:1.5;">Radio search uses <strong>radio-browser.info</strong>. Your device can\'t reach it right now.</div>';
+        const _isTimeout = e?.name === 'AbortError';
+        const _errMsg = _isTimeout ? 'Timed out after 12s waiting for a response.' : (e?.message ? String(e.message) : '');
+        errDiv.innerHTML = '<div style="font-size:13px;font-weight:600;color:rgba(255,165,0,0.9);margin-bottom:6px;">📡 Can\'t reach Radio Browser</div><div style="font-size:12px;color:rgba(255,255,255,0.6);line-height:1.5;">Radio search uses <strong>radio-browser.info</strong>. Your device can\'t reach it right now.' +
+          (_errMsg ? '<br><span style="font-family:monospace;font-size:10px;opacity:0.7;">' + _errMsg.replace(/</g,'&lt;') + '</span>' : '') +
+          '</div>';
         const closeBtn = document.createElement('button');
         closeBtn.textContent = 'Go back';
         closeBtn.style.cssText = 'margin-top:12px;padding:6px 14px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:8px;color:#fff;font-size:12px;font-family:inherit;cursor:pointer;';
@@ -12975,22 +13136,16 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
         const _attrs = this._hass?.states[this._entity]?.attributes || {};
 
-        // Strategy 0: the station we ourselves most recently asked to play,
-        // from this card's own UI. This is what makes the pill work reliably
+        // Strategy 0: the station we ourselves most recently asked this
+        // specific entity to play, from this card's own UI (persisted, so it
+        // survives an app reload). This is what makes the pill work reliably
         // for HA Radio Browser stations — MA can end up reporting a
         // media_content_id for the entity that doesn't match anything we
-        // cached it under (it may just echo back the media-source:// id, or
-        // something else entirely), so parsing that id can't be trusted.
-        // Sanity-check it against the currently playing title when one is
-        // available, so a stale value from an earlier station never sticks.
-        if (this._lastPlayedRbStation) {
-          const _nowTitle = (_attrs.media_title || _attrs.media_album_name || '').toLowerCase().trim();
-          const _lastName = (this._lastPlayedRbStation.name || '').toLowerCase().trim();
-          if (!_nowTitle || !_lastName || _nowTitle.includes(_lastName) || _lastName.includes(_nowTitle)) {
-            this._showRbMoreInfo(this._lastPlayedRbStation);
-            return;
-          }
-        }
+        // cached it under — and for any station that overwrites media_title
+        // with the currently playing song once tuned in (very common), which
+        // otherwise permanently hides the station's own name from HA's state.
+        const _lastPlayed = this._rbGetLastPlayed(this._entity);
+        if (_lastPlayed) { this._showRbMoreInfo(_lastPlayed); return; }
 
         // Strategy 1: check pinned stations by name — instant, no network
         // and check the session station cache by stream URL — populated when
