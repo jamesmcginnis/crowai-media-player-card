@@ -3799,7 +3799,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         const cardOuter = r.getElementById('cardOuter');
         const isCompact = cardOuter.classList.contains('mode-compact');
         if (!isCompact && !this._remoteMode) {
-          if (_hasArt()) {
+          const _lpState = this._hass?.states[this._entity];
+          if (_hasArt() || this._isLiveStream(_lpState)) {
+            // _openLyrics() already shows "Lyrics aren't available for radio
+            // and live streams" for this case — that's the correct behavior
+            // even with no artwork, rather than falling through to the
+            // library browser below.
             this._toggleLyrics();
           } else if (_isMaEntity() && !this._isAppleTV) {
             this._openMABrowser();
@@ -10632,16 +10637,19 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           service_data: playCall.service_data
         }).then(() => {
           this._closeInfoPopup();
+          this._closeMABrowser();
         }).catch(() => {
           // Only fall back to a direct-URL play for real stream URLs — an MA
           // library URI or HA media-source id isn't a playable URL on its own.
           if (!st._maUri && !st._haMediaContentId) this._playMediaDirect(_rbPlayTarget, (st.url_resolved || st.url), 'music', st.name);
           else this._showToast('\u26a0\ufe0f Could not play ' + st.name);
           this._closeInfoPopup();
+          this._closeMABrowser();
         });
       } else {
         this._playMediaDirect(this._entity, (st.url_resolved || st.url), 'music', st.name);
         this._closeInfoPopup();
+        this._closeMABrowser();
       }
     });
 
@@ -20846,9 +20854,44 @@ Include ALL tracks. Use null for unknown fields.`;
     // ── Recently Added ────────────────────────────────────────────────
     if (tab === 'recently_added') {
       try {
-        // Strategy 1: Find the "Recently Added Tracks" playlist by name in MA's
-        // library and load its contents — this is the most reliable approach since
-        // MA maintains this playlist itself in the correct order.
+        // Primary: ask MA's library directly for tracks sorted by true add
+        // date (order_by: timestamp_added_desc). MA's Apple Music provider
+        // only seems to carry genuine, distinct per-track add dates for a
+        // small recent window — beyond that, tracks appear to share one
+        // fallback timestamp and the "sort" silently reverts to whatever
+        // their default library order already was. There's no way to detect
+        // that boundary from the data get_library returns (no date field is
+        // exposed, only the ability to sort by it), so rather than show a
+        // long list that quietly turns into unsorted noise partway through,
+        // this deliberately caps to a small, reliable number.
+        let items = [];
+        try {
+          const res = await this._hass.connection.sendMessagePromise({
+            type: 'call_service',
+            domain: 'music_assistant',
+            service: 'get_library',
+            service_data: { config_entry_id: configEntryId, media_type: 'track', order_by: 'timestamp_added_desc', limit: 6 },
+            return_response: true
+          });
+          items = (res?.response?.items || []).map(item => ({ ...item, _tab: 'track' }));
+        } catch (_) {
+          // order_by not supported on this Music Assistant version —
+          // fall through to the playlist heuristic below.
+        }
+
+        if (items.length) {
+          this._maLibCacheSet('recently_added', items);
+          this._renderMAGrid(items, 'track', content);
+          if (!this._maTabRenderCache) this._maTabRenderCache = new Map();
+          this._maTabRenderCache.set('recently_added', { items, ts: Date.now() });
+          return;
+        }
+
+        // Fallback: look for a playlist literally named "Recently Added
+        // Tracks" (or similar) — only reached when the direct query above
+        // isn't supported or came back empty, e.g. an older Music Assistant
+        // version. Its contents are only as accurate as whatever maintains
+        // that playlist, so it's a last resort rather than the default.
         const playlistRes = await this._hass.connection.sendMessagePromise({
           type: 'call_service',
           domain: 'music_assistant',
@@ -20864,6 +20907,8 @@ Include ALL tracks. Use null for unknown fields.`;
         );
 
         if (recentPlaylist) {
+          // TEMPORARY DEBUG marker — tells us which strategy actually ran.
+          this._showToast('🔧 DEBUG: using playlist fallback ("' + (recentPlaylist.name || recentPlaylist.title) + '") — direct query returned nothing', 6000);
           // Found it — open it as a collection drill-in so we reuse all the
           // existing track-loading, rendering, and action bar infrastructure.
           // Set _maCurrentTab to '__ios_root__' before calling so the nav stack
@@ -20880,25 +20925,8 @@ Include ALL tracks. Use null for unknown fields.`;
           return;
         }
 
-        // Strategy 2: Fall back to get_library with added_at_desc (supported on newer MA)
-        const res = await this._hass.connection.sendMessagePromise({
-          type: 'call_service',
-          domain: 'music_assistant',
-          service: 'get_library',
-          service_data: { config_entry_id: configEntryId, media_type: 'track', order_by: 'added_at_desc', limit: 50 },
-          return_response: true
-        });
-        const items = (res?.response?.items || []).map(item => ({ ...item, _tab: 'track' }));
-
-        if (!items.length) {
-          this.shadowRoot?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
-          content.innerHTML = '<div class="ma-empty">No recently added tracks found. Try adding a playlist named "Recently Added Tracks" in Music Assistant.</div>';
-          return;
-        }
-        this._maLibCacheSet('recently_added', items);
-        this._renderMAGrid(items, 'track', content);
-        if (!this._maTabRenderCache) this._maTabRenderCache = new Map();
-        this._maTabRenderCache.set('recently_added', { items, ts: Date.now() });
+        this.shadowRoot?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
+        content.innerHTML = '<div class="ma-empty">No recently added tracks found. Try adding a playlist named "Recently Added Tracks" in Music Assistant.</div>';
       } catch (e) {
         console.error('[MA] recently_added error:', e);
         this.shadowRoot?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
