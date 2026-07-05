@@ -8433,6 +8433,17 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       const _wordMatch = title.split(' ').some(w => w.startsWith(q));
       wrap.style.display = (title.includes(q) || sub.includes(q) || _wordMatch) ? '' : 'none';
     });
+    // The HA Radio Browser browse tree (folders + stations) doesn't use the
+    // .ma-item-wrap/.ma-item-title markup above — it's tagged with a simpler
+    // data-ha-rb-title attribute instead. Without this block, typing in the
+    // search bar while browsing silently filtered nothing.
+    // IMPORTANT: these rows only have "display:flex" set via inline style
+    // (no backing CSS class), so clearing the property reverts them to the
+    // browser default of "display:block" instead of restoring the flex
+    // layout — that's what was stacking the flag/title/chevron vertically.
+    content.querySelectorAll('[data-ha-rb-title]').forEach(row => {
+      row.style.display = (!q || row.dataset.haRbTitle.includes(q)) ? 'flex' : 'none';
+    });
   }
 
 
@@ -8703,12 +8714,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
   _rbIsStarred(st) {
     const starred = this._rbGetStarred();
-    return starred.some(s => s.stationuuid === st.stationuuid || (s.name === st.name && s.url_resolved === st.url_resolved));
+    return starred.some(s => s.stationuuid === st.stationuuid || (s.name === st.name && s.url_resolved === st.url_resolved) || (st._maUri && s._maUri === st._maUri) || (st._haMediaContentId && s._haMediaContentId === st._haMediaContentId));
   }
 
   _rbToggleStar(st) {
     let starred = this._rbGetStarred();
-    const idx = starred.findIndex(s => s.stationuuid === st.stationuuid || (s.name === st.name && s.url_resolved === st.url_resolved));
+    const idx = starred.findIndex(s => s.stationuuid === st.stationuuid || (s.name === st.name && s.url_resolved === st.url_resolved) || (st._maUri && s._maUri === st._maUri) || (st._haMediaContentId && s._haMediaContentId === st._haMediaContentId));
     if (idx >= 0) {
       starred.splice(idx, 1);
       this._rbSaveStarred(starred);
@@ -8813,8 +8824,157 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     content.querySelector('#rb-starred-section')?.remove();
     const rbEntity = this._resolveMATargetEntity() || this._entity;
     const section = this._rbRenderStarredSection(rbEntity);
-    if (!section) return;
-    content.insertBefore(section, content.firstChild);
+    if (section) content.insertBefore(section, content.firstChild);
+    // Always (re-)add the "Browse Home Assistant Radio" entry point above it
+    this._haRbInjectBrowseEntry(content);
+  }
+
+  // ── Home Assistant "Radio Browser" integration browsing (Option A) ──────────
+  // HA's own Radio Browser integration exposes stations as a media source
+  // (media-source://radio_browser) that's browsed by category (Popular, By
+  // Category, By Language, Country List, Local Stations) rather than searched
+  // by free text — so this is a separate "Browse" entry point next to the
+  // existing search, not merged into the search results.
+
+  // Inserts a single tappable row at the very top of the radio tab that opens
+  // the HA Radio Browser category tree. Safe to call repeatedly — replaces
+  // any existing entry first.
+  _haRbInjectBrowseEntry(content) {
+    if (!content) return;
+    content.querySelector('#ha-rb-browse-entry')?.remove();
+    const rbEntity = this._resolveMATargetEntity() || this._entity;
+    const row = document.createElement('div');
+    row.id = 'ha-rb-browse-entry';
+    row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 4px;margin-bottom:6px;border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer;-webkit-tap-highlight-color:transparent;';
+    row.innerHTML =
+      '<div style="width:40px;height:40px;border-radius:8px;background:rgba(3,169,244,0.15);flex-shrink:0;display:flex;align-items:center;justify-content:center;"><svg viewBox="0 0 24 24" style="width:19px;height:19px;fill:#03A9F4"><path d="M10,20V14H14V20H19V12H22L12,3L2,12H5V20H10Z"/></svg></div>' +
+      '<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:600;color:var(--primary-text-color,#fff);">Browse Home Assistant Radio</div><div style="font-size:11px;color:rgba(255,255,255,0.45);margin-top:1px;">Popular · By Category · By Language · Country</div></div>' +
+      '<svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:rgba(255,255,255,0.3);flex-shrink:0;"><path d="M8.59,16.59L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.59Z"/></svg>';
+    row.addEventListener('click', () => {
+      this._haRbStack = [];
+      // The root of a media source is browsed as media_content_type "app" —
+      // matching what HA's own media browser dialog sends for the first level.
+      this._haRbBrowse(rbEntity, 'media-source://radio_browser', 'app', 'Radio Browser');
+    });
+    content.insertBefore(row, content.firstChild);
+  }
+
+  // Browse a single level of HA's Radio Browser media source using the raw
+  // media_player/browse_media WebSocket command. That command's schema
+  // requires media_content_type and media_content_id to be supplied together,
+  // so mediaContentType must be threaded through at every level — the root
+  // call uses "app", and every level after that reuses the media_content_type
+  // that the previous browse response reported for that child.
+  async _haRbBrowse(entity, mediaContentId, mediaContentType, title) {
+    const content = this.shadowRoot.getElementById('maContent');
+    if (!content) return;
+    if (!this._haRbStack) this._haRbStack = [];
+    content.innerHTML = this._psLoading('Browsing Home Assistant Radio Browser…');
+    try {
+      // IMPORTANT: media_player.browse_media (the service/action) calls the
+      // target entity's own async_browse_media() directly — Music Assistant's
+      // entity only understands its own library URIs, so calling it with a
+      // media-source://radio_browser id throws. The raw WebSocket command
+      // media_player/browse_media (what HA's own media browser dialog uses)
+      // has separate logic that detects media-source:// ids and hands them
+      // straight to the media_source integration, independent of what the
+      // target entity supports — so that's the one we need here.
+      const result = await this._hass.connection.sendMessagePromise({
+        type: 'media_player/browse_media',
+        entity_id: entity,
+        media_content_id: mediaContentId,
+        media_content_type: mediaContentType,
+      });
+      const children = result?.children || [];
+      this._haRbRenderBrowse(entity, mediaContentId, mediaContentType, title || result?.title || 'Radio Browser', children);
+    } catch (e) {
+      console.error('[HA Radio Browser] browse failed:', e);
+      content.innerHTML = '';
+      const errDiv = document.createElement('div');
+      errDiv.style.cssText = 'margin:16px 4px;background:rgba(255,165,0,0.1);border:1px solid rgba(255,165,0,0.3);border-radius:12px;padding:14px;';
+      const _errMsg = (e && (e.message || e.code)) ? String(e.message || e.code) : '';
+      errDiv.innerHTML = '<div style="font-size:13px;font-weight:600;color:rgba(255,165,0,0.9);margin-bottom:6px;">📻 Can\'t browse Home Assistant Radio</div><div style="font-size:12px;color:rgba(255,255,255,0.6);line-height:1.5;">Make sure the <strong>Radio Browser</strong> integration is added under Settings → Devices &amp; services in Home Assistant.' +
+        (_errMsg ? '<br><span style="font-family:monospace;font-size:10px;opacity:0.7;">' + _errMsg.replace(/</g,'&lt;') + '</span>' : '') +
+        '</div>';
+      const closeBtn = document.createElement('button');
+      closeBtn.textContent = 'Back to search';
+      closeBtn.style.cssText = 'margin-top:12px;padding:6px 14px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:8px;color:#fff;font-size:12px;font-family:inherit;cursor:pointer;';
+      closeBtn.addEventListener('click', () => { this._haRbStack = []; this._loadMATab('radio'); });
+      errDiv.appendChild(closeBtn);
+      content.appendChild(errDiv);
+    }
+  }
+
+  // Render one level of the HA Radio Browser tree — folders (can_expand) drill
+  // deeper, playable leaves (can_play) call the standard media_player.play_media
+  // service with the media source's own content id/type, letting HA resolve
+  // the actual stream URL server-side.
+  _haRbRenderBrowse(entity, currentId, currentType, currentTitle, children) {
+    const content = this.shadowRoot.getElementById('maContent');
+    if (!content) return;
+    content.innerHTML = '';
+
+    const header = document.createElement('div');
+    header.style.cssText = 'display:flex;align-items:center;gap:8px;padding:4px 4px 10px;';
+    header.innerHTML =
+      '<button class="ma-back-btn" id="haRbBackBtn"><svg viewBox="0 0 24 24"><path d="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z"/></svg></button>' +
+      '<span class="ma-title" style="flex:1;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (currentTitle || 'Radio Browser') + '</span>' +
+      '<div style="width:28px;flex-shrink:0;"></div>';
+    content.appendChild(header);
+
+    // Same button either way — pops one level of the browse stack if there is
+    // one, otherwise exits back to the radio search/tab.
+    header.querySelector('#haRbBackBtn')?.addEventListener('click', () => {
+      if (this._haRbStack.length > 0) {
+        const prev = this._haRbStack.pop();
+        this._haRbBrowse(entity, prev.mediaContentId, prev.mediaContentType, prev.title);
+      } else {
+        this._haRbStack = [];
+        this._loadMATab('radio');
+      }
+    });
+
+    if (!children.length) {
+      const empty = document.createElement('div');
+      empty.className = 'ma-empty';
+      empty.textContent = 'Nothing to show here.';
+      content.appendChild(empty);
+      return;
+    }
+
+    const list = document.createElement('div');
+    list.style.cssText = 'display:flex;flex-direction:column;';
+
+    children.forEach(child => {
+      if (child.can_expand) {
+        // Folder — drills deeper into the category tree.
+        const row = document.createElement('div');
+        row.dataset.haRbTitle = (child.title || '').toLowerCase();
+        row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer;-webkit-tap-highlight-color:transparent;';
+        const thumb = child.thumbnail
+          ? '<img src="' + child.thumbnail + '" alt="" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display=\'none\'">'
+          : '<svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:rgba(255,255,255,0.35)"><path d="M10,4H4C2.89,4 2,4.89 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V8C22,6.89 21.1,6 20,6H12L10,4Z"/></svg>';
+        row.innerHTML =
+          '<div style="width:40px;height:40px;border-radius:8px;background:rgba(255,255,255,0.08);flex-shrink:0;overflow:hidden;display:flex;align-items:center;justify-content:center;">' + thumb + '</div>' +
+          '<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:600;color:var(--primary-text-color,#fff);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (child.title || 'Untitled') + '</div></div>' +
+          '<svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:rgba(255,255,255,0.25);flex-shrink:0;"><path d="M8.59,16.59L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.59Z"/></svg>';
+        row.addEventListener('click', () => {
+          this._haRbStack.push({ mediaContentId: currentId, mediaContentType: currentType, title: currentTitle });
+          this._haRbBrowse(entity, child.media_content_id, child.media_content_type, child.title);
+        });
+        list.appendChild(row);
+      } else if (child.can_play) {
+        // Playable station — reuse the shared station row so tap opens the
+        // same more-info panel (with a working Play button) and long-press
+        // opens the same context menu (Play Now / Pin / Share / More Info)
+        // that every other radio station row in the app already has.
+        const st = this._haBrowseItemToStation(child);
+        const row = this._rbMakeStationRow(st, entity, false);
+        row.dataset.haRbTitle = (child.title || '').toLowerCase();
+        list.appendChild(row);
+      }
+    });
+    content.appendChild(list);
   }
 
   // Cache a radio-browser station object keyed by its stream URLs.
@@ -8824,7 +8984,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (!st || !st.name) return;
     // Also keep in-memory for fast lookups this session
     if (!this._rbStationCache) this._rbStationCache = new Map();
-    const urls = [st.url_resolved, st.url].filter(Boolean);
+    const urls = [st.url_resolved, st.url, st._maUri, st._haMediaContentId].filter(Boolean);
     urls.forEach(u => this._rbStationCache.set(u.toLowerCase(), st));
     // Persist to localStorage
     try {
@@ -8836,6 +8996,56 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       Object.keys(store).forEach(k => { if (Date.now() - (store[k].ts || 0) > TTL) delete store[k]; });
       localStorage.setItem('crow_rb_station_cache', JSON.stringify(store));
     } catch (_) {}
+  }
+
+  // Returns { domain, service, service_data } describing exactly how to play
+  // a station, regardless of which of the three sources it came from:
+  //  - HA's own Radio Browser media source (Option A) — must go through the
+  //    core media_player.play_media service, which resolves media-source://
+  //    ids itself. music_assistant.play_media is documented to behave
+  //    inconsistently with media-source:// ids, so it must not be used here.
+  //  - Music Assistant's own library (Option B) — plays by uri via
+  //    music_assistant.play_media.
+  //  - A plain radio-browser.info stream URL — also plays via
+  //    music_assistant.play_media, matching existing behaviour.
+  // Returns null if the station has nothing playable.
+  _rbStationPlayCall(st, entity) {
+    if (st && st._haMediaContentId) {
+      return {
+        domain: 'media_player', service: 'play_media',
+        service_data: { entity_id: entity, media_content_id: st._haMediaContentId, media_content_type: st._haMediaContentType || 'music' }
+      };
+    }
+    const mediaId = (st && st._maUri) ? st._maUri : (st?.url_resolved || st?.url || null);
+    if (!mediaId) return null;
+    return {
+      domain: 'music_assistant', service: 'play_media',
+      service_data: { entity_id: entity, media_id: mediaId, media_type: 'radio', enqueue: 'replace' }
+    };
+  }
+
+  // Adapt a playable ("can_play") leaf from HA's Radio Browser browse tree
+  // into the same station shape used everywhere else, so it can reuse
+  // _rbMakeStationRow (tap → more-info panel, long-press → context menu),
+  // pinning, and caching completely unchanged.
+  _haBrowseItemToStation(child) {
+    return {
+      name: child.title || 'Unknown Station',
+      favicon: child.thumbnail || '',
+      tags: 'Home Assistant Radio Browser',
+      countrycode: '',
+      country: '',
+      language: '',
+      codec: '',
+      bitrate: '',
+      votes: '',
+      homepage: '',
+      stationuuid: null,
+      url: null,
+      url_resolved: null,
+      _haMediaContentId: child.media_content_id,
+      _haMediaContentType: child.media_content_type || 'music',
+    };
   }
 
   // Look up a cached station by stream URL (tries both http/https variants).
@@ -10090,11 +10300,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         backdrop.remove(); menu.remove();
         const mode = el.dataset.mode;
         if (mode === 'play_now') {
-          const url = st.url_resolved || st.url;
-          if (!url) { this._showToast('No stream URL'); return; }
+          const playCall = this._rbStationPlayCall(st, entity);
+          if (!playCall) { this._showToast('No stream URL'); return; }
+          this._lastPlayedRbStation = st;
           this._hass.connection.sendMessagePromise({
-            type: 'call_service', domain: 'music_assistant', service: 'play_media',
-            service_data: { entity_id: entity, media_id: url, media_type: 'radio', enqueue: 'replace' }
+            type: 'call_service', domain: playCall.domain, service: playCall.service,
+            service_data: playCall.service_data
           }).then(() => {
             const _rbCmEntity = entity;
             let _rbCmChecks = 0;
@@ -10110,7 +10321,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
               if (_rbCmChecks >= 8) clearInterval(_rbCmInterval);
             }, 500);
           }).catch(() => {
-            this._playMediaDirect(entity, url, 'music', st.name);
+            // A direct-URL fallback only makes sense for a real stream URL —
+            // MA library uris and HA media-source ids aren't playable URLs.
+            if (!st._maUri && !st._haMediaContentId) {
+              this._playMediaDirect(entity, (st.url_resolved || st.url), 'music', st.name);
+            } else {
+              this._showToast('\u26a0\ufe0f Could not play ' + st.name);
+            }
           });
           this._closeMABrowser();
         } else if (mode === 'pin') {
@@ -10266,20 +10483,26 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
     // Wire Play Now button
     content.querySelector('#rb-info-play-btn')?.addEventListener('click', () => {
-      const url = st.url_resolved || st.url;
-      if (!url) { this._showToast('No stream URL for this station'); return; }
-      if (_rbHasMA) {
+      const playCall = this._rbStationPlayCall(st, _rbPlayTarget);
+      if (!playCall) { this._showToast('No stream URL for this station'); return; }
+      this._lastPlayedRbStation = st;
+      // HA media-source stations always go through the core service — it
+      // works on any media_player entity and doesn't need MA at all.
+      if (playCall.domain === 'media_player' || _rbHasMA) {
         this._hass.connection.sendMessagePromise({
-          type: 'call_service', domain: 'music_assistant', service: 'play_media',
-          service_data: { entity_id: _rbPlayTarget, media_id: url, media_type: 'radio', enqueue: 'replace' }
+          type: 'call_service', domain: playCall.domain, service: playCall.service,
+          service_data: playCall.service_data
         }).then(() => {
           this._closeInfoPopup();
         }).catch(() => {
-          this._playMediaDirect(_rbPlayTarget, url, 'music', st.name);
+          // Only fall back to a direct-URL play for real stream URLs — an MA
+          // library URI or HA media-source id isn't a playable URL on its own.
+          if (!st._maUri && !st._haMediaContentId) this._playMediaDirect(_rbPlayTarget, (st.url_resolved || st.url), 'music', st.name);
+          else this._showToast('\u26a0\ufe0f Could not play ' + st.name);
           this._closeInfoPopup();
         });
       } else {
-        this._playMediaDirect(this._entity, url, 'music', st.name);
+        this._playMediaDirect(this._entity, (st.url_resolved || st.url), 'music', st.name);
         this._closeInfoPopup();
       }
     });
@@ -10376,7 +10599,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const activeTabEl = this.shadowRoot.querySelector('.ma-tab.active');
     const activeTabKey = activeTabEl ? activeTabEl.dataset.tab : (this._maCurrentTab || null);
 
-    // Radio tab: search radio-browser.info instead of MA library
+    // Radio tab: search radio-browser.info directly.
     if (activeTabKey === 'radio' || this._maCurrentTab === 'radio') {
       // Clear the action bar — it doesn't apply to a radio station list
       this.shadowRoot?.getElementById('maContent')?.querySelector('.ma-drill-actions')?.remove();
@@ -10395,70 +10618,19 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         content.innerHTML = '';
         const rbList = document.createElement('div');
         rbList.style.cssText = 'display:flex;flex-direction:column;';
-        const _rbPlayStation = (st) => {
-          const url = st.url_resolved || st.url;
-          if (!url) { this._showToast('No stream URL for this station'); return; }
-          // Cache the full st object so the LIVE pill can find it
-          this._rbCacheStation(st);
-          const _rbEntity = rbEntity;
-          const _rbSelf = this;
-          this._hass.connection.sendMessagePromise({
-            type: 'call_service', domain: 'music_assistant', service: 'play_media',
-            service_data: { entity_id: _rbEntity, media_id: url, media_type: 'radio', enqueue: 'replace' }
-          }).then(async () => {
-            // Subscribe to state_changed to catch rapid idle transitions (geo-blocking etc.)
-            let _rbUnsub = null;
-            let _rbResolved = false;
-            const _rbFail = () => {
-              if (_rbResolved) return;
-              _rbResolved = true;
-              if (_rbUnsub) { try { _rbUnsub(); } catch(_) {} }
-              _rbSelf._showToast('\u26a0\ufe0f ' + st.name + ' didn\u0027t start \u2014 it may be geo-blocked or unavailable', 4500);
-            };
-            const _rbSuccess = () => {
-              if (_rbResolved) return;
-              _rbResolved = true;
-              if (_rbUnsub) { try { _rbUnsub(); } catch(_) {} }
-            };
-            try {
-              _rbUnsub = await _rbSelf._hass.connection.subscribeEvents((event) => {
-                const d = event?.data;
-                if (!d || d.entity_id !== _rbEntity) return;
-                const newState = d.new_state?.state || '';
-                const oldState = d.old_state?.state || '';
-                // Went idle/off after being playing or unknown — stream failed
-                if ((newState === 'idle' || newState === 'off') &&
-                    (oldState === 'playing' || oldState === 'buffering' || oldState === 'unknown')) {
-                  _rbFail();
-                }
-                // Successfully playing with new content
-                if (newState === 'playing' || newState === 'buffering') {
-                  _rbSuccess();
-                }
-              }, 'state_changed');
-            } catch(_) {}
-            // Safety timeout — stop monitoring after 8s regardless
-            setTimeout(() => { _rbSuccess(); }, 8000);
-          }).catch(() => {
-            this._playMediaDirect(_rbEntity, url, 'music', st.name);
-          });
-          this._closeMABrowser();
-        };
 
-        stations.forEach(st => {
-          rbList.appendChild(this._rbMakeStationRow(st, rbEntity, false));
-        });
+        const heading = document.createElement('div');
+        heading.style.cssText = 'font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.6px;padding:10px 4px 6px;';
+        heading.textContent = 'Search Results';
+        rbList.appendChild(heading);
+
+        stations.forEach(st => rbList.appendChild(this._rbMakeStationRow(st, rbEntity, false)));
 
         // Prepend starred section above search results
         const starredSection = this._rbRenderStarredSection(rbEntity);
-        if (starredSection) {
-          const starredHeading = document.createElement('div');
-          starredHeading.style.cssText = 'font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.6px;padding:10px 4px 6px;';
-          starredHeading.textContent = 'Search Results';
-          rbList.insertBefore(starredHeading, rbList.firstChild);
-          content.appendChild(starredSection);
-        }
+        if (starredSection) content.appendChild(starredSection);
         content.appendChild(rbList);
+        this._haRbInjectBrowseEntry(content);
       } catch(e) {
         content.innerHTML = '';
         const errDiv = document.createElement('div');
@@ -12802,6 +12974,23 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         e.stopPropagation();
 
         const _attrs = this._hass?.states[this._entity]?.attributes || {};
+
+        // Strategy 0: the station we ourselves most recently asked to play,
+        // from this card's own UI. This is what makes the pill work reliably
+        // for HA Radio Browser stations — MA can end up reporting a
+        // media_content_id for the entity that doesn't match anything we
+        // cached it under (it may just echo back the media-source:// id, or
+        // something else entirely), so parsing that id can't be trusted.
+        // Sanity-check it against the currently playing title when one is
+        // available, so a stale value from an earlier station never sticks.
+        if (this._lastPlayedRbStation) {
+          const _nowTitle = (_attrs.media_title || _attrs.media_album_name || '').toLowerCase().trim();
+          const _lastName = (this._lastPlayedRbStation.name || '').toLowerCase().trim();
+          if (!_nowTitle || !_lastName || _nowTitle.includes(_lastName) || _lastName.includes(_nowTitle)) {
+            this._showRbMoreInfo(this._lastPlayedRbStation);
+            return;
+          }
+        }
 
         // Strategy 1: check pinned stations by name — instant, no network
         // and check the session station cache by stream URL — populated when
