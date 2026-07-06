@@ -5049,6 +5049,15 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           extraClass: ''
         });
 
+        // Pin Queue as Playlist — a snapshot of the full queue, not a live
+        // reference to a real MA playlist object (see _renderSavedQueuesSection)
+        items.push({
+          id: 'qmSaveQueue',
+          icon: '<svg viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg>',
+          label: 'Pin Queue as Playlist',
+          extraClass: ''
+        });
+
         // Music Library — MA only
         if (isMa || hasMA) {
           items.push({
@@ -5129,7 +5138,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             const _qdTrackUri   = this._hass?.states[this._entity]?.attributes?.media_content_id || '';
             const _qdTrackTitle = this._hass?.states[this._entity]?.attributes?.media_title || '';
             if (_qdTrackUri && _qdTrackTitle && !_qdStream && (_qdType === 'music' || _qdType === 'track' || _qdType === '')) {
-              const _qdPinItem = { uri: _qdTrackUri, name: _qdTrackTitle, artist: this._hass?.states[this._entity]?.attributes?.media_artist || '', media_type: 'track' };
+              const _qdArtistName = this._hass?.states[this._entity]?.attributes?.media_artist || '';
+              const _qdPinItem = { uri: _qdTrackUri, name: _qdTrackTitle, artist: _qdArtistName, artists: _qdArtistName ? [{ name: _qdArtistName }] : [], media_type: 'track' };
               const _qdPinned  = this._maLibIsStarred(_qdPinItem, 'track');
               items.push({ id: 'qmPinTrack', _needsMA: !isMa && hasMA, icon: '<svg viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg>', label: _qdPinned ? 'Unpin Song' : 'Pin Song', extraClass: '', _qdPinItem });
             }
@@ -5364,6 +5374,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           if (!infoContent) return;
           const currentRow = infoContent.querySelector('.queue-row.current-track');
           if (currentRow) currentRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        });
+
+        // ── Save Queue as Playlist ──
+        menu.querySelector('#qmSaveQueue')?.addEventListener('click', () => { if (!_menuReady()) return;
+          closeMenu();
+          this._promptSaveQueueAsPlaylist();
         });
 
         // ── Transfer Queue ──
@@ -8609,7 +8625,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const conn = this._hass?.connection;
     if (!conn) return;
     try {
-      const pinCats = ['stations','podcasts','audiobooks','track','artist','album','playlist'];
+      const pinCats = ['stations','podcasts','audiobooks','track','artist','album','playlist','saved_queues'];
       const value = {};
       pinCats.forEach(cat => {
         const lsKey = 'crow_pin_' + cat;
@@ -8881,6 +8897,39 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // typed to filter one level (e.g. "Germany" in a country list) doesn't
   // stay in the box and silently hide everything in the next level, which
   // won't contain that text at all.
+  // ── Persistent flag/thumbnail cache for the HA Radio Browser folder tree ──
+  // Country flags (and other category thumbnails) never change, so once one
+  // has successfully loaded we cache it as a base64 data URI in localStorage
+  // — avoids re-fetching ~250 flags every time someone browses into "Country
+  // List", and keeps them available even if the image CDN has a bad moment.
+  _haRbFlagCacheKey() { return 'crow_ha_rb_flag_cache'; }
+
+  _haRbGetCachedFlag(url) {
+    if (!url) return null;
+    try {
+      const cache = JSON.parse(localStorage.getItem(this._haRbFlagCacheKey()) || '{}');
+      return cache[url] || null;
+    } catch (_) { return null; }
+  }
+
+  _haRbCacheFlag(url, dataUri) {
+    if (!url || !dataUri) return;
+    try {
+      const key = this._haRbFlagCacheKey();
+      const cache = JSON.parse(localStorage.getItem(key) || '{}');
+      cache[url] = dataUri;
+      // Simple size guard — flags are small and bounded (~250 countries), but
+      // cap the cache so it can't grow unbounded across sessions.
+      const keys = Object.keys(cache);
+      if (keys.length > 400) {
+        keys.slice(0, keys.length - 400).forEach(k => delete cache[k]);
+      }
+      localStorage.setItem(key, JSON.stringify(cache));
+    } catch (_) {
+      // Storage full/unavailable — non-fatal, just skip caching this time.
+    }
+  }
+
   _haRbClearSearchInputs() {
     if (this._maFilterDebounce) { clearTimeout(this._maFilterDebounce); this._maFilterDebounce = null; }
     // IMPORTANT: live-filtering only runs while this is false (a full Enter
@@ -9020,19 +9069,62 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const list = document.createElement('div');
     list.style.cssText = 'display:flex;flex-direction:column;';
 
-    children.forEach(child => {
+    // Some categories (a common language, "Popular", etc.) can return
+    // thousands of stations in a single browse response. Rendering that many
+    // rows — each with several event listeners and a favicon image load —
+    // can make touch handling (tap, long-press) unreliable in WKWebView even
+    // though the per-row logic itself is fine. Cap it and point at the
+    // search bar, which filters whatever's actually rendered.
+    const MAX_RENDERED = 200;
+    const _truncated = children.length > MAX_RENDERED;
+    const _renderList = _truncated ? children.slice(0, MAX_RENDERED) : children;
+
+    _renderList.forEach(child => {
       if (child.can_expand) {
         // Folder — drills deeper into the category tree.
         const row = document.createElement('div');
         row.dataset.haRbTitle = (child.title || '').toLowerCase();
         row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer;-webkit-tap-highlight-color:transparent;';
-        const thumb = child.thumbnail
-          ? '<img src="' + child.thumbnail + '" alt="" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display=\'none\'">'
-          : '<svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:rgba(255,255,255,0.35)"><path d="M10,4H4C2.89,4 2,4.89 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V8C22,6.89 21.1,6 20,6H12L10,4Z"/></svg>';
+
+        const _folderFallbackIcon = '<svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:rgba(255,255,255,0.35)"><path d="M10,4H4C2.89,4 2,4.89 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V8C22,6.89 21.1,6 20,6H12L10,4Z"/></svg>';
+        const _cachedFlag = child.thumbnail ? this._haRbGetCachedFlag(child.thumbnail) : null;
+        let thumb;
+        if (_cachedFlag) {
+          // Already cached — renders instantly, no network dependency at all.
+          thumb = '<img src="' + _cachedFlag + '" alt="" style="width:100%;height:100%;object-fit:cover;">';
+        } else {
+          // Always render the fallback icon underneath, then layer the real
+          // thumbnail on top if one exists — a failed/slow load reveals the
+          // icon instead of a blank box (same fix already applied to station
+          // favicons, which had the identical bug).
+          thumb = _folderFallbackIcon + (child.thumbnail
+            ? '<img class="ha-rb-flag-img" data-flag-url="' + child.thumbnail.replace(/"/g, '&quot;') + '" src="' + child.thumbnail + '" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;" onerror="this.remove()">'
+            : '');
+        }
+
         row.innerHTML =
-          '<div style="width:40px;height:40px;border-radius:8px;background:rgba(255,255,255,0.08);flex-shrink:0;overflow:hidden;display:flex;align-items:center;justify-content:center;">' + thumb + '</div>' +
+          '<div style="width:40px;height:40px;border-radius:8px;background:rgba(255,255,255,0.08);flex-shrink:0;overflow:hidden;display:flex;align-items:center;justify-content:center;position:relative;">' + thumb + '</div>' +
           '<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:600;color:var(--primary-text-color,#fff);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (child.title || 'Untitled') + '</div></div>' +
           '<svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:rgba(255,255,255,0.25);flex-shrink:0;"><path d="M8.59,16.59L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.59Z"/></svg>';
+
+        // If we just rendered a fresh (uncached) flag, cache it as a data URI
+        // once it successfully loads so next time it's instant.
+        const _flagImg = row.querySelector('.ha-rb-flag-img');
+        if (_flagImg) {
+          _flagImg.addEventListener('load', () => {
+            try {
+              const canvas = document.createElement('canvas');
+              canvas.width = _flagImg.naturalWidth || 40;
+              canvas.height = _flagImg.naturalHeight || 40;
+              canvas.getContext('2d').drawImage(_flagImg, 0, 0);
+              this._haRbCacheFlag(_flagImg.dataset.flagUrl, canvas.toDataURL('image/png'));
+            } catch (_) {
+              // Cross-origin canvas taint or similar — non-fatal, the image
+              // still displays fine, it just won't be cached this time.
+            }
+          }, { once: true });
+        }
+
         row.addEventListener('click', () => {
           this._haRbClearSearchInputs();
           this._haRbStack.push({ mediaContentId: currentId, mediaContentType: currentType, title: currentTitle });
@@ -9051,6 +9143,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       }
     });
     content.appendChild(list);
+
+    if (_truncated) {
+      const note = document.createElement('div');
+      note.style.cssText = 'padding:12px 8px;font-size:11px;color:rgba(255,255,255,0.4);text-align:center;line-height:1.5;';
+      note.textContent = 'Showing the first ' + MAX_RENDERED + ' of ' + children.length + ' results — use the search bar above to filter this list down.';
+      content.appendChild(note);
+    }
   }
 
   // Cache a radio-browser station object keyed by its stream URLs.
@@ -9541,10 +9640,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         if (nowPinned === null) return;
         _updatePinBtn();
         this._showToast(nowPinned ? '\u{1F4CD} Podcast pinned' : 'Podcast unpinned');
-        const svg   = content.querySelector('#pc-info-star-svg');
-        const label = content.querySelector('#pc-info-star-label');
-        if (svg)   svg.style.fill    = nowPinned ? '#FFD60A' : 'rgba(255,255,255,0.4)';
-        if (label) label.textContent = nowPinned ? 'Pinned' : 'Pin Podcast';
         this._pcRefreshPinnedUI();
       };
     }
@@ -9588,13 +9683,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         '<div style="flex:1;min-width:0;">' +
           '<div style="font-size:16px;font-weight:700;color:' + _pt('text') + ';line-height:1.3;margin-bottom:4px;">' + (pod.collectionName || '') + '</div>' +
           (pod.artistName ? '<div style="font-size:12px;color:' + _pt('dim') + ';margin-bottom:8px;">' + pod.artistName + '</div>' : '') +
-          '<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">' +
-
-            '<button id="pc-info-star-btn" style="display:inline-flex;align-items:center;gap:5px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:20px;padding:4px 10px;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;">' +
-              '<svg id="pc-info-star-svg" viewBox="0 0 24 24" style="width:11px;height:11px;fill:' + (this._pcIsStarred(pod) ? '#FFD60A' : 'rgba(255,255,255,0.4)') + ';flex-shrink:0;transition:fill 0.15s;"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg>' +
-              '<span id="pc-info-star-label" style="font-size:11px;font-weight:600;color:' + _pt('dim') + ';">' + (this._pcIsStarred(pod) ? 'Pinned' : 'Pin Podcast') + '</span>' +
-            '</button>' +
-          '</div>' +
         '</div>' +
       '</div>' +
       metaGridHtml +
@@ -9623,19 +9711,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       sec.style.display = shown ? 'none' : '';
       const lbl = content.querySelector('#pc-info-play-btn span');
       if (lbl) lbl.textContent = shown ? 'Episodes' : 'Hide';
-    });
-
-    // Wire star button
-    content.querySelector('#pc-info-star-btn')?.addEventListener('click', () => {
-      const nowStarred = this._pcToggleStar(pod);
-      if (nowStarred === null) return;
-      const svg   = content.querySelector('#pc-info-star-svg');
-      const label = content.querySelector('#pc-info-star-label');
-      if (svg)   svg.style.fill    = nowStarred ? '#FFD60A' : 'rgba(255,255,255,0.4)';
-      if (label) label.textContent = nowStarred ? 'Pinned' : 'Pin Podcast';
-      this._showToast(nowStarred ? '\u{1F4CD} Podcast pinned' : 'Podcast unpinned');
-      _updatePinBtn();
-      this._pcRefreshPinnedUI();
     });
 
     // Wire genre pill — same bottom-sheet AI pattern as radio tag pills
@@ -9850,23 +9925,390 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       section.appendChild(wrap);
     });
 
-    const divider = document.createElement('div');
-    divider.style.cssText = 'font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.6px;padding:10px 4px 6px;';
-    divider.textContent = 'Library';
-    section.appendChild(divider);
+    return section;
+  }
+
+  // ── Saved Queues (playlist tab only) ────────────────────────────────────────
+  // A "Saved Queue" is a frozen snapshot of a queue's tracks at the moment it
+  // was saved — deliberately kept distinct from real pinned MA playlists,
+  // which are live references to an actual library object. There's no
+  // backing object here at all, just a stored list of title/artist pairs.
+  // Storage follows the exact same pattern as every other pin category
+  // (stations/podcasts/audiobooks/track/artist/album/playlist) — same
+  // crow_pin_ key convention, same in-memory mirror, and syncs to HA's own
+  // persistent storage via _haStorageSavePins() under the same
+  // pins_persistent_storage toggle in the visual editor.
+  _savedQueuesKey() { return 'crow_pin_saved_queues'; }
+
+  _getSavedQueues() {
+    const k = this._savedQueuesKey();
+    if (this._starredMemCache?.[k]) return this._starredMemCache[k];
+    let list;
+    try { list = JSON.parse(localStorage.getItem(k) || '[]'); } catch (_) { list = []; }
+    // One-time migration from the original key this feature briefly used
+    // before being wired into the shared pin-sync system, so anything
+    // already saved isn't silently lost.
+    if (!list.length) {
+      try {
+        const legacy = JSON.parse(localStorage.getItem('crow_saved_queues') || '[]');
+        if (legacy.length) {
+          list = legacy;
+          localStorage.setItem(k, JSON.stringify(list));
+          localStorage.removeItem('crow_saved_queues');
+        }
+      } catch (_) {}
+    }
+    if (!this._starredMemCache) this._starredMemCache = {};
+    this._starredMemCache[k] = list;
+    return list;
+  }
+
+  _saveSavedQueuesList(list) {
+    const k = this._savedQueuesKey();
+    if (!this._starredMemCache) this._starredMemCache = {};
+    this._starredMemCache[k] = list;
+    try { localStorage.setItem(k, JSON.stringify(list)); } catch (_) {}
+    this._haStorageSavePins();
+  }
+
+  _renderSavedQueuesSection() {
+    const saved = this._getSavedQueues();
+    if (!saved.length) return null;
+    const self = this;
+
+    const section = document.createElement('div');
+    section.id = 'saved-queues-section';
+    section.style.cssText = 'margin-bottom:4px;';
+
+    const heading = document.createElement('div');
+    heading.style.cssText = 'font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.6px;padding:10px 4px 6px;';
+    heading.textContent = '\ud83d\udccd Pinned Queues';
+    section.appendChild(heading);
+
+    saved.forEach(sq => {
+      const wrap = document.createElement('div');
+      wrap.className = 'ma-item-wrap';
+      const el = document.createElement('div');
+      el.className = 'ma-item';
+      const count = sq.tracks?.length || 0;
+      el.innerHTML =
+        '<div class="ma-item-art"><svg viewBox="0 0 24 24" style="display:flex;fill:rgba(255,255,255,0.35)"><path d="M15,6H3V8H15V6M15,10H3V12H15V10M3,16H11V14H3V16M17,6V14.18C16.69,14.07 16.35,14 16,14A3,3 0 0,0 13,17A3,3 0 0,0 16,20A3,3 0 0,0 19,17V8H22V6H17Z"/></svg></div>' +
+        '<div class="ma-item-info"><div class="ma-item-title">' + (sq.name || 'Pinned Queue') + '</div>' +
+          '<div class="ma-item-sub">' + count + ' track' + (count === 1 ? '' : 's') + '</div>' +
+        '</div>' +
+        '<div class="ma-item-chevron"><svg viewBox="0 0 24 24"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg></div>';
+      wrap.appendChild(el);
+
+      let lpTimer = null, lpFired = false;
+      el.addEventListener('contextmenu', e => e.preventDefault());
+      el.addEventListener('pointerdown', () => {
+        lpFired = false;
+        lpTimer = setTimeout(() => { lpFired = true; self._showSavedQueueContextMenu(el, sq); }, 480);
+      }, { passive: true });
+      el.addEventListener('pointerup',     () => clearTimeout(lpTimer), { passive: true });
+      el.addEventListener('pointercancel', () => { clearTimeout(lpTimer); lpFired = false; }, { passive: true });
+      el.addEventListener('pointermove',   () => clearTimeout(lpTimer), { passive: true });
+      el.addEventListener('click', () => {
+        if (lpFired) { lpFired = false; return; }
+        self._openSavedQueueDetail(sq);
+      });
+
+      section.appendChild(wrap);
+    });
 
     return section;
+  }
+
+  // Small context menu for a saved queue row — Play or Delete.
+  _showSavedQueueContextMenu(anchor, sq) {
+    const r = this.shadowRoot;
+    document.querySelectorAll('.rb-tag-sheet').forEach(el => el.remove());
+    const backdrop = document.createElement('div');
+    backdrop.className = 'queue-dropdown-backdrop';
+    const menu = document.createElement('div');
+    menu.className = 'queue-dropdown-menu';
+    menu.innerHTML =
+      '<div class="queue-dropdown-item" id="sqPlay" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg><span class="queue-dropdown-label">Play</span></div>' +
+      '<div class="queue-dropdown-item danger" id="sqDelete" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg><span class="queue-dropdown-label">Unpin</span></div>';
+    const anchorRect = anchor.getBoundingClientRect();
+    const cardRect = r.host.getBoundingClientRect();
+    menu.style.position = 'absolute';
+    menu.style.top = (anchorRect.bottom - cardRect.top + 4) + 'px';
+    menu.style.left = Math.max(4, anchorRect.left - cardRect.left) + 'px';
+    const infoPopup = r.getElementById('infoPopup') || r.getElementById('maPopup');
+    const host = infoPopup || r.host;
+    host.appendChild(backdrop);
+    host.appendChild(menu);
+    const _menuOpenedAt = Date.now();
+    const _menuReady = () => (Date.now() - _menuOpenedAt) > 320;
+    const closeMenu = () => { menu.remove(); backdrop.remove(); };
+    backdrop.addEventListener('click', closeMenu, { once: true });
+    menu.querySelector('#sqPlay')?.addEventListener('click', () => { if (!_menuReady()) return; closeMenu(); this._playSavedQueue(sq); });
+    menu.querySelector('#sqDelete')?.addEventListener('click', () => { if (!_menuReady()) return; closeMenu();
+      const list = this._getSavedQueues().filter(s => s.id !== sq.id);
+      this._saveSavedQueuesList(list);
+      this._showToast('Queue unpinned');
+      const content = this.shadowRoot?.getElementById('maContent');
+      if (content) this._maLibInjectStarred('playlist', content);
+    });
+  }
+
+  // Replays a saved queue: clears the current queue, then re-adds every track
+  // via the same fuzzy title+artist search used everywhere else in the app
+  // (Add Similar Songs, pinned tracks, etc.) — there's no stored direct URI,
+  // so an exact remaster/version match isn't guaranteed, just very likely.
+  async _playSavedQueue(sq, mode = 'replace') {
+    const tracks = sq.tracks || [];
+    if (!tracks.length) { this._showToast('This pinned queue is empty'); return; }
+    const targetEntity = this._maEntityIds?.has(this._entity) ? this._entity : (this._getValidMASpeakers(true)[0] || null);
+    if (!targetEntity) { this._showToast('Music Assistant required'); return; }
+    this._closeMABrowser();
+    this._showLoadingToast(mode === 'add' ? 'Adding to queue…' : 'Starting playback…');
+    let added = 0;
+    for (let i = 0; i < tracks.length; i++) {
+      const t = tracks[i];
+      try {
+        await this._hass.connection.sendMessagePromise({
+          type: 'call_service', domain: 'music_assistant', service: 'play_media',
+          service_data: {
+            entity_id: targetEntity,
+            media_id: (t.title || '') + ' ' + (t.artist || ''),
+            media_type: 'track',
+            enqueue: (mode === 'replace' && i === 0) ? 'replace' : 'add'
+          }
+        });
+        added++;
+      } catch (_) {}
+    }
+    this._hideLoadingToast();
+    if (added > 0) {
+      this._showToast(mode === 'add'
+        ? '✓ Added ' + added + ' tracks from "' + (sq.name || 'Pinned Queue') + '"'
+        : '✓ Playing "' + (sq.name || 'Pinned Queue') + '" (' + added + ' tracks)', 3500);
+    } else {
+      this._showToast('Could not play pinned queue — check Music Assistant');
+    }
+  }
+
+  // Drills into a Saved Queue and shows its tracks with full interaction
+  // parity with any other track list — tap opens the same hero-art info
+  // panel (_showAITrackInfo), long-press opens the same context menu
+  // (_showEnqueueMenu via _attachMAItemSwipe). There's no real backing MA
+  // object here (it's a frozen snapshot with no uri), so this can't reuse
+  // _maOpenCollectionTracks, which requires one — this is a lightweight,
+  // purpose-built equivalent for synthetic track lists. Uses the same shared
+  // back-button/nav-stack pattern as every other library drill-in.
+  _openSavedQueueDetail(sq) {
+    const content   = this.shadowRoot?.getElementById('maContent');
+    const titleEl   = this.shadowRoot?.getElementById('maTitle');
+    const backBtn   = this.shadowRoot?.getElementById('maBackBtn');
+    const tabsEl    = this.shadowRoot?.getElementById('maTabs');
+    const searchRow = this.shadowRoot?.querySelector('.ma-search-row');
+    if (!content) return;
+
+    if (!this._maBrowserNavStack) this._maBrowserNavStack = [];
+    this._maBrowserNavStack.push({
+      tab: this._maCurrentTab || 'playlist',
+      searchQuery: null,
+      inSearchResults: false,
+    });
+
+    if (tabsEl)    tabsEl.style.display    = 'none';
+    if (searchRow) searchRow.style.display = 'none';
+    if (backBtn)   backBtn.classList.remove('hidden');
+    if (titleEl)   titleEl.textContent = sq.name || 'Saved Queue';
+
+    const tracks = sq.tracks || [];
+    content.innerHTML =
+      '<div class="ma-drill-actions" style="margin-bottom:14px;">' +
+        '<button class="ma-drill-action-btn" id="sqDetailPlayAll"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div><span class="ma-drill-btn-label">Play All</span></button>' +
+        '<button class="ma-drill-action-btn" id="sqDetailAdd"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M19 11h-6V5h-2v6H5v2h6v6h2v-6h6z"/></svg></div><span class="ma-drill-btn-label">Add</span></button>' +
+        '<button class="ma-drill-action-btn" id="sqDetailDelete"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg></div><span class="ma-drill-btn-label">Unpin</span></button>' +
+      '</div>' +
+      '<div id="sqDetailList"></div>';
+
+    const list = content.querySelector('#sqDetailList');
+    if (!tracks.length) {
+      const empty = document.createElement('div');
+      empty.className = 'ma-empty';
+      empty.textContent = 'This pinned queue is empty.';
+      list.appendChild(empty);
+    } else {
+      const _fallbackNoteIcon = '<svg viewBox="0 0 24 24" style="display:flex;fill:rgba(255,255,255,0.3)"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>';
+      tracks.forEach(t => {
+        // Same shape _showAITrackInfo/_showEnqueueMenu already expect — no
+        // uri, so playback and pinning fall back to fuzzy title+artist
+        // search, exactly like a pinned non-MA track.
+        const item = {
+          name:    t.title || '',
+          artists: t.artist ? [{ name: t.artist }] : [],
+          album:   t.album ? { name: t.album } : null,
+          _tab:    'track',
+        };
+        const wrap = document.createElement('div');
+        wrap.className = 'ma-item-wrap';
+        const el = document.createElement('div');
+        el.className = 'ma-item';
+
+        // Artwork: the thumbnail captured when the queue was saved (best —
+        // no lookup needed) → already-cached iTunes art from anywhere else
+        // in the app → fall back to the note icon and kick off a live
+        // iTunes lookup, same mechanism the Queue panel itself uses, which
+        // will patch this exact element in once it resolves.
+        const itunesKey = (t.artist || t.album || t.title)
+          ? [t.artist, t.album || t.title].filter(Boolean).join('|').toLowerCase()
+          : '';
+        const cachedArt = itunesKey ? (this._itunesArtCache?.[itunesKey] || '') : '';
+        const artSrc = t.image || cachedArt || '';
+        const keyAttr = itunesKey ? ' data-itunes-key="' + itunesKey.replace(/"/g, '&quot;') + '"' : '';
+        const artInner = artSrc
+          ? _fallbackNoteIcon + '<img src="' + artSrc + '" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;" onerror="this.remove()">'
+          : _fallbackNoteIcon;
+
+        el.innerHTML =
+          '<div class="ma-item-art"' + keyAttr + ' style="position:relative;">' + artInner + '</div>' +
+          '<div class="ma-item-info"><div class="ma-item-title">' + (t.title || 'Unknown') + '</div>' +
+            (t.artist ? '<div class="ma-item-sub">' + t.artist + '</div>' : '') +
+          '</div>' +
+          '<div class="ma-item-chevron"><svg viewBox="0 0 24 24"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg></div>';
+        wrap.appendChild(el);
+        this._attachMAItemSwipe(wrap, item, 'track');
+        list.appendChild(wrap);
+
+        if (!artSrc && itunesKey) this._fetchItunesArt(t.artist, t.album, t.title);
+      });
+    }
+
+    content.querySelector('#sqDetailPlayAll')?.addEventListener('click', () => this._playSavedQueue(sq, 'replace'));
+    content.querySelector('#sqDetailAdd')?.addEventListener('click', () => this._playSavedQueue(sq, 'add'));
+    content.querySelector('#sqDetailDelete')?.addEventListener('click', () => {
+      const list2 = this._getSavedQueues().filter(s => s.id !== sq.id);
+      this._saveSavedQueuesList(list2);
+      this._showToast('Queue unpinned');
+      this._maNavBack();
+    });
+  }
+
+  // Reads the full current queue (previous, current, and upcoming) and opens
+  // the naming sheet. Uses mass_queue.get_queue_items if that companion
+  // integration is installed (gives the complete queue); otherwise falls back
+  // to music_assistant.get_queue, which only exposes the current + next item.
+  async _promptSaveQueueAsPlaylist() {
+    const targetEntity = this._entity;
+    if (!targetEntity) return;
+
+    let tracks = [];
+    try {
+      const hasMassQueue = !!(this._hass?.services?.mass_queue?.get_queue_items);
+      if (hasMassQueue) {
+        const mqRes = await this._hass.connection.sendMessagePromise({
+          type: 'call_service', domain: 'mass_queue', service: 'get_queue_items',
+          service_data: { entity: targetEntity, limit_before: 9999, limit_after: 9999 },
+          return_response: true
+        });
+        const raw = mqRes?.response?.[targetEntity] || mqRes?.response || [];
+        if (Array.isArray(raw)) {
+          tracks = raw.map(item => ({
+            title:  item.media_title || item.name || '',
+            artist: item.media_artist || item.artist || '',
+            album:  item.media_album_name || item.album || '',
+            image:  item.thumbnail || '',
+          })).filter(t => t.title);
+        }
+      } else {
+        const qRes = await this._hass.connection.sendMessagePromise({
+          type: 'call_service', domain: 'music_assistant', service: 'get_queue',
+          service_data: { entity_id: targetEntity }, return_response: true
+        });
+        const qData = qRes?.response?.[targetEntity] || qRes?.response || null;
+        [qData?.current_item, qData?.next_item].forEach(item => {
+          const title = item?.name || item?.media_item?.name || '';
+          if (title) tracks.push({
+            title,
+            artist: item?.media_item?.artists?.[0]?.name || '',
+            album:  item?.media_item?.album?.name || '',
+            image:  item?.image || item?.media_item?.metadata?.images?.[0]?.url || '',
+          });
+        });
+        if (tracks.length) {
+          this._showToast('Only the current + next track could be read — install the mass_queue integration to save the full queue', 5000);
+        }
+      }
+    } catch (_) {
+      this._showToast('Could not read the queue — try again');
+      return;
+    }
+
+    if (!tracks.length) { this._showToast('Queue is empty — nothing to save'); return; }
+    this._showSaveQueueNameSheet(tracks);
+  }
+
+  // Naming bottom-sheet for a queue snapshot — same visual pattern as the
+  // radio/podcast genre-pill sheet elsewhere in the app.
+  _showSaveQueueNameSheet(tracks) {
+    const _pt = (k) => this._pt(k);
+    document.querySelectorAll('.rb-tag-sheet').forEach(el => el.remove());
+    const sheet = document.createElement('div');
+    sheet.className = 'rb-tag-sheet';
+    sheet.style.cssText = 'position:absolute;z-index:99999;display:flex;align-items:flex-end;justify-content:center;background:rgba(0,0,0,0.5);left:0;top:' + window.scrollY + 'px;width:' + document.documentElement.clientWidth + 'px;height:' + window.innerHeight + 'px;';
+    const _defaultName = 'Queue \u2013 ' + new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + ', ' + new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    sheet.innerHTML = '<div style="width:100%;max-width:480px;background:var(--crow-panel-bg,#13131a);border-radius:20px 20px 0 0;padding:20px 20px 32px;box-shadow:0 -8px 40px rgba(0,0,0,0.6);">'
+      + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">'
+      + '<span style="font-size:15px;font-weight:700;color:' + _pt('text') + ';">Pin Queue as Playlist</span>'
+      + '<button class="rb-tag-sheet-close" style="width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,0.1);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;"><svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:' + _pt('text') + '"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>'
+      + '</div>'
+      + '<div style="font-size:12px;color:' + _pt('dim') + ';margin-bottom:10px;">' + tracks.length + ' track' + (tracks.length === 1 ? '' : 's') + ' will be pinned.</div>'
+      + '<input id="sqNameInput" type="text" value="' + _defaultName.replace(/"/g, '&quot;') + '" style="width:100%;box-sizing:border-box;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);border-radius:10px;padding:10px 12px;font-size:14px;color:' + _pt('text') + ';font-family:inherit;margin-bottom:14px;" autocomplete="off" autocorrect="off" spellcheck="false">'
+      + '<button id="sqSaveBtn" style="width:100%;padding:11px;background:#0A84FF;border:none;border-radius:12px;color:#fff;font-size:14px;font-weight:600;font-family:inherit;cursor:pointer;">Pin</button>'
+      + '</div>';
+    document.body.appendChild(sheet);
+    const _close = () => sheet.remove();
+    sheet.addEventListener('click', e => { if (e.target === sheet) _close(); });
+    sheet.querySelector('.rb-tag-sheet-close')?.addEventListener('click', _close);
+    const _input = sheet.querySelector('#sqNameInput');
+    _input?.focus();
+    _input?.select();
+    sheet.querySelector('#sqSaveBtn')?.addEventListener('click', () => {
+      const name = (_input?.value || '').trim() || _defaultName;
+      const list = this._getSavedQueues();
+      list.unshift({ id: 'sq_' + Date.now(), name, createdAt: Date.now(), tracks });
+      // Cap at 20 saved queues — oldest drops off first.
+      if (list.length > 20) list.length = 20;
+      this._saveSavedQueuesList(list);
+      _close();
+      this._showToast('\ud83d\udccd Pinned "' + name + '"');
+      const content = this.shadowRoot?.getElementById('maContent');
+      if (content) this._maLibInjectStarred('playlist', content);
+    });
   }
 
   _maLibInjectStarred(tab, content) {
     if (!['track','artist','album','favourites','playlist'].includes(tab)) return;
     const _t = tab === 'favourites' ? 'track' : tab;
-    const sectionId = 'malib-starred-' + _t;
-    content.querySelector('#' + sectionId)?.remove();
-    const section = this._maLibRenderStarredSection(_t);
-    if (!section) return;
     const grid = content.querySelector('.ma-grid');
-    content.insertBefore(section, grid || content.firstChild);
+
+    content.querySelector('#malib-starred-' + _t)?.remove();
+    content.querySelector('#saved-queues-section')?.remove();
+    content.querySelector('#malib-starred-divider')?.remove();
+
+    const section = this._maLibRenderStarredSection(_t);
+    if (section) content.insertBefore(section, grid || content.firstChild);
+
+    let sqSection = null;
+    if (_t === 'playlist') {
+      sqSection = this._renderSavedQueuesSection();
+      if (sqSection) content.insertBefore(sqSection, grid || content.firstChild);
+    }
+
+    // Single shared "Library" divider after whichever of the two sections
+    // above actually rendered, so there's never more than one shown.
+    if (section || sqSection) {
+      const divider = document.createElement('div');
+      divider.id = 'malib-starred-divider';
+      divider.style.cssText = 'font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.6px;padding:10px 4px 6px;';
+      divider.textContent = 'Library';
+      content.insertBefore(divider, grid || content.firstChild);
+    }
   }
 
   // ════════════════════════════════════════════════════════════════════════════
@@ -10413,6 +10855,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           const playCall = this._rbStationPlayCall(st, entity);
           if (!playCall) { this._showToast('No stream URL'); return; }
           this._rbSaveLastPlayed(entity, st);
+          this._showLoadingToast('Starting playback…');
           this._hass.connection.sendMessagePromise({
             type: 'call_service', domain: playCall.domain, service: playCall.service,
             service_data: playCall.service_data
@@ -10629,6 +11072,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       const playCall = this._rbStationPlayCall(st, _rbPlayTarget);
       if (!playCall) { this._showToast('No stream URL for this station'); return; }
       this._rbSaveLastPlayed(_rbPlayTarget, st);
+      this._showLoadingToast('Starting playback…');
       // HA media-source stations always go through the core service — it
       // works on any media_player entity and doesn't need MA at all.
       if (playCall.domain === 'media_player' || _rbHasMA) {
@@ -13651,6 +14095,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         heroImg.style.cursor = 'zoom-in';
         heroImg.addEventListener('click', (e) => {
           e.stopPropagation();
+          if (this._infoPopupOpenedAt && (Date.now() - this._infoPopupOpenedAt) < 500) return;
           this._showBioPhotoLightbox(heroImg.src || artUrl, `${trackTitle}${artistName ? ' · ' + artistName : ''}`, content, 'square');
         });
       }
@@ -14489,6 +14934,7 @@ Include ALL tracks. Use null for unknown fields.`;
       if (_fbArtImg) {
         _fbArtImg.addEventListener('click', (e) => {
           e.stopPropagation();
+          if (this._infoPopupOpenedAt && (Date.now() - this._infoPopupOpenedAt) < 500) return;
           this._showBioPhotoLightbox(_fbArtImg.src || artUrl, `${trackTitle}${artistName ? ' · ' + artistName : ''}`, content, 'square');
         });
       }
@@ -14657,6 +15103,7 @@ Include ALL tracks. Use null for unknown fields.`;
       _artImg.style.pointerEvents = 'auto';
       _artImg.addEventListener('click', (e) => {
         e.stopPropagation();
+        if (this._infoPopupOpenedAt && (Date.now() - this._infoPopupOpenedAt) < 500) return;
         this._showBioPhotoLightbox(_artImg.src || artUrl, `${trackTitle}${artistName ? ' · ' + artistName : ''}`, content, 'square');
       });
     }
@@ -14745,10 +15192,16 @@ Include ALL tracks. Use null for unknown fields.`;
     }
 
     // Wire pin button — builds a minimal track item from whatever URI we have:
-    // context.queueUri (library row long-press) → entity's media_content_id (artwork tap)
+    // context.queueUri (library row long-press) → entity's media_content_id
+    // (artwork tap) → a synthetic title+artist key as a last resort, so pinning
+    // still works on non-MA speakers, which often don't populate
+    // media_content_id at all. Playing a pinned track back later already goes
+    // through a fuzzy title+artist search regardless of URI (see
+    // _playTrackViaMAToast), so this synthetic key doesn't lose anything —
+    // it's only ever used as a stable identity key for the pin list itself.
     const _trackUri = context.queueUri
       || this._hass?.states[this._entity]?.attributes?.media_content_id
-      || '';
+      || ((trackTitle || artistName) ? ('title-artist://' + (trackTitle || '').toLowerCase().trim() + '|' + (artistName || '').toLowerCase().trim()) : '');
     const _pinBtn = r.getElementById('infoPinBtn');
     const _pinSvg = r.getElementById('infoPinSvg');
     if (_pinBtn && _pinSvg && _trackUri) {
@@ -14756,6 +15209,10 @@ Include ALL tracks. Use null for unknown fields.`;
         uri:          _trackUri,
         name:         trackTitle,
         artist:       artistName,
+        // _maLibRenderStarredSection's subtitle reads item.artists (an array,
+        // matching MA's own library item shape) — not the singular 'artist'
+        // field above, so without this the artist silently never displayed.
+        artists:      artistName ? [{ name: artistName }] : [],
         image:        specificArt || '',
         media_type:   'track',
       };
@@ -15609,10 +16066,12 @@ Include ALL tracks. Use null for unknown fields.`;
     });
 
     // Album art tap → lightbox
+    const _albumArtOpenedAt = Date.now();
     const _albumArtImg = body.querySelector('#ai-album-art-thumb .info-hero-art-img');
     if (_albumArtImg) {
       _albumArtImg.addEventListener('click', (e) => {
         e.stopPropagation();
+        if ((Date.now() - _albumArtOpenedAt) < 500) return;
         this._showBioPhotoLightbox(_albumArtImg.src || artUrl, `${albumName}${artistName ? ' · ' + artistName : ''}`, body, 'square');
       });
     }
@@ -15859,6 +16318,10 @@ Include ALL tracks. Use null for unknown fields.`;
 
   /**
    * Adds AI-suggested similar songs to the queue silently with a friendly toast.
+   * Dedupes against the live queue and against anything already added for this
+   * same track in a previous press, then backfills with a fresh AI request
+   * (excluding what's already been used) if dedup leaves us short of the
+   * target count.
    */
   async _addSimilarSongsToQueue() {
     this._pillPulse(10000);
@@ -15878,44 +16341,140 @@ Include ALL tracks. Use null for unknown fields.`;
     const hasAI = await this._aiCheckAvailable();
     if (!hasAI) { this._maBatchLoading = false; this._showToast('No AI agent found — check Settings → Voice Assistants'); return; }
 
-    const cacheKey = ('addlike|' + artist + '|' + track).toLowerCase();
-    if (!this._aiAddSimilarCache) this._aiAddSimilarCache = new Map();
+    const TARGET_COUNT = 6;
+    const _normKey = (title, artistName) => (String(title || '').toLowerCase().trim() + '|' + String(artistName || '').toLowerCase().trim()).replace(/[^a-z0-9|]/g, '');
 
-    // Check sessionStorage before network
+    // ── Dedup source 1: what's already sitting in the live queue ──
+    let _queueKeys = new Set();
+    try {
+      const hasMassQueue = !!(this._hass?.services?.mass_queue?.get_queue_items);
+      if (hasMassQueue) {
+        const mqRes = await this._hass.connection.sendMessagePromise({
+          type: 'call_service', domain: 'mass_queue', service: 'get_queue_items',
+          service_data: { entity: this._entity, limit_before: 0, limit_after: 9999 },
+          return_response: true
+        });
+        const raw = mqRes?.response?.[this._entity] || mqRes?.response || [];
+        if (Array.isArray(raw)) raw.forEach(item => {
+          const key = _normKey(item.media_title || item.name, item.media_artist || item.artist);
+          if (key) _queueKeys.add(key);
+        });
+      } else {
+        const qRes = await this._hass.connection.sendMessagePromise({
+          type: 'call_service', domain: 'music_assistant', service: 'get_queue',
+          service_data: { entity_id: this._entity }, return_response: true
+        });
+        const qData = qRes?.response?.[this._entity] || qRes?.response || null;
+        [qData?.current_item, qData?.next_item].forEach(item => {
+          const key = _normKey(item?.name || item?.media_item?.name, item?.media_item?.artists?.[0]?.name);
+          if (key) _queueKeys.add(key);
+        });
+      }
+    } catch (_) {
+      // Non-fatal — if we can't read the queue this time, just skip queue dedup.
+    }
+
+    // ── Dedup source 2: what we've already added for this exact track before ──
+    // (persisted, so pressing the button again later for the same song
+    // doesn't just re-add the same batch it added last time)
+    const cacheKey = ('addlike|' + artist + '|' + track).toLowerCase();
+    if (!this._aiSimilarAdded) this._aiSimilarAdded = new Map();
+    let _alreadyAdded = this._aiSimilarAdded.get(cacheKey);
+    if (!_alreadyAdded) {
+      try {
+        const store = JSON.parse(localStorage.getItem('crow_ai_similar_added') || '{}');
+        _alreadyAdded = new Set(store[cacheKey] || []);
+      } catch (_) { _alreadyAdded = new Set(); }
+      this._aiSimilarAdded.set(cacheKey, _alreadyAdded);
+    }
+
+    // ── Base suggestions — reuses the existing session/localStorage cache,
+    // so a repeat press for the same track doesn't re-hit the AI unless the
+    // dedup pass below actually needs a backfill.
+    if (!this._aiAddSimilarCache) this._aiAddSimilarCache = new Map();
     if (!this._aiAddSimilarCache.has(cacheKey)) {
       const persisted = this._aiSessionGet('addSimilar', cacheKey);
       if (persisted) this._aiAddSimilarCache.set(cacheKey, persisted);
     }
-    let tracks = this._aiAddSimilarCache.get(cacheKey);
-    if (!tracks) {
+
+    const _askAI = async (excludeKeys) => {
       const agentId = this._config?.ai_conversation_agent || 'conversation.home_assistant';
-      const prompt = `I'm listening to "${track}" by "${artist}". Suggest 6 similar tracks to add to my queue. Respond ONLY with a JSON array (no markdown):
+      const excludeNote = excludeKeys?.size
+        ? `\nDon't suggest any of these again: ${[...excludeKeys].slice(0, 20).join(', ')}`
+        : '';
+      const prompt = `I'm listening to "${track}" by "${artist}". Suggest ${TARGET_COUNT} similar tracks to add to my queue.${excludeNote} Respond ONLY with a JSON array (no markdown):
 [{"title":"Track Title","artist":"Artist Name"}]`;
+      const resp = await this._hass.connection.sendMessagePromise({
+        type: 'conversation/process', text: prompt,
+        agent_id: agentId, language: navigator.language || 'en'
+      });
+      const raw = resp?.response?.speech?.plain?.speech || '';
+      return JSON.parse(raw.replace(/```json?\s*/gi, '').replace(/```/g, '').trim());
+    };
+
+    let baseTracks = this._aiAddSimilarCache.get(cacheKey);
+    if (!baseTracks) {
       try {
-        const resp = await this._hass.connection.sendMessagePromise({
-          type: 'conversation/process', text: prompt,
-          agent_id: agentId, language: navigator.language || 'en'
-        });
-        const raw = resp?.response?.speech?.plain?.speech || '';
-        tracks = JSON.parse(raw.replace(/```json?\s*/gi,'').replace(/```/g,'').trim());
-        this._aiAddSimilarCache.set(cacheKey, tracks);
-        this._aiSessionSet('addSimilar', cacheKey, tracks);
-      } catch(e) {
+        baseTracks = await _askAI(null);
+        this._aiAddSimilarCache.set(cacheKey, baseTracks);
+        this._aiSessionSet('addSimilar', cacheKey, baseTracks);
+      } catch (e) {
         this._maBatchLoading = false;
         this._showToast('AI couldn\'t find similar songs — try again'); return;
       }
     }
 
+    // ── Filter out anything already queued, already added before, or
+    // duplicated within the AI's own response ──
+    const _seen = new Set();
+    let candidates = (baseTracks || []).filter(t => {
+      const key = _normKey(t.title, t.artist);
+      if (!key || _queueKeys.has(key) || _alreadyAdded.has(key) || _seen.has(key)) return false;
+      _seen.add(key);
+      return true;
+    });
+
+    // ── Backfill: if dedup left us short of the target, ask once more with
+    // everything already seen excluded, to top back up ──
+    if (candidates.length < TARGET_COUNT) {
+      const excludeForRetry = new Set([..._queueKeys, ..._alreadyAdded, ..._seen]);
+      try {
+        const more = await _askAI(excludeForRetry);
+        (more || []).forEach(t => {
+          const key = _normKey(t.title, t.artist);
+          if (!key || _queueKeys.has(key) || _alreadyAdded.has(key) || _seen.has(key)) return;
+          _seen.add(key);
+          candidates.push(t);
+        });
+      } catch (_) {
+        // Backfill failing is non-fatal — proceed with whatever we already have.
+      }
+    }
+
+    if (!candidates.length) {
+      this._maBatchLoading = false;
+      this._showToast('No new similar songs to add right now');
+      return;
+    }
+
     let added = 0;
-    for (const t of (tracks || []).slice(0, 6)) {
+    for (const t of candidates.slice(0, TARGET_COUNT)) {
       try {
         await this._hass.connection.sendMessagePromise({
           type: 'call_service', domain: 'music_assistant', service: 'play_media',
           service_data: { entity_id: this._entity, media_id: `${t.title} ${t.artist}`, media_type: 'track', enqueue: 'add' }
         });
         added++;
+        _alreadyAdded.add(_normKey(t.title, t.artist));
       } catch(_) {}
     }
+
+    // Persist the updated "already added for this track" set.
+    try {
+      const store = JSON.parse(localStorage.getItem('crow_ai_similar_added') || '{}');
+      store[cacheKey] = [..._alreadyAdded];
+      localStorage.setItem('crow_ai_similar_added', JSON.stringify(store));
+    } catch (_) {}
 
     this._maBatchLoading = false;
     clearTimeout(this._maBatchLoadingTimer);
@@ -20346,11 +20905,13 @@ Include ALL tracks. Use null for unknown fields.`;
     }
 
     // Re-wire art thumbnail tap → lightbox (lost when content.innerHTML is restored)
+    const _artImg2OpenedAt = Date.now();
     const _artImg2 = content.querySelector('.info-hero-art-img');
     if (_artImg2) {
       _artImg2.style.pointerEvents = 'auto';
       _artImg2.addEventListener('click', (e) => {
         e.stopPropagation();
+        if ((Date.now() - _artImg2OpenedAt) < 500) return;
         const _tTitle  = content.dataset.musicTrackTitle  || '';
         const _tArtist = content.dataset.musicArtistName || '';
         self._showBioPhotoLightbox(_artImg2.src || artUrl, `${_tTitle}${_tArtist ? ' · ' + _tArtist : ''}`, content, 'square');
@@ -20907,8 +21468,6 @@ Include ALL tracks. Use null for unknown fields.`;
         );
 
         if (recentPlaylist) {
-          // TEMPORARY DEBUG marker — tells us which strategy actually ran.
-          this._showToast('🔧 DEBUG: using playlist fallback ("' + (recentPlaylist.name || recentPlaylist.title) + '") — direct query returned nothing', 6000);
           // Found it — open it as a collection drill-in so we reuse all the
           // existing track-loading, rendering, and action bar infrastructure.
           // Set _maCurrentTab to '__ios_root__' before calling so the nav stack
@@ -25802,7 +26361,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       // Also clear in-memory AI caches on the card
       const _ce = document.querySelector('crowai-media-player-card') || [...document.querySelectorAll('*')].find(el => el.tagName?.toLowerCase() === 'crowai-media-player-card');
       if (_ce) {
-        ['_aiTrackInfoCache','_aiInfoCache','_aiRecsCache','_aiAddSimilarCache','_aiAlbumTracksCache','_aiVideoInfoCache','_aiSimilarArtistsCache','_aiSearchResultCache','_tvEpCountCache','_tvEpisodesCache','_tvEpDetailCache','_tvActorCache','_aiPromptCache','_entityRegistryCache','_deviceRegistryCache','_areaRegistryCache','_aiWtwCache','_aiCwCache','_aiMoodCache','_aiTriviaCache','_aiMusicTriviaCache','_aiMeaningCache','_aiDayMusicCache','_aiBioTriviaCache','_castBioCache'].forEach(k => { if (_ce[k]) _ce[k] = _ce[k] instanceof Map ? new Map() : {}; });
+        ['_aiTrackInfoCache','_aiInfoCache','_aiRecsCache','_aiAddSimilarCache','_aiSimilarAdded','_aiAlbumTracksCache','_aiVideoInfoCache','_aiSimilarArtistsCache','_aiSearchResultCache','_tvEpCountCache','_tvEpisodesCache','_tvEpDetailCache','_tvActorCache','_aiPromptCache','_entityRegistryCache','_deviceRegistryCache','_areaRegistryCache','_aiWtwCache','_aiCwCache','_aiMoodCache','_aiTriviaCache','_aiMusicTriviaCache','_aiMeaningCache','_aiDayMusicCache','_aiBioTriviaCache','_castBioCache'].forEach(k => { if (_ce[k]) _ce[k] = _ce[k] instanceof Map ? new Map() : {}; });
         _ce._aiAvailable = undefined;
         _ce._maConfigEntryId = null;
       }
@@ -25881,6 +26440,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       { key: 'crow_pin_artist',     label: 'Artists' },
       { key: 'crow_pin_album',      label: 'Albums' },
       { key: 'crow_pin_playlist',   label: 'Playlists' },
+      { key: 'crow_pin_saved_queues', label: 'Pinned Queues' },
     ];
 
     const pinsRowsEl = root.getElementById('pins-rows');
@@ -26292,7 +26852,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
           const _cacheKeys = [
             '_wikiThumbUrlCache', '_wikiBlobCache', '_castPhotoCache', '_castBioCache',
             '_itunesArtCache', '_itunesMiniCache', '_itunesMoviePosterCache', '_discogsArtCache',
-            '_aiTrackInfoCache', '_aiInfoCache', '_aiRecsCache', '_aiAddSimilarCache',
+            '_aiTrackInfoCache', '_aiInfoCache', '_aiRecsCache', '_aiAddSimilarCache', '_aiSimilarAdded',
             '_aiAlbumTracksCache', '_aiVideoInfoCache', '_aiVideoInfoSelectedCache',
             '_aiSimilarArtistsCache', '_aiSearchResultCache', '_aiPromptCache',
             '_tvEpCountCache', '_tvEpisodesCache', '_tvEpDetailCache', '_tvActorCache',
