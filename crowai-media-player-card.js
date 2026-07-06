@@ -27,7 +27,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   }
 
   static getStubConfig() {
-    return { entities: [], auto_switch: true, accent_color: '#007AFF', volume_accent: '#007AFF', title_color: '#ffffff', artist_color: '#ffffff', button_color: '#ffffff', player_bg: '#1c1c1e', player_bg_opacity: 100, show_entity_selector: true, volume_control: 'slider', startup_mode: 'compact', remember_view: false, volume_entity: '', ma_entities: [], show_vol_pct: true, vol_pct_color: 'rgba(255,255,255,0.45)', scroll_text: false, remember_last_entity: false, entity_startup_volumes: {}, lyrics_bg: '#0a0a0c', lyrics_text_color: '#ffffff', lyrics_scroll_mode: 'highlight', lyrics_persist: false, lyrics_cache_ttl: 7, lyrics_cache_enabled: true, lyrics_persistent_storage: false, pins_persistent_storage: false, ai_info_persistent_storage: false, itunes_persistent_storage: false, wiki_persistent_storage: false, ma_library_cache_enabled: true, ma_library_cache_ttl: 1, ma_radio_mode: false, show_ma_library_button: true, use_ha_theme: false, remote_buttons_position: 'bottom', ambient_glow: false, announce_tts_service: '', row_glow: false, show_remote_button: true, ma_ios_library: true, artwork_crossfade: false, icon_theme: 'robot', resize_btn_spin: true, remote_art_blur: true, volume_hud: true, itunes_art: true, controls_theme: 'classic', add_pill_color: '', card_liquid_glass: true, volume_hud_glass: false, ai_conversation_agent: '', share_service: 'youtube_music', song_intro_enabled: false, show_media_type_pill: false };
+    return { entities: [], auto_switch: true, accent_color: '#007AFF', volume_accent: '#007AFF', title_color: '#ffffff', artist_color: '#ffffff', button_color: '#ffffff', player_bg: '#1c1c1e', player_bg_opacity: 100, show_entity_selector: true, volume_control: 'slider', startup_mode: 'compact', remember_view: false, volume_entity: '', ma_entities: [], show_vol_pct: true, vol_pct_color: 'rgba(255,255,255,0.45)', scroll_text: false, remember_last_entity: false, entity_startup_volumes: {}, lyrics_bg: '#0a0a0c', lyrics_text_color: '#ffffff', lyrics_scroll_mode: 'highlight', lyrics_persist: false, lyrics_cache_ttl: 7, lyrics_cache_enabled: true, lyrics_persistent_storage: false, pins_persistent_storage: false, show_pins_in_sections: true, ai_info_persistent_storage: false, itunes_persistent_storage: false, wiki_persistent_storage: false, ma_library_cache_enabled: true, ma_library_cache_ttl: 1, ma_radio_mode: false, show_ma_library_button: true, use_ha_theme: false, remote_buttons_position: 'bottom', ambient_glow: false, announce_tts_service: '', row_glow: false, show_remote_button: true, ma_ios_library: true, artwork_crossfade: false, icon_theme: 'robot', resize_btn_spin: true, remote_art_blur: true, volume_hud: true, itunes_art: true, controls_theme: 'classic', add_pill_color: '', card_liquid_glass: true, volume_hud_glass: false, ai_conversation_agent: '', share_service: 'youtube_music', song_intro_enabled: false, show_media_type_pill: false };
   }
 
   setConfig(config) {
@@ -61,6 +61,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       lyrics_cache_enabled: true,
       lyrics_persistent_storage: false,
       pins_persistent_storage: false,
+      show_pins_in_sections: true,
       ai_info_persistent_storage: false,
       itunes_persistent_storage: false,
       wiki_persistent_storage: false,
@@ -7911,6 +7912,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
     const CATS = [
       { tab: 'recently_added', label: 'Recently Added', color: '#00C7BE', path: 'M13,3A9,9 0 0,0 4,12H1L4.89,15.89L4.96,16.03L9,12H6A7,7 0 0,1 13,5A7,7 0 0,1 20,12A7,7 0 0,1 13,19C11.07,19 9.32,18.21 8.06,16.94L6.64,18.36C8.27,19.99 10.52,21 13,21A9,9 0 0,0 22,12A9,9 0 0,0 13,3M14,8H12V13L16.28,15.54L17,14.33L13.5,12.25V8H14Z' },
+      { tab: 'pinned',         label: 'Pinned',         color: '#FFD60A', path: 'M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z' },
       { tab: 'favourites',  label: 'Favourites',    color: '#FF9500', path: 'M12,17.27L18.18,21L16.54,13.97L22,9.24L14.81,8.62L12,2L9.19,8.62L2,9.24L7.45,13.97L5.82,21L12,17.27Z' },
       { tab: 'recommended', label: 'Made for You',  color: '#FF3B30', path: 'M12,21.35L10.55,20.03C5.4,15.36 2,12.27 2,8.5C2,5.41 4.42,3 7.5,3C9.24,3 10.91,3.81 12,5.08C13.09,3.81 14.76,3 16.5,3C19.58,3 22,5.41 22,8.5C22,12.27 18.6,15.36 13.45,20.03L12,21.35Z' },
       { tab: 'playlist',    label: 'Playlists',     color: '#FF9F0A', path: 'M15,6H3V8H15V6M15,10H3V12H15V10M3,16H11V14H3V16M17,6V14.18C16.69,14.07 16.35,14 16,14A4,4 0 0,0 12,18A4,4 0 0,0 16,22A4,4 0 0,0 20,18V8H23V6H17Z' },
@@ -7972,6 +7974,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           _iosInput._fullSearchEnabled = _searchableTabs.has(tab);
         }
         if (_iosBar) _iosBar.classList.remove('hidden');
+        // Pinned is a pure category browser (like this root list itself) —
+        // no search makes sense at this level, so keep it hidden regardless
+        // of the general toggle above.
+        if (tab === 'pinned' && _iosBar) _iosBar.classList.add('hidden');
 
         // Show content + back button — clear first to avoid stale content flash
         const maContent = rr.getElementById('maContent');
@@ -7995,6 +8001,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     this._maLastSearch = null;
     this._haRbActive = false;
     this._haRbStack = [];
+    this._pinnedDetailActive = false;
     const maSearchInput = this.shadowRoot?.getElementById('maSearchInput');
     const maSearchClear = this.shadowRoot?.getElementById('maSearchClear');
     const maIosInput    = this.shadowRoot?.getElementById('maIosSearchInput');
@@ -8028,6 +8035,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       } else {
         this._haRbExitToRadioTab();
       }
+      return;
+    }
+    // Pinned category drill-in — one level only, so back always returns to
+    // the category list rather than needing its own stack.
+    if (this._pinnedDetailActive) {
+      const content = this.shadowRoot?.getElementById('maContent');
+      this._renderPinnedOverview(content);
       return;
     }
     // Remove any stray artwork/bio lightbox before navigating back
@@ -8786,8 +8800,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   _rbRefreshPinnedUI() {
     const maContent = this.shadowRoot?.getElementById('maContent');
     if (!maContent) return;
-    const rbEntity = this._resolveMATargetEntity() || this._entity;
     const existing = maContent.querySelector('#rb-starred-section');
+    if (this._config?.show_pins_in_sections === false) { existing?.remove(); return; }
+    const rbEntity = this._resolveMATargetEntity() || this._entity;
     const newSection = this._rbRenderStarredSection(rbEntity);
     if (existing) {
       if (newSection) existing.replaceWith(newSection);
@@ -8875,9 +8890,11 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (!content) return;
     // Remove any existing starred section first to avoid duplicates
     content.querySelector('#rb-starred-section')?.remove();
-    const rbEntity = this._resolveMATargetEntity() || this._entity;
-    const section = this._rbRenderStarredSection(rbEntity);
-    if (section) content.insertBefore(section, content.firstChild);
+    if (this._config?.show_pins_in_sections !== false) {
+      const rbEntity = this._resolveMATargetEntity() || this._entity;
+      const section = this._rbRenderStarredSection(rbEntity);
+      if (section) content.insertBefore(section, content.firstChild);
+    }
     // Always (re-)add the "Browse Home Assistant Radio" entry point above it
     this._haRbInjectBrowseEntry(content);
   }
@@ -9384,6 +9401,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const maContent = this.shadowRoot?.getElementById('maContent');
     if (!maContent) return;
     const existing = maContent.querySelector('#pc-starred-section');
+    if (this._config?.show_pins_in_sections === false) { existing?.remove(); return; }
     const newSection = this._pcRenderStarredSection();
     // Find reference node — insert before top chart section or library section
     const refNode = maContent.querySelector('#pc-library-section') || maContent.firstChild;
@@ -9399,6 +9417,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   async _pcInjectSections(content) {
     if (!content) return;
     content.querySelector('#pc-starred-section')?.remove();
+    if (this._config?.show_pins_in_sections === false) return;
 
     // Insert starred at top
     const starredSection = this._pcRenderStarredSection();
@@ -9878,6 +9897,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const _t = tab === 'favourites' ? 'track' : tab;
     const sectionId = 'malib-starred-' + _t;
     const existing  = maContent.querySelector('#' + sectionId);
+    if (this._config?.show_pins_in_sections === false) { existing?.remove(); return; }
     const newSection = this._maLibRenderStarredSection(_t);
     if (existing) {
       if (newSection) existing.replaceWith(newSection);
@@ -9888,10 +9908,36 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     }
   }
 
+  // Builds one pinned-item row for track/artist/album/playlist — extracted so
+  // it can be reused both by the per-tab pinned section and the consolidated
+  // Pinned overview, matching the same pattern already used for
+  // _rbMakeStationRow/_pcMakeRow/_abMakeRow.
+  _maLibMakeRow(item, tab) {
+    const self = this;
+    const imgUrl = self._maImgUrl(item);
+    const title  = item.name || item.title || '';
+    const sub    = (item.artists ? item.artists.map(a => a.name).join(', ') : '') || '';
+    const wrap = document.createElement('div');
+    wrap.className = 'ma-item-wrap';
+    const el = document.createElement('div');
+    el.className = 'ma-item';
+    el.innerHTML =
+      '<div class="ma-item-art">' +
+        (imgUrl ? '<img src="' + imgUrl + '" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">' : '') +
+        '<svg viewBox="0 0 24 24" style="display:' + (imgUrl ? 'none' : 'flex') + '">' + self._maItemSvg(tab) + '</svg>' +
+      '</div>' +
+      '<div class="ma-item-info"><div class="ma-item-title">' + title + '</div>' +
+        (sub ? '<div class="ma-item-sub">' + sub + '</div>' : '') +
+      '</div>' +
+      '<div class="ma-item-chevron" style="' + (['artist','album','playlist'].includes(tab) ? '' : 'visibility:hidden') + '"><svg viewBox="0 0 24 24"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg></div>';
+    wrap.appendChild(el);
+    self._attachMAItemSwipe(wrap, item, tab);
+    return wrap;
+  }
+
   _maLibRenderStarredSection(tab) {
     const starred = this._maLibGetStarred(tab);
     if (!starred.length) return null;
-    const self = this;
 
     const label = tab === 'track' ? 'Songs' : tab === 'artist' ? 'Artists' : tab === 'playlist' ? 'Playlists' : 'Albums';
     const section = document.createElement('div');
@@ -9903,27 +9949,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     heading.textContent = '\ud83d\udccd Pinned ' + label;
     section.appendChild(heading);
 
-    starred.forEach(item => {
-      const wrap = document.createElement('div');
-      wrap.className = 'ma-item-wrap';
-      const imgUrl = self._maImgUrl(item);
-      const title  = item.name || item.title || '';
-      const sub    = (item.artists ? item.artists.map(a => a.name).join(', ') : '') || '';
-      const el = document.createElement('div');
-      el.className = 'ma-item';
-      el.innerHTML =
-        '<div class="ma-item-art">' +
-          (imgUrl ? '<img src="' + imgUrl + '" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">' : '') +
-          '<svg viewBox="0 0 24 24" style="display:' + (imgUrl ? 'none' : 'flex') + '">' + self._maItemSvg(tab) + '</svg>' +
-        '</div>' +
-        '<div class="ma-item-info"><div class="ma-item-title">' + title + '</div>' +
-          (sub ? '<div class="ma-item-sub">' + sub + '</div>' : '') +
-        '</div>' +
-        '<div class="ma-item-chevron" style="' + (['artist','album','playlist'].includes(tab) ? '' : 'visibility:hidden') + '"><svg viewBox="0 0 24 24"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg></div>';
-      wrap.appendChild(el);
-      self._attachMAItemSwipe(wrap, item, tab);
-      section.appendChild(wrap);
-    });
+    starred.forEach(item => section.appendChild(this._maLibMakeRow(item, tab)));
 
     return section;
   }
@@ -9971,10 +9997,43 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     this._haStorageSavePins();
   }
 
+  // Builds one pinned-queue row — extracted so it can be reused both by the
+  // per-tab pinned section and the consolidated Pinned overview.
+  _makeSavedQueueRow(sq) {
+    const self = this;
+    const wrap = document.createElement('div');
+    wrap.className = 'ma-item-wrap';
+    const el = document.createElement('div');
+    el.className = 'ma-item';
+    const count = sq.tracks?.length || 0;
+    el.innerHTML =
+      '<div class="ma-item-art"><svg viewBox="0 0 24 24" style="display:flex;fill:rgba(255,255,255,0.35)"><path d="M15,6H3V8H15V6M15,10H3V12H15V10M3,16H11V14H3V16M17,6V14.18C16.69,14.07 16.35,14 16,14A3,3 0 0,0 13,17A3,3 0 0,0 16,20A3,3 0 0,0 19,17V8H22V6H17Z"/></svg></div>' +
+      '<div class="ma-item-info"><div class="ma-item-title">' + (sq.name || 'Pinned Queue') + '</div>' +
+        '<div class="ma-item-sub">' + count + ' track' + (count === 1 ? '' : 's') + '</div>' +
+      '</div>' +
+      '<div class="ma-item-chevron"><svg viewBox="0 0 24 24"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg></div>';
+    wrap.appendChild(el);
+
+    let lpTimer = null, lpFired = false;
+    el.addEventListener('contextmenu', e => e.preventDefault());
+    el.addEventListener('pointerdown', () => {
+      lpFired = false;
+      lpTimer = setTimeout(() => { lpFired = true; self._showSavedQueueContextMenu(el, sq); }, 480);
+    }, { passive: true });
+    el.addEventListener('pointerup',     () => clearTimeout(lpTimer), { passive: true });
+    el.addEventListener('pointercancel', () => { clearTimeout(lpTimer); lpFired = false; }, { passive: true });
+    el.addEventListener('pointermove',   () => clearTimeout(lpTimer), { passive: true });
+    el.addEventListener('click', () => {
+      if (lpFired) { lpFired = false; return; }
+      self._openSavedQueueDetail(sq);
+    });
+
+    return wrap;
+  }
+
   _renderSavedQueuesSection() {
     const saved = this._getSavedQueues();
     if (!saved.length) return null;
-    const self = this;
 
     const section = document.createElement('div');
     section.id = 'saved-queues-section';
@@ -9985,39 +10044,160 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     heading.textContent = '\ud83d\udccd Pinned Queues';
     section.appendChild(heading);
 
-    saved.forEach(sq => {
-      const wrap = document.createElement('div');
-      wrap.className = 'ma-item-wrap';
-      const el = document.createElement('div');
-      el.className = 'ma-item';
-      const count = sq.tracks?.length || 0;
-      el.innerHTML =
-        '<div class="ma-item-art"><svg viewBox="0 0 24 24" style="display:flex;fill:rgba(255,255,255,0.35)"><path d="M15,6H3V8H15V6M15,10H3V12H15V10M3,16H11V14H3V16M17,6V14.18C16.69,14.07 16.35,14 16,14A3,3 0 0,0 13,17A3,3 0 0,0 16,20A3,3 0 0,0 19,17V8H22V6H17Z"/></svg></div>' +
-        '<div class="ma-item-info"><div class="ma-item-title">' + (sq.name || 'Pinned Queue') + '</div>' +
-          '<div class="ma-item-sub">' + count + ' track' + (count === 1 ? '' : 's') + '</div>' +
-        '</div>' +
-        '<div class="ma-item-chevron"><svg viewBox="0 0 24 24"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg></div>';
-      wrap.appendChild(el);
-
-      let lpTimer = null, lpFired = false;
-      el.addEventListener('contextmenu', e => e.preventDefault());
-      el.addEventListener('pointerdown', () => {
-        lpFired = false;
-        lpTimer = setTimeout(() => { lpFired = true; self._showSavedQueueContextMenu(el, sq); }, 480);
-      }, { passive: true });
-      el.addEventListener('pointerup',     () => clearTimeout(lpTimer), { passive: true });
-      el.addEventListener('pointercancel', () => { clearTimeout(lpTimer); lpFired = false; }, { passive: true });
-      el.addEventListener('pointermove',   () => clearTimeout(lpTimer), { passive: true });
-      el.addEventListener('click', () => {
-        if (lpFired) { lpFired = false; return; }
-        self._openSavedQueueDetail(sq);
-      });
-
-      section.appendChild(wrap);
-    });
+    saved.forEach(sq => section.appendChild(this._makeSavedQueueRow(sq)));
 
     return section;
   }
+
+  // ── Consolidated Pinned overview ─────────────────────────────────────────
+  // A category browser matching the Music Library root list's exact visual
+  // style — same classes, same per-category colors/icons — rather than a
+  // flat filtered list. Tapping a category drills into just that category's
+  // pins, reusing each category's existing row-builder unchanged, so tap and
+  // long-press behavior is identical to browsing that category directly.
+  // Purely additive to the existing per-tab pinned sections.
+  _pinnedCategoryDefs() {
+    return [
+      { key: 'track',      label: 'Songs',      color: '#34C759', path: 'M12,3V13.55C11.41,13.21 10.73,13 10,13A4,4 0 0,0 6,17A4,4 0 0,0 10,21A4,4 0 0,0 14,17V7H18V3H12Z' },
+      { key: 'artist',     label: 'Artists',     color: '#FF2D55', path: 'M12,4A4,4 0 0,1 16,8A4,4 0 0,1 12,12A4,4 0 0,1 8,8A4,4 0 0,1 12,4M12,14C16.42,14 20,15.79 20,18V20H4V18C4,15.79 7.58,14 12,14Z' },
+      { key: 'album',      label: 'Albums',      color: '#5856D6', path: 'M12,11A1,1 0 0,0 11,12A1,1 0 0,0 12,13A1,1 0 0,0 13,12A1,1 0 0,0 12,11M12,16.5C9.5,16.5 7.5,14.5 7.5,12C7.5,9.5 9.5,7.5 12,7.5C14.5,7.5 16.5,9.5 16.5,12C16.5,14.5 14.5,16.5 12,16.5M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2Z' },
+      { key: 'playlist',   label: 'Playlists',   color: '#FF9F0A', path: 'M15,6H3V8H15V6M15,10H3V12H15V10M3,16H11V14H3V16M17,6V14.18C16.69,14.07 16.35,14 16,14A4,4 0 0,0 12,18A4,4 0 0,0 16,22A4,4 0 0,0 20,18V8H23V6H17Z' },
+      { key: 'queues',     label: 'Queues',      color: '#FFD60A', path: 'M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z' },
+      { key: 'stations',   label: 'Radio',       color: '#FF9F0A', path: 'M19,6.41L4.86,2.28L4.29,4.2L7,5V7H5A2,2 0 0,0 3,9V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V9A2,2 0 0,0 19,7H9V5.75L19,8.55V6.41M7,9A2,2 0 0,1 9,11A2,2 0 0,1 7,13A2,2 0 0,1 5,11A2,2 0 0,1 7,9M17,18H7V16H17V18M19,14H11V10H19V14Z' },
+      { key: 'podcasts',   label: 'Podcasts',    color: '#BF5AF2', path: 'M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12,7A5,5 0 0,0 7,12C7,14.76 8.58,17.15 11,18.27V16.06C9.8,15.16 9,13.68 9,12A3,3 0 0,1 12,9A3,3 0 0,1 15,12C15,13.68 14.2,15.16 13,16.06V18.27C15.42,17.15 17,14.76 17,12A5,5 0 0,0 12,7M12,11A1,1 0 0,0 11,12A1,1 0 0,0 12,13A1,1 0 0,0 13,12A1,1 0 0,0 12,11Z' },
+      { key: 'audiobooks', label: 'Audiobooks',  color: '#32ADE6', path: 'M18,22A2,2 0 0,0 20,20V4C20,2.89 19.1,2 18,2H12V9L9.5,7.5L7,9V2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18Z' },
+    ];
+  }
+
+  _getPinnedCategoryItems(key) {
+    switch (key) {
+      case 'track': case 'artist': case 'album': case 'playlist':
+        return this._maLibGetStarred(key);
+      case 'queues':     return this._getSavedQueues();
+      case 'stations':   return this._rbGetStarred();
+      case 'podcasts':   return this._pcGetStarred();
+      case 'audiobooks': return this._abGetStarred();
+      default: return [];
+    }
+  }
+
+  _makePinnedCategoryRow(item, key, entity) {
+    switch (key) {
+      case 'track': case 'artist': case 'album': case 'playlist':
+        return this._maLibMakeRow(item, key);
+      case 'queues':     return this._makeSavedQueueRow(item);
+      case 'stations':   return this._rbMakeStationRow(item, entity, true);
+      case 'podcasts':   return this._pcMakeRow(item, true);
+      case 'audiobooks': return this._abMakeRow(item, true);
+      default: return document.createElement('div');
+    }
+  }
+
+  _renderPinnedOverview(content) {
+    if (!content) return;
+    content.innerHTML = '';
+    this._pinnedDetailActive = false;
+    const titleEl = this.shadowRoot?.getElementById('maTitle');
+    if (titleEl) titleEl.textContent = 'Pinned';
+
+    const rows = this._pinnedCategoryDefs()
+      .map(cat => ({ cat, count: this._getPinnedCategoryItems(cat.key).length }))
+      .filter(x => x.count > 0);
+
+    if (!rows.length) {
+      const empty = document.createElement('div');
+      empty.className = 'ma-empty';
+      empty.textContent = 'Nothing pinned yet.';
+      content.appendChild(empty);
+      return;
+    }
+
+    const catHtml = rows.map(({ cat }) =>
+      `<div class="ma-ios-cat-row" data-key="${cat.key}" data-color="${cat.color}">
+        <div class="ma-ios-cat-icon" style="background:${cat.color}"><svg viewBox="0 0 24 24"><path d="${cat.path}"/></svg></div>
+        <span class="ma-ios-cat-label">${cat.label}</span>
+        <div class="ma-ios-cat-chevron"></div>
+      </div>`
+    ).join('');
+    content.innerHTML = `<div class="ma-ios-categories">${catHtml}</div>`;
+
+    content.querySelectorAll('.ma-ios-cat-row').forEach(row => {
+      row.addEventListener('click', () => this._openPinnedCategoryDetail(row.dataset.key));
+    });
+  }
+
+  // Drills into a single pinned category — same shared back-button pattern
+  // already used for the HA Radio Browser browse tree (_haRbActive).
+  // Extracts the right display-name field per category shape — used for
+  // client-side search filtering below, since row markup/classes differ
+  // across categories (library rows use classes, radio/podcast/audiobook
+  // rows don't), so filtering has to happen at the data level instead.
+  _pinnedItemDisplayName(item, key) {
+    switch (key) {
+      case 'track': case 'artist': case 'album': case 'playlist':
+        return item.name || item.title || '';
+      case 'queues':     return item.name || '';
+      case 'stations':   return item.name || '';
+      case 'podcasts':   return item.collectionName || '';
+      case 'audiobooks': return item.title || '';
+      default: return '';
+    }
+  }
+
+  _openPinnedCategoryDetail(key) {
+    const content = this.shadowRoot?.getElementById('maContent');
+    const titleEl  = this.shadowRoot?.getElementById('maTitle');
+    const backBtn  = this.shadowRoot?.getElementById('maBackBtn');
+    if (!content) return;
+
+    const cat = this._pinnedCategoryDefs().find(c => c.key === key);
+    if (!cat) return;
+
+    this._pinnedDetailActive = true;
+    if (backBtn) backBtn.classList.remove('hidden');
+    if (titleEl) titleEl.textContent = cat.label;
+
+    const items = this._getPinnedCategoryItems(key);
+    const entity = this._resolveMATargetEntity() || this._entity;
+    content.innerHTML = '';
+
+    if (!items.length) {
+      const empty = document.createElement('div');
+      empty.className = 'ma-empty';
+      empty.textContent = 'Nothing pinned in this category yet.';
+      content.appendChild(empty);
+      return;
+    }
+
+    // Search bar — filters this category's pinned items by name.
+    const searchWrap = document.createElement('div');
+    searchWrap.style.cssText = 'padding:2px 2px 12px;';
+    searchWrap.innerHTML = '<input type="search" id="pinnedCatSearch" placeholder="Search ' + cat.label.toLowerCase() + '…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" style="width:100%;box-sizing:border-box;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);border-radius:10px;padding:9px 12px;font-size:14px;color:var(--primary-text-color,#fff);font-family:inherit;">';
+    content.appendChild(searchWrap);
+
+    const list = document.createElement('div');
+    content.appendChild(list);
+
+    const renderList = (query) => {
+      list.innerHTML = '';
+      const q = (query || '').trim().toLowerCase();
+      const filtered = q
+        ? items.filter(item => this._pinnedItemDisplayName(item, key).toLowerCase().includes(q))
+        : items;
+      if (!filtered.length) {
+        const noRes = document.createElement('div');
+        noRes.className = 'ma-empty';
+        noRes.textContent = 'No matches.';
+        list.appendChild(noRes);
+        return;
+      }
+      filtered.forEach(item => list.appendChild(this._makePinnedCategoryRow(item, key, entity)));
+    };
+    renderList('');
+
+    searchWrap.querySelector('#pinnedCatSearch')?.addEventListener('input', (e) => renderList(e.target.value));
+  }
+
 
   // Small context menu for a saved queue row — Play or Delete.
   _showSavedQueueContextMenu(anchor, sq) {
@@ -10291,13 +10471,15 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     content.querySelector('#saved-queues-section')?.remove();
     content.querySelector('#malib-starred-divider')?.remove();
 
-    const section = this._maLibRenderStarredSection(_t);
-    if (section) content.insertBefore(section, grid || content.firstChild);
+    let section = null, sqSection = null;
+    if (this._config?.show_pins_in_sections !== false) {
+      section = this._maLibRenderStarredSection(_t);
+      if (section) content.insertBefore(section, grid || content.firstChild);
 
-    let sqSection = null;
-    if (_t === 'playlist') {
-      sqSection = this._renderSavedQueuesSection();
-      if (sqSection) content.insertBefore(sqSection, grid || content.firstChild);
+      if (_t === 'playlist') {
+        sqSection = this._renderSavedQueuesSection();
+        if (sqSection) content.insertBefore(sqSection, grid || content.firstChild);
+      }
     }
 
     // Single shared "Library" divider after whichever of the two sections
@@ -10571,6 +10753,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const maContent = this.shadowRoot?.getElementById('maContent');
     if (!maContent) return;
     const existing = maContent.querySelector('#ab-starred-section');
+    if (this._config?.show_pins_in_sections === false) { existing?.remove(); return; }
     const newSection = this._abRenderStarredSection();
     if (existing) { if (newSection) existing.replaceWith(newSection); else existing.remove(); }
     else if (newSection) maContent.insertBefore(newSection, maContent.firstChild);
@@ -10580,8 +10763,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (!content) return;
     content.querySelector('#ab-starred-section')?.remove();
     content.querySelector('#ab-search-prompt')?.remove();
-    const starredSection = this._abRenderStarredSection();
-    if (starredSection) content.insertBefore(starredSection, content.firstChild);
+    if (this._config?.show_pins_in_sections !== false) {
+      const starredSection = this._abRenderStarredSection();
+      if (starredSection) content.insertBefore(starredSection, content.firstChild);
+    }
     const prompt = document.createElement('div');
     prompt.id = 'ab-search-prompt';
     prompt.style.cssText = 'padding:20px 4px;text-align:center;';
@@ -11234,7 +11419,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         stations.forEach(st => rbList.appendChild(this._rbMakeStationRow(st, rbEntity, false)));
 
         // Prepend starred section above search results
-        const starredSection = this._rbRenderStarredSection(rbEntity);
+        const starredSection = this._config?.show_pins_in_sections !== false ? this._rbRenderStarredSection(rbEntity) : null;
         if (starredSection) content.appendChild(starredSection);
         content.appendChild(rbList);
         this._haRbInjectBrowseEntry(content);
@@ -11278,7 +11463,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         results.forEach(pod => list.appendChild(this._pcMakeRow(pod, false)));
 
         // Prepend starred section above search results — same pattern as radio
-        const starredSection = this._pcRenderStarredSection();
+        const starredSection = this._config?.show_pins_in_sections !== false ? this._pcRenderStarredSection() : null;
         if (starredSection) content.appendChild(starredSection);
         content.appendChild(list);
       } catch(e) {
@@ -11344,7 +11529,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
               const list2 = document.createElement('div');
               list2.style.cssText = 'display:flex;flex-direction:column;';
               dymResults.forEach(book => list2.appendChild(this._abMakeRow(book, false)));
-              const ss2 = this._abRenderStarredSection();
+              const ss2 = this._config?.show_pins_in_sections !== false ? this._abRenderStarredSection() : null;
               if (ss2) content.appendChild(ss2);
               content.appendChild(list2);
             } catch(e) {
@@ -11370,7 +11555,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         const list = document.createElement('div');
         list.style.cssText = 'display:flex;flex-direction:column;';
         results.forEach(book => list.appendChild(this._abMakeRow(book, false)));
-        const starredSection = this._abRenderStarredSection();
+        const starredSection = this._config?.show_pins_in_sections !== false ? this._abRenderStarredSection() : null;
         if (starredSection) content.appendChild(starredSection);
         // "Search Results" divider is baked into _abRenderStarredSection when pinned items exist
         // Add it ourselves only when there are no pinned items
@@ -11458,12 +11643,34 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           // If a tab was active, only include its result type
           if (filterKey && mediaType !== filterKey) return;
           if (Array.isArray(items) && items.length) {
-            // Deduplicate — MA searches multiple providers and returns duplicates.
-            // Key on normalised title + primary artist; first occurrence wins.
+            // Deduplicate — MA searches multiple providers and returns
+            // duplicates. Two passes:
+            // 1) Collapse exact duplicates by stable item id/uri first — the
+            //    strongest possible signal, catching cases where a
+            //    provider-mapping quirk returns the literal same library
+            //    object twice.
+            // 2) Fall back to a fuzzy title+primary-artist match for
+            //    genuinely separate provider entries of the same content.
+            //    This reuses the same _norm() normaliser used for query-token
+            //    matching above (strips accents, normalises curly vs straight
+            //    apostrophes, strips other punctuation) instead of a plain
+            //    lowercase+trim — that inconsistency was the main reason
+            //    near-identical duplicates from different providers weren't
+            //    being caught (e.g. a curly apostrophe from one provider vs a
+            //    straight one from another).
+            const _seenIds = new Set();
+            const _idDeduped = items.filter(item => {
+              const _id = item.uri || item.item_id || item.media_content_id || null;
+              if (!_id) return true; // no stable id to key on — let the fuzzy pass handle it
+              if (_seenIds.has(_id)) return false;
+              _seenIds.add(_id);
+              return true;
+            });
+
             const _seen = new Set();
-            const _deduped = items.filter(item => {
-              const _title  = (item.name || item.title || '').toLowerCase().trim();
-              const _artist = (item.artists?.[0]?.name || item.artist?.name || item.owner?.name || '').toLowerCase().trim();
+            const _deduped = _idDeduped.filter(item => {
+              const _title  = _norm(item.name || item.title || '');
+              const _artist = _norm(item.artists?.[0]?.name || item.artist?.name || item.owner?.name || '');
               const _key = _title + '|' + _artist;
               if (_seen.has(_key)) return false;
               _seen.add(_key);
@@ -21324,6 +21531,15 @@ Include ALL tracks. Use null for unknown fields.`;
       return;
     }
 
+    // Pinned tab: consolidated view across every pin category — doesn't
+    // touch MA library loading or the in-memory render cache at all, since
+    // it's just reading straight from localStorage each time (instant).
+    if (tab === 'pinned') {
+      content.innerHTML = '';
+      this._renderPinnedOverview(content);
+      return;
+    }
+
     // Podcast tab: skip MA library entirely — show pinned + top charts only
     if (tab === 'podcast') {
       content.innerHTML = '';
@@ -24477,7 +24693,7 @@ Include ALL tracks. Use null for unknown fields.`;
     }
     if (enqueueMode === 'replace') this._recordMAPlayStart(targetEntity);
 
-    this._showLoadingToast('Starting playback…');
+    this._showLoadingToast(enqueueMode === 'replace' ? 'Starting playback…' : 'Adding to Queue…');
 
     let _played = true;
     try {
@@ -24666,6 +24882,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       remember_last_entity: false, lyrics_persist: false, lyrics_cache_enabled: true,
       lyrics_persistent_storage: false,
       pins_persistent_storage: false,
+      show_pins_in_sections: true,
       ai_info_persistent_storage: false,
       itunes_persistent_storage: false,
       wiki_persistent_storage: false,
@@ -24790,6 +25007,8 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
     if (lyricsPersistentStorageInput) lyricsPersistentStorageInput.checked = this._config.lyrics_persistent_storage === true;
     const pinsPersistentStorageInput = root.getElementById('pins_persistent_storage');
     if (pinsPersistentStorageInput) pinsPersistentStorageInput.checked = this._config.pins_persistent_storage === true;
+    const showPinsInSectionsInput = root.getElementById('show_pins_in_sections');
+    if (showPinsInSectionsInput) showPinsInSectionsInput.checked = this._config.show_pins_in_sections !== false;
     const aiInfoPersistentStorageInput = root.getElementById('ai_info_persistent_storage');
     if (aiInfoPersistentStorageInput) aiInfoPersistentStorageInput.checked = this._config.ai_info_persistent_storage === true;
     const itunesPersistentStorageInput = root.getElementById('itunes_persistent_storage');
@@ -25442,6 +25661,13 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                     <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Off: pins saved on this device only. On: also saved permanently so pins survive app restarts.</div>
                   </div>
                   <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="pins_persistent_storage"><span class="toggle-track"></span></label>
+                </div>
+                <div class="toggle-item" style="align-items:flex-start;gap:12px;margin-bottom:10px;">
+                  <div style="flex:1;">
+                    <div class="toggle-label">Show Pins in Sections</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">On: pinned items also appear in their own tab (e.g. Pinned Songs in the Track tab). Off: pins only appear in the consolidated Pinned tab.</div>
+                  </div>
+                  <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="show_pins_in_sections"><span class="toggle-track"></span></label>
                 </div>
                 <div id="pins-rows"></div>
                 <button id="clear-all-pins-btn" style="width:100%;padding:9px;font-size:13px;font-weight:600;color:#ff453a;background:rgba(255,69,58,0.08);border:1px solid rgba(255,69,58,0.25);border-radius:10px;cursor:pointer;font-family:inherit;margin-top:10px;">&#x1F4CC; Clear All Pins</button>
@@ -26131,6 +26357,10 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
         // Just turned off — remove the HA copy but keep the local pins as-is
         this._hass?.connection?.sendMessagePromise({ type: 'frontend/set_user_data', key: 'crow_pins', value: null }).catch(() => {});
       }
+    };
+    const showPinsInSectionsEl = root.getElementById('show_pins_in_sections');
+    if (showPinsInSectionsEl) showPinsInSectionsEl.onchange = (e) => {
+      this._updateConfig('show_pins_in_sections', e.target.checked);
     };
     const aiInfoPersistentStorageEl = root.getElementById('ai_info_persistent_storage');
     if (aiInfoPersistentStorageEl) aiInfoPersistentStorageEl.onchange = async (e) => {
@@ -27247,6 +27477,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       remember_last_entity: false, lyrics_persist: false, lyrics_cache_enabled: true,
       lyrics_persistent_storage: false,
       pins_persistent_storage: false,
+      show_pins_in_sections: true,
       ai_info_persistent_storage: false,
       itunes_persistent_storage: false,
       wiki_persistent_storage: false,
