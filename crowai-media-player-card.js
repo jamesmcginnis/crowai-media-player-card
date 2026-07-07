@@ -9259,8 +9259,11 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // rows — each with several event listeners and a favicon image load —
     // can make touch handling (tap, long-press) unreliable in WKWebView even
     // though the per-row logic itself is fine. Cap it and point at the
-    // search bar, which filters whatever's actually rendered.
-    const MAX_RENDERED = 200;
+    // search bar, which filters whatever's actually rendered. Set well above
+    // the full country list (~245 entries — a small, world-fixed number that
+    // won't grow dramatically) so that list always renders in full, while
+    // still protecting against genuinely huge station lists.
+    const MAX_RENDERED = 300;
     const _truncated = children.length > MAX_RENDERED;
     const _renderList = _truncated ? children.slice(0, MAX_RENDERED) : children;
 
@@ -10476,6 +10479,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     menu.className = 'queue-dropdown-menu';
     menu.innerHTML =
       '<div class="queue-dropdown-item" id="sqPlay" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg><span class="queue-dropdown-label">Play</span></div>' +
+      '<div class="queue-dropdown-item" id="sqRename" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M3,17.25V21H6.75L17.81,9.94L14.06,6.19L3,17.25M20.71,7.04C21.1,6.65 21.1,6 20.71,5.63L18.37,3.29C18,2.9 17.35,2.9 16.96,3.29L15.13,5.12L18.88,8.87L20.71,7.04Z"/></svg><span class="queue-dropdown-label">Rename</span></div>' +
       '<div class="queue-dropdown-item danger" id="sqDelete" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg><span class="queue-dropdown-label">Unpin</span></div>';
     const anchorRect = anchor.getBoundingClientRect();
     const cardRect = r.host.getBoundingClientRect();
@@ -10509,6 +10513,17 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // already uses.
     backdrop.addEventListener('pointerdown', () => { if (!_menuReady()) return; closeMenu(); });
     menu.querySelector('#sqPlay')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu(); this._playSavedQueue(sq); });
+    menu.querySelector('#sqRename')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
+      this._showRenameQueueSheet(sq, () => {
+        const content = this.shadowRoot?.getElementById('maContent');
+        if (!content) return;
+        if ((this._pinnedDetailActive && this._pinnedDetailCategory === 'queues') || content.querySelector('#pinnedCatSearch')) {
+          this._openPinnedCategoryDetail('queues');
+        } else {
+          this._maLibInjectStarred('playlist', content);
+        }
+      });
+    });
     menu.querySelector('#sqDelete')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
       const list = this._getSavedQueues().filter(s => s.id !== sq.id);
       this._saveSavedQueuesList(list);
@@ -10575,7 +10590,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // _maOpenCollectionTracks, which requires one — this is a lightweight,
   // purpose-built equivalent for synthetic track lists. Uses the same shared
   // back-button/nav-stack pattern as every other library drill-in.
-  _openSavedQueueDetail(sq) {
+  _openSavedQueueDetail(sq, skipNavPush = false) {
     const content   = this.shadowRoot?.getElementById('maContent');
     const titleEl   = this.shadowRoot?.getElementById('maTitle');
     const backBtn   = this.shadowRoot?.getElementById('maBackBtn');
@@ -10588,13 +10603,14 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // remember which, so the back button returns to the right place instead
     // of the pinned-category shortcut intercepting it and skipping a level.
     const openedFromPinned = this._pinnedDetailActive === true;
-    this._pinnedDetailActive = false;
-
-    if (!this._maBrowserNavStack) this._maBrowserNavStack = [];
-    this._maBrowserNavStack.push(openedFromPinned
-      ? { tab: '__pinned_category__', _pinnedCategory: 'queues', searchQuery: null, inSearchResults: false }
-      : { tab: this._maCurrentTab || 'playlist', searchQuery: null, inSearchResults: false }
-    );
+    if (!skipNavPush) {
+      this._pinnedDetailActive = false;
+      if (!this._maBrowserNavStack) this._maBrowserNavStack = [];
+      this._maBrowserNavStack.push(openedFromPinned
+        ? { tab: '__pinned_category__', _pinnedCategory: 'queues', searchQuery: null, inSearchResults: false }
+        : { tab: this._maCurrentTab || 'playlist', searchQuery: null, inSearchResults: false }
+      );
+    }
 
     if (tabsEl)    tabsEl.style.display    = 'none';
     if (searchRow) searchRow.style.display = 'none';
@@ -10606,6 +10622,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       '<div class="ma-drill-actions" style="margin-bottom:14px;">' +
         '<button class="ma-drill-action-btn" id="sqDetailPlayAll"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div><span class="ma-drill-btn-label">Play All</span></button>' +
         '<button class="ma-drill-action-btn" id="sqDetailAdd"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M19 11h-6V5h-2v6H5v2h6v6h2v-6h6z"/></svg></div><span class="ma-drill-btn-label">Add</span></button>' +
+        '<button class="ma-drill-action-btn" id="sqDetailRename"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M3,17.25V21H6.75L17.81,9.94L14.06,6.19L3,17.25M20.71,7.04C21.1,6.65 21.1,6 20.71,5.63L18.37,3.29C18,2.9 17.35,2.9 16.96,3.29L15.13,5.12L18.88,8.87L20.71,7.04Z"/></svg></div><span class="ma-drill-btn-label">Rename</span></button>' +
         '<button class="ma-drill-action-btn" id="sqDetailDelete"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg></div><span class="ma-drill-btn-label">Unpin</span></button>' +
       '</div>' +
       '<div id="sqDetailList"></div>';
@@ -10664,6 +10681,11 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
     content.querySelector('#sqDetailPlayAll')?.addEventListener('click', () => this._playSavedQueue(sq, 'replace'));
     content.querySelector('#sqDetailAdd')?.addEventListener('click', () => this._playSavedQueue(sq, 'add'));
+    content.querySelector('#sqDetailRename')?.addEventListener('click', () => {
+      this._showRenameQueueSheet(sq, (updatedSq) => {
+        this._openSavedQueueDetail(updatedSq, true);
+      });
+    });
     content.querySelector('#sqDetailDelete')?.addEventListener('click', () => {
       const list2 = this._getSavedQueues().filter(s => s.id !== sq.id);
       this._saveSavedQueuesList(list2);
@@ -10760,6 +10782,45 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       this._showToast('\ud83d\udccd Pinned "' + name + '"');
       const content = this.shadowRoot?.getElementById('maContent');
       if (content) this._maLibInjectStarred('playlist', content);
+    });
+  }
+
+  // Renames an existing Saved Queue. Takes an onRenamed callback rather than
+  // guessing at how to refresh internally — the list's context menu and the
+  // drill-in detail view each need to refresh themselves differently, and
+  // the caller already knows which context it's being invoked from.
+  _showRenameQueueSheet(sq, onRenamed) {
+    const _pt = (k) => this._pt(k);
+    document.querySelectorAll('.rb-tag-sheet').forEach(el => el.remove());
+    const sheet = document.createElement('div');
+    sheet.className = 'rb-tag-sheet';
+    sheet.style.cssText = 'position:absolute;z-index:99999;display:flex;align-items:flex-end;justify-content:center;background:rgba(0,0,0,0.5);left:0;top:' + window.scrollY + 'px;width:' + document.documentElement.clientWidth + 'px;height:' + window.innerHeight + 'px;';
+    sheet.innerHTML = '<div style="width:100%;max-width:480px;background:var(--crow-panel-bg,#13131a);border-radius:20px 20px 0 0;padding:20px 20px 32px;box-shadow:0 -8px 40px rgba(0,0,0,0.6);">'
+      + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">'
+      + '<span style="font-size:15px;font-weight:700;color:' + _pt('text') + ';">Rename Queue</span>'
+      + '<button class="rb-tag-sheet-close" style="width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,0.1);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;"><svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:' + _pt('text') + '"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>'
+      + '</div>'
+      + '<input id="sqRenameInput" type="text" value="' + (sq.name || '').replace(/"/g, '&quot;') + '" style="width:100%;box-sizing:border-box;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);border-radius:10px;padding:10px 12px;font-size:14px;color:' + _pt('text') + ';font-family:inherit;margin-bottom:14px;" autocomplete="off" autocorrect="off" spellcheck="false">'
+      + '<button id="sqRenameBtn" style="width:100%;padding:11px;background:#0A84FF;border:none;border-radius:12px;color:#fff;font-size:14px;font-weight:600;font-family:inherit;cursor:pointer;">Save</button>'
+      + '</div>';
+    document.body.appendChild(sheet);
+    const _close = () => sheet.remove();
+    sheet.addEventListener('click', e => { if (e.target === sheet) _close(); });
+    sheet.querySelector('.rb-tag-sheet-close')?.addEventListener('click', _close);
+    const _input = sheet.querySelector('#sqRenameInput');
+    _input?.focus();
+    _input?.select();
+    sheet.querySelector('#sqRenameBtn')?.addEventListener('click', () => {
+      const newName = (_input?.value || '').trim();
+      if (!newName) { this._showToast('Name cannot be empty'); return; }
+      const list = this._getSavedQueues();
+      const target = list.find(s => s.id === sq.id);
+      if (!target) { _close(); return; }
+      target.name = newName;
+      this._saveSavedQueuesList(list);
+      _close();
+      this._showToast('Renamed to "' + newName + '"');
+      if (typeof onRenamed === 'function') onRenamed(target);
     });
   }
 
