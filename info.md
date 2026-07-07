@@ -33,6 +33,7 @@ CrowAI is a Home Assistant media player card built specifically for **iPhone**. 
 - **Album Artwork** — automatic iTunes artwork lookup when no artwork is provided
 - **Ambient Glow** — extracts dominant colour from album artwork and applies a subtle glow
 - **Radio Mode Indicator** — tap the radio icon to turn radio mode off immediately
+- **HA Radio Browser Integration** — browse Home Assistant's own Radio Browser categories (Popular, By Country, By Genre, etc.) directly from the Radio tab, alongside direct radio-browser.info search
 - **Live/Podcast/Audiobook Pill** — optional badge identifying what's currently playing (off by default)
 - **In-card Notifications** — toast alerts appear inside the card
 - **Controls Theme** — 12 colour presets for the control icons (Classic, Vivid, Warm, Ocean, Rose, Forest, Neon, Soft, Midnight, Gold, Retro, Ember)
@@ -89,15 +90,20 @@ Play the same audio on multiple MA speakers simultaneously:
 
 ## Pinning (Library)
 
-Pin your favourites for one-tap access — pins live in a dedicated section at the top of each browser/search panel.
+Pin your favourites for one-tap access. All pins also live together in a consolidated **Pinned** section in the Music Library, with its own sub-categories: Songs, Artists, Albums, Playlists, Queues, Radio, Podcasts and Audiobooks.
 
-- **What can be pinned** — radio stations, podcasts, audiobooks, and MA library tracks, artists, albums and playlists
+- **What can be pinned** — radio stations, podcasts, audiobooks, saved queues (see Pin Queue as Playlist below), and MA library tracks, artists, albums and playlists
 - **How to pin** — long-press any item (or use the pin icon in its info panel) and choose Pin/Unpin
 - **Limit** — up to 10 pinned items per category
+- **Show Pins in Sections** *(on by default)* — when enabled, pinned items also still appear inline at the top of their own tab (e.g. Pinned Songs in the Songs tab); turn it off in Caches & Data so pins only appear in the consolidated Pinned section
 - **Management** — view and clear pins individually or all at once from the visual editor's Caches & Data section
 - Pins are stored on-device only by default and aren't synced between browsers or devices
 - Enable **Persistent Pin Storage** in Caches & Data to also save pins to Home Assistant's database, so they survive app restarts and cache clears
 - Clearing caches (individually or via Clear All Caches) still clears on-device pins — use **Clear Persistent Storage** to also remove the HA-side copy
+
+## Pin Queue as Playlist
+
+Save the current queue as a named snapshot from the queue's 3-dot menu — **Pin Queue as Playlist**. It's a point-in-time copy (not a live link to the original queue) and shows up under **Queues** in the consolidated Pinned section, ready to play back in full any time.
 
 ## Persistent Storage
 
@@ -156,7 +162,7 @@ Share is available from the quick menu, the AI Info / Media Info panels, and the
 - Now Playing row with animated sound bars — tap to open AI Info
 - Drag to reorder (MA only, requires Queue Actions integration)
 - Long-press any row: Play Now, Play Next, Add to Queue, AI Artist Radio, Share, More Info
-- Queue 3-dot menu: Music Library, Mood, AI Artist Radio, Radio Mode, Announce, Send Message, Clear Queue
+- Queue 3-dot menu: Music Library, Mood, AI Artist Radio, Radio Mode, Announce, Send Message, **Pin Queue as Playlist**, Clear Queue
 
 ## Announce
 
@@ -176,13 +182,15 @@ Push notifications to iPhones running the HA Companion App:
 
 ## Music Assistant Library Browser
 
-Tabs: Recently Played, Recommended, Playlists, Artists, Albums, Songs, Radio, Podcasts, Audiobooks, Favourites.
+Tabs: Recently Added, Pinned, Favourites, Made for You (Recommended), Playlists, Artists, Albums, Songs, Radio, Podcasts, Audiobooks. (Classic tab-bar mode shows Recently Played instead of Recently Added/Pinned — toggle the layout in Appearance & Behaviour.)
 
 - Tap any item to play; drill into collections with a back button
 - Action bar on every drill-down: Play All, Add to Queue, Play Next
 - Long-press tracks for the enqueue menu
 - **Podcasts tab** — search iTunes directly; pin favourites
 - **Audiobooks tab** — search free, public-domain titles on LibriVox via the Archive.org catalogue, with AI-assisted query refinement and chapter-by-chapter playback; pin favourites
+- **Radio tab** — search radio-browser.info directly, or use Browse Home Assistant Radio to explore categories from HA's own Radio Browser integration (requires the [Radio Browser](https://www.home-assistant.io/integrations/radio_browser/) integration under Settings → Devices & Services)
+- **Pinned tab** — everything you've pinned, grouped into Songs, Artists, Albums, Playlists, Queues, Radio, Podcasts and Audiobooks
 
 ## Radio Mode
 
@@ -207,7 +215,7 @@ The recommended way to run Music Assistant is as a Home Assistant **App** (forme
 5. Open the Music Assistant web interface to add your music providers (Spotify, Apple Music, local library, Tidal, etc.) and players (HomePod, Sonos, AirPlay, Chromecast, etc.)
 6. MA-managed players appear in HA as `media_player.mass_*` entities — use these in the card's `ma_entities` config
 
-> 💡 **Highly recommended:** connect a streaming provider (Apple Music, Spotify, YouTube Music, Tidal, etc.) to Music Assistant rather than relying on a local library alone. Recommendations, the Vibe Queue Builder, AI Artist Radio and Similar Tracks all suggest music that needs to actually be playable through MA — a streaming provider gives them a full catalogue to draw from instead of just what you already have.
+> 🍎 **Apple Music is the preferred provider.** Connect a streaming provider to Music Assistant rather than relying on a local library alone — **Apple Music is the recommended choice** for this card, giving the most reliable catalogue, metadata and artwork matches. Spotify, YouTube Music, Tidal and others are also supported, but Apple Music is the safest choice if you're picking one. Recommendations, the Vibe Queue Builder, AI Artist Radio and Similar Tracks all suggest music that needs to actually be playable through MA — a streaming provider gives them a full catalogue to draw from instead of just what you already have.
 
 GitHub: [github.com/music-assistant](https://github.com/music-assistant) · Documentation: [music-assistant.io](https://music-assistant.io)
 
@@ -241,8 +249,8 @@ Repository: [github.com/droans/mass_queue](https://github.com/droans/mass_queue)
 The editor includes a filter box at the top (search any setting by name) and a Reset All Settings to Defaults button. Several sections are collapsible.
 
 - **Manage & Reorder Media Players** — accordion list with drag-and-drop reordering; enable/disable per speaker; startup volume per speaker; MA Speaker toggle per speaker
-- **Appearance & Behaviour** *(collapsible)* — Follow HA Theme, Auto Switch, Remember Last Speaker, Media Player Selector, Always Show Library Button, Show Remote Button, Default Radio Mode on Startup, iTunes Artwork Fallback, Show Volume HUD, Live/Podcast/Audiobook Pill, Volume Buttons, Volume Percentage, Scroll Long Text, Lyrics persistence and caching, plus a Startup & Navigation sub-section (Startup View, Retain Current View, Remote Button Row Position, Volume Entity)
-- **Caches & Data** *(collapsible)* — AI caches (bios, trivia, where-to-watch, content warnings, year-in-music, vibe history, AI response cache), artwork caches (iTunes, Wikipedia) with Persistent Storage toggles, library & radio caches (MA library, radio stations, HA registry), lyrics cache & scroll style with its own Persistent Storage toggle, and management of all pinned items including a Persistent Pin Storage toggle and a Clear Persistent Storage button
+- **Appearance & Behaviour** *(collapsible)* — Follow HA Theme, Auto Switch, Remember Last Speaker, Media Player Selector, Music Library Layout (iOS-style category list vs. classic tab bar), Always Show Library Button, Show Remote Button, Default Radio Mode on Startup, iTunes Artwork Fallback, Show Volume HUD, Live/Podcast/Audiobook Pill, Volume Buttons, Volume Percentage, Scroll Long Text, Lyrics persistence and caching, plus a Startup & Navigation sub-section (Startup View, Retain Current View, Remote Button Row Position, Volume Entity)
+- **Caches & Data** *(collapsible)* — AI caches (bios, trivia, where-to-watch, content warnings, year-in-music, vibe history, AI response cache), artwork caches (iTunes, Wikipedia) with Persistent Storage toggles, library & radio caches (MA library, radio stations, HA registry), lyrics cache & scroll style with its own Persistent Storage toggle, and management of all pinned items including a Show Pins in Sections toggle, a Persistent Pin Storage toggle and a Clear Persistent Storage button
 - **Visual Effects** — Card Liquid Glass, Remote Liquid Glass, Volume HUD Liquid Glass, Ambient Glow, Library & Queue Row Glow, Artwork Crossfade, Resize Button Spin
 - **✨ AI Settings** — AI Agent selector (Google Gemini required), Share Track service (YouTube Music, Apple Music, Spotify, Tidal, Amazon Music, Deezer), Announce TTS Service, Song Intro toggle
 - **AI Vibe Artist Seeds** — customisable playlist search terms and radio fallback artist per vibe category
@@ -288,6 +296,8 @@ show_remote_button: true
 show_media_type_pill: false
 song_intro_enabled: true
 card_liquid_glass: true
+ma_ios_library: true
+show_pins_in_sections: true
 ```
 
 > **Note:** `ma_entities` should list your MA speaker entities (e.g. `media_player.mass_kitchen_homepod`). These do **not** need to also appear in `entities`.
