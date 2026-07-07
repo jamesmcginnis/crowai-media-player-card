@@ -229,7 +229,6 @@ Pin your favourites for one-tap access. All pins also live together in a consoli
 
 - **What can be pinned** — radio stations, podcasts, audiobooks, saved queues (see [Pin Queue as Playlist](#pin-queue-as-playlist)), and MA library tracks, artists, albums and playlists
 - **How to pin** — long-press any item (or use the pin icon in its info panel) and choose Pin/Unpin
-- **Limit** — up to 10 pinned items per category
 - **Show Pins in Sections** *(on by default)* — when enabled, pinned items also still appear inline at the top of their own tab (e.g. Pinned Songs in the Songs tab); turn it off in **Caches & Data** so pins only appear in the consolidated Pinned section
 - **Management** — view and clear pins individually or all at once from **Caches & Data → Pinned Items** in the visual editor
 - Pins are stored on-device only by default and aren't synced between browsers or devices
