@@ -727,6 +727,43 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     this._themeIconPaths = icons;
   }
 
+  // Sets up the structural ghost-click guard once. Watches only the three
+  // containers where navigation/drill-in actions replace content
+  // synchronously in response to a tap (#maContent, #infoContent,
+  // #infoPopup) — deliberately not the whole shadow root, since that would
+  // also catch routine, frequent updates elsewhere (like the once-a-second
+  // progress bar tick) and end up blocking clicks almost constantly.
+  _setupGhostClickGuard() {
+    if (this._ghostClickGuardSetup) return;
+    if (!this.shadowRoot) return;
+    this._ghostClickGuardSetup = true;
+
+    const _watchedIds = ['maContent', 'infoContent', 'infoPopup'];
+    this._contentSwapObserver = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        const node = m.target;
+        if (!node || typeof node.closest !== 'function') continue;
+        for (const id of _watchedIds) {
+          if (node.id === id || node.closest('#' + id)) {
+            this._lastContentSwapAt = Date.now();
+            return;
+          }
+        }
+      }
+    });
+    this._contentSwapObserver.observe(this.shadowRoot, { childList: true, subtree: true });
+
+    // Single global capture-phase click guard, replacing the need for a
+    // separate timing check on every individual hero-art/interactive element.
+    this._ghostClickHandler = (e) => {
+      if (this._lastContentSwapAt && (Date.now() - this._lastContentSwapAt) < 350) {
+        e.stopPropagation();
+        e.preventDefault();
+      }
+    };
+    this.shadowRoot.addEventListener('click', this._ghostClickHandler, true);
+  }
+
   connectedCallback() {
     // Invalidate the artwork skip-guard so images are retried after a reconnect.
     this._lastArtKey = null;
@@ -805,6 +842,21 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       }
     };
     window.addEventListener('hass-notification', this._haNotificationInterceptor, true);
+    // ── Structural ghost-click guard ──────────────────────────────────────────
+    // WKWebView can synthesize a trailing "click" event after a touch, hit-
+    // tested against whatever's on screen at the moment the click fires —
+    // not necessarily what was actually touched. Since navigation/drill-in
+    // actions in this card replace #maContent/#infoContent/#infoPopup's
+    // contents synchronously in response to a tap, new content (e.g. a
+    // track's hero artwork) can end up sitting exactly where the finger just
+    // was, and the trailing click lands on it instead of bubbling harmlessly.
+    // This was previously patched per-element, per-navigation-flow, which
+    // meant every new drill-in view was a fresh chance to reintroduce it.
+    // Fixed structurally instead: watch the three containers where this
+    // pattern occurs, and suppress any click landing within ~350ms of a
+    // content swap in one of them, card-wide, in the capture phase (before
+    // any other click handler runs).
+    this._setupGhostClickGuard();
     // _alexaPulse is started here; the visibilitychange handler below will
     // suspend and resume it automatically when the page is hidden/shown.
     this._alexaPulse = setInterval(() => {
@@ -945,6 +997,15 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       window.removeEventListener('location-changed', this._onLocationChanged);
       this._onLocationChanged = null;
     }
+    if (this._contentSwapObserver) {
+      try { this._contentSwapObserver.disconnect(); } catch(_) {}
+      this._contentSwapObserver = null;
+    }
+    if (this._ghostClickHandler && this.shadowRoot) {
+      this.shadowRoot.removeEventListener('click', this._ghostClickHandler, true);
+      this._ghostClickHandler = null;
+    }
+    this._ghostClickGuardSetup = false;
 
   }
 
@@ -8002,6 +8063,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     this._haRbActive = false;
     this._haRbStack = [];
     this._pinnedDetailActive = false;
+    this._pinnedDetailCategory = null;
     const maSearchInput = this.shadowRoot?.getElementById('maSearchInput');
     const maSearchClear = this.shadowRoot?.getElementById('maSearchClear');
     const maIosInput    = this.shadowRoot?.getElementById('maIosSearchInput');
@@ -8112,6 +8174,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       if (titleEl3) titleEl3.textContent = 'Music Library';
       return;
     }
+    // Sentinel for returning to a specific Pinned category (e.g. Queues)
+    // rather than a normal tab — same pattern as __ios_root__ above.
+    if (prev.tab === '__pinned_category__') {
+      this._pinnedDetailActive = true;
+      this._openPinnedCategoryDetail(prev._pinnedCategory);
+      return;
+    }
     // If we drilled in from search results, restore them directly — don't load the tab
     if (prev.inSearchResults && prev.searchQuery) {
       this._maLastSearch = prev.searchQuery;
@@ -8166,15 +8235,15 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     return null;
   }
 
-  async _maOpenCollectionTracks(item, tab) {
+  async _maOpenCollectionTracks(item, tab, opts = {}) {
     const hasMassQueue = !!(this._hass?.services?.mass_queue);
     if (!hasMassQueue) {
       // No mass_queue: fall back to playing the collection directly
-      this._playMAItem(item, tab);
+      this._playMAItem(item, tab, undefined, opts);
       return;
     }
     const uri = item.uri || item.media_content_id;
-    if (!uri) { this._playMAItem(item, tab); return; }
+    if (!uri) { this._playMAItem(item, tab, undefined, opts); return; }
 
     const content = this.shadowRoot?.getElementById('maContent');
     const titleEl = this.shadowRoot?.getElementById('maTitle');
@@ -8328,6 +8397,41 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           }
         }
 
+        // Artists: browse_media's children for an artist are very likely
+        // sub-categories (Albums/Singles/Appears On) rather than a flat
+        // track list — unlike albums/playlists, which are naturally flat and
+        // work fine through browse_media directly. That structural
+        // difference is the most likely reason artists behave differently
+        // here. Sidestep it entirely with a direct library search for tracks
+        // by this artist's name, which always returns a flat list regardless
+        // of browse hierarchy.
+        if (effectiveTab === 'artist') {
+          const _artistNameForSearch = item.name || item.title || '';
+          if (_artistNameForSearch) {
+            fetches.push((async () => {
+              try {
+                const _searchConfigEntryId = await this._getMAConfigEntryId();
+                if (!_searchConfigEntryId) return [];
+                const _searchRes = await this._hass.connection.sendMessagePromise({
+                  type: 'call_service', domain: 'music_assistant', service: 'search',
+                  service_data: { config_entry_id: _searchConfigEntryId, name: _artistNameForSearch, limit: 50 },
+                  return_response: true
+                });
+                const _searchTracks = _searchRes?.response?.tracks || [];
+                const _wanted = _artistNameForSearch.toLowerCase().trim();
+                const _matched = _searchTracks.filter(t =>
+                  (t.artists || []).some(a => (a.name || '').toLowerCase().trim() === _wanted)
+                );
+                return (_matched.length ? _matched : _searchTracks).map(t => ({
+                  name: t.name || t.title || '', uri: t.uri || t.media_content_id || '',
+                  image: t.image || t.metadata?.images?.[0]?.url || null,
+                  artists: t.artists || [], album: t.album || null, _tab: 'track'
+                }));
+              } catch (_) { return []; }
+            })());
+          }
+        }
+
         // browse_media parallel for non-album types
         if (effectiveTab !== 'album') {
           fetches.push(
@@ -8382,10 +8486,49 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         if (_hadOptimisticRender) {
           // browse_media already rendered, mass_queue gave nothing better — keep it
         } else {
-          this._maBrowserNavStack.pop();
-          this._maNavReset();
-          this._playMAItem(item, tab);
-          return;
+          // Last resort before giving up: the stored uri (captured whenever
+          // this was pinned) may be stale and no longer resolve at all —
+          // e.g. if the MA library was rescanned/reindexed since. Try a
+          // fresh name-based search to find the artist's current uri and
+          // retry the browse once, rather than silently losing the
+          // track-list view and just playing instead.
+          let _recovered = [];
+          const _itemName2 = item.name || item.title || '';
+          if (_itemName2 && effectiveTab === 'artist') {
+            try {
+              const _freshConfigEntryId = await this._getMAConfigEntryId();
+              if (_freshConfigEntryId && !aborted()) {
+                const _freshRes = await this._hass.connection.sendMessagePromise({
+                  type: 'call_service', domain: 'music_assistant', service: 'search',
+                  service_data: { config_entry_id: _freshConfigEntryId, name: _itemName2, limit: 5 },
+                  return_response: true
+                });
+                const _freshArtist = (_freshRes?.response?.artists || [])[0];
+                if (_freshArtist?.uri && _freshArtist.uri !== uri && !aborted()) {
+                  const _freshBrowseRes = await this._hass.connection.sendMessagePromise({
+                    type: 'call_service', domain: 'media_player', service: 'browse_media',
+                    service_data: { entity_id: maEntityEarly, media_content_id: _freshArtist.uri },
+                    return_response: true
+                  });
+                  const _freshResult = _freshBrowseRes?.response?.[maEntityEarly]?.result || _freshBrowseRes?.result || {};
+                  _recovered = (_freshResult.children || []).map(c => ({
+                    name: c.title || c.name || '', uri: c.media_content_id || c.uri || '',
+                    image: c.thumbnail || c.image || null,
+                    artists: c.media_artist ? [{ name: c.media_artist }] : [], album: null, _tab: 'track'
+                  }));
+                }
+              }
+            } catch (_) {}
+          }
+          if (aborted()) return;
+          if (_recovered.length) {
+            tracks = _recovered;
+          } else {
+            this._maBrowserNavStack.pop();
+            this._maNavReset();
+            this._playMAItem(item, tab, undefined, opts);
+            return;
+          }
         }
       }
 
@@ -8412,8 +8555,14 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       // Render the track list reusing the existing MA grid renderer
       this._renderMAGrid(normalisedTracks, 'track', content);
 
-      // ── Action bar — Play All / Add to Queue / Play Next ────────────────
+      // ── Action bar — Play All / Add to Queue / Play Next / Pin ──────────
       // Injected after _renderMAGrid because it does innerHTML='' internally.
+      // Pin/Unpin only applies to artist/album/playlist (podcasts use their
+      // own separate pin mechanism elsewhere, and aren't reached via this
+      // generic collection-tracks view in practice).
+      const _pinnableTab = ['artist','album','playlist'].includes(effectiveTab) ? effectiveTab : null;
+      let _isPinned = _pinnableTab ? this._maLibIsStarred(item, _pinnableTab) : false;
+
       const _actionBar = document.createElement('div');
       _actionBar.className = 'ma-drill-actions';
       _actionBar.innerHTML =
@@ -8428,7 +8577,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         '<button class="ma-drill-action-btn" data-action="next">' +
           '<div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zm2-8.14L11.03 12 8 14.14V9.86zM16 6h2v12h-2z"/></svg></div>' +
           '<span class="ma-drill-btn-label">Play Next</span>' +
-        '</button>';
+        '</button>' +
+        (_pinnableTab
+          ? '<button class="ma-drill-action-btn" data-action="pin">' +
+              '<div class="ma-drill-btn-circle"><svg id="drillPinSvg" viewBox="0 0 24 24" style="fill:' + (_isPinned ? '#FFD60A' : 'currentColor') + '"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg></div>' +
+              '<span class="ma-drill-btn-label" id="drillPinLabel">' + (_isPinned ? 'Unpin' : 'Pin') + '</span>' +
+            '</button>'
+          : '');
       content.insertBefore(_actionBar, content.firstChild);
 
       // Pinned tracks sit above action bar
@@ -8439,7 +8594,17 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           e.stopPropagation();
           const action = btn.dataset.action;
           if (action === 'play_all') {
-            this._playMAItem(item, tab);
+            this._playMAItem(item, tab, undefined, opts);
+          } else if (action === 'pin') {
+            const _result = this._maLibToggleStar(item, _pinnableTab);
+            if (_result === null) return; // failed — _maLibToggleStar already showed why
+            _isPinned = _result;
+            const svg   = btn.querySelector('#drillPinSvg');
+            const label = btn.querySelector('#drillPinLabel');
+            if (svg)   svg.style.fill    = _isPinned ? '#FFD60A' : 'currentColor';
+            if (label) label.textContent = _isPinned ? 'Unpin' : 'Pin';
+            this._showToast(_isPinned ? '\ud83d\udccd Pinned' : 'Unpinned');
+            this._maLibRefreshPinnedUI(_pinnableTab);
           } else {
             const enqueueMode = action === 'add' ? 'add' : 'next';
             const validMA = this._getValidMASpeakers(true);
@@ -8786,7 +8951,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       this._rbSaveStarred(starred);
       return false; // now unstarred
     } else {
-      if (starred.length >= 10) { this._showToast('Maximum 10 pinned stations — unpin one first'); return null; }
       starred.unshift(st); // add to top
       this._rbSaveStarred(starred);
       return true; // now starred
@@ -8800,6 +8964,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   _rbRefreshPinnedUI() {
     const maContent = this.shadowRoot?.getElementById('maContent');
     if (!maContent) return;
+    if (this._pinnedDetailActive && this._pinnedDetailCategory === 'stations') {
+      this._openPinnedCategoryDetail('stations');
+      return;
+    }
     const existing = maContent.querySelector('#rb-starred-section');
     if (this._config?.show_pins_in_sections === false) { existing?.remove(); return; }
     const rbEntity = this._resolveMATargetEntity() || this._entity;
@@ -9329,7 +9497,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     let starred = this._pcGetStarred();
     const idx = starred.findIndex(p => p.collectionId === pod.collectionId);
     if (idx >= 0) { starred.splice(idx, 1); this._pcSaveStarred(starred); return false; }
-    if (starred.length >= 10) { this._showToast('Maximum 10 pinned podcasts — unpin one first'); return null; }
     starred.unshift(pod); this._pcSaveStarred(starred); return true;
   }
 
@@ -9400,6 +9567,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   _pcRefreshPinnedUI() {
     const maContent = this.shadowRoot?.getElementById('maContent');
     if (!maContent) return;
+    if (this._pinnedDetailActive && this._pinnedDetailCategory === 'podcasts') {
+      this._openPinnedCategoryDetail('podcasts');
+      return;
+    }
     const existing = maContent.querySelector('#pc-starred-section');
     if (this._config?.show_pins_in_sections === false) { existing?.remove(); return; }
     const newSection = this._pcRenderStarredSection();
@@ -9881,11 +10052,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       this._maLibSaveStarred(tab, starred);
       return false;
     }
-    if (starred.length >= 10) {
-      const label = tab === 'track' ? 'songs' : tab === 'playlist' ? 'playlists' : tab + 's';
-      this._showToast('Maximum 10 pinned ' + label + ' — unpin one first');
-      return null;
-    }
     starred.unshift(item);
     this._maLibSaveStarred(tab, starred);
     return true;
@@ -9895,6 +10061,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const maContent = this.shadowRoot?.getElementById('maContent');
     if (!maContent) return;
     const _t = tab === 'favourites' ? 'track' : tab;
+    if (this._pinnedDetailActive && this._pinnedDetailCategory === _t) {
+      this._openPinnedCategoryDetail(_t);
+      return;
+    }
     const sectionId = 'malib-starred-' + _t;
     const existing  = maContent.querySelector('#' + sectionId);
     if (this._config?.show_pins_in_sections === false) { existing?.remove(); return; }
@@ -9912,7 +10082,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // it can be reused both by the per-tab pinned section and the consolidated
   // Pinned overview, matching the same pattern already used for
   // _rbMakeStationRow/_pcMakeRow/_abMakeRow.
-  _maLibMakeRow(item, tab) {
+  _maLibMakeRow(item, tab, opts = {}) {
     const self = this;
     const imgUrl = self._maImgUrl(item);
     const title  = item.name || item.title || '';
@@ -9931,7 +10101,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       '</div>' +
       '<div class="ma-item-chevron" style="' + (['artist','album','playlist'].includes(tab) ? '' : 'visibility:hidden') + '"><svg viewBox="0 0 24 24"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg></div>';
     wrap.appendChild(el);
-    self._attachMAItemSwipe(wrap, item, tab);
+    self._attachMAItemSwipe(wrap, item, tab, opts);
     return wrap;
   }
 
@@ -10083,8 +10253,18 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
   _makePinnedCategoryRow(item, key, entity) {
     switch (key) {
-      case 'track': case 'artist': case 'album': case 'playlist':
-        return this._maLibMakeRow(item, key);
+      case 'track': case 'artist': case 'album': case 'playlist': {
+        // A pinned item is a stored snapshot — its own media_type/_tab can be
+        // stale, missing, or wrong even though the category it's filed under
+        // (key) is always correct. Since _attachMAItemSwipe's dispatch logic
+        // prioritizes item.media_type over the tab parameter, a bad stored
+        // value here would cause it to mis-dispatch (e.g. play an artist
+        // directly instead of showing its track list). Normalize both fields
+        // to match key so dispatch is always correct regardless of what the
+        // original snapshot contains.
+        const _normalizedItem = { ...item, media_type: key, _tab: key };
+        return this._maLibMakeRow(_normalizedItem, key, { noRadioMode: true });
+      }
       case 'queues':     return this._makeSavedQueueRow(item);
       case 'stations':   return this._rbMakeStationRow(item, entity, true);
       case 'podcasts':   return this._pcMakeRow(item, true);
@@ -10097,20 +10277,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (!content) return;
     content.innerHTML = '';
     this._pinnedDetailActive = false;
+    this._pinnedDetailCategory = null;
     const titleEl = this.shadowRoot?.getElementById('maTitle');
     if (titleEl) titleEl.textContent = 'Pinned';
 
     const rows = this._pinnedCategoryDefs()
-      .map(cat => ({ cat, count: this._getPinnedCategoryItems(cat.key).length }))
-      .filter(x => x.count > 0);
-
-    if (!rows.length) {
-      const empty = document.createElement('div');
-      empty.className = 'ma-empty';
-      empty.textContent = 'Nothing pinned yet.';
-      content.appendChild(empty);
-      return;
-    }
+      .map(cat => ({ cat, count: this._getPinnedCategoryItems(cat.key).length }));
 
     const catHtml = rows.map(({ cat }) =>
       `<div class="ma-ios-cat-row" data-key="${cat.key}" data-color="${cat.color}">
@@ -10154,6 +10326,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (!cat) return;
 
     this._pinnedDetailActive = true;
+    this._pinnedDetailCategory = key;
     if (backBtn) backBtn.classList.remove('hidden');
     if (titleEl) titleEl.textContent = cat.label;
 
@@ -10167,6 +10340,100 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       empty.textContent = 'Nothing pinned in this category yet.';
       content.appendChild(empty);
       return;
+    }
+
+    // Pinned Songs is a finite, curated flat list of individual tracks —
+    // same shape as a playlist's own drill-in, so it gets the same Play
+    // All/Add bar. The other categories (artists/albums/playlists/queues)
+    // are lists of separate collections, each with its own drill-in that
+    // already has its own Play All specific to that one item — an aggregate
+    // "play everything across all of them" would be a different, bigger
+    // feature, not just this same pattern reused. Radio/podcasts/audiobooks
+    // play individually, matching how their normal tabs already behave.
+    if (key === 'track') {
+      const bar = document.createElement('div');
+      bar.className = 'ma-drill-actions';
+      bar.innerHTML =
+        '<button class="ma-drill-action-btn" id="pinnedSongsPlayAll"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div><span class="ma-drill-btn-label">Play All</span></button>' +
+        '<button class="ma-drill-action-btn" id="pinnedSongsAdd"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M19 11h-6V5h-2v6H5v2h6v6h2v-6h6z"/></svg></div><span class="ma-drill-btn-label">Add</span></button>';
+      content.appendChild(bar);
+
+      const _getQueueLength = async (targetEntity) => {
+        try {
+          const hasMassQueue = !!(this._hass?.services?.mass_queue?.get_queue_items);
+          if (!hasMassQueue) return null; // can't verify without this — caller falls back to trusting the call
+          const mqRes = await this._hass.connection.sendMessagePromise({
+            type: 'call_service', domain: 'mass_queue', service: 'get_queue_items',
+            service_data: { entity: targetEntity, limit_before: 9999, limit_after: 9999 },
+            return_response: true
+          });
+          const raw = mqRes?.response?.[targetEntity] || mqRes?.response || [];
+          return Array.isArray(raw) ? raw.length : null;
+        } catch (_) {
+          return null;
+        }
+      };
+
+      const _playPinnedSongs = async (mode) => {
+        const targetEntity = this._maEntityIds?.has(this._entity) ? this._entity : (this._getValidMASpeakers(true)[0] || null);
+        if (!targetEntity) { this._showToast('Music Assistant required'); return; }
+        this._closeMABrowser();
+        this._showLoadingToast(mode === 'add' ? 'Adding to Queue…' : 'Starting playback…');
+
+        // For "Add", verify against real queue length — MA's play_media can
+        // report success at the service-call level even when a fuzzy
+        // title+artist search fails to resolve a match and nothing actually
+        // gets enqueued, so a clean call here isn't proof anything happened.
+        // "Play All" (replace) starts a fresh queue, so this check doesn't
+        // apply there the same way.
+        const _queueLenBefore = mode === 'add' ? await _getQueueLength(targetEntity) : null;
+
+        let calledOk = 0;
+        for (let i = 0; i < items.length; i++) {
+          const it = items[i];
+          const _name   = it.name || it.title || '';
+          const _artist = (it.artists && it.artists[0]?.name) || '';
+          if (!_name) continue;
+          try {
+            await this._hass.connection.sendMessagePromise({
+              type: 'call_service', domain: 'music_assistant', service: 'play_media',
+              service_data: {
+                entity_id: targetEntity,
+                media_id: (_name + (_artist ? ' ' + _artist : '')).trim(),
+                media_type: 'track',
+                enqueue: (mode === 'replace' && i === 0) ? 'replace' : 'add',
+                // Pinned Songs is a deliberately curated, finite list — see
+                // the same reasoning in _playSavedQueue.
+                ...(mode === 'replace' && i === 0 ? { radio_mode: false } : {})
+              }
+            });
+            calledOk++;
+          } catch (_) {}
+        }
+
+        let added = calledOk;
+        if (mode === 'add' && _queueLenBefore !== null) {
+          const _queueLenAfter = await _getQueueLength(targetEntity);
+          if (_queueLenAfter !== null) {
+            added = Math.max(0, Math.min(calledOk, _queueLenAfter - _queueLenBefore));
+          }
+        }
+
+        this._hideLoadingToast();
+        if (added > 0) {
+          this._showToast(mode === 'add'
+            ? '✓ Added ' + added + ' pinned songs'
+            : '✓ Playing ' + added + ' pinned songs', 3500);
+        } else if (calledOk > 0 && mode === 'add') {
+          // The calls didn't throw, but the queue genuinely didn't grow —
+          // tell the truth instead of a false success toast.
+          this._showToast('Nothing was actually added — Music Assistant couldn\'t match these songs', 4000);
+        } else {
+          this._showToast('Could not play pinned songs — check Music Assistant');
+        }
+      };
+      bar.querySelector('#pinnedSongsPlayAll')?.addEventListener('click', () => _playPinnedSongs('replace'));
+      bar.querySelector('#pinnedSongsAdd')?.addEventListener('click', () => _playPinnedSongs('add'));
     }
 
     // Search bar — filters this category's pinned items by name.
@@ -10214,22 +10481,46 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const cardRect = r.host.getBoundingClientRect();
     menu.style.position = 'absolute';
     menu.style.top = (anchorRect.bottom - cardRect.top + 4) + 'px';
-    menu.style.left = Math.max(4, anchorRect.left - cardRect.left) + 'px';
-    const infoPopup = r.getElementById('infoPopup') || r.getElementById('maPopup');
-    const host = infoPopup || r.host;
+    // Not setting .left here — the CSS class already fixes this menu's
+    // horizontal position via "right: 14px", matching the exact pattern the
+    // proven working context menus use (only .top is set dynamically from
+    // the anchor; horizontal position stays fixed). Setting .left as well
+    // conflicted with that baked-in "right" value on an absolutely
+    // positioned element, which could render it off-screen or collapsed —
+    // looking exactly like "instantly disappeared".
+    // #infoPopup persists in the DOM (just hidden via a class) once the card
+    // has rendered once, so checking existence alone isn't enough — using it
+    // as host while it's actually hidden puts the menu in an invisible
+    // container, which looks exactly like "long-press does nothing".
+    const infoPopupEl = r.getElementById('infoPopup');
+    const visibleInfoPopup = infoPopupEl?.classList.contains('visible') ? infoPopupEl : null;
+    const host = visibleInfoPopup || r.getElementById('maPopup') || r.host;
     host.appendChild(backdrop);
     host.appendChild(menu);
     const _menuOpenedAt = Date.now();
     const _menuReady = () => (Date.now() - _menuOpenedAt) > 320;
     const closeMenu = () => { menu.remove(); backdrop.remove(); };
-    backdrop.addEventListener('click', closeMenu, { once: true });
-    menu.querySelector('#sqPlay')?.addEventListener('click', () => { if (!_menuReady()) return; closeMenu(); this._playSavedQueue(sq); });
-    menu.querySelector('#sqDelete')?.addEventListener('click', () => { if (!_menuReady()) return; closeMenu();
+    // pointerdown, not click — click gets synthesized as a trailing event of
+    // the same long-press gesture that opened this menu, so a click-based
+    // dismiss handler fires almost immediately and closes what it just
+    // opened. pointerdown only fires once per physical touch, so the same
+    // gesture can't retrigger it — only a genuine subsequent tap can. This
+    // matches the exact pattern every other working context menu in the app
+    // already uses.
+    backdrop.addEventListener('pointerdown', () => { if (!_menuReady()) return; closeMenu(); });
+    menu.querySelector('#sqPlay')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu(); this._playSavedQueue(sq); });
+    menu.querySelector('#sqDelete')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
       const list = this._getSavedQueues().filter(s => s.id !== sq.id);
       this._saveSavedQueuesList(list);
       this._showToast('Queue unpinned');
       const content = this.shadowRoot?.getElementById('maContent');
-      if (content) this._maLibInjectStarred('playlist', content);
+      if (!content) return;
+      // Refresh whichever view is actually showing this row right now.
+      if ((this._pinnedDetailActive && this._pinnedDetailCategory === 'queues') || content.querySelector('#pinnedCatSearch')) {
+        this._openPinnedCategoryDetail('queues');
+      } else {
+        this._maLibInjectStarred('playlist', content);
+      }
     });
   }
 
@@ -10254,7 +10545,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             entity_id: targetEntity,
             media_id: (t.title || '') + ' ' + (t.artist || ''),
             media_type: 'track',
-            enqueue: (mode === 'replace' && i === 0) ? 'replace' : 'add'
+            enqueue: (mode === 'replace' && i === 0) ? 'replace' : 'add',
+            // A pinned queue is a deliberately curated, finite list — it
+            // should never auto-continue into unrelated tracks once it ends,
+            // regardless of any radio-mode state left over from something
+            // else entirely (MA's radio_mode can persist at the queue level
+            // rather than being purely per-call).
+            ...(mode === 'replace' && i === 0 ? { radio_mode: false } : {})
           }
         });
         added++;
@@ -10286,12 +10583,18 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const searchRow = this.shadowRoot?.querySelector('.ma-search-row');
     if (!content) return;
 
+    // This can be reached from either the normal Playlists tab's Saved
+    // Queues section, or the consolidated Pinned tab's Queues category —
+    // remember which, so the back button returns to the right place instead
+    // of the pinned-category shortcut intercepting it and skipping a level.
+    const openedFromPinned = this._pinnedDetailActive === true;
+    this._pinnedDetailActive = false;
+
     if (!this._maBrowserNavStack) this._maBrowserNavStack = [];
-    this._maBrowserNavStack.push({
-      tab: this._maCurrentTab || 'playlist',
-      searchQuery: null,
-      inSearchResults: false,
-    });
+    this._maBrowserNavStack.push(openedFromPinned
+      ? { tab: '__pinned_category__', _pinnedCategory: 'queues', searchQuery: null, inSearchResults: false }
+      : { tab: this._maCurrentTab || 'playlist', searchQuery: null, inSearchResults: false }
+    );
 
     if (tabsEl)    tabsEl.style.display    = 'none';
     if (searchRow) searchRow.style.display = 'none';
@@ -10452,8 +10755,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       const name = (_input?.value || '').trim() || _defaultName;
       const list = this._getSavedQueues();
       list.unshift({ id: 'sq_' + Date.now(), name, createdAt: Date.now(), tracks });
-      // Cap at 20 saved queues — oldest drops off first.
-      if (list.length > 20) list.length = 20;
       this._saveSavedQueuesList(list);
       _close();
       this._showToast('\ud83d\udccd Pinned "' + name + '"');
@@ -10505,7 +10806,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     let starred = this._abGetStarred();
     const idx = starred.findIndex(b => b.id === book.id);
     if (idx >= 0) { starred.splice(idx, 1); this._abSaveStarred(starred); return false; }
-    if (starred.length >= 10) { this._showToast('Maximum 10 pinned audiobooks — unpin one first'); return null; }
     starred.unshift(book); this._abSaveStarred(starred); return true;
   }
 
@@ -10752,6 +11052,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   _abRefreshPinnedUI() {
     const maContent = this.shadowRoot?.getElementById('maContent');
     if (!maContent) return;
+    if (this._pinnedDetailActive && this._pinnedDetailCategory === 'audiobooks') {
+      this._openPinnedCategoryDetail('audiobooks');
+      return;
+    }
     const existing = maContent.querySelector('#ab-starred-section');
     if (this._config?.show_pins_in_sections === false) { existing?.remove(); return; }
     const newSection = this._abRenderStarredSection();
@@ -22184,7 +22488,7 @@ Include ALL tracks. Use null for unknown fields.`;
   // Attaches swipe gestures on an MA browser item.
   // Swipe right → Info panel (blue). Swipe left → Add panel (green). Hold → enqueue menu.
   // Attaches long-press gesture on an MA browser item. Swipe removed — use long-press only.
-  _attachMAItemSwipe(wrap, item, tab) {
+  _attachMAItemSwipe(wrap, item, tab, opts = {}) {
     const el = wrap.querySelector('.ma-item');
     if (!el) return;
     const self = this;
@@ -22210,14 +22514,20 @@ Include ALL tracks. Use null for unknown fields.`;
     el.addEventListener('click', e => {
       if (lpFired) { lpFired = false; return; }
       const type = item.media_type || (item._tab !== 'recommended' && item._tab !== 'recently_played' ? item._tab : '') || (tab !== 'recommended' && tab !== 'recently_played' ? tab : '');
-      if (['album','artist','podcast','playlist'].includes(type) && !!(item.uri||item.media_content_id)) {
-        this._maOpenCollectionTracks(item, tab);
+      // Opt-in: tap plays immediately instead of opening the info panel.
+      // Long-press still opens the same context menu either way.
+      if (opts.directPlayTrack && (type === 'track' || tab === 'track')) {
+        this._playMAItem(item, tab, undefined, opts);
+        return;
+      }
+      if (['album','artist','podcast','playlist'].includes(type)) {
+        this._maOpenCollectionTracks(item, tab, opts);
       } else if (type === 'track' || ['track','favourites','recommended','recently_played'].includes(tab)) {
         const _title  = item.name || item.title || '';
         const _artist = (item.artists && item.artists[0]?.name) || '';
         if (_title || _artist) this._showAITrackInfo(_title, _artist, { fromSearch: true, queueUri: item.uri || item.media_content_id || '' });
-        else this._playMAItem(item, tab);
-      } else { this._playMAItem(item, tab); }
+        else this._playMAItem(item, tab, undefined, opts);
+      } else { this._playMAItem(item, tab, undefined, opts); }
     });
 
 
@@ -22598,7 +22908,7 @@ Include ALL tracks. Use null for unknown fields.`;
     }
   }
 
-  _playMAItem(item, tab, shuffle) {
+  _playMAItem(item, tab, shuffle, opts = {}) {
     const now = Date.now();
     if (this._lastMAPlay && (now - this._lastMAPlay) < 1500) return;
     this._lastMAPlay = now;
@@ -22606,21 +22916,21 @@ Include ALL tracks. Use null for unknown fields.`;
     const allMAEntities = this._getValidMASpeakers();
 
     if (allMAEntities.length === 0) {
-      this._playMAItemTo(item, tab, this._entity, shuffle);
+      this._playMAItemTo(item, tab, this._entity, shuffle, opts);
       return;
     }
 
     if (allMAEntities.length === 1) {
       const target = allMAEntities[0];
-      this._playMAItemTo(item, tab, target, shuffle);
+      this._playMAItemTo(item, tab, target, shuffle, opts);
       return;
     }
 
-    this._showMAPlayTargetPicker(item, tab, allMAEntities, shuffle);
+    this._showMAPlayTargetPicker(item, tab, allMAEntities, shuffle, opts);
   }
 
   // Extracted play logic — called by _playMAItem and _showMAPlayTargetPicker.
-  async _playMAItemTo(item, tab, targetEntity, shuffle) {
+  async _playMAItemTo(item, tab, targetEntity, shuffle, opts = {}) {
     const uri        = item.uri || item.media_content_id;
     const mediaType  = item.media_type || tab;
     const self       = this;
@@ -22640,7 +22950,11 @@ Include ALL tracks. Use null for unknown fields.`;
         entity_id: targetEntity,
         media_id: _nameId || uri,
         media_type: mediaType, enqueue: 'replace',
-        ...(this._config?.ma_radio_mode ? { radio_mode: true } : {})
+        // opts.noRadioMode explicitly forces this off regardless of the
+        // global Radio Mode setting — used for contexts like Pinned Artists,
+        // where playing a specifically pinned item should never auto-mix in
+        // other artists/tracks, even if Radio Mode is on elsewhere.
+        ...(opts.noRadioMode ? { radio_mode: false } : (this._config?.ma_radio_mode ? { radio_mode: true } : {}))
       }
     });
     const playViaMP = () => this._hass.connection.sendMessagePromise({
@@ -23003,7 +23317,7 @@ Include ALL tracks. Use null for unknown fields.`;
 
   // Speaker picker — supports multi-select for multicast playback.
   // allMAEntities: the full list of available MA entity IDs to present.
-  _showMAPlayTargetPicker(item, tab, allMAEntities) {
+  _showMAPlayTargetPicker(item, tab, allMAEntities, shuffle, opts = {}) {
     const r    = this.shadowRoot;
     const self = this;
     if (!allMAEntities?.length) return;
@@ -23103,7 +23417,7 @@ Include ALL tracks. Use null for unknown fields.`;
       const targets = [...selected];
       if (targets.length === 1) {
         self._lastMAPlayTarget = targets[0];
-        self._playMAItemTo(item, tab, targets[0]);
+        self._playMAItemTo(item, tab, targets[0], shuffle, opts);
       } else {
         self._playMAItemToMultiple(item, tab, targets);
       }
