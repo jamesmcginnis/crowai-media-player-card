@@ -445,6 +445,19 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       }
       const _trackChanged = hasRealMeta && this._lastTrackKey !== newTrackKey;
       if (_trackChanged) {
+        // Listening Recap — log the track that just finished/was skipped from,
+        // using the meta captured when IT started playing (see below). Only
+        // counts as a genuine listen (not a skip) if it played past 30s or
+        // half its duration, whichever is smaller. Live streams/radio and
+        // system sound clips (announcements, TTS, notifications) are excluded
+        // since neither represents a discrete music "play".
+        if (this._lastTrackMeta && !this._lastTrackMeta.isLiveStream && !this._isNotificationClip(this._lastTrackMeta)) {
+          const _elapsedMs = Date.now() - (this._trackStartTs || Date.now());
+          const _durMs = (this._lastTrackMeta.duration || 0) * 1000;
+          if (_elapsedMs >= 30000 || (_durMs > 0 && _elapsedMs >= _durMs * 0.5)) {
+            this._logListenEntry(this._lastTrackMeta);
+          }
+        }
         // Restore prog-area and remove intro div on track change
         clearTimeout(this._songIntroTimer);
         const _pa = this.shadowRoot?.getElementById('prog-area');
@@ -534,6 +547,21 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       if (hasRealMeta) {
         this._lastAlbumKey = newAlbumKey;
         this._lastTrackKey = newTrackKey;
+        if (_trackChanged) {
+          // Start tracking this new track for the Listening Recap — logged
+          // once it's replaced by the next track (see _trackChanged block above).
+          this._trackStartTs = Date.now();
+          this._lastTrackMeta = {
+            artist: newArtist,
+            title: newTitle,
+            album: newAlbum,
+            entity: this._entity,
+            mediaType: this._detectMediaType(stateObj),
+            duration: stateObj.attributes?.media_duration || 0,
+            uri: stateObj.attributes?.media_content_id || '',
+            isLiveStream: this._isLiveStream(stateObj),
+          };
+        }
       }
       this.updateContent(stateObj);
     }
@@ -4219,6 +4247,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           info:    '<path d="M11,9H13V7H11M12,20C7.59,20 4,16.41 4,12C4,7.59 7.59,4 12,4C16.41,4 20,7.59 20,12C20,16.41 16.41,20 12,20M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M11,17H13V11H11V17Z"/>',
           remote:  '<path d="M15,12H13V10H15M15,16H13V14H15M11,12H9V10H11M11,16H9V14H11M15,8H9C7.89,8 7,8.9 7,10V20A2,2 0 0,0 9,22H15A2,2 0 0,0 17,20V10C17,8.9 16.11,8 15,8M15,20H9V18H15V20M17,4H15V2H9V4H7A2,2 0 0,0 5,6V8H7V6H17V8H19V6A2,2 0 0,0 17,4Z"/>',
           sendmsg:    '<path d="M20,2H4A2,2 0 0,0 2,4V22L6,18H20A2,2 0 0,0 22,16V4A2,2 0 0,0 20,2M6,9H18V11H6V9M14,14H6V12H14V14M18,8H6V6H18V8Z"/>',
+          recap:      '<path d="M22,21H2V3H4V19H6V10H10V19H12V6H16V19H18V14H22V21Z"/>',
         };
         const items = [];
 
@@ -4227,6 +4256,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
         // AI Search — MA only
         if (isMa || hasMA) items.push({ id: 'qm_ai_search', label: 'AI Search', icon: '<svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>', active: false });
+
+        // Listening Recap — MA only, manual trigger, works off local play-history log
+        if (isMa || hasMA) items.push({ id: 'qm_ai_recap', label: 'Listening Recap', icon: SVG.recap, active: false });
 
         // Music Library — MA only
         if (isMa || hasMA) items.push({ id: 'qm_library', label: 'Music Library', icon: SVG.library, active: false });
@@ -4376,6 +4408,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           btn.addEventListener('pointerup', (ev) => {
             if (_qmMoved) return;
             if (Date.now() - _popupOpenedAt < 350) return;
+            ev.preventDefault();
             ev.stopPropagation();
             popup.remove();
             // Cancel any artwork-tap timer outright — covers both the menu's own
@@ -4398,6 +4431,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             else if (item.id === 'qm_mood')         { expand().then(() => { this._queuePanelDirection = null; this._showAIMoodQueue(); }); }
             else if (item.id === 'qm_ai_recs')      { expand().then(() => { const _rMT = this._detectMediaType(this._hass?.states[this._entity]); (_rMT === 'tv' || _rMT === 'movie') ? this._showAIRecommendations() : _runMA(() => this._showAIRecommendations()); }); }
             else if (item.id === 'qm_ai_search')    { expand().then(() => _runMA(() => this._showAISearchPanel())); }
+            else if (item.id === 'qm_ai_recap')        { expand().then(() => _runMA(() => this._showAIRecap())); }
             else if (item.id === 'qm_mood_video')   { expand().then(() => this._showMoodMatchPanel(item._qmVideoTitle)); }
             else if (item.id === 'qm_trivia')       { expand().then(() => this._showTriviaPanel(item._qmVideoTitle)); }
             else if (item.id === 'qm_soundtrack')   { expand().then(() => _runMA(() => this._showAISearchPanel(`Music from ${item._atMedia}`))); }
@@ -14735,6 +14769,274 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     return r || null;
   }
 
+  // Detects transient system sound clips (announcements, TTS, notification
+  // sounds) so they don't pollute the Listening Recap history. Same core
+  // logic as the queue panel's own system-clip filter, plus two extra
+  // heuristics that catch clips whose title has no file extension (e.g.
+  // "[unknown]" artist, or a bare filename-style slug like "youve-got-mail-sound").
+  // Splits a raw multi-artist credit string ("YUNGBLUD/Nuno Bettencourt/Frank
+  // Bello", "Artist A & Artist B", "Artist A feat. Artist B") into individual
+  // artist names. Broader than the existing primary-artist split used
+  // elsewhere (which only grabs the first name before & / ,) — this one is
+  // for aggregation contexts (Recap) where every contributor should be
+  // counted and bio-able on their own, not just the lead artist.
+  _splitArtists(str) {
+    return (str || '')
+      .split(/\s*[\/,&]\s*|\s+feat\.?\s+|\s+ft\.?\s+|\s+featuring\s+/i)
+      .map(s => s.trim())
+      .filter(Boolean);
+  }
+
+  _isNotificationClip(meta) {
+    const uri    = (meta.uri || '').toLowerCase();
+    const title  = (meta.title || '').toLowerCase();
+    const artist = (meta.artist || '').toLowerCase();
+    const hasArtist = !!artist && artist !== '[unknown]' && artist !== 'unknown';
+
+    if (uri.startsWith('media-source://')) return true;
+    if (uri.startsWith('tts://') || uri.includes('/tts/') || uri.includes('/api/tts_proxy/')) return true;
+    if (/\/local\/audio\//i.test(uri)) return true;
+    if (/\/local\/sounds\//i.test(uri)) return true;
+    if (/\/media\/local\//i.test(uri)) return true;
+    if (uri.startsWith('/local/') || uri.startsWith('/media/')) return true;
+    if (/https?:\/\/[^/]+(:\d+)?\/local\//i.test(uri)) return true;
+    if (/https?:\/\/[^/]+(:\d+)?\/media\//i.test(uri)) return true;
+    if (/https?:\/\/[^/]+(:\d+)?\/api\/tts/i.test(uri)) return true;
+
+    if (/\.(mp3|wav|ogg|flac|aac|m4a|opus)(\?|$)/i.test(uri)) {
+      const isStream = /spotify|tidal|qobuz|deezer|apple|soundcloud|youtube|tunein|radio/i.test(uri);
+      if (!isStream) return true;
+    }
+    if (/^[a-z0-9_\-\s]+\.(mp3|wav|ogg|flac|aac|m4a|opus)$/i.test(title)) return true;
+
+    // No real artist + very short duration — a notification even without any
+    // matching URI pattern (e.g. an external announcement URL).
+    if (!hasArtist && meta.duration && meta.duration <= 15) return true;
+
+    // Bare filename-style slug with no extension — 3+ hyphen-separated
+    // lowercase words and no spaces (e.g. "youve-got-mail-sound").
+    if (!hasArtist && /^[a-z0-9]+(-[a-z0-9]+){2,}$/.test(title)) return true;
+
+    return false;
+  }
+
+  /**
+   * Listening Recap — local play-history log + AI narrative
+   * ─────────────────────────────────────────────────────────────────────
+   * Log entries are appended by the _trackChanged handler in the hass
+   * setter (see _lastTrackMeta / _trackStartTs). Aggregation (top artists,
+   * top tracks, totals) is plain JS — only the narrative paragraph is AI.
+   */
+
+  // Append a qualifying listen to the rolling history log. Reuses the
+  // existing _aiLocalGet/Set cache infra (cacheName 'listenLog', single key
+  // 'entries' holding the whole array) so it automatically gets the same
+  // HA cross-device sync as other AI caches when ai_info_persistent_storage
+  // is enabled, without needing a new storage key.
+  _logListenEntry(meta) {
+    try {
+      if (!meta?.title || !meta?.artist) return;
+      const entries = this._aiLocalGet('listenLog', 'entries') || [];
+      entries.push({
+        ts: Date.now(),
+        artist: meta.artist,
+        title: meta.title,
+        album: meta.album || '',
+        entity: meta.entity || '',
+        mediaType: meta.mediaType || 'music',
+        durationMs: (meta.duration || 0) * 1000,
+      });
+      // Rolling 90-day window, hard cap of 2000 entries either way
+      const cutoff = Date.now() - 90 * 24 * 3600 * 1000;
+      const pruned = entries.filter(e => e.ts >= cutoff).slice(-2000);
+      this._aiLocalSet('listenLog', 'entries', pruned);
+    } catch (_) { /* localStorage unavailable — silently skip logging */ }
+  }
+
+  // ISO-ish week key ("2026-W27") used to freeze one recap narrative per week
+  // so re-opening the panel doesn't re-query the AI every time.
+  _recapWeekKey() {
+    const d = new Date();
+    const onejan = new Date(d.getFullYear(), 0, 1);
+    const week = Math.ceil((((d - onejan) / 86400000) + onejan.getDay() + 1) / 7);
+    return d.getFullYear() + '-W' + week;
+  }
+
+  async _showAIRecap() {
+    const r = this.shadowRoot;
+    const popup = r.getElementById('infoPopup');
+    const content = r.getElementById('infoContent');
+    const titleEl = r.getElementById('infoPopupTitle');
+    if (!popup || !content) return;
+
+    popup.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
+    popup.style.setProperty('backdrop-filter', 'none');
+    popup.style.setProperty('-webkit-backdrop-filter', 'none');
+    popup.style.setProperty('isolation', 'isolate');
+    popup.style.setProperty('transform', 'translateZ(0)');
+    content.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
+    const _haCard = r.querySelector('ha-card');
+    if (_haCard) _haCard.style.setProperty('--crow-card-blur', 'none');
+
+    popup.classList.add('visible');
+    this._infoPopupOpenedAt = Date.now();
+    this._queuePanelDirection = null;
+    r.getElementById('queueMenuBtn')?.classList.add('hidden');
+    if (titleEl) titleEl.textContent = '📊 Listening Recap';
+
+    if (!this._aiPanelGeneration) this._aiPanelGeneration = 0;
+    const _myGen = ++this._aiPanelGeneration;
+    const _stale = () => this._aiPanelGeneration !== _myGen;
+
+    const entries = this._aiLocalGet('listenLog', 'entries') || [];
+    const cutoff = Date.now() - 7 * 24 * 3600 * 1000; // last 7 days
+    const recent = entries.filter(e => e.ts >= cutoff);
+
+    if (!recent.length) {
+      content.innerHTML = this._psEmpty(
+        'M22,21H2V3H4V19H6V10H10V19H12V6H16V19H18V14H22V21Z',
+        'Not enough listening yet',
+        'Keep playing music this week and check back for a recap.'
+      );
+      return;
+    }
+
+    // ── Aggregate locally — no AI needed for the numbers themselves ──────
+    const artistCounts = {}, trackCounts = {};
+    let totalMs = 0;
+    const _isRealArtist = (name) => {
+      const n = (name || '').trim().toLowerCase();
+      return !!n && n !== '[unknown]' && n !== 'unknown';
+    };
+    recent.forEach(e => {
+      totalMs += (e.durationMs || 0);
+      // "[unknown]"/blank artists are placeholder values from old entries
+      // (pre-dating the notification-clip filter) — not a real artist, so
+      // they're excluded from Top Artists rather than shown as a dead-end
+      // bio lookup. Multi-artist credits ("YUNGBLUD/Nuno Bettencourt/Frank
+      // Bello") are split apart so each contributor is counted — and later
+      // bio-able — individually, rather than the whole joined string being
+      // treated as one (unsearchable) "artist".
+      this._splitArtists(e.artist).forEach(name => {
+        if (_isRealArtist(name)) artistCounts[name] = (artistCounts[name] || 0) + 1;
+      });
+      if (e.artist && e.title) {
+        // \u0001 as separator (vs a plain " — ") so artist/title can be split
+        // back apart reliably even if either contains an em dash of its own.
+        const tKey = e.artist + '\u0001' + e.title;
+        if (!trackCounts[tKey]) trackCounts[tKey] = { count: 0, artist: e.artist, title: e.title, album: e.album || '' };
+        trackCounts[tKey].count++;
+      }
+    });
+    const top = (obj, n) => Object.entries(obj).sort((a, b) => (b[1].count || b[1]) - (a[1].count || a[1])).slice(0, n);
+    const topArtists = top(artistCounts, 5);
+    const topTracks  = top(trackCounts, 5).map(([, v]) => v);
+    const totalPlays = recent.length;
+    const totalMins  = Math.round(totalMs / 60000);
+
+    content.innerHTML = this._psLoading('Building your recap…');
+
+    const hasAI = await this._aiCheckAvailable();
+    if (_stale()) return;
+
+    let narrative = '';
+    const periodKey = this._recapWeekKey();
+    const cachedNarrative = this._aiLocalGet('recapNarrative', periodKey) || this._aiSessionGet('recapNarrative', periodKey);
+
+    if (cachedNarrative) {
+      narrative = cachedNarrative;
+    } else if (hasAI) {
+      const statSummary = `Top artists: ${topArtists.map(a => a[0] + ' (' + a[1].count + ' plays)').join(', ') || 'none'}. ` +
+        `Top tracks: ${topTracks.map(t => t.artist + ' — ' + t.title).join(', ') || 'none'}. ` +
+        `Total plays: ${totalPlays}. Total listening time: ${totalMins} minutes.`;
+      const prompt = `Here is a week of someone's music listening stats: ${statSummary} Write a warm, 2-3 sentence recap summarising their week of listening, in a friendly Spotify-Wrapped style tone. No markdown, no headers, no quotes.`;
+      try {
+        const raw = await this._aiConverse(prompt);
+        narrative = (raw || '').trim();
+        if (narrative) {
+          this._aiLocalSet('recapNarrative', periodKey, narrative);
+          this._aiSessionSet('recapNarrative', periodKey, narrative);
+        }
+      } catch (_) { /* narrative is optional — stats still render below */ }
+    }
+    if (_stale()) return;
+
+    const esc = s => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    content.innerHTML = `
+      <div style="padding:4px 2px 16px;">
+        ${narrative ? `<div style="font-size:14px;line-height:1.5;color:${this._pt('text')};margin-bottom:18px;">${esc(narrative)}</div>` : ''}
+        ${topArtists.length ? `
+        <div style="font-size:10px;font-weight:700;color:rgba(99,179,237,0.8);letter-spacing:0.6px;text-transform:uppercase;margin-bottom:8px;">Top Artists</div>
+        <div id="recapArtistList" style="margin-bottom:16px;"></div>` : ''}
+        ${topTracks.length ? `
+        <div style="font-size:10px;font-weight:700;color:rgba(99,179,237,0.8);letter-spacing:0.6px;text-transform:uppercase;margin-bottom:8px;">Top Tracks</div>
+        <div id="recapTrackList"></div>` : ''}
+      </div>`;
+
+    // ── Top Artists — tap opens the AI bio panel, same one used elsewhere
+    // in the app (_showCastBio). Passing a custom onBack re-renders the
+    // Recap view fresh (cheap — narrative/log are cached) instead of
+    // _showCastBio's default restore, which is tailored to nested
+    // track/show-info panels rather than this one.
+    const artistListEl = content.querySelector('#recapArtistList');
+    if (artistListEl) {
+      topArtists.forEach(([name, v], i) => {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer;';
+        row.innerHTML = `
+          <div style="width:20px;font-size:12px;color:${this._pt('dim')};">${i + 1}</div>
+          <div style="flex:1;font-size:13px;color:${this._pt('text')};">${esc(name)}</div>
+          <div style="font-size:11px;color:${this._pt('dim')};">${v} plays</div>`;
+        row.addEventListener('click', () => this._showCastBio(content, name, '', '', () => this._showAIRecap()));
+        artistListEl.appendChild(row);
+      });
+    }
+
+    // ── Top Tracks — tap opens AI Info, long-press opens the same context
+    // menu the Music Library uses. These are synthetic tracks (title/artist/
+    // album only, no MA uri — same shape _openSavedQueueDetail builds for
+    // pinned queues), so playback/pinning falls back to fuzzy title+artist
+    // matching rather than a direct uri, same as any other non-MA pin.
+    const trackListEl = content.querySelector('#recapTrackList');
+    if (trackListEl) {
+      const _fallbackNoteIcon = '<svg viewBox="0 0 24 24" style="display:flex;fill:rgba(255,255,255,0.3)"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>';
+      topTracks.forEach(t => {
+        const item = {
+          name: t.title,
+          artists: t.artist ? [{ name: t.artist }] : [],
+          album: t.album ? { name: t.album } : null,
+          _tab: 'track',
+        };
+        const wrap = document.createElement('div');
+        wrap.className = 'ma-item-wrap';
+        const el = document.createElement('div');
+        el.className = 'ma-item';
+
+        const itunesKey = (t.artist || t.album || t.title)
+          ? [t.artist, t.album || t.title].filter(Boolean).join('|').toLowerCase()
+          : '';
+        const cachedArt = itunesKey ? (this._itunesArtCache?.[itunesKey] || '') : '';
+        const keyAttr = itunesKey ? ' data-itunes-key="' + itunesKey.replace(/"/g, '&quot;') + '"' : '';
+        const artInner = cachedArt
+          ? _fallbackNoteIcon + '<img src="' + cachedArt + '" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;" onerror="this.remove()">'
+          : _fallbackNoteIcon;
+
+        el.innerHTML =
+          '<div class="ma-item-art"' + keyAttr + ' style="position:relative;">' + artInner + '</div>' +
+          '<div class="ma-item-info"><div class="ma-item-title">' + esc(t.title) + '</div>' +
+            (t.artist ? '<div class="ma-item-sub">' + esc(t.artist) + '</div>' : '') +
+          '</div>';
+        wrap.appendChild(el);
+        this._attachMAItemSwipe(wrap, item, 'track');
+        if (this._config?.row_glow === true && cachedArt) this._observeRowGlow(cachedArt, wrap, null);
+        trackListEl.appendChild(wrap);
+
+        if (!cachedArt && itunesKey) this._fetchItunesArt(t.artist, t.album, t.title);
+      });
+    }
+  }
+
+
   // Silently pre-warm the video info cache so long-press on artwork is instant
   async _prefetchVideoInfo(title) {
     if (!title) return;
@@ -20865,7 +21167,7 @@ Include ALL tracks. Use null for unknown fields.`;
     } catch (e) { return null; }
   }
 
-  async _showCastBio(content, name, showTitle, artUrl) {
+  async _showCastBio(content, name, showTitle, artUrl, onBack) {
     const savedHtml = content.innerHTML;
     const savedScroll = content.scrollTop;
 
@@ -20992,6 +21294,7 @@ Include ALL tracks. Use null for unknown fields.`;
 
       content.querySelector('#cast-bio-back').addEventListener('click', () => {
         this.shadowRoot?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
+        if (typeof onBack === 'function') { onBack(); return; }
         content.innerHTML = savedHtml;
         content.scrollTop = savedScroll;
         this._rewireCastClicks(content, showTitle, artUrl);
@@ -26115,8 +26418,8 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
 
             <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid rgba(255,255,255,0.07);">
               <div>
-                <div style="font-size:14px;font-weight:500;">Library &amp; Queue Row Glow</div>
-                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Adds a subtle accent-colour glow to rows in the library browser and queue panel.</div>
+                <div style="font-size:14px;font-weight:500;">Library, Queue &amp; Recap Row Glow</div>
+                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Adds a subtle accent-colour glow to rows in the library browser, queue panel, and Listening Recap.</div>
               </div>
               <label class="toggle-switch" style="flex-shrink:0"><input type="checkbox" id="row_glow"><span class="toggle-track"></span></label>
             </div>
