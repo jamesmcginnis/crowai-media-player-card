@@ -16328,6 +16328,12 @@ Include ALL tracks. Use null for unknown fields.`;
     // Mount on the card outer element so overlay is constrained to the card
     const cardOuter = this.shadowRoot?.getElementById('cardOuter');
     if (!cardOuter) return;
+    // Guard against a delayed/ghost click firing after the user has already
+    // navigated away from the AI Info panel (e.g. to the Music Library) —
+    // the hero-art tap listener that triggers this can still be sitting in
+    // the DOM even once its panel is hidden, so a late-arriving synthetic
+    // click can otherwise pop this lightbox up over whatever's open now.
+    if (this.shadowRoot?.getElementById('maPopup')?.classList.contains('visible')) return;
     cardOuter.querySelectorAll('.crow-bio-lightbox').forEach(el => el.remove());
 
     // Backdrop
