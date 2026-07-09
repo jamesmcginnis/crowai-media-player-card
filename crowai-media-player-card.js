@@ -140,6 +140,108 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+
+    // ── Listening Recap — track configured entities directly ─────────────
+    // Deliberately independent of this._entity/auto_switch (see below).
+    // Originally watched only config.ma_entities, on the assumption that the
+    // MA-tagged entity is the authoritative source for a given speaker. In
+    // practice, on at least one real setup, the MA entity's state can be
+    // completely disconnected from reality — reporting `idle` with unrelated
+    // leftover content — while the *native* entity for the same physical
+    // speaker (e.g. HomeKit/AirPlay) accurately reflects what's playing,
+    // moment to moment. So instead of trusting a specific entity by label,
+    // this watches every entity configured for this card (entities +
+    // ma_entities, deduped) and only reads from whichever one is actually
+    // reporting `state === 'playing'` right now — self-correcting regardless
+    // of which representation happens to be reliable on a given setup.
+    //
+    // The "last seen track per entity" comparison state is persisted to
+    // localStorage (not just held in memory) because dashboard navigation
+    // commonly destroys and recreates this card element — a purely in-memory
+    // comparison would reset on every tab switch, meaning it could never see
+    // two observations of the same entity in a row and would silently never
+    // log anything, no matter how much was actually played. It also syncs to
+    // HA's own storage via _haStorageSaveAI (same as the log itself) when
+    // "AI Info Persistent Storage" is enabled, so a WKWebView localStorage
+    // eviction doesn't reset it either.
+    {
+      const _watchEntities = [
+        ...(Array.isArray(this._config?.entities) ? this._config.entities : []),
+        ...(Array.isArray(this._config?.ma_entities) ? this._config.ma_entities : []),
+      ].filter((v, i, a) => a.indexOf(v) === i);
+
+      if (_watchEntities.length) {
+        if (!this._maRecapState) {
+          try { this._maRecapState = JSON.parse(localStorage.getItem('crow_ai_local_maRecapState') || '{}'); }
+          catch (_) { this._maRecapState = {}; }
+        }
+        let _maRecapStateChanged = false;
+        _watchEntities.forEach(entId => {
+          const st = hass.states?.[entId];
+          if (!st || st.state !== 'playing') return; // ignore idle/paused/off — only trust an entity that's actively playing right now
+          const attrs = st.attributes || {};
+          const artist = attrs.media_artist || '';
+          const title  = attrs.media_title  || '';
+          if (!artist || !title) return;
+
+          // Narrow notification/announcement filter — deliberately NOT a
+          // blanket URI-scheme match (that's what silently excluded every
+          // real MA track before). Only catches the specific shape a system
+          // sound clip actually has: no real artist + a bare filename-style
+          // title (e.g. "youve-got-mail-sound").
+          const _artistLower = artist.trim().toLowerCase();
+          const _hasRealArtist = _artistLower !== '[unknown]' && _artistLower !== 'unknown';
+          const _looksLikeFilenameSlug = /^[a-z0-9]+(-[a-z0-9]+){2,}$/i.test(title.trim());
+          if (!_hasRealArtist && _looksLikeFilenameSlug) return;
+
+          // Music-only — podcast/audiobook rely on this card's own "currently
+          // playing via my podcast/audiobook browser" flags (reliable
+          // regardless of what MA itself reports), plus the standard
+          // media_content_type attribute as a secondary signal. Radio uses
+          // the same shared _isLiveStream check the lyrics feature already
+          // relies on for exactly this — proven reliable on this setup.
+          const _contentType = (attrs.media_content_type || '').toLowerCase();
+          const _isPodcast   = !!this._pcNowPlaying || _contentType === 'podcast';
+          const _isAudiobook = !!this._abNowPlaying || _contentType === 'audiobook';
+          const _isRadio      = this._isLiveStream(st);
+          if (_isPodcast || _isAudiobook || _isRadio) return;
+
+          const key = artist + '|||' + title + '|||' + (attrs.media_album_name || '');
+          const prev = this._maRecapState[entId];
+          if (prev && prev.key !== key) {
+            // Rapid-skip protection — only counts as a genuine listen if the
+            // previous track played past 30s or half its duration, whichever
+            // is smaller. Falls back to the flat 30s rule when duration is
+            // unknown, so it still works even without reliable duration data.
+            const _elapsedMs = Date.now() - (prev.startTs || Date.now());
+            const _durMs = (prev.meta?.duration || 0) * 1000;
+            const _qualifies = _elapsedMs >= 30000 || (_durMs > 0 && _elapsedMs >= _durMs * 0.5);
+            if (prev.meta && _qualifies) this._logListenEntry(prev.meta);
+          }
+          if (!prev || prev.key !== key) {
+            this._maRecapState[entId] = {
+              key,
+              startTs: Date.now(),
+              meta: {
+                artist, title,
+                album: attrs.media_album_name || '',
+                entity: entId,
+                mediaType: 'music',
+                duration: attrs.media_duration || 0,
+                uri: attrs.media_content_id || '',
+                isMaEntity: true,
+              },
+            };
+            _maRecapStateChanged = true;
+          }
+        });
+        if (_maRecapStateChanged) {
+          try { localStorage.setItem('crow_ai_local_maRecapState', JSON.stringify(this._maRecapState)); } catch (_) {}
+          this._haStorageSaveAI('maRecapState');
+        }
+      }
+    }
+
     // Load pins, AI cache and iTunes art from HA user data on first connection —
     // this survives pull-to-refresh and WKWebView localStorage evictions.
     if (!this._haStorageLoaded) this._haStorageLoad();
@@ -445,19 +547,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       }
       const _trackChanged = hasRealMeta && this._lastTrackKey !== newTrackKey;
       if (_trackChanged) {
-        // Listening Recap — log the track that just finished/was skipped from,
-        // using the meta captured when IT started playing (see below). Only
-        // counts as a genuine listen (not a skip) if it played past 30s or
-        // half its duration, whichever is smaller. Live streams/radio and
-        // system sound clips (announcements, TTS, notifications) are excluded
-        // since neither represents a discrete music "play".
-        if (this._lastTrackMeta && !this._lastTrackMeta.isLiveStream && !this._isNotificationClip(this._lastTrackMeta)) {
-          const _elapsedMs = Date.now() - (this._trackStartTs || Date.now());
-          const _durMs = (this._lastTrackMeta.duration || 0) * 1000;
-          if (_elapsedMs >= 30000 || (_durMs > 0 && _elapsedMs >= _durMs * 0.5)) {
-            this._logListenEntry(this._lastTrackMeta);
-          }
-        }
+        // Listening Recap logging now happens independently at the top of
+        // this setter, watching config.ma_entities directly rather than
+        // this._entity (which auto_switch can bounce to a native entity
+        // mirroring the same physical speaker's playback state).
         // Restore prog-area and remove intro div on track change
         clearTimeout(this._songIntroTimer);
         const _pa = this.shadowRoot?.getElementById('prog-area');
@@ -547,21 +640,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       if (hasRealMeta) {
         this._lastAlbumKey = newAlbumKey;
         this._lastTrackKey = newTrackKey;
-        if (_trackChanged) {
-          // Start tracking this new track for the Listening Recap — logged
-          // once it's replaced by the next track (see _trackChanged block above).
-          this._trackStartTs = Date.now();
-          this._lastTrackMeta = {
-            artist: newArtist,
-            title: newTitle,
-            album: newAlbum,
-            entity: this._entity,
-            mediaType: this._detectMediaType(stateObj),
-            duration: stateObj.attributes?.media_duration || 0,
-            uri: stateObj.attributes?.media_content_id || '',
-            isLiveStream: this._isLiveStream(stateObj),
-          };
-        }
       }
       this.updateContent(stateObj);
     }
@@ -4257,9 +4335,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         // AI Search — MA only
         if (isMa || hasMA) items.push({ id: 'qm_ai_search', label: 'AI Search', icon: '<svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>', active: false });
 
-        // Listening Recap — MA only, manual trigger, works off local play-history log
-        if (isMa || hasMA) items.push({ id: 'qm_ai_recap', label: 'Listening Recap', icon: SVG.recap, active: false });
-
         // Music Library — MA only
         if (isMa || hasMA) items.push({ id: 'qm_library', label: 'Music Library', icon: SVG.library, active: false });
         if (isMa || hasMA) items.push({ id: 'qm_mood', label: 'Vibe', icon: '<svg viewBox="0 0 24 24"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>', active: false });
@@ -4281,6 +4356,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         if (isPlaying && _qmIsVideo) items.push({ id: 'qm_mood_video', label: 'Mood Match', icon: '<svg viewBox="0 0 24 24"><path d="M12 2A10 10 0 1 0 22 12 10 10 0 0 0 12 2M12 20A8 8 0 1 1 20 12 8 8 0 0 1 12 20M17 11.5A1.5 1.5 0 1 1 15.5 10 1.5 1.5 0 0 1 17 11.5M8.5 10A1.5 1.5 0 1 1 7 11.5 1.5 1.5 0 0 1 8.5 10M12 17.5C9.67 17.5 7.69 16.04 6.89 14H17.11C16.31 16.04 14.33 17.5 12 17.5Z"/></svg>', active: false, _qmVideoTitle: attrs?.media_series_title || attrs?.media_title || '' });
         if (isPlaying && _qmIsVideo) items.push({ id: 'qm_trivia', label: 'Trivia', icon: '<svg viewBox="0 0 24 24"><path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"/></svg>', active: false, _qmVideoTitle: attrs?.media_series_title || attrs?.media_title || '' });
         }
+
+        // Listening Recap — MA only, manual trigger, works off local play-history log.
+        // Pushed here (unconditional on album info) so it lands immediately
+        // below Recommendations in the rendered menu, without becoming tied
+        // to whether Recommendations itself shows.
+        if (isMa || hasMA) items.push({ id: 'qm_ai_recap', label: 'Listening Recap', icon: SVG.recap, active: false });
 
         // AI Artist Radio — MA only, only when a track is playing
         if ((isMa || hasMA) && isPlaying && !isStream) {
@@ -5145,15 +5226,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           extraClass: ''
         });
 
-        // Pin Queue as Playlist — a snapshot of the full queue, not a live
-        // reference to a real MA playlist object (see _renderSavedQueuesSection)
-        items.push({
-          id: 'qmSaveQueue',
-          icon: '<svg viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg>',
-          label: 'Pin Queue as Playlist',
-          extraClass: ''
-        });
-
         // Music Library — MA only
         if (isMa || hasMA) {
           items.push({
@@ -5242,6 +5314,15 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           }
         }
 
+        // Pin Queue as Playlist — a snapshot of the full queue, not a live
+        // reference to a real MA playlist object (see _renderSavedQueuesSection)
+        items.push({
+          id: 'qmSaveQueue',
+          icon: '<svg viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg>',
+          label: 'Pin Queue',
+          extraClass: ''
+        });
+
         // AI Artist Radio — MA only
         if (isMa || hasMA) {
           const _qCurState  = this._hass?.states[this._entity];
@@ -5320,7 +5401,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         const backdrop = document.createElement('div');
         backdrop.className = 'queue-dropdown-backdrop';
         backdrop.id = 'queueDropdownBackdrop';
-        backdrop.addEventListener('click', (ev) => {
+        backdrop.addEventListener('pointerup', (ev) => {
+          ev.preventDefault();
           ev.stopPropagation();
           menu.remove(); backdrop.remove();
         }, { once: true });
@@ -5330,6 +5412,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         menu.id = 'queueDropdownMenu';
         menu.innerHTML = menuHtml;
         menu.addEventListener('click', (ev) => ev.stopPropagation());
+        menu.addEventListener('pointerup', (ev) => ev.stopPropagation());
 
         // Guard: ignore item taps within 320ms of menu opening to prevent
         // the finger-lift from the ⋮ button accidentally firing a menu item
@@ -5349,21 +5432,21 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         infoPopup.appendChild(menu);
 
         // ── Reorder ──
-        menu.querySelector('#qmReorder')?.addEventListener('click', () => { if (!_menuReady()) return;
+        menu.querySelector('#qmReorder')?.addEventListener('pointerup', (ev) => { ev.preventDefault(); ev.stopPropagation(); if (!_menuReady()) return;
           closeMenu();
           const btn = r.getElementById('queueMenuBtn');
           this._toggleQueueReorder(btn);
         });
 
         // ── AI Recommendations ──
-        menu.querySelector('#qmAIRecs')?.addEventListener('click', () => { if (!_menuReady()) return;
+        menu.querySelector('#qmAIRecs')?.addEventListener('pointerup', (ev) => { ev.preventDefault(); ev.stopPropagation(); if (!_menuReady()) return;
           closeMenu();
           const _qRecs = () => this._showAIRecommendations();
           items.find(i => i.id === 'qmAIRecs')?._needsMA ? this._switchToMAAndRun(_qRecs) : _qRecs();
         });
 
         // ── Add Similar Songs ──
-        menu.querySelector('#qmAddSimilar')?.addEventListener('click', () => { if (!_menuReady()) return;
+        menu.querySelector('#qmAddSimilar')?.addEventListener('pointerup', (ev) => { ev.preventDefault(); ev.stopPropagation(); if (!_menuReady()) return;
           closeMenu();
           this._closeInfoPopup();
           this._queuePanelDirection = null;
@@ -5372,7 +5455,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         });
 
         // ── Play Album ──
-        menu.querySelector('#qmPlayAlbum')?.addEventListener('click', () => { if (!_menuReady()) return;
+        menu.querySelector('#qmPlayAlbum')?.addEventListener('pointerup', (ev) => { ev.preventDefault(); ev.stopPropagation(); if (!_menuReady()) return;
           closeMenu();
           this._closeInfoPopup();
           this._queuePanelDirection = null;
@@ -5384,13 +5467,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
 
         // ── Music Library ──
-        menu.querySelector('#qmLibrary')?.addEventListener('click', () => { if (!_menuReady()) return;
+        menu.querySelector('#qmLibrary')?.addEventListener('pointerup', (ev) => { ev.preventDefault(); ev.stopPropagation(); if (!_menuReady()) return;
           closeMenu();
           const _qLib = () => { this._closeInfoPopup(); setTimeout(() => this._openMABrowser(), 320); };
           items.find(i => i.id === 'qmLibrary')?._needsMA ? this._switchToMAAndRun(_qLib) : _qLib();
         });
 
-        menu.querySelector('#qmMood')?.addEventListener('click', () => { if (!_menuReady()) return;
+        menu.querySelector('#qmMood')?.addEventListener('pointerup', (ev) => { ev.preventDefault(); ev.stopPropagation(); if (!_menuReady()) return;
           closeMenu();
           this._closeInfoPopup();
           this._queuePanelDirection = null;
@@ -5398,14 +5481,14 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         });
 
         // ── AI Search ──
-        menu.querySelector('#qmAISearch')?.addEventListener('click', () => { if (!_menuReady()) return;
+        menu.querySelector('#qmAISearch')?.addEventListener('pointerup', (ev) => { ev.preventDefault(); ev.stopPropagation(); if (!_menuReady()) return;
           closeMenu();
           const _qSearch = () => this._showAISearchPanel();
           items.find(i => i.id === 'qmAISearch')?._needsMA ? this._switchToMAAndRun(_qSearch) : _qSearch();
         });
 
         // ── Continue Playing (MA radio mode) ──
-        menu.querySelector('#qmRadioMode')?.addEventListener('click', () => {
+        menu.querySelector('#qmRadioMode')?.addEventListener('pointerup', (ev) => { ev.preventDefault(); ev.stopPropagation();
           closeMenu();
           this._closeInfoPopup(); // Return to artwork panel
           const newVal = !(this._config?.ma_radio_mode);
@@ -5453,7 +5536,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         });
 
         // ── Similar Artist Radio ──
-        menu.querySelector('#qmArtistRadio')?.addEventListener('click', () => { if (!_menuReady()) return;
+        menu.querySelector('#qmArtistRadio')?.addEventListener('pointerup', (ev) => { ev.preventDefault(); ev.stopPropagation(); if (!_menuReady()) return;
           closeMenu();
           this._closeInfoPopup();
           const _artist = this._hass?.states[this._entity]?.attributes?.media_artist || '';
@@ -5464,7 +5547,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         });
 
         // ── Jump to Current Track ──
-        menu.querySelector('#qmJumpCurrent')?.addEventListener('click', () => {
+        menu.querySelector('#qmJumpCurrent')?.addEventListener('pointerup', (ev) => { ev.preventDefault(); ev.stopPropagation();
           closeMenu();
           const infoContent = r.getElementById('infoContent');
           if (!infoContent) return;
@@ -5473,13 +5556,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         });
 
         // ── Save Queue as Playlist ──
-        menu.querySelector('#qmSaveQueue')?.addEventListener('click', () => { if (!_menuReady()) return;
+        menu.querySelector('#qmSaveQueue')?.addEventListener('pointerup', (ev) => { ev.preventDefault(); ev.stopPropagation(); if (!_menuReady()) return;
           closeMenu();
           this._promptSaveQueueAsPlaylist();
         });
 
         // ── Transfer Queue ──
-        menu.querySelector('#qmTransfer')?.addEventListener('click', () => { if (!_menuReady()) return;
+        menu.querySelector('#qmTransfer')?.addEventListener('pointerup', (ev) => { ev.preventDefault(); ev.stopPropagation(); if (!_menuReady()) return;
           closeMenu();
           const infoContent = r.getElementById('infoContent');
           if (!infoContent) return;
@@ -5556,7 +5639,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         });
 
         // ── Announce ──
-        menu.querySelector('#qmPinTrack')?.addEventListener('click', () => {
+        menu.querySelector('#qmPinTrack')?.addEventListener('pointerup', (ev) => { ev.preventDefault(); ev.stopPropagation();
           if (!_menuReady()) return;
           menu.remove(); backdrop?.remove();
           const _pItem = items.find(i => i.id === 'qmPinTrack');
@@ -5569,7 +5652,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           }
         });
 
-        menu.querySelector('#qmAnnounce')?.addEventListener('click', () => { if (!_menuReady()) return;
+        menu.querySelector('#qmAnnounce')?.addEventListener('pointerup', (ev) => { ev.preventDefault(); ev.stopPropagation(); if (!_menuReady()) return;
           closeMenu();
           // Close infoPopup (queue panel) first so maPopup shows on top
           this._closeInfoPopup();
@@ -5577,14 +5660,14 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         });
 
         // ── Send Message ──
-        menu.querySelector('#qmSendMsg')?.addEventListener('click', () => { if (!_menuReady()) return;
+        menu.querySelector('#qmSendMsg')?.addEventListener('pointerup', (ev) => { ev.preventDefault(); ev.stopPropagation(); if (!_menuReady()) return;
           closeMenu();
           this._closeInfoPopup();
           setTimeout(() => this._showSendMessagePanel(), 50);
         });
 
         // ── Clear Queue ──
-        menu.querySelector('#qmClear')?.addEventListener('click', () => { if (!_menuReady()) return;
+        menu.querySelector('#qmClear')?.addEventListener('pointerup', (ev) => { ev.preventDefault(); ev.stopPropagation(); if (!_menuReady()) return;
           closeMenu();
           const infoContent = r.getElementById('infoContent');
           if (!infoContent) return;
@@ -10793,7 +10876,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const _defaultName = 'Queue \u2013 ' + new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + ', ' + new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
     sheet.innerHTML = '<div style="width:100%;max-width:480px;background:var(--crow-panel-bg,#13131a);border-radius:20px 20px 0 0;padding:20px 20px 32px;box-shadow:0 -8px 40px rgba(0,0,0,0.6);">'
       + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">'
-      + '<span style="font-size:15px;font-weight:700;color:' + _pt('text') + ';">Pin Queue as Playlist</span>'
+      + '<span style="font-size:15px;font-weight:700;color:' + _pt('text') + ';">Pin Queue</span>'
       + '<button class="rb-tag-sheet-close" style="width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,0.1);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;"><svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:' + _pt('text') + '"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>'
       + '</div>'
       + '<div style="font-size:12px;color:' + _pt('dim') + ';margin-bottom:10px;">' + tracks.length + ' track' + (tracks.length === 1 ? '' : 's') + ' will be pinned.</div>'
@@ -14787,39 +14870,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       .filter(Boolean);
   }
 
-  _isNotificationClip(meta) {
-    const uri    = (meta.uri || '').toLowerCase();
-    const title  = (meta.title || '').toLowerCase();
-    const artist = (meta.artist || '').toLowerCase();
-    const hasArtist = !!artist && artist !== '[unknown]' && artist !== 'unknown';
-
-    if (uri.startsWith('media-source://')) return true;
-    if (uri.startsWith('tts://') || uri.includes('/tts/') || uri.includes('/api/tts_proxy/')) return true;
-    if (/\/local\/audio\//i.test(uri)) return true;
-    if (/\/local\/sounds\//i.test(uri)) return true;
-    if (/\/media\/local\//i.test(uri)) return true;
-    if (uri.startsWith('/local/') || uri.startsWith('/media/')) return true;
-    if (/https?:\/\/[^/]+(:\d+)?\/local\//i.test(uri)) return true;
-    if (/https?:\/\/[^/]+(:\d+)?\/media\//i.test(uri)) return true;
-    if (/https?:\/\/[^/]+(:\d+)?\/api\/tts/i.test(uri)) return true;
-
-    if (/\.(mp3|wav|ogg|flac|aac|m4a|opus)(\?|$)/i.test(uri)) {
-      const isStream = /spotify|tidal|qobuz|deezer|apple|soundcloud|youtube|tunein|radio/i.test(uri);
-      if (!isStream) return true;
-    }
-    if (/^[a-z0-9_\-\s]+\.(mp3|wav|ogg|flac|aac|m4a|opus)$/i.test(title)) return true;
-
-    // No real artist + very short duration — a notification even without any
-    // matching URI pattern (e.g. an external announcement URL).
-    if (!hasArtist && meta.duration && meta.duration <= 15) return true;
-
-    // Bare filename-style slug with no extension — 3+ hyphen-separated
-    // lowercase words and no spaces (e.g. "youve-got-mail-sound").
-    if (!hasArtist && /^[a-z0-9]+(-[a-z0-9]+){2,}$/.test(title)) return true;
-
-    return false;
-  }
-
   /**
    * Listening Recap — local play-history log + AI narrative
    * ─────────────────────────────────────────────────────────────────────
@@ -14828,38 +14878,57 @@ class CrowAIMediaPlayerCard extends HTMLElement {
    * top tracks, totals) is plain JS — only the narrative paragraph is AI.
    */
 
-  // Append a qualifying listen to the rolling history log. Reuses the
-  // existing _aiLocalGet/Set cache infra (cacheName 'listenLog', single key
-  // 'entries' holding the whole array) so it automatically gets the same
-  // HA cross-device sync as other AI caches when ai_info_persistent_storage
-  // is enabled, without needing a new storage key.
+  // Append a qualifying listen to the rolling history log. Each play gets
+  // its OWN key in the 'listenLog' store (rather than one shared 'entries'
+  // array) so that cross-device HA sync — which merges object stores
+  // key-by-key — actually combines plays logged by different rooms' cards
+  // instead of whichever device syncs last wholesale-overwriting the other's
+  // history. Written directly against localStorage (not via _aiLocalSet)
+  // because that helper caps stores at 100 keys, which is fine for lookup
+  // caches but far too aggressive for a household's multi-room listening
+  // history — this manages its own 90-day/2000-entry retention instead.
   _logListenEntry(meta) {
     try {
       if (!meta?.title || !meta?.artist) return;
-      const entries = this._aiLocalGet('listenLog', 'entries') || [];
-      entries.push({
-        ts: Date.now(),
-        artist: meta.artist,
-        title: meta.title,
-        album: meta.album || '',
-        entity: meta.entity || '',
-        mediaType: meta.mediaType || 'music',
-        durationMs: (meta.duration || 0) * 1000,
-      });
-      // Rolling 90-day window, hard cap of 2000 entries either way
-      const cutoff = Date.now() - 90 * 24 * 3600 * 1000;
-      const pruned = entries.filter(e => e.ts >= cutoff).slice(-2000);
-      this._aiLocalSet('listenLog', 'entries', pruned);
+      const lsKey = 'crow_ai_local_listenLog';
+      const store = JSON.parse(localStorage.getItem(lsKey) || '{}');
+      const now = Date.now();
+      const entryKey = 't' + now + '_' + Math.random().toString(36).slice(2, 6);
+      store[entryKey] = {
+        data: {
+          artist: meta.artist,
+          title: meta.title,
+          album: meta.album || '',
+          entity: meta.entity || '',
+          mediaType: meta.mediaType || 'music',
+          durationMs: (meta.duration || 0) * 1000,
+        },
+        ts: now,
+      };
+      // Rolling 90-day window, hard cap of 2000 entries
+      const cutoff = now - 90 * 24 * 3600 * 1000;
+      Object.keys(store).forEach(k => { if ((store[k].ts || 0) < cutoff) delete store[k]; });
+      const keys = Object.keys(store);
+      if (keys.length > 2000) {
+        keys.sort((a, b) => (store[a].ts || 0) - (store[b].ts || 0))
+            .slice(0, keys.length - 2000)
+            .forEach(k => delete store[k]);
+      }
+      localStorage.setItem(lsKey, JSON.stringify(store));
+      this._haStorageSaveAI('listenLog');
     } catch (_) { /* localStorage unavailable — silently skip logging */ }
   }
 
-  // ISO-ish week key ("2026-W27") used to freeze one recap narrative per week
-  // so re-opening the panel doesn't re-query the AI every time.
-  _recapWeekKey() {
-    const d = new Date();
-    const onejan = new Date(d.getFullYear(), 0, 1);
-    const week = Math.ceil((((d - onejan) / 86400000) + onejan.getDay() + 1) / 7);
-    return d.getFullYear() + '-W' + week;
+  // Reads every logged play back out as a flat array (merging each entry's
+  // wrapper-level ts into its data), so the rest of the Recap aggregation
+  // code doesn't need to know about the underlying per-key storage shape.
+  _getListenLogEntries() {
+    try {
+      const store = JSON.parse(localStorage.getItem('crow_ai_local_listenLog') || '{}');
+      return Object.values(store)
+        .filter(entry => entry && entry.data)
+        .map(entry => ({ ...entry.data, ts: entry.ts }));
+    } catch (_) { return []; }
   }
 
   async _showAIRecap() {
@@ -14888,7 +14957,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const _myGen = ++this._aiPanelGeneration;
     const _stale = () => this._aiPanelGeneration !== _myGen;
 
-    const entries = this._aiLocalGet('listenLog', 'entries') || [];
+    const entries = this._getListenLogEntries();
     const cutoff = Date.now() - 7 * 24 * 3600 * 1000; // last 7 days
     const recent = entries.filter(e => e.ts >= cutoff);
 
@@ -14929,8 +14998,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       }
     });
     const top = (obj, n) => Object.entries(obj).sort((a, b) => (b[1].count || b[1]) - (a[1].count || a[1])).slice(0, n);
-    const topArtists = top(artistCounts, 5);
-    const topTracks  = top(trackCounts, 5).map(([, v]) => v);
+    const topArtists = top(artistCounts, 10);
+    const topTracks  = top(trackCounts, 10).map(([, v]) => v);
     const totalPlays = recent.length;
     const totalMins  = Math.round(totalMs / 60000);
 
@@ -14940,23 +15009,14 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (_stale()) return;
 
     let narrative = '';
-    const periodKey = this._recapWeekKey();
-    const cachedNarrative = this._aiLocalGet('recapNarrative', periodKey) || this._aiSessionGet('recapNarrative', periodKey);
-
-    if (cachedNarrative) {
-      narrative = cachedNarrative;
-    } else if (hasAI) {
-      const statSummary = `Top artists: ${topArtists.map(a => a[0] + ' (' + a[1].count + ' plays)').join(', ') || 'none'}. ` +
-        `Top tracks: ${topTracks.map(t => t.artist + ' — ' + t.title).join(', ') || 'none'}. ` +
+    if (hasAI) {
+      const statSummary = `Top artists: ${topArtists.slice(0, 5).map(a => a[0] + ' (' + a[1] + ' plays)').join(', ') || 'none'}. ` +
+        `Top tracks: ${topTracks.slice(0, 5).map(t => t.artist + ' — ' + t.title).join(', ') || 'none'}. ` +
         `Total plays: ${totalPlays}. Total listening time: ${totalMins} minutes.`;
-      const prompt = `Here is a week of someone's music listening stats: ${statSummary} Write a warm, 2-3 sentence recap summarising their week of listening, in a friendly Spotify-Wrapped style tone. No markdown, no headers, no quotes.`;
+      const prompt = `Here is a week of someone's music listening stats: ${statSummary} Write a warm, 2-3 sentence recap summarising their week of listening, in a friendly Spotify-Wrapped style tone. Speak directly to them about their own listening — don't write as a company or service thanking them for "letting us be part of your journey" or similar phrasing; this is their own personal summary, not a product message. No markdown, no headers, no quotes.`;
       try {
         const raw = await this._aiConverse(prompt);
         narrative = (raw || '').trim();
-        if (narrative) {
-          this._aiLocalSet('recapNarrative', periodKey, narrative);
-          this._aiSessionSet('recapNarrative', periodKey, narrative);
-        }
       } catch (_) { /* narrative is optional — stats still render below */ }
     }
     if (_stale()) return;
@@ -14970,8 +15030,57 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         <div id="recapArtistList" style="margin-bottom:16px;"></div>` : ''}
         ${topTracks.length ? `
         <div style="font-size:10px;font-weight:700;color:rgba(99,179,237,0.8);letter-spacing:0.6px;text-transform:uppercase;margin-bottom:8px;">Top Tracks</div>
-        <div id="recapTrackList"></div>` : ''}
+        <div id="recapTrackList"></div>
+        <div style="font-size:11px;color:${this._pt('dim')};margin-top:10px;text-align:center;">Top 10 · last 7 days</div>` : ''}
+        <button id="recapResetBtn" style="width:100%;margin-top:20px;padding:10px 14px;border-radius:10px;border:1px solid rgba(255,69,58,0.3);background:rgba(255,69,58,0.1);color:#ff453a;font-size:13px;font-weight:500;cursor:pointer;font-family:inherit;">Clear Recap History</button>
       </div>`;
+
+    content.querySelector('#recapResetBtn')?.addEventListener('click', () => {
+      const _savedHtml = content.innerHTML;
+      const _savedScroll = content.scrollTop;
+      content.innerHTML =
+        '<div class="panel-state confirm">' +
+          '<div class="panel-state-icon"><svg viewBox="0 0 24 24"><path d="M9,3V4H4V6H5V19A2,2 0 0,0 7,21H17A2,2 0 0,0 19,19V6H20V4H15V3H9M7,6H17V19H7V6M9,8V17H11V8H9M13,8V17H15V8H13Z"/></svg></div>' +
+          '<div class="panel-state-title">Reset listening data?</div>' +
+          '<div class="panel-state-body">This permanently deletes your Recap history. This can\u2019t be undone.</div>' +
+          '<div class="panel-state-confirm-btns">' +
+            '<button class="panel-state-btn-cancel" id="recapResetCancel">Cancel</button>' +
+            '<button class="panel-state-btn-danger" id="recapResetConfirm">Reset</button>' +
+          '</div>' +
+        '</div>';
+      content.querySelector('#recapResetCancel')?.addEventListener('click', () => {
+        content.innerHTML = _savedHtml;
+        content.scrollTop = _savedScroll;
+        content.querySelector('#recapResetBtn')?.addEventListener('click', () => this._showAIRecap(), { once: true });
+      }, { once: true });
+      content.querySelector('#recapResetConfirm')?.addEventListener('click', async () => {
+        try {
+          localStorage.removeItem('crow_ai_local_listenLog');
+          localStorage.removeItem('crow_ai_local_maRecapState');
+        } catch (_) {}
+        this._maRecapState = {};
+        // Cancel any pending debounced write for these caches — otherwise a
+        // stale timer could still fire afterwards and re-push old data.
+        clearTimeout(this._haAISaveTimers?.listenLog);
+        clearTimeout(this._haAISaveTimers?.maRecapState);
+        // Write the clear straight to HA now rather than via the debounced
+        // _haStorageSaveAI (2s delay) — if the card gets torn down and
+        // recreated (e.g. dashboard navigation) before that timer fires, the
+        // next load would pull the old, not-yet-cleared data back down from
+        // HA and silently undo the clear.
+        if (this._config?.ai_info_persistent_storage === true && this._hass?.connection) {
+          try {
+            const conn = this._hass.connection;
+            const res = await conn.sendMessagePromise({ type: 'frontend/get_user_data', key: 'crow_ai_local' });
+            const full = (res?.value && typeof res.value === 'object') ? res.value : {};
+            full.listenLog = {};
+            full.maRecapState = {};
+            await conn.sendMessagePromise({ type: 'frontend/set_user_data', key: 'crow_ai_local', value: full });
+          } catch (_) { /* best-effort — local clear already happened either way */ }
+        }
+        this._showAIRecap();
+      }, { once: true });
+    });
 
     // ── Top Artists — tap opens the AI bio panel, same one used elsewhere
     // in the app (_showCastBio). Passing a custom onBack re-renders the
@@ -26366,7 +26475,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                 <div class="toggle-item" style="align-items:flex-start;gap:12px;margin-top:12px;">
                   <div style="flex:1;">
                     <div class="toggle-label">Persistent AI Info Storage</div>
-                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Off: AI lookups (track info, recommendations, bios, etc.) cached on this device only. On: also saved permanently.</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Off: AI lookups (track info, recommendations, bios, etc.) and Listening Recap history cached on this device only. On: also saved permanently.</div>
                   </div>
                   <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="ai_info_persistent_storage"><span class="toggle-track"></span></label>
                 </div>
