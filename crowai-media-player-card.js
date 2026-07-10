@@ -237,7 +237,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         });
         if (_maRecapStateChanged) {
           try { localStorage.setItem('crow_ai_local_maRecapState', JSON.stringify(this._maRecapState)); } catch (_) {}
-          this._haStorageSaveAI('maRecapState');
+          this._haStorageSaveAIImmediate('maRecapState');
         }
       }
     }
@@ -8932,6 +8932,31 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   }
 
   // Write a single AI local cache store to HA user data (fire-and-forget)
+  // Immediate (non-debounced) version of _haStorageSaveAI, used specifically
+  // for Recap data (listenLog, maRecapState). Unlike lookup caches (lyrics,
+  // iTunes art, AI info), Recap holds actual user history — losing a couple
+  // of seconds of batching efficiency is an acceptable trade for not losing
+  // a play that was logged just before a refresh or WKWebView eviction,
+  // which the 2s debounce window would otherwise be vulnerable to.
+  async _haStorageSaveAIImmediate(cacheName) {
+    if (this._config?.ai_info_persistent_storage !== true) return;
+    const conn = this._hass?.connection;
+    if (!conn) return;
+    clearTimeout(this._haAISaveTimers?.[cacheName]);
+    try {
+      const store = JSON.parse(localStorage.getItem('crow_ai_local_' + cacheName) || '{}');
+      const res = await conn.sendMessagePromise({ type: 'frontend/get_user_data', key: 'crow_ai_local' });
+      const full = (res?.value && typeof res.value === 'object') ? res.value : {};
+      full[cacheName] = store;
+      await conn.sendMessagePromise({ type: 'frontend/set_user_data', key: 'crow_ai_local', value: full });
+    } catch (_) {
+      try {
+        const store = JSON.parse(localStorage.getItem('crow_ai_local_' + cacheName) || '{}');
+        await conn.sendMessagePromise({ type: 'frontend/set_user_data', key: 'crow_ai_local', value: { [cacheName]: store } });
+      } catch (_) {}
+    }
+  }
+
   _haStorageSaveAI(cacheName) {
     if (this._config?.ai_info_persistent_storage !== true) return;
     const conn = this._hass?.connection;
@@ -14915,7 +14940,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             .forEach(k => delete store[k]);
       }
       localStorage.setItem(lsKey, JSON.stringify(store));
-      this._haStorageSaveAI('listenLog');
+      this._haStorageSaveAIImmediate('listenLog');
     } catch (_) { /* localStorage unavailable — silently skip logging */ }
   }
 
@@ -24842,6 +24867,117 @@ Include ALL tracks. Use null for unknown fields.`;
     });
   }
 
+  // Syncs the final queue order to MA in a single pass once the user is done
+  // reordering, rather than after every individual drag. Only replays the
+  // affected range (from the first position that changed to the last) in
+  // reverse via move_queue_item_next — each call inserts that item right
+  // after the currently-playing track, so processing last-to-first
+  // reproduces the exact intended order. One sync at the very end, computed
+  // from the final settled order, avoids ever computing a move sequence
+  // against a queue state that hasn't caught up with an earlier drag yet.
+  // Re-fetches the current queue and returns items as {uri, queueItemId} in
+  // upcoming order (excludes history/current). Used to resolve a fresh,
+  // correct queue_item_id immediately before each move — MA's queue_item_id
+  // values are positional and shift after every move_queue_item_next call,
+  // so an ID captured earlier in a multi-step reorder can go stale partway
+  // through and get rejected as "already played/buffered".
+  async _fetchUpcomingQueueItems() {
+    try {
+      const res = await this._hass.connection.sendMessagePromise({
+        type: 'call_service', domain: 'mass_queue', service: 'get_queue_items',
+        service_data: { entity: this._entity, limit_before: 0, limit_after: 9999 },
+        return_response: true
+      });
+      const raw = res?.response?.[this._entity] || res?.response || [];
+      const activeIdx = raw.findIndex(i => i.active === true || i.state === 'playing');
+      const startIdx = activeIdx >= 0 ? activeIdx + 1 : 0;
+      return raw.slice(startIdx).map(item => ({
+        uri: item.media_content_id || item.uri || null,
+        queueItemId: item.queue_item_id != null ? item.queue_item_id : null,
+      })).filter(i => i.uri && i.queueItemId != null);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  // Syncs the final queue order to MA in a single pass once the user is done
+  // reordering, rather than after every individual drag — avoids ever
+  // computing a move sequence against a queue state that hasn't caught up
+  // with an earlier drag yet. Diffs by URI (stable) to find the affected
+  // range, then replays that range in reverse via move_queue_item_next —
+  // each call inserts that item right after the currently-playing track, so
+  // processing last-to-first reproduces the exact intended order. Before
+  // each individual move, re-fetches the live queue and resolves that
+  // track's current queue_item_id fresh, since earlier moves in the same
+  // pass shift everyone else's positional ID.
+  async _syncFullQueueReorderToMA(finalUris, origUris) {
+    const attrs = this._hass?.states?.[this._entity]?.attributes || {};
+    const isMaByAttrs    = 'mass_player_id' in attrs || 'mass_is_group' in attrs || 'mass_queue_index' in attrs ||
+                           !!(attrs.platform && String(attrs.platform).toLowerCase().includes('music_assistant'));
+    const isMaByEntityId = (this._entity || '').startsWith('media_player.mass_');
+    const isMaByRegistry = this._maEntityIds !== null && this._maEntityIds?.has(this._entity);
+    const isMaByConfig   = Array.isArray(this._config?.ma_entities) && this._config.ma_entities.includes(this._entity);
+    const isMaByKnown    = this._knownMaEntities?.has(this._entity);
+    const isMa = isMaByAttrs || isMaByEntityId || isMaByRegistry || isMaByConfig || isMaByKnown;
+
+    if (!isMa) {
+      this._showToast('Reorder not available \u2014 not a Music Assistant speaker');
+      return;
+    }
+
+    const hasMoveNext  = !!(this._hass?.services?.mass_queue?.move_queue_item_next);
+    const hasGetItems  = !!(this._hass?.services?.mass_queue?.get_queue_items);
+    if (!hasMoveNext || !hasGetItems || !finalUris?.length) return;
+
+    this._queueReordering = true;
+    try {
+      let first = -1, last = -1;
+      const minLen = Math.min(finalUris.length, origUris.length);
+      for (let i = 0; i < minLen; i++) {
+        if (finalUris[i] !== origUris[i]) { if (first === -1) first = i; last = i; }
+      }
+      if (finalUris.length !== origUris.length) {
+        if (first === -1) first = minLen;
+        last = finalUris.length - 1;
+      }
+      if (first === -1) return; // nothing actually changed
+
+      // Tracks which live queue_item_ids this pass has already used, so a
+      // duplicate track (same URI appearing more than once) doesn't get the
+      // same physical queue slot matched twice.
+      const usedIds = new Set();
+
+      for (let i = last; i >= first; i--) {
+        const targetUri = finalUris[i];
+        if (!targetUri) continue;
+
+        const liveItems = await this._fetchUpcomingQueueItems();
+        // Prefer the last unused matching occurrence, closest to how the
+        // original order would have laid out duplicates.
+        let match = null;
+        for (let j = liveItems.length - 1; j >= 0; j--) {
+          const li = liveItems[j];
+          if (li.uri === targetUri && !usedIds.has(li.queueItemId)) { match = li; break; }
+        }
+        if (!match) continue; // couldn't resolve — skip rather than risk moving the wrong track
+
+        usedIds.add(match.queueItemId);
+        await this._hass.callService('mass_queue', 'move_queue_item_next', {
+          entity: this._entity, queue_item_id: match.queueItemId
+        });
+        await new Promise(res => setTimeout(res, 60));
+      }
+
+      await new Promise(res => setTimeout(res, 300));
+      await this._showQueuePanel(this._queuePanelDirection);
+    } catch (err) {
+      console.error('[Queue reorder]', err);
+      this._showToast('Reorder failed \u2014 please try again');
+    } finally {
+      this._queueReordering = false;
+    }
+  }
+
   _exitReorderMode(content) {
     clearTimeout(this._reorderIdleTimer);
     this._reorderIdleTimer = null;
@@ -24849,6 +24985,16 @@ Include ALL tracks. Use null for unknown fields.`;
     this._queueReorderMode = false;
     const r = this.shadowRoot;
     const _ic = content || r?.getElementById('infoContent');
+
+    if (_ic && this._queueReorderOriginalUris?.length) {
+      const _finalUris = [..._ic.querySelectorAll('.queue-row-wrap:not(.is-current):not(.is-history)')]
+        .map(w => w.querySelector('.queue-row')?.dataset?.uri)
+        .filter(Boolean);
+      const _origUris = this._queueReorderOriginalUris;
+      this._syncFullQueueReorderToMA(_finalUris, _origUris);
+    }
+    this._queueReorderOriginalUris = null;
+
     if (_ic) { _ic.classList.remove('queue-reorder-mode'); this._teardownQueueDrag(_ic); }
     r?.getElementById('queueReorderDoneBtn')?.classList.add('hidden');
   }
@@ -24890,6 +25036,9 @@ Include ALL tracks. Use null for unknown fields.`;
     r.getElementById('queueReorderDoneBtn')?.classList.toggle('hidden', !this._queueReorderMode);
 
     if (this._queueReorderMode) {
+      this._queueReorderOriginalUris = [...content.querySelectorAll('.queue-row-wrap:not(.is-current):not(.is-history)')]
+        .map(w => w.querySelector('.queue-row')?.dataset?.uri)
+        .filter(Boolean);
       this._setupQueueDrag(content);
     } else {
       clearTimeout(this._reorderIdleTimer);
@@ -24973,13 +25122,6 @@ Include ALL tracks. Use null for unknown fields.`;
       if (lastTarget) { lastTarget.classList.remove('queue-drop-above', 'queue-drop-below'); lastTarget = null; }
       dragging.classList.remove('queue-dragging');
 
-      // Capture dragged item info before inserting it into new position
-      const _draggedRow = dragging.querySelector('.queue-row');
-      const _draggedId  = _draggedRow?.dataset?.queueItemId;
-      const _dropTargetRow = dropTarget?.querySelector('.queue-row');
-      const _dropTargetId  = _dropTargetRow?.dataset?.queueItemId;
-      const _dropAtEnd = !dropTarget;
-
       const container = dragging.parentNode;
       if (dropTarget && dropTarget !== dragging) container.insertBefore(dragging, dropTarget);
       else if (!dropTarget) container.appendChild(dragging);
@@ -24989,31 +25131,19 @@ Include ALL tracks. Use null for unknown fields.`;
       hasMoved  = false;
       content.style.touchAction = ''; // restore scroll
 
-      // Build new URI order: rendered rows + any unrendered tail from cache
+      // Purely local — no MA sync per-drag. The full final order gets synced
+      // once, in a single pass, when the user taps Done. This avoids the
+      // race condition where syncing after every individual drag could
+      // compute a move sequence from a queue state that hadn't caught up
+      // with the previous drag yet.
       const _renderedUris = [...content.querySelectorAll('.queue-row-wrap:not(.is-current):not(.is-history)')]
         .map(w => w.querySelector('.queue-row')?.dataset?.uri)
         .filter(Boolean);
-
-      if (!_renderedUris.length) return;
-
-      const _cached   = content._queueCache;
-      const _origUris = _cached ? _cached.after : [];
-      const _renderedSet = new Set(_renderedUris);
-      const _tailUris = _origUris.filter(u => !_renderedSet.has(u));
-      const _newUris  = [..._renderedUris, ..._tailUris];
-
-      // Only fire if the rendered portion actually changed
-      const _changed = _renderedUris.some((uri, i) => uri !== _origUris[i]);
-      if (!_changed) return;
-
-      await self._syncQueueReorderToMA(content, _newUris, _draggedId, _dropTargetId, _dropAtEnd);
-      // Reset drag listeners cleanly while staying in reorder mode — but only
-      // if reorder mode is still actually on. The sync above can take a while
-      // (MA calls + a delayed panel refresh), and the user may have already
-      // pressed "Reorder" to exit before it resolves.
-      if (self._queueReorderMode) {
-        self._teardownQueueDrag(content);
-        self._setupQueueDrag(content);
+      if (_renderedUris.length && content._queueCache) {
+        const _origUris = content._queueCache.after || [];
+        const _renderedSet = new Set(_renderedUris);
+        const _tailUris = _origUris.filter(u => !_renderedSet.has(u));
+        content._queueCache.after = [..._renderedUris, ..._tailUris];
       }
     };
 
@@ -25119,105 +25249,6 @@ Include ALL tracks. Use null for unknown fields.`;
     content.removeEventListener('pointerup',     L.onUp);
     content.removeEventListener('pointercancel', L.onCancel);
     content._dragListeners = null;
-  }
-
-  // Sync a single drag-drop to MA using move_queue_item_next.
-  // draggedId: queue_item_id of the moved track
-  // beforeId:  queue_item_id of the track it was dropped before (null = end of queue)
-  // atEnd:     true if dropped at the end
-  async _syncQueueReorderToMA(content, newUris, draggedId, beforeId, atEnd) {
-    this._queueReordering = true;
-
-    const attrs = this._hass?.states?.[this._entity]?.attributes || {};
-    const isMaByAttrs    = 'mass_player_id' in attrs || 'mass_is_group' in attrs || 'mass_queue_index' in attrs ||
-                           !!(attrs.platform && String(attrs.platform).toLowerCase().includes('music_assistant'));
-    const isMaByEntityId = (this._entity || '').startsWith('media_player.mass_');
-    const isMaByRegistry = this._maEntityIds !== null && this._maEntityIds?.has(this._entity);
-    const isMaByConfig   = Array.isArray(this._config?.ma_entities) && this._config.ma_entities.includes(this._entity);
-    const isMaByKnown    = this._knownMaEntities?.has(this._entity);
-    const isMa = isMaByAttrs || isMaByEntityId || isMaByRegistry || isMaByConfig || isMaByKnown;
-
-    const _cleanup = () => {
-      this._queueReordering = false;
-    };
-
-    if (!isMa) {
-      _cleanup();
-      this._showToast('Reorder not available \u2014 not a Music Assistant speaker');
-      return;
-    }
-
-    if (!newUris?.length) { _cleanup(); return; }
-
-    // Update local cache immediately so panel looks right during sync
-    if (content._queueCache) content._queueCache.after = [...newUris];
-
-    try {
-      const hasMoveNext = !!(this._hass?.services?.mass_queue?.move_queue_item_next);
-
-      if (hasMoveNext && draggedId) {
-        // ── Single-item move: only move the dragged track ─────────────────
-        // Dropped before a specific item → move it to next, then if needed
-        // move it past subsequent items using the queue state.
-        // The simplest reliable approach: move draggedId to next position,
-        // then if it was dropped at position > 1, use the full new order
-        // to do minimal additional moves for just the affected range.
-        //
-        // Simplest correct implementation: move draggedId to the position
-        // just before beforeId by making it "next" relative to the item
-        // before it in the new order.
-        const rows = [...content.querySelectorAll('.queue-row-wrap:not(.is-current):not(.is-history)')];
-        const allIds = rows.map(r => r.querySelector('.queue-row')?.dataset?.queueItemId).filter(Boolean);
-        const newPos = allIds.indexOf(draggedId);
-
-        if (newPos === 0) {
-          // Moved to first position — move_queue_item_next does exactly this
-          await this._hass.callService('mass_queue', 'move_queue_item_next', {
-            entity: this._entity, queue_item_id: draggedId
-          });
-        } else if (newPos > 0) {
-          // Moved to middle or end: move it to next first, then shift it
-          // down to the right position by moving all items above it to next
-          await this._hass.callService('mass_queue', 'move_queue_item_next', {
-            entity: this._entity, queue_item_id: draggedId
-          });
-          await new Promise(res => setTimeout(res, 60));
-          // Move each item that should be above the dragged item to next
-          // This puts them back in front of draggedId
-          for (let i = 0; i < newPos; i++) {
-            if (allIds[i] && allIds[i] !== draggedId) {
-              await this._hass.callService('mass_queue', 'move_queue_item_next', {
-                entity: this._entity, queue_item_id: allIds[i]
-              });
-              await new Promise(res => setTimeout(res, 40));
-            }
-          }
-        }
-      } else if (!hasMoveNext) {
-        // ── Fallback without mass_queue: enqueue dragged item as next ─────
-        const draggedUri = newUris[newUris.indexOf(newUris.find((_, i) =>
-          content.querySelectorAll('.queue-row-wrap:not(.is-current):not(.is-history)')[i]
-            ?.querySelector('.queue-row')?.dataset?.queueItemId === draggedId))];
-        if (draggedUri) {
-          await this._hass.connection.sendMessagePromise({
-            type: 'call_service', domain: 'music_assistant', service: 'play_media',
-            service_data: { entity_id: this._entity, media_id: draggedUri, media_type: 'track', enqueue: 'next' }
-          });
-        }
-      }
-
-      _cleanup();
-      if (this._queueReorderMode) {
-        await new Promise(res => setTimeout(res, 300));
-        if (this._queueReorderMode) await this._showQueuePanel(this._queuePanelDirection);
-      }
-    } catch (err) {
-      _cleanup();
-      console.error('[Queue reorder]', err);
-      this._showToast('Reorder failed \u2014 please try again');
-    } finally {
-      this._queueReordering = false;
-    }
   }
 
 
