@@ -184,27 +184,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           const title  = attrs.media_title  || '';
           if (!artist || !title) return;
 
-          // Narrow notification/announcement filter — deliberately NOT a
-          // blanket URI-scheme match (that's what silently excluded every
-          // real MA track before). Only catches the specific shape a system
-          // sound clip actually has: no real artist + a bare filename-style
-          // title (e.g. "youve-got-mail-sound").
-          const _artistLower = artist.trim().toLowerCase();
-          const _hasRealArtist = _artistLower !== '[unknown]' && _artistLower !== 'unknown';
-          const _looksLikeFilenameSlug = /^[a-z0-9]+(-[a-z0-9]+){2,}$/i.test(title.trim());
-          if (!_hasRealArtist && _looksLikeFilenameSlug) return;
-
-          // Music-only — podcast/audiobook rely on this card's own "currently
-          // playing via my podcast/audiobook browser" flags (reliable
-          // regardless of what MA itself reports), plus the standard
-          // media_content_type attribute as a secondary signal. Radio uses
-          // the same shared _isLiveStream check the lyrics feature already
-          // relies on for exactly this — proven reliable on this setup.
-          const _contentType = (attrs.media_content_type || '').toLowerCase();
-          const _isPodcast   = !!this._pcNowPlaying || _contentType === 'podcast';
-          const _isAudiobook = !!this._abNowPlaying || _contentType === 'audiobook';
-          const _isRadio      = this._isLiveStream(st);
-          if (_isPodcast || _isAudiobook || _isRadio) return;
+          if (this._recapShouldExclude(artist, title, attrs, st)) return;
 
           const key = artist + '|||' + title + '|||' + (attrs.media_album_name || '');
           const prev = this._maRecapState[entId];
@@ -245,6 +225,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // Load pins, AI cache and iTunes art from HA user data on first connection —
     // this survives pull-to-refresh and WKWebView localStorage evictions.
     if (!this._haStorageLoaded) this._haStorageLoad();
+    // Backfill Recap history from HA's own state history — catches plays
+    // that happened on this card's speaker(s) while this card wasn't
+    // mounted (e.g. a different room's tab was open) to observe them live.
+    if (!this._historyBackfillDone) this._backfillListenHistoryFromHA();
     if (!this.shadowRoot.innerHTML) {
       // Pre-load starred/pinned keys into memory before render so they're available
       // immediately when _loadMATab and _rbInjectStarredSection run
@@ -8938,23 +8922,36 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // of seconds of batching efficiency is an acceptable trade for not losing
   // a play that was logged just before a refresh or WKWebView eviction,
   // which the 2s debounce window would otherwise be vulnerable to.
-  async _haStorageSaveAIImmediate(cacheName) {
-    if (this._config?.ai_info_persistent_storage !== true) return;
-    const conn = this._hass?.connection;
-    if (!conn) return;
-    clearTimeout(this._haAISaveTimers?.[cacheName]);
-    try {
-      const store = JSON.parse(localStorage.getItem('crow_ai_local_' + cacheName) || '{}');
-      const res = await conn.sendMessagePromise({ type: 'frontend/get_user_data', key: 'crow_ai_local' });
-      const full = (res?.value && typeof res.value === 'object') ? res.value : {};
-      full[cacheName] = store;
-      await conn.sendMessagePromise({ type: 'frontend/set_user_data', key: 'crow_ai_local', value: full });
-    } catch (_) {
+  //
+  // Serialized through a single promise chain (_haSaveQueue) because this is
+  // a read-modify-write against one shared HA key (crow_ai_local covers
+  // several cache names). listenLog and maRecapState get pushed together on
+  // every track change — if two of these overlapped, the second call's
+  // "read the full blob" could happen before the first call's "write it
+  // back" landed, so the second write would silently discard the first
+  // one's change once it completed. Chaining forces each write to fully
+  // finish before the next one reads.
+  _haStorageSaveAIImmediate(cacheName) {
+    const run = async () => {
+      if (this._config?.ai_info_persistent_storage !== true) return;
+      const conn = this._hass?.connection;
+      if (!conn) return;
+      clearTimeout(this._haAISaveTimers?.[cacheName]);
       try {
         const store = JSON.parse(localStorage.getItem('crow_ai_local_' + cacheName) || '{}');
-        await conn.sendMessagePromise({ type: 'frontend/set_user_data', key: 'crow_ai_local', value: { [cacheName]: store } });
-      } catch (_) {}
-    }
+        const res = await conn.sendMessagePromise({ type: 'frontend/get_user_data', key: 'crow_ai_local' });
+        const full = (res?.value && typeof res.value === 'object') ? res.value : {};
+        full[cacheName] = store;
+        await conn.sendMessagePromise({ type: 'frontend/set_user_data', key: 'crow_ai_local', value: full });
+      } catch (_) {
+        try {
+          const store = JSON.parse(localStorage.getItem('crow_ai_local_' + cacheName) || '{}');
+          await conn.sendMessagePromise({ type: 'frontend/set_user_data', key: 'crow_ai_local', value: { [cacheName]: store } });
+        } catch (_) {}
+      }
+    };
+    this._haSaveQueue = (this._haSaveQueue || Promise.resolve()).then(run, run);
+    return this._haSaveQueue;
   }
 
   _haStorageSaveAI(cacheName) {
@@ -10246,6 +10243,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       '</div>' +
       '<div class="ma-item-chevron" style="' + (['artist','album','playlist'].includes(tab) ? '' : 'visibility:hidden') + '"><svg viewBox="0 0 24 24"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg></div>';
     wrap.appendChild(el);
+    if (this._config?.row_glow === true && imgUrl) this._observeRowGlow(imgUrl, wrap, null);
     self._attachMAItemSwipe(wrap, item, tab, opts);
     return wrap;
   }
@@ -10437,6 +10435,20 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       </div>`
     ).join('');
     content.innerHTML = `<div class="ma-ios-categories">${catHtml}</div>`;
+
+    // Apply glow to rows — same icon-colour-based treatment as the Music
+    // Library root list, since these are colour-tile category shortcuts
+    // rather than individual items with real artwork.
+    if (this._config?.row_glow === true) {
+      content.querySelectorAll('.ma-ios-cat-row').forEach(row => {
+        const hex = row.dataset.color;
+        row.style.background    = `linear-gradient(90deg, ${hex}20 0%, transparent 60%)`;
+        row.style.boxShadow     = `inset 0 0 0 1px ${hex}25`;
+        row.style.borderRadius  = '12px';
+        row.style.marginBottom  = '4px';
+        row.style.borderBottom  = 'none';
+      });
+    }
 
     content.querySelectorAll('.ma-ios-cat-row').forEach(row => {
       row.addEventListener('click', () => this._openPinnedCategoryDetail(row.dataset.key));
@@ -11073,6 +11085,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
                       : (b.description || '').replace(/<[^>]+>/g, '').trim().slice(0, 200),
       url_rss:      'https://librivox.org/rss/' + b.identifier,
       url_librivox: 'https://librivox.org/' + b.identifier,
+      // Archive.org's standard per-item cover thumbnail — reliable, no extra
+      // API call needed, works directly off the identifier.
+      artUrl:       'https://archive.org/services/img/' + b.identifier,
       language:     null,
       totaltime:    null,
       genres:       Array.isArray(b.subject) ? b.subject : [],
@@ -11217,10 +11232,17 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const row = document.createElement('div');
     row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer;-webkit-tap-highlight-color:transparent;position:relative;';
     const sub = [book.author, book.language, book.totaltime].filter(Boolean).join(' \u00b7 ');
+    // Fallback URL construction for audiobooks pinned before artUrl was
+    // stored — those snapshots still have `id` (the Archive.org identifier),
+    // which is all the standard cover endpoint needs.
+    const _artUrl = book.artUrl || (book.id ? ('https://archive.org/services/img/' + book.id) : '');
+    const _fallbackIcon = '<svg viewBox="0 0 24 24" style="width:20px;height:20px;fill:#FF9500;"><path d="M21,5C19.89,4.65 18.67,4.5 17.5,4.5C15.55,4.5 13.45,4.9 12,6C10.55,4.9 8.45,4.5 6.5,4.5C4.55,4.5 2.45,4.9 1,6V20.65C1,20.9 1.25,21.15 1.5,21.15C1.6,21.15 1.65,21.1 1.75,21.1C3.1,20.45 5.05,20 6.5,20C8.45,20 10.55,20.4 12,21.5C13.35,20.65 15.8,20 17.5,20C19.15,20 20.85,20.3 22.25,21.1C22.35,21.15 22.4,21.15 22.5,21.15C22.75,21.15 23,20.9 23,20.65V6C22.4,5.55 21.75,5.25 21,5M21,18.5C19.9,18.15 18.7,18 17.5,18C15.8,18 13.35,18.65 12,19.5V8C13.35,7.15 15.8,6.5 17.5,6.5C18.7,6.5 19.9,6.65 21,7V18.5Z"/></svg>';
+    const artHtml = _artUrl
+      ? '<img src="' + _artUrl + '" alt="" style="width:40px;height:40px;border-radius:8px;object-fit:cover;" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">' +
+        '<span style="display:none;width:40px;height:40px;align-items:center;justify-content:center;">' + _fallbackIcon + '</span>'
+      : _fallbackIcon;
     row.innerHTML =
-      '<div style="width:40px;height:40px;border-radius:8px;background:rgba(255,149,0,0.15);flex-shrink:0;display:flex;align-items:center;justify-content:center;">' +
-        '<svg viewBox="0 0 24 24" style="width:20px;height:20px;fill:#FF9500;"><path d="M21,5C19.89,4.65 18.67,4.5 17.5,4.5C15.55,4.5 13.45,4.9 12,6C10.55,4.9 8.45,4.5 6.5,4.5C4.55,4.5 2.45,4.9 1,6V20.65C1,20.9 1.25,21.15 1.5,21.15C1.6,21.15 1.65,21.1 1.75,21.1C3.1,20.45 5.05,20 6.5,20C8.45,20 10.55,20.4 12,21.5C13.35,20.65 15.8,20 17.5,20C19.15,20 20.85,20.3 22.25,21.1C22.35,21.15 22.4,21.15 22.5,21.15C22.75,21.15 23,20.9 23,20.65V6C22.4,5.55 21.75,5.25 21,5M21,18.5C19.9,18.15 18.7,18 17.5,18C15.8,18 13.35,18.65 12,19.5V8C13.35,7.15 15.8,6.5 17.5,6.5C18.7,6.5 19.9,6.65 21,7V18.5Z"/></svg>' +
-      '</div>' +
+      '<div style="width:40px;height:40px;border-radius:8px;background:rgba(255,149,0,0.15);flex-shrink:0;display:flex;align-items:center;justify-content:center;overflow:hidden;">' + artHtml + '</div>' +
       '<div style="flex:1;min-width:0;">' +
         '<div style="font-size:13px;font-weight:600;color:var(--primary-text-color,#fff);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (book.title||'Unknown') + '</div>' +
         '<div style="font-size:11px;color:rgba(255,255,255,0.45);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + sub + '</div>' +
@@ -14912,12 +14934,137 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // because that helper caps stores at 100 keys, which is fine for lookup
   // caches but far too aggressive for a household's multi-room listening
   // history — this manages its own 90-day/2000-entry retention instead.
-  _logListenEntry(meta) {
+  // Shared exclusion check used by both the live watcher (set hass) and the
+  // history backfill — kept as one function so the two paths can't drift
+  // out of sync with different rules.
+  _recapShouldExclude(artist, title, attrs, pseudoState) {
+    // Narrow notification/announcement filter — deliberately NOT a blanket
+    // URI-scheme match (that's what silently excluded every real MA track
+    // before). Only catches the specific shape a system sound clip actually
+    // has: no real artist + a bare filename-style title.
+    const artistLower = (artist || '').trim().toLowerCase();
+    const hasRealArtist = artistLower !== '[unknown]' && artistLower !== 'unknown';
+    const looksLikeFilenameSlug = /^[a-z0-9]+(-[a-z0-9]+){2,}$/i.test((title || '').trim());
+    if (!hasRealArtist && looksLikeFilenameSlug) return true;
+
+    // Music-only — podcast/audiobook rely on this card's own "currently
+    // playing via my podcast/audiobook browser" flags where available (live
+    // tracking only — historical entries have no such flag, so those fall
+    // back to media_content_type alone), plus that attribute as a secondary
+    // signal either way. Radio uses the shared _isLiveStream heuristic.
+    const contentType = (attrs?.media_content_type || '').toLowerCase();
+    const isPodcast   = (!pseudoState && !!this._pcNowPlaying) || contentType === 'podcast';
+    const isAudiobook = (!pseudoState && !!this._abNowPlaying) || contentType === 'audiobook';
+    const isRadio      = this._isLiveStream(pseudoState || { attributes: attrs });
+    return isPodcast || isAudiobook || isRadio;
+  }
+
+  // Reconstructs plays that happened while this card wasn't mounted/visible
+  // to observe them live — the live watcher in `set hass` only runs while
+  // this specific card is rendered, so a play on a room's speaker while a
+  // different room's tab was open would otherwise never be logged at all.
+  // HA stores entity state history independently of any card, so this asks
+  // for it directly and walks through it the same way the live watcher
+  // walks through real-time updates, applying the exact same shared
+  // exclusion/qualification rules via _recapShouldExclude.
+  //
+  // Runs once per card load (like _haStorageLoad), and only looks back as
+  // far as each entity's last checkpoint (or 48h on the very first run, to
+  // avoid a huge initial fetch) — not the entity's entire history.
+  async _backfillListenHistoryFromHA() {
+    if (this._historyBackfillDone) return;
+    this._historyBackfillDone = true;
+    const conn = this._hass?.connection;
+    if (!conn) return;
+
+    const watchEntities = [
+      ...(Array.isArray(this._config?.entities) ? this._config.entities : []),
+      ...(Array.isArray(this._config?.ma_entities) ? this._config.ma_entities : []),
+    ].filter((v, i, a) => a.indexOf(v) === i);
+    if (!watchEntities.length) return;
+
+    let checkpoints = {};
+    try { checkpoints = JSON.parse(localStorage.getItem('crow_ai_local_historyCheckpoint') || '{}'); } catch (_) {}
+    let clearedAtTs = 0;
+    try { clearedAtTs = JSON.parse(localStorage.getItem('crow_ai_local_recapClearedAt') || '{}').ts || 0; } catch (_) {}
+
+    const now = Date.now();
+    const maxLookbackMs = 48 * 3600 * 1000; // cap first-ever backfill per entity
+    let checkpointsChanged = false;
+
+    for (const entId of watchEntities) {
+      const sinceTs = Math.max(checkpoints[entId] || 0, clearedAtTs, now - maxLookbackMs);
+
+      let raw = [];
+      try {
+        const res = await conn.sendMessagePromise({
+          type: 'history/history_during_period',
+          start_time: new Date(sinceTs).toISOString(),
+          end_time: new Date(now).toISOString(),
+          entity_ids: [entId],
+          minimal_response: false,
+          no_attributes: false,
+          significant_changes_only: false,
+        });
+        raw = res?.[entId] || [];
+      } catch (_) {
+        continue; // leave this entity's checkpoint untouched — retry next load
+      }
+
+      if (raw.length) {
+        // Normalize — HA's compressed history format uses s/a/lu; some
+        // versions/endpoints use full state/attributes/last_updated keys.
+        const normalized = raw.map(h => ({
+          state: h.s !== undefined ? h.s : h.state,
+          attrs: h.a !== undefined ? h.a : (h.attributes || {}),
+          ts: h.lu !== undefined ? h.lu * 1000 : new Date(h.last_updated || h.last_changed || 0).getTime(),
+        })).filter(e => e.ts && !isNaN(e.ts)).sort((a, b) => a.ts - b.ts);
+
+        let prevMeta = null, prevStartTs = null;
+        for (const entry of normalized) {
+          if (entry.state !== 'playing') continue;
+          const artist = entry.attrs.media_artist || '';
+          const title  = entry.attrs.media_title  || '';
+          if (!artist || !title) continue;
+          if (this._recapShouldExclude(artist, title, entry.attrs, { state: entry.state, attributes: entry.attrs })) continue;
+
+          const key = artist + '|||' + title + '|||' + (entry.attrs.media_album_name || '');
+          if (prevMeta && prevMeta.key !== key) {
+            const elapsedMs = entry.ts - (prevStartTs || entry.ts);
+            const durMs = (prevMeta.duration || 0) * 1000;
+            const qualifies = elapsedMs >= 30000 || (durMs > 0 && elapsedMs >= durMs * 0.5);
+            if (qualifies) this._logListenEntry(prevMeta, prevStartTs);
+          }
+          if (!prevMeta || prevMeta.key !== key) {
+            prevMeta = {
+              key, artist, title,
+              album: entry.attrs.media_album_name || '',
+              entity: entId,
+              mediaType: 'music',
+              duration: entry.attrs.media_duration || 0,
+              uri: entry.attrs.media_content_id || '',
+              isMaEntity: true,
+            };
+            prevStartTs = entry.ts;
+          }
+        }
+      }
+
+      checkpoints[entId] = now;
+      checkpointsChanged = true;
+    }
+
+    if (checkpointsChanged) {
+      try { localStorage.setItem('crow_ai_local_historyCheckpoint', JSON.stringify(checkpoints)); } catch (_) {}
+    }
+  }
+
+  _logListenEntry(meta, tsOverride) {
     try {
       if (!meta?.title || !meta?.artist) return;
       const lsKey = 'crow_ai_local_listenLog';
       const store = JSON.parse(localStorage.getItem(lsKey) || '{}');
-      const now = Date.now();
+      const now = tsOverride || Date.now();
       const entryKey = 't' + now + '_' + Math.random().toString(36).slice(2, 6);
       store[entryKey] = {
         data: {
@@ -14931,7 +15078,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         ts: now,
       };
       // Rolling 90-day window, hard cap of 2000 entries
-      const cutoff = now - 90 * 24 * 3600 * 1000;
+      const cutoff = Date.now() - 90 * 24 * 3600 * 1000;
       Object.keys(store).forEach(k => { if ((store[k].ts || 0) < cutoff) delete store[k]; });
       const keys = Object.keys(store);
       if (keys.length > 2000) {
@@ -15079,6 +15226,29 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         content.querySelector('#recapResetBtn')?.addEventListener('click', () => this._showAIRecap(), { once: true });
       }, { once: true });
       content.querySelector('#recapResetConfirm')?.addEventListener('click', async () => {
+        // Reset (not delete) history checkpoints to "now" for every entity
+        // this card or others might be tracking. Deleting them would make
+        // the backfill treat it as a first-ever run and look back 48h again
+        // — re-fetching and re-inserting exactly what's being cleared here.
+        // Setting them to now marks "already caught up" so nothing before
+        // this point gets backfilled again on the next card load.
+        let _checkpoints = {};
+        try { _checkpoints = JSON.parse(localStorage.getItem('crow_ai_local_historyCheckpoint') || '{}'); } catch (_) {}
+        const _nowTs = Date.now();
+        const _watchEntitiesForClear = [
+          ...(Array.isArray(this._config?.entities) ? this._config.entities : []),
+          ...(Array.isArray(this._config?.ma_entities) ? this._config.ma_entities : []),
+          ...Object.keys(_checkpoints),
+        ].filter((v, i, a) => a.indexOf(v) === i);
+        _watchEntitiesForClear.forEach(eid => { _checkpoints[eid] = _nowTs; });
+        try { localStorage.setItem('crow_ai_local_historyCheckpoint', JSON.stringify(_checkpoints)); } catch (_) {}
+        // Global marker, separate from per-entity checkpoints — covers a
+        // different room's card that has never run backfill at all yet (so
+        // has no checkpoint entry for its own entities), which would
+        // otherwise still look back the full default 48h and re-insert
+        // pre-clear history the first time it loads.
+        try { localStorage.setItem('crow_ai_local_recapClearedAt', JSON.stringify({ ts: _nowTs })); } catch (_) {}
+
         try {
           localStorage.removeItem('crow_ai_local_listenLog');
           localStorage.removeItem('crow_ai_local_maRecapState');
@@ -15100,6 +15270,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             const full = (res?.value && typeof res.value === 'object') ? res.value : {};
             full.listenLog = {};
             full.maRecapState = {};
+            full.historyCheckpoint = _checkpoints;
+            full.recapClearedAt = { ts: _nowTs };
             await conn.sendMessagePromise({ type: 'frontend/set_user_data', key: 'crow_ai_local', value: full });
           } catch (_) { /* best-effort — local clear already happened either way */ }
         }
@@ -22440,22 +22612,22 @@ Include ALL tracks. Use null for unknown fields.`;
     if (tab === 'recently_added') {
       try {
         // Primary: ask MA's library directly for tracks sorted by true add
-        // date (order_by: timestamp_added_desc). MA's Apple Music provider
-        // only seems to carry genuine, distinct per-track add dates for a
-        // small recent window — beyond that, tracks appear to share one
-        // fallback timestamp and the "sort" silently reverts to whatever
-        // their default library order already was. There's no way to detect
-        // that boundary from the data get_library returns (no date field is
-        // exposed, only the ability to sort by it), so rather than show a
-        // long list that quietly turns into unsorted noise partway through,
-        // this deliberately caps to a small, reliable number.
+        // date (order_by: timestamp_added_desc). Note: MA's Apple Music
+        // provider only seems to carry genuine, distinct per-track add dates
+        // for a small recent window — beyond that, tracks appear to share
+        // one fallback timestamp and the "sort" silently reverts to
+        // whatever their default library order already was. There's no way
+        // to detect that boundary from the data get_library returns (no
+        // date field is exposed, only the ability to sort by it), so
+        // further down a long list, entries may not actually be true
+        // recent-adds — just whatever MA's default order happens to be.
         let items = [];
         try {
           const res = await this._hass.connection.sendMessagePromise({
             type: 'call_service',
             domain: 'music_assistant',
             service: 'get_library',
-            service_data: { config_entry_id: configEntryId, media_type: 'track', order_by: 'timestamp_added_desc', limit: 6 },
+            service_data: { config_entry_id: configEntryId, media_type: 'track', order_by: 'timestamp_added_desc' },
             return_response: true
           });
           items = (res?.response?.items || []).map(item => ({ ...item, _tab: 'track' }));
@@ -26564,8 +26736,8 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
 
             <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid rgba(255,255,255,0.07);">
               <div>
-                <div style="font-size:14px;font-weight:500;">Library, Queue &amp; Recap Row Glow</div>
-                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Adds a subtle accent-colour glow to rows in the library browser, queue panel, and Listening Recap.</div>
+                <div style="font-size:14px;font-weight:500;">Row Glow</div>
+                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Adds a subtle accent-colour glow to rows throughout the app \u2014 library browser, queue panel, Listening Recap, and pinned tracks/artists/albums/playlists.</div>
               </div>
               <label class="toggle-switch" style="flex-shrink:0"><input type="checkbox" id="row_glow"><span class="toggle-track"></span></label>
             </div>
