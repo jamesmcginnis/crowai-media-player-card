@@ -4,6 +4,8 @@
 
 CrowAI is a Home Assistant media player card built specifically for **iPhone**. Designed from the ground up for iPhone, it brings frosted-glass aesthetics, fluid touch animations, full Music Assistant integration, synced lyrics, a queue browser, multi-room multicast playback, rich AI-powered media info panels, and an Apple TV remote — all in a card that feels like a native iPhone app.
 
+CrowAI is about **discovery** as much as playback — AI-powered info panels, recommendations, artist radio, similar tracks/shows/movies, and a personal Listening Recap all help you find your next favourite song, album, TV show or film, not just control what's already playing.
+
 > ⚠️ **Music Assistant is required** for the Music Library browser, queue management, Vibe Queue Builder, AI Artist Radio, multi-room multicast playback and all MA-specific features.
 
 > ⚠️ **Music Assistant Queue Actions is required** for the Recommended tab, full queue browsing and library drill-in. See [Music Assistant Queue Actions](https://github.com/droans/mass_queue) below.
@@ -169,6 +171,7 @@ Repository: [github.com/droans/mass_queue](https://github.com/droans/mass_queue)
 - 📨 **Send Message AI** — improves your notification text (requires Gemini)
 - 📚 **Audiobook search** — find free, public-domain audiobooks via LibriVox/Archive.org, with AI-assisted query refinement (requires Gemini)
 - 🎙️ **Podcast search** — search iTunes for podcasts and pin your favourites
+- 📊 **Listening Recap** — a personal weekly snapshot: top artists and tracks (last 7 days, up to 10 each) plus a short AI-written summary that regenerates fresh every time you open it
 
 ### Persistent Storage
 
@@ -206,6 +209,7 @@ Decade moods search your MA library for chart compilations first, then fall back
 | Music Library | MA speakers only |
 | Vibe | Opens Vibe Queue Builder |
 | Recommendations | AI track suggestions |
+| Listening Recap | Personal weekly top artists/tracks with an AI summary |
 | Add Similar Songs | Adds AI-suggested tracks to queue |
 | AI Artist Radio | Builds artist radio queue |
 | Radio Mode | Toggles MA radio mode |
@@ -238,6 +242,21 @@ Pin your favourites for one-tap access. All pins also live together in a consoli
 ### Pin Queue as Playlist
 
 Save the current queue as a named snapshot from the queue's 3-dot menu — **Pin Queue as Playlist**. It's saved as a point-in-time copy (not a live link to the original queue) and shows up under **Queues** in the consolidated Pinned section, ready to play back in full any time.
+
+### Listening Recap
+
+Open from the quick menu (below Recommendations) for a personal snapshot of your recent listening.
+
+- **Top Artists & Top Tracks** — up to 10 each, ranked by play count over a rolling last-7-days window
+- **AI summary** — a short, warm write-up of your week's listening, regenerated fresh every time the panel opens (not cached, so it always matches the numbers below it)
+- **Tap a track** to open its AI Info panel; **tap an artist** to open their bio — the same panels used throughout the card
+- **What counts as a play** — a track has to play past 30 seconds or half its duration (whichever is smaller) to be logged, so quick skips don't pollute your stats
+- **What's excluded** — radio streams, podcasts, audiobooks, and system/notification sounds (e.g. announcements) never count toward your Recap
+- **Which entities count** — any entity listed in this card's `entities` or `ma_entities` config, not MA-only. Whichever one is actively reporting as playing at a given moment is used, so a speaker with both a native and an MA entity is covered by either
+- **Shared across rooms on the same device** — logging is scoped to whatever entities a card is configured with, but the Recap panel itself doesn't filter by entity when displaying results. If you run separate cards per room on the same phone/browser, they all read from one shared history, so every card's Recap shows the combined total of everything any of your cards have logged — not a breakdown per room
+- **Catches up on missed plays** — each time a card loads, it also pulls that entity's own state history from Home Assistant (not just what it observes live) to backfill anything played while that card wasn't open — e.g. a different room's tab was active at the time. This needs Home Assistant's recorder to actually be tracking the entity; it looks back up to 48 hours on a card's first-ever load, then only as far as its last check after that
+- **Per-user** — if you and other household members use separate Home Assistant accounts, each person's Recap is tracked and stored separately, the same way Pins are
+- **Clear Recap History** — a button at the bottom of the panel (with an iOS-style confirmation) permanently deletes your Recap history and resets the history-backfill checkpoint, so cleared plays don't get silently reinstated the next time a card loads; enable **AI Info Persistent Storage** in **Caches & Data** so this history survives app restarts and WKWebView cache evictions
 
 ### Synced Lyrics
 
