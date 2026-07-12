@@ -176,42 +176,84 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           catch (_) { this._maRecapState = {}; }
         }
         let _maRecapStateChanged = false;
+        // Extracted so it's usable both for the normal "switched to a
+        // different title" case and the "playback just stopped" case below.
+        const _qualifyAndLog = (prev, entId) => {
+          if (!prev?.meta) return;
+          const _elapsedMs = Date.now() - (prev.startTs || Date.now());
+          const _durMs = (prev.meta.duration || 0) * 1000;
+          const _qualifies = prev.kind === 'music'
+            ? (_elapsedMs >= 30000 || (_durMs > 0 && _elapsedMs >= _durMs * 0.5))
+            : (_elapsedMs >= 10000); // TV/movie — just needs a genuine start, not a full watch
+          if (_qualifies) {
+            if (prev.kind === 'music') this._logListenEntry(prev.meta);
+            else this._logWatchEntry(prev.meta);
+            // Advance this entity's backfill checkpoint to now — otherwise
+            // the next time any card reloads and runs the history backfill,
+            // it would re-fetch this same time window from HA and log this
+            // exact play a second time.
+            this._advanceHistoryCheckpoint(entId);
+          }
+        };
+
         _watchEntities.forEach(entId => {
           const st = hass.states?.[entId];
-          if (!st || st.state !== 'playing') return; // ignore idle/paused/off — only trust an entity that's actively playing right now
+          const prev = this._maRecapState[entId];
+
+          if (!st || st.state !== 'playing') {
+            // Entity stopped/paused/went idle — close out whatever was being
+            // tracked for it. Music naturally moves on to a "next track"
+            // event, but video is very often just stopped outright (TV
+            // turned off, app closed) rather than switched to something
+            // else — without this, a partially-watched show that never
+            // transitions to a "next" item would never get evaluated at
+            // all, no matter how much of it was actually watched.
+            if (prev) {
+              _qualifyAndLog(prev, entId);
+              delete this._maRecapState[entId];
+              _maRecapStateChanged = true;
+            }
+            return;
+          }
           const attrs = st.attributes || {};
           const artist = attrs.media_artist || '';
           const title  = attrs.media_title  || '';
-          if (!artist || !title) return;
+          if (!title) return;
 
-          if (this._recapShouldExclude(artist, title, attrs, st)) return;
+          let kind = null, key = null, entryMeta = null;
 
-          const key = artist + '|||' + title + '|||' + (attrs.media_album_name || '');
-          const prev = this._maRecapState[entId];
-          if (prev && prev.key !== key) {
-            // Rapid-skip protection — only counts as a genuine listen if the
-            // previous track played past 30s or half its duration, whichever
-            // is smaller. Falls back to the flat 30s rule when duration is
-            // unknown, so it still works even without reliable duration data.
-            const _elapsedMs = Date.now() - (prev.startTs || Date.now());
-            const _durMs = (prev.meta?.duration || 0) * 1000;
-            const _qualifies = _elapsedMs >= 30000 || (_durMs > 0 && _elapsedMs >= _durMs * 0.5);
-            if (prev.meta && _qualifies) this._logListenEntry(prev.meta);
-          }
-          if (!prev || prev.key !== key) {
-            this._maRecapState[entId] = {
-              key,
-              startTs: Date.now(),
-              meta: {
-                artist, title,
-                album: attrs.media_album_name || '',
-                entity: entId,
-                mediaType: 'music',
-                duration: attrs.media_duration || 0,
-                uri: attrs.media_content_id || '',
-                isMaEntity: true,
-              },
+          if (artist) {
+            if (this._recapShouldExclude(artist, title, attrs, st)) return;
+            kind = 'music';
+            key = 'music|' + artist + '|||' + title + '|||' + (attrs.media_album_name || '');
+            entryMeta = {
+              artist, title,
+              album: attrs.media_album_name || '',
+              entity: entId,
+              mediaType: 'music',
+              duration: attrs.media_duration || 0,
+              uri: attrs.media_content_id || '',
+              isMaEntity: true,
             };
+          } else {
+            // No artist — only path left is TV/movie (Watch Recap). Music
+            // always has an artist; this branch never applies to songs.
+            const cls = this._classifyWatchMedia(attrs, st);
+            if (!cls.kind) return;
+            kind = cls.kind;
+            key = kind + '|' + cls.seriesTitle + '|||' + cls.title;
+            entryMeta = {
+              title: cls.title,
+              seriesTitle: cls.seriesTitle,
+              entity: entId,
+              mediaType: kind,
+              duration: attrs.media_duration || 0,
+            };
+          }
+
+          if (prev && prev.key !== key) _qualifyAndLog(prev, entId);
+          if (!prev || prev.key !== key) {
+            this._maRecapState[entId] = { key, kind, startTs: Date.now(), meta: entryMeta };
             _maRecapStateChanged = true;
           }
         });
@@ -224,11 +266,21 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
     // Load pins, AI cache and iTunes art from HA user data on first connection —
     // this survives pull-to-refresh and WKWebView localStorage evictions.
-    if (!this._haStorageLoaded) this._haStorageLoad();
+    if (!this._haStorageLoaded && !this._haStorageLoadPromise) {
+      this._haStorageLoadPromise = this._haStorageLoad();
+    }
     // Backfill Recap history from HA's own state history — catches plays
     // that happened on this card's speaker(s) while this card wasn't
     // mounted (e.g. a different room's tab was open) to observe them live.
-    if (!this._historyBackfillDone) this._backfillListenHistoryFromHA();
+    // Deliberately waits for the HA storage load above to fully finish
+    // first — otherwise, on a freshly loaded card, this could run before
+    // this device has pulled down the "recap was just cleared" marker from
+    // HA, see no local trace of the clear, fall back to its default 48h
+    // lookback, and re-log everything that was just cleared.
+    if (!this._historyBackfillDone && !this._historyBackfillQueued) {
+      this._historyBackfillQueued = true;
+      (this._haStorageLoadPromise || Promise.resolve()).then(() => this._backfillListenHistoryFromHA());
+    }
     if (!this.shadowRoot.innerHTML) {
       // Pre-load starred/pinned keys into memory before render so they're available
       // immediately when _loadMATab and _rbInjectStarredSection run
@@ -855,6 +907,16 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   }
 
   connectedCallback() {
+    // Reset any expanded panel left open from a previous visit — navigating
+    // away from the dashboard page and back reconnects the card without
+    // otherwise touching its state, so a popup (Music Library browser, AI
+    // Info panel) left open stayed stuck open while the card itself
+    // collapsed back to mini-player size around it, showing a broken-
+    // looking shrunk view of stale content instead of a clean mini player.
+    // Wrapped defensively since the shadow DOM may not be populated yet on
+    // a genuinely first connection (before render() has ever run).
+    try { this._closeMABrowser(); } catch (_) {}
+    try { this._closeInfoPopup(); } catch (_) {}
     // Invalidate the artwork skip-guard so images are retried after a reconnect.
     this._lastArtKey = null;
     // Reset artwork failure tracking so stale failed URLs are retried
@@ -4319,8 +4381,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         // AI Search — MA only
         if (isMa || hasMA) items.push({ id: 'qm_ai_search', label: 'AI Search', icon: '<svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>', active: false });
 
-        // Music Library — MA only
-        if (isMa || hasMA) items.push({ id: 'qm_library', label: 'Music Library', icon: SVG.library, active: false });
+        // Library — always available. Several of its tabs (Movies & TV,
+        // Radio, Podcasts, Audiobooks) never needed MA in the first place,
+        // so gating this by isMa/hasMA/video-playing kept missing valid
+        // scenarios (e.g. a native, non-MA entity playing music).
+        const _qmMediaType = this._detectMediaType(state);
+        const _qmIsVideo = _qmMediaType === 'tv' || _qmMediaType === 'movie';
+        items.push({ id: 'qm_library', label: 'Library', icon: SVG.library, active: false });
         if (isMa || hasMA) items.push({ id: 'qm_mood', label: 'Vibe', icon: '<svg viewBox="0 0 24 24"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>', active: false });
 
         // AI Mood — MA only
@@ -4334,8 +4401,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         const _qmType  = state?.attributes?.media_content_type || '';
         if ((isMa || hasMA) && isPlaying && !isStream && _qmAlbum && (_qmType === 'music' || _qmType === 'track' || _qmType === '')) {
           if (isMa) items.push({ id: 'qm_play_album', label: 'Add Album', icon: '<svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/></svg>', active: false });
-        const _qmMediaType = this._detectMediaType(state);
-        const _qmIsVideo = _qmMediaType === 'tv' || _qmMediaType === 'movie';
         if (isPlaying && ((isMa || hasMA) || _qmIsVideo)) items.push({ id: 'qm_ai_recs', label: 'Recommendations', icon: '<svg viewBox="0 0 24 24"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>', active: false });
         if (isPlaying && _qmIsVideo) items.push({ id: 'qm_mood_video', label: 'Mood Match', icon: '<svg viewBox="0 0 24 24"><path d="M12 2A10 10 0 1 0 22 12 10 10 0 0 0 12 2M12 20A8 8 0 1 1 20 12 8 8 0 0 1 12 20M17 11.5A1.5 1.5 0 1 1 15.5 10 1.5 1.5 0 0 1 17 11.5M8.5 10A1.5 1.5 0 1 1 7 11.5 1.5 1.5 0 0 1 8.5 10M12 17.5C9.67 17.5 7.69 16.04 6.89 14H17.11C16.31 16.04 14.33 17.5 12 17.5Z"/></svg>', active: false, _qmVideoTitle: attrs?.media_series_title || attrs?.media_title || '' });
         if (isPlaying && _qmIsVideo) items.push({ id: 'qm_trivia', label: 'Trivia', icon: '<svg viewBox="0 0 24 24"><path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"/></svg>', active: false, _qmVideoTitle: attrs?.media_series_title || attrs?.media_title || '' });
@@ -4345,7 +4410,18 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         // Pushed here (unconditional on album info) so it lands immediately
         // below Recommendations in the rendered menu, without becoming tied
         // to whether Recommendations itself shows.
-        if (isMa || hasMA) items.push({ id: 'qm_ai_recap', label: 'Listening Recap', icon: SVG.recap, active: false });
+        // Listening Recap — a historical stats view like Watch Recap, not
+        // tied to what's currently playing or which kind of entity this is.
+        // The underlying tracking already works off any configured entity
+        // (native or MA), so this doesn't need an MA-only gate.
+        items.push({ id: 'qm_ai_recap', label: 'Recently Listened To', icon: SVG.recap, active: false });
+
+        // Watch Recap — same reasoning as Listening Recap: a historical
+        // stats view, not tied to what's currently playing, so it shouldn't
+        // be gated on isPlaying/isVideo the way Trivia/Mood Match are (those
+        // need to know the specific title actively playing right now; this
+        // one doesn't need any current context at all).
+        items.push({ id: 'qm_watch_recap', label: 'Recently Watched', icon: '<svg viewBox="0 0 24 24"><path d="M21,3H3C1.89,3 1,3.89 1,5V19A2,2 0 0,0 3,21H21A2,2 0 0,0 23,19V5C23,3.89 22.1,3 21,3M21,19H3V5H21V19M18,13.5L15.5,15.15L15.5,11.85L18,13.5M13,15.5L10.5,17.15L10.5,13.85L13,15.5M8,13.5L5.5,15.15L5.5,11.85L8,13.5Z"/></svg>', active: false });
 
         // AI Artist Radio — MA only, only when a track is playing
         if ((isMa || hasMA) && isPlaying && !isStream) {
@@ -4497,6 +4573,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             else if (item.id === 'qm_ai_recs')      { expand().then(() => { const _rMT = this._detectMediaType(this._hass?.states[this._entity]); (_rMT === 'tv' || _rMT === 'movie') ? this._showAIRecommendations() : _runMA(() => this._showAIRecommendations()); }); }
             else if (item.id === 'qm_ai_search')    { expand().then(() => _runMA(() => this._showAISearchPanel())); }
             else if (item.id === 'qm_ai_recap')        { expand().then(() => _runMA(() => this._showAIRecap())); }
+            else if (item.id === 'qm_watch_recap')     { expand().then(() => this._showWatchRecap()); }
             else if (item.id === 'qm_mood_video')   { expand().then(() => this._showMoodMatchPanel(item._qmVideoTitle)); }
             else if (item.id === 'qm_trivia')       { expand().then(() => this._showTriviaPanel(item._qmVideoTitle)); }
             else if (item.id === 'qm_soundtrack')   { expand().then(() => _runMA(() => this._showAISearchPanel(`Music from ${item._atMedia}`))); }
@@ -5140,7 +5217,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           maSearchClear.classList.add('hidden');
           this._maLastSearch = null;
           this._maInSearchResults = false;
-          const _tabPh = { radio: 'Search radio stations…', podcast: 'Search podcasts…', audiobook: 'Search audiobooks…', artist: 'Search artists…', album: 'Search albums…', track: 'Search songs…', playlist: 'Search playlists…', recently_added: 'Search recently added…' };
+          const _tabPh = { radio: 'Search radio stations…', podcast: 'Search podcasts…', audiobook: 'Search audiobooks…', movie_tv: 'Search movies & TV…', artist: 'Search artists…', album: 'Search albums…', track: 'Search songs…', playlist: 'Search playlists…', recently_added: 'Search recently added…' };
           maSearchInput.placeholder = _tabPh[tab.dataset.tab] || 'Search library…';
           this._loadMATab(tab.dataset.tab);
         }
@@ -5177,9 +5254,19 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (queueMenuBtn) {
       queueMenuBtn.addEventListener('click', (e) => {
         e.stopPropagation();
+        if (this._artTapTimer) { clearTimeout(this._artTapTimer); this._artTapTimer = null; }
+
+        if (this._activeInfoPanelKind === 'recap') {
+          this._showRecapOptionsMenu();
+          return;
+        }
+        if (this._activeInfoPanelKind === 'watchRecap') {
+          this._showWatchRecapOptionsMenu();
+          return;
+        }
+
         // Same guard as the main quick-actions button — a stale pending artwork tap
         // shouldn't be able to fire AI Info after this menu opens.
-        if (this._artTapTimer) { clearTimeout(this._artTapTimer); this._artTapTimer = null; }
         const existing = r.getElementById('queueDropdownMenu');
         if (existing) { existing.remove(); r.getElementById('queueDropdownBackdrop')?.remove(); return; }
 
@@ -5216,7 +5303,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             id: 'qmLibrary',
             _needsMA: !isMa && hasMA,
             icon: '<svg viewBox="0 0 24 24"><path d="M12,3V13.55C11.41,13.21 10.73,13 10,13C7.79,13 6,14.79 6,17C6,19.21 7.79,21 10,21C12.21,21 14,19.21 14,17V7H18V3H12Z"/></svg>',
-            label: 'Music Library',
+            label: 'Library',
             extraClass: ''
           });
         }
@@ -8071,6 +8158,16 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // Remove any stray lightbox — the root view is the safest catch-all since
     // every navigation path that lands here eventually calls this function.
     r.getElementById('cardOuter')?.querySelectorAll('.crow-bio-lightbox').forEach(e => e.remove());
+    // Remove any stray dropdown menu/backdrop too — several context menus
+    // across the app (queue options, pinned recap/watch-recap/movie-TV
+    // context menus) create a transparent, absolutely-positioned backdrop
+    // at whatever position they were last anchored to. If one of those
+    // isn't dismissed before navigating away (e.g. the popup gets closed
+    // entirely while the menu is still open), it's left stuck in the DOM —
+    // invisible, but still there — and can end up sitting on top of part of
+    // this completely unrelated screen, silently blocking clicks on
+    // whatever happens to be underneath it.
+    r.querySelectorAll('.queue-dropdown-menu, .queue-dropdown-backdrop').forEach(e => e.remove());
 
     const CATS = [
       { tab: 'recently_added', label: 'Recently Added', color: '#00C7BE', path: 'M13,3A9,9 0 0,0 4,12H1L4.89,15.89L4.96,16.03L9,12H6A7,7 0 0,1 13,5A7,7 0 0,1 20,12A7,7 0 0,1 13,19C11.07,19 9.32,18.21 8.06,16.94L6.64,18.36C8.27,19.99 10.52,21 13,21A9,9 0 0,0 22,12A9,9 0 0,0 13,3M14,8H12V13L16.28,15.54L17,14.33L13.5,12.25V8H14Z' },
@@ -8084,6 +8181,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       { tab: 'radio',       label: 'Radio',         color: '#FF9F0A', path: 'M19,6.41L4.86,2.28L4.29,4.2L7,5V7H5A2,2 0 0,0 3,9V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V9A2,2 0 0,0 19,7H9V5.75L19,8.55V6.41M7,9A2,2 0 0,1 9,11A2,2 0 0,1 7,13A2,2 0 0,1 5,11A2,2 0 0,1 7,9M17,18H7V16H17V18M19,14H11V10H19V14Z' },
       { tab: 'podcast',     label: 'Podcasts',      color: '#BF5AF2', path: 'M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12,7A5,5 0 0,0 7,12C7,14.76 8.58,17.15 11,18.27V16.06C9.8,15.16 9,13.68 9,12A3,3 0 0,1 12,9A3,3 0 0,1 15,12C15,13.68 14.2,15.16 13,16.06V18.27C15.42,17.15 17,14.76 17,12A5,5 0 0,0 12,7M12,11A1,1 0 0,0 11,12A1,1 0 0,0 12,13A1,1 0 0,0 13,12A1,1 0 0,0 12,11Z' },
       { tab: 'audiobook',   label: 'Audiobooks',    color: '#32ADE6', path: 'M18,22A2,2 0 0,0 20,20V4C20,2.89 19.1,2 18,2H12V9L9.5,7.5L7,9V2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18Z' },
+      { tab: 'movie_tv',    label: 'Movies & TV',   color: '#FF453A', path: 'M21,3H3C1.89,3 1,3.89 1,5V19A2,2 0 0,0 3,21H21A2,2 0 0,0 23,19V5C23,3.89 22.1,3 21,3M21,19H3V5H21V19M18,13.5L15.5,15.15L15.5,11.85L18,13.5M13,15.5L10.5,17.15L10.5,13.85L13,15.5M8,13.5L5.5,15.15L5.5,11.85L8,13.5Z' },
     ];
 
     const glowOn = this._config?.row_glow === true;
@@ -8119,20 +8217,20 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
         // Push a sentinel so _maNavBack knows to return to iOS list
         if (!this._maBrowserNavStack) this._maBrowserNavStack = [];
-        this._maBrowserNavStack.push({ tab: '__ios_root__', label: 'Music Library' });
+        this._maBrowserNavStack.push({ tab: '__ios_root__', label: 'Library' });
 
         // Hide iOS view, keep tabs/search hidden, but keep iOS search bar visible
         el.classList.add('hidden');
         rr.getElementById('maTabs')?.setAttribute('style', 'display:none');
         rr.querySelector('.ma-search-row')?.setAttribute('style', 'display:none');
         // Only show iOS search bar for the four main searchable types
-        const _searchableTabs = new Set(['artist', 'album', 'track', 'playlist', 'radio', 'podcast', 'audiobook', 'recently_added']);
+        const _searchableTabs = new Set(['artist', 'album', 'track', 'playlist', 'radio', 'podcast', 'audiobook', 'movie_tv', 'recently_added']);
         const _iosBar = rr.getElementById('maIosSearchBar');
         if (_iosBar) _iosBar.classList.toggle('hidden', !_searchableTabs.has(tab));
         // Update placeholder to reflect whether full search is available
         const _iosInput = rr.getElementById('maIosSearchInput');
         if (_iosInput) {
-          _iosInput.placeholder = tab === 'radio' ? 'Search radio stations… (press Enter)' : tab === 'podcast' ? 'Search podcasts… (press Enter)' : tab === 'audiobook' ? 'Search audiobooks… (press Enter)' : _searchableTabs.has(tab) ? 'Search… (Enter to search all music)' : 'Search…';
+          _iosInput.placeholder = tab === 'radio' ? 'Search radio stations… (press Enter)' : tab === 'podcast' ? 'Search podcasts… (press Enter)' : tab === 'audiobook' ? 'Search audiobooks… (press Enter)' : tab === 'movie_tv' ? 'Search movies & TV… (press Enter)' : _searchableTabs.has(tab) ? 'Search… (Enter to search all music)' : 'Search…';
           _iosInput._fullSearchEnabled = _searchableTabs.has(tab);
         }
         if (_iosBar) _iosBar.classList.remove('hidden');
@@ -8163,6 +8261,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     this._maLastSearch = null;
     this._haRbActive = false;
     this._haRbStack = [];
+    this._mtLocalActive = false;
+    this._mtLocalStack = [];
     this._pinnedDetailActive = false;
     this._pinnedDetailCategory = null;
     const maSearchInput = this.shadowRoot?.getElementById('maSearchInput');
@@ -8178,7 +8278,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const tabsEl  = this.shadowRoot?.getElementById('maTabs');
     const searchRow = this.shadowRoot?.querySelector('.ma-search-row');
     if (backBtn) backBtn.classList.add('hidden');
-    if (titleEl) titleEl.textContent = 'Music Library';
+    if (titleEl) titleEl.textContent = 'Library';
     // In iOS view mode keep tabs and search hidden; _syncMAViewToggle manages them
     const _iosMode = this._config?.ma_ios_library === true;
     if (tabsEl)    tabsEl.style.display    = _iosMode ? 'none' : '';
@@ -8197,6 +8297,18 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         this._haRbBrowse(entity, prev.mediaContentId, prev.mediaContentType, prev.title);
       } else {
         this._haRbExitToRadioTab();
+      }
+      return;
+    }
+    // Local HA media browse tree (Movies & TV → Browse Home Assistant
+    // Media) — same layered-stack pattern as the Radio Browser above.
+    if (this._mtLocalActive) {
+      if (this._mtLocalStack && this._mtLocalStack.length > 0) {
+        const prev = this._mtLocalStack.pop();
+        this._mtBrowseLocal(prev.mediaContentId, prev.mediaContentType, prev.title);
+      } else {
+        this._mtLocalActive = false;
+        this._loadMATab('movie_tv');
       }
       return;
     }
@@ -8245,7 +8357,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         this._maInSearchResults = false;
         this._maLastSearch = null;
         const titleEl2 = this.shadowRoot?.getElementById('maTitle');
-        if (titleEl2) titleEl2.textContent = 'Music Library';
+        if (titleEl2) titleEl2.textContent = 'Library';
         return;
       }
       if (backBtn)    backBtn.classList.add('hidden');
@@ -8272,7 +8384,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       this._maInSearchResults = false;
       this._maLastSearch = null;
       const titleEl3 = this.shadowRoot?.getElementById('maTitle');
-      if (titleEl3) titleEl3.textContent = 'Music Library';
+      if (titleEl3) titleEl3.textContent = 'Library';
       return;
     }
     // Sentinel for returning to a specific Pinned category (e.g. Queues)
@@ -8905,7 +9017,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const conn = this._hass?.connection;
     if (!conn) return;
     try {
-      const pinCats = ['stations','podcasts','audiobooks','track','artist','album','playlist','saved_queues'];
+      const pinCats = ['stations','podcasts','audiobooks','track','artist','album','playlist','saved_queues','recaps','watch_recaps','movies_tv'];
       const value = {};
       pinCats.forEach(cat => {
         const lsKey = 'crow_pin_' + cat;
@@ -9223,13 +9335,31 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // won't contain that text at all.
   // ── Persistent flag/thumbnail cache for the HA Radio Browser folder tree ──
   // Country flags (and other category thumbnails) never change, so once one
-  // has successfully loaded we cache it as a base64 data URI in localStorage
-  // — avoids re-fetching ~250 flags every time someone browses into "Country
-  // List", and keeps them available even if the image CDN has a bad moment.
-  _haRbFlagCacheKey() { return 'crow_ha_rb_flag_cache'; }
+  // has successfully loaded we cache it as a base64 data URI. Synced to HA's
+  // own storage (same crow_ai_local convention/mechanism as every other AI
+  // cache) rather than kept local-only — a purely local cache gets wiped by
+  // WKWebView storage eviction, which was exactly why flags that loaded
+  // right after a Home Assistant restart would stop loading again over
+  // time: nothing ever stuck around permanently, so a fresh eviction meant
+  // starting the whole cache over from empty.
+  _haRbFlagCacheKey() { return 'crow_ai_local_rbFlagCache'; }
+
+  _haRbMigrateFlagCache() {
+    if (this._haRbFlagCacheMigrated) return;
+    this._haRbFlagCacheMigrated = true;
+    try {
+      const oldKey = 'crow_ha_rb_flag_cache';
+      const old = localStorage.getItem(oldKey);
+      if (old && !localStorage.getItem(this._haRbFlagCacheKey())) {
+        localStorage.setItem(this._haRbFlagCacheKey(), old);
+        localStorage.removeItem(oldKey);
+      }
+    } catch (_) {}
+  }
 
   _haRbGetCachedFlag(url) {
     if (!url) return null;
+    this._haRbMigrateFlagCache();
     try {
       const cache = JSON.parse(localStorage.getItem(this._haRbFlagCacheKey()) || '{}');
       return cache[url] || null;
@@ -9238,17 +9368,21 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
   _haRbCacheFlag(url, dataUri) {
     if (!url || !dataUri) return;
+    this._haRbMigrateFlagCache();
     try {
       const key = this._haRbFlagCacheKey();
       const cache = JSON.parse(localStorage.getItem(key) || '{}');
       cache[url] = dataUri;
       // Simple size guard — flags are small and bounded (~250 countries), but
-      // cap the cache so it can't grow unbounded across sessions.
+      // cap the cache so it can't grow unbounded across sessions. Kept a bit
+      // lower than a typical cache cap since these are base64 data URIs, not
+      // small metadata — the payload adds up when synced to HA.
       const keys = Object.keys(cache);
-      if (keys.length > 400) {
-        keys.slice(0, keys.length - 400).forEach(k => delete cache[k]);
+      if (keys.length > 250) {
+        keys.slice(0, keys.length - 250).forEach(k => delete cache[k]);
       }
       localStorage.setItem(key, JSON.stringify(cache));
+      this._haStorageSaveAI('rbFlagCache');
     } catch (_) {
       // Storage full/unavailable — non-fatal, just skip caching this time.
     }
@@ -9620,6 +9754,352 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
   _pcStarredKey()  { return 'crow_pin_podcasts'; }
 
+  // ── Movies & TV — search iTunes, pin, and open the same AI Info video
+  // panel used everywhere else in the app (artwork taps, Watch Recap rows,
+  // etc.) rather than building a separate dedicated info screen.
+  _mtStarredKey() { return 'crow_pin_movies_tv'; }
+
+  _mtGetStarred() {
+    const k = this._mtStarredKey();
+    if (this._starredMemCache?.[k]) return this._starredMemCache[k];
+    try { const v = JSON.parse(localStorage.getItem(k) || '[]'); if (!this._starredMemCache) this._starredMemCache = {}; this._starredMemCache[k] = v; return v; } catch (_) { return []; }
+  }
+  _mtSaveStarred(list) {
+    const k = this._mtStarredKey();
+    if (!this._starredMemCache) this._starredMemCache = {};
+    this._starredMemCache[k] = list;
+    try { localStorage.setItem(k, JSON.stringify(list)); } catch (_) {}
+    this._haStorageSavePins();
+  }
+  _mtIsStarred(item) {
+    return this._mtGetStarred().some(m => m.id === item.id);
+  }
+  _mtToggleStar(item) {
+    let starred = this._mtGetStarred();
+    const idx = starred.findIndex(m => m.id === item.id);
+    if (idx >= 0) { starred.splice(idx, 1); this._mtSaveStarred(starred); return false; }
+    starred.unshift(item); this._mtSaveStarred(starred); return true;
+  }
+
+  // Searches iTunes for both movies and TV shows in one call, combining the
+  // two result sets into a single list. TV shows come back from iTunes as
+  // one entry per SEASON (entity=tvSeason) — deduped down to one
+  // representative entry per show, preferring the lowest season number,
+  // since a search shouldn't show "Show Name Season 1", "Show Name Season
+  // 2", etc. as separate results.
+  async _mtSearch(query) {
+    let _movieFailed = false, _tvFailed = false;
+    const [movieRes, tvRes] = await Promise.all([
+      fetch('https://itunes.apple.com/search?term=' + encodeURIComponent(query) + '&media=movie&entity=movie&limit=15&country=gb')
+        .then(r => { if (!r.ok) { _movieFailed = true; return { results: [] }; } return r.json(); })
+        .catch(() => { _movieFailed = true; return { results: [] }; }),
+      fetch('https://itunes.apple.com/search?term=' + encodeURIComponent(query) + '&media=tvShow&entity=tvSeason&limit=50&country=gb')
+        .then(r => { if (!r.ok) { _tvFailed = true; return { results: [] }; } return r.json(); })
+        .catch(() => { _tvFailed = true; return { results: [] }; }),
+    ]);
+
+    const movies = (movieRes.results || []).map(m => ({
+      id: 'movie_' + m.trackId,
+      kind: 'movie',
+      title: m.trackName || 'Unknown',
+      subtitle: [m.primaryGenreName, (m.releaseDate || '').slice(0, 4)].filter(Boolean).join(' · '),
+      artworkUrl100: m.artworkUrl100 || '',
+    }));
+
+    const tvByShow = new Map();
+    (tvRes.results || []).forEach(t => {
+      // iTunes' collectionName for a tvSeason result includes the season
+      // number baked in (e.g. "Star Trek: The Next Generation, Season 4"),
+      // so grouping by that string doesn't actually dedupe anything — every
+      // season of the same show gets its own distinct key. Group by the
+      // cleaned name (season marker stripped) instead. Note: artistId is
+      // NOT safe to use here — it turns out to represent the studio/
+      // franchise (e.g. every Star Trek show shares the same artistId),
+      // not the individual show, so grouping by it merges genuinely
+      // different shows together and silently drops real results.
+      const rawName = t.collectionName || t.artistName || '';
+      if (!rawName) return;
+      const cleanShowName = rawName.replace(/,?\s*Season\s*\d+\s*$/i, '').trim() || rawName;
+      const groupKey = cleanShowName.toLowerCase();
+      const existing = tvByShow.get(groupKey);
+      if (!existing || (t.season != null && (existing._season == null || t.season < existing._season))) {
+        tvByShow.set(groupKey, {
+          id: 'tv_' + groupKey,
+          kind: 'tv',
+          title: cleanShowName,
+          subtitle: [t.primaryGenreName, (t.releaseDate || '').slice(0, 4)].filter(Boolean).join(' · '),
+          artworkUrl100: t.artworkUrl100 || '',
+          _season: t.season,
+        });
+      }
+    });
+
+    const combined = [...movies, ...tvByShow.values()];
+    // Both requests failing (e.g. iTunes' well-documented, IP-based 403
+    // rate-limiting — see Apple Developer Forums, this has been an
+    // ongoing issue on their end for years) looks identical to a genuine
+    // zero-match search unless flagged separately. Surface it as an error
+    // instead so the UI can tell "nothing matched" apart from "couldn't
+    // even ask the question."
+    if (!combined.length && _movieFailed && _tvFailed) {
+      const err = new Error('iTunes search unreachable');
+      err.mtApiFailure = true;
+      throw err;
+    }
+    return combined;
+  }
+
+  // ── Browse Home Assistant's own local media folder ──────────────────────
+  // Reuses the same media_player/browse_media WebSocket command already
+  // used for HA's Radio Browser — that raw command hands media-source://
+  // ids off to the media_source integration directly, independent of
+  // whatever entity is passed, unlike calling the entity's own
+  // media_player.browse_media service (which Music Assistant, for example,
+  // can't resolve media-source:// ids through).
+  async _mtBrowseLocal(mediaContentId, mediaContentType, title) {
+    const content = this.shadowRoot.getElementById('maContent');
+    if (!content) return;
+    if (!this._mtLocalStack) this._mtLocalStack = [];
+    this._mtLocalActive = true;
+    this.shadowRoot?.getElementById('maBackBtn')?.classList.remove('hidden');
+    const _titleEl = this.shadowRoot?.getElementById('maTitle');
+    if (_titleEl) _titleEl.textContent = title || 'Home Assistant Media';
+    this._maContentGen = (this._maContentGen || 0) + 1;
+    const _myGen = this._maContentGen;
+    content.innerHTML = this._psLoading('Browsing your media folder…');
+    try {
+      const result = await this._hass.connection.sendMessagePromise({
+        type: 'media_player/browse_media',
+        entity_id: this._entity,
+        ...(mediaContentId ? { media_content_id: mediaContentId, media_content_type: mediaContentType } : {}),
+      });
+      if (this._maContentGen !== _myGen) return;
+      const children = result?.children || [];
+      if (_titleEl && !title && result?.title) _titleEl.textContent = result.title;
+      this._mtRenderLocalBrowse(mediaContentId, mediaContentType, title || result?.title || 'Home Assistant Media', children);
+    } catch (e) {
+      if (this._maContentGen !== _myGen) return;
+      content.innerHTML = '';
+      const errDiv = document.createElement('div');
+      errDiv.style.cssText = 'margin:16px 4px;background:rgba(255,165,0,0.1);border:1px solid rgba(255,165,0,0.3);border-radius:12px;padding:14px;';
+      const _errMsg = (e && (e.message || e.code)) ? String(e.message || e.code) : '';
+      errDiv.innerHTML = '<div style="font-size:13px;font-weight:600;color:rgba(255,165,0,0.9);margin-bottom:6px;">📁 Can\'t browse media</div><div style="font-size:12px;color:rgba(255,255,255,0.6);line-height:1.5;">Make sure Home Assistant\'s <strong>media_source</strong> integration is set up and this entity can browse media.' +
+        (_errMsg ? '<br><span style="font-family:monospace;font-size:10px;opacity:0.7;">' + _errMsg.replace(/</g,'&lt;') + '</span>' : '') +
+        '</div>';
+      const backBtn = document.createElement('button');
+      backBtn.textContent = 'Back';
+      backBtn.style.cssText = 'margin-top:12px;padding:6px 14px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:8px;color:#fff;font-size:12px;font-family:inherit;cursor:pointer;';
+      backBtn.addEventListener('click', () => { this._mtLocalActive = false; this._loadMATab('movie_tv'); });
+      errDiv.appendChild(backBtn);
+      content.appendChild(errDiv);
+    }
+  }
+
+  _mtRenderLocalBrowse(currentId, currentType, currentTitle, children) {
+    const content = this.shadowRoot.getElementById('maContent');
+    if (!content) return;
+    content.innerHTML = '';
+
+    // Keep all folders (can't know what's inside without drilling in — a
+    // "Movies" folder needs to stay navigable regardless of its own
+    // media_class). For playable leaves, only keep ones that look like
+    // video — otherwise every non-video file in the same media directory
+    // shows up too (automation sound clips, TTS output, etc.), which isn't
+    // useful in a Movies & TV browser and, worse, can genuinely fail to
+    // play on a video-only target like an Apple TV.
+    const _videoExt = /\.(mp4|mkv|avi|mov|m4v|webm|ts|wmv|flv|mpg|mpeg)$/i;
+    const _audioExt  = /\.(mp3|wav|m4a|flac|ogg|aac|wma)$/i;
+    children = children.filter(child => {
+      if (child.can_expand) return true;
+      if (!child.can_play) return false;
+      const mc = (child.media_class || '').toLowerCase();
+      if (mc === 'video' || mc === 'movie' || mc === 'tv_show' || mc === 'episode') return true;
+      if (mc === 'music' || mc === 'audio' || mc === 'podcast' || mc === 'track') return false;
+      const name = child.title || child.media_content_id || '';
+      if (_videoExt.test(name)) return true;
+      if (_audioExt.test(name)) return false;
+      // Unknown extension/class — err toward showing it rather than
+      // silently hiding something that might genuinely be a video.
+      return true;
+    });
+
+    if (!children.length) {
+      const empty = document.createElement('div');
+      empty.className = 'ma-empty';
+      empty.textContent = 'Nothing found in this folder.';
+      content.appendChild(empty);
+      return;
+    }
+
+    const list = document.createElement('div');
+    list.style.cssText = 'display:flex;flex-direction:column;';
+    const self = this;
+
+    children.forEach(child => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer;-webkit-tap-highlight-color:transparent;';
+
+      const _folderIcon = '<svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:rgba(255,255,255,0.35)"><path d="M10,4H4C2.89,4 2,4.89 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V8C22,6.89 21.1,6 20,6H12L10,4Z"/></svg>';
+      const _fileIcon   = '<svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:rgba(255,255,255,0.35)"><path d="M21,3H3C1.89,3 1,3.89 1,5V19A2,2 0 0,0 3,21H21A2,2 0 0,0 23,19V5C23,3.89 22.1,3 21,3M21,19H3V5H21V19M18,13.5L15.5,15.15L15.5,11.85L18,13.5M13,15.5L10.5,17.15L10.5,13.85L13,15.5M8,13.5L5.5,15.15L5.5,11.85L8,13.5Z"/></svg>';
+      const thumb = child.thumbnail
+        ? _fileIcon + '<img src="' + child.thumbnail + '" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;" onerror="this.remove()">'
+        : (child.can_expand ? _folderIcon : _fileIcon);
+
+      row.innerHTML =
+        '<div style="width:40px;height:40px;border-radius:8px;background:rgba(255,255,255,0.08);flex-shrink:0;overflow:hidden;display:flex;align-items:center;justify-content:center;position:relative;">' + thumb + '</div>' +
+        '<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:600;color:var(--primary-text-color,#fff);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (child.title || 'Untitled') + '</div></div>' +
+        (child.can_expand
+          ? '<svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:rgba(255,255,255,0.25);flex-shrink:0;"><path d="M8.59,16.59L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.59Z"/></svg>'
+          : '');
+
+      if (child.can_expand) {
+        row.addEventListener('click', () => {
+          self._mtLocalStack.push({ mediaContentId: currentId, mediaContentType: currentType, title: currentTitle });
+          self._mtBrowseLocal(child.media_content_id, child.media_content_type, child.title);
+        });
+      } else if (child.can_play) {
+        row.addEventListener('click', () => self._mtShowLocalFileInfo(child));
+      }
+      list.appendChild(row);
+    });
+    content.appendChild(list);
+  }
+
+  _mtShowLocalFileInfo(child) {
+    // Best-effort title cleanup — local filenames are often not a clean
+    // "just the title" string (extensions, resolution tags, etc.), so this
+    // AI lookup may not always resolve. Not guaranteed like it is for
+    // iTunes search results, which come with real, clean titles.
+    const _guessTitle = (child.title || '')
+      .replace(/\.(mkv|mp4|avi|m4v|mov)$/i, '')
+      .replace(/[\.\_]/g, ' ')
+      .replace(/\s*\(?\b(1080p|720p|2160p|4k|x264|x265|hevc|bluray|web[- ]?dl|webrip|hdtv)\b\)?/gi, '')
+      .trim();
+    const infoPopup = this.shadowRoot?.getElementById('infoPopup');
+    const infoContent = this.shadowRoot?.getElementById('infoContent');
+    const infoTitleEl = this.shadowRoot?.getElementById('infoPopupTitle');
+    if (infoPopup) {
+      infoPopup.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
+      infoPopup.style.setProperty('backdrop-filter', 'none');
+      infoPopup.style.setProperty('-webkit-backdrop-filter', 'none');
+      infoPopup.classList.add('visible');
+    }
+    if (infoContent) infoContent.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
+    if (infoTitleEl) infoTitleEl.textContent = 'Media Info';
+    this._infoPopupOpenedAt = Date.now();
+    this._activeInfoPanelKind = null;
+    this.shadowRoot?.getElementById('queueMenuBtn')?.classList.add('hidden');
+    const _ext = (child.title || child.media_content_id || '').match(/\.([a-z0-9]{2,4})$/i)?.[1] || '';
+    const localFileMeta = {
+      rawFilename: child.title || '',
+      extension: _ext,
+      thumbnail: child.thumbnail || '',
+      mediaContentType: child.media_content_type || '',
+    };
+    this._fetchVideoInfo(_guessTitle || child.title, undefined, localFileMeta);
+  }
+
+  // Build a movie/TV row (search result or starred)
+  _mtMakeRow(item, isStarred) {
+    const self = this;
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer;-webkit-tap-highlight-color:transparent;position:relative;';
+
+    const art = item.artworkUrl100 || '';
+    const artHtml = art
+      ? '<img src="' + art + '" alt="" style="width:40px;height:40px;border-radius:8px;object-fit:cover;" onerror="this.style.display=\'none\'">'
+      : '<svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:rgba(255,255,255,0.3)"><path d="M21,3H3C1.89,3 1,3.89 1,5V19A2,2 0 0,0 3,21H21A2,2 0 0,0 23,19V5C23,3.89 22.1,3 21,3M21,19H3V5H21V19M18,13.5L15.5,15.15L15.5,11.85L18,13.5M13,15.5L10.5,17.15L10.5,13.85L13,15.5M8,13.5L5.5,15.15L5.5,11.85L8,13.5Z"/></svg>';
+
+    row.innerHTML =
+      '<div style="width:40px;height:40px;border-radius:8px;background:rgba(255,255,255,0.08);flex-shrink:0;overflow:hidden;display:flex;align-items:center;justify-content:center;">' + artHtml + '</div>' +
+      '<div style="flex:1;min-width:0;">' +
+        '<div style="font-size:13px;font-weight:600;color:var(--primary-text-color,#fff);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + item.title + (item.kind === 'tv' ? ' <span style="opacity:0.5;font-weight:400;font-size:10px;">TV</span>' : '') + '</div>' +
+        '<div style="font-size:11px;color:rgba(255,255,255,0.45);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + item.subtitle + '</div>' +
+      '</div>';
+
+    let _lpTimer = null, _lpFired = false;
+    row.addEventListener('contextmenu', e => e.preventDefault());
+    row.addEventListener('pointerdown', () => {
+      _lpFired = false;
+      _lpTimer = setTimeout(() => { _lpFired = true; self._showMtContextMenu(row, item); }, 480);
+    }, { passive: true });
+    row.addEventListener('pointerup',     () => clearTimeout(_lpTimer), { passive: true });
+    row.addEventListener('pointercancel', () => { clearTimeout(_lpTimer); _lpFired = false; }, { passive: true });
+    row.addEventListener('pointermove',   () => clearTimeout(_lpTimer), { passive: true });
+    row.addEventListener('click', () => {
+      if (_lpFired) { _lpFired = false; return; }
+      const infoPopup = self.shadowRoot?.getElementById('infoPopup');
+      const infoContent = self.shadowRoot?.getElementById('infoContent');
+      const infoTitleEl = self.shadowRoot?.getElementById('infoPopupTitle');
+      if (infoPopup) {
+        infoPopup.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
+        infoPopup.style.setProperty('backdrop-filter', 'none');
+        infoPopup.style.setProperty('-webkit-backdrop-filter', 'none');
+        infoPopup.classList.add('visible');
+      }
+      if (infoContent) infoContent.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
+      if (infoTitleEl) infoTitleEl.textContent = 'Media Info';
+      self._infoPopupOpenedAt = Date.now();
+      self._activeInfoPanelKind = null;
+      self.shadowRoot?.getElementById('queueMenuBtn')?.classList.add('hidden');
+      // iTunes' search thumbnail is only 100x100 — upgrade to a larger size
+      // for the detail panel using the same URL-substitution pattern iTunes
+      // artwork URLs support.
+      self._videoInfoArtOverride = (item.artworkUrl100 || '').replace('100x100bb', '600x600bb') || null;
+      self._fetchVideoInfo(item.title, item.kind === 'tv');
+    });
+
+    return row;
+  }
+
+  _showMtContextMenu(anchor, item) {
+    const r = this.shadowRoot;
+    document.querySelectorAll('.rb-tag-sheet').forEach(el => el.remove());
+    const isPinned = this._mtIsStarred(item);
+    const backdrop = document.createElement('div');
+    backdrop.className = 'queue-dropdown-backdrop';
+    const menu = document.createElement('div');
+    menu.className = 'queue-dropdown-menu';
+    menu.innerHTML =
+      '<div class="queue-dropdown-item" id="mtPin" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg><span class="queue-dropdown-label">' + (isPinned ? 'Unpin' : 'Pin') + '</span></div>';
+    const anchorRect = anchor.getBoundingClientRect();
+    const cardRect = r.host.getBoundingClientRect();
+    menu.style.position = 'absolute';
+    menu.style.top = (anchorRect.bottom - cardRect.top + 4) + 'px';
+    const host = r.getElementById('maPopup') || r.host;
+    host.appendChild(backdrop);
+    host.appendChild(menu);
+    const _menuOpenedAt = Date.now();
+    const _menuReady = () => (Date.now() - _menuOpenedAt) > 320;
+    const closeMenu = () => { menu.remove(); backdrop.remove(); };
+    backdrop.addEventListener('pointerdown', () => { if (!_menuReady()) return; closeMenu(); });
+    menu.querySelector('#mtPin')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
+      const nowPinned = this._mtToggleStar(item);
+      this._showToast(nowPinned ? 'Pinned' : 'Unpinned');
+      if (this._maCurrentTab === 'movie_tv') this._loadMATab('movie_tv');
+      if (this._pinnedDetailActive && this._pinnedDetailCategory === 'movies_tv') this._openPinnedCategoryDetail('movies_tv');
+    });
+  }
+
+  // Render the starred movies/TV section (returns element or null)
+  _mtRenderStarredSection() {
+    const starred = this._mtGetStarred();
+    if (!starred.length) return null;
+    const section = document.createElement('div');
+    section.id = 'mt-starred-section';
+    const heading = document.createElement('div');
+    heading.style.cssText = 'font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.6px;padding:10px 4px 6px;';
+    heading.textContent = '📍 Pinned Movies & TV';
+    section.appendChild(heading);
+    starred.forEach(item => section.appendChild(this._mtMakeRow(item, true)));
+    const divider = document.createElement('div');
+    divider.style.cssText = 'font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.6px;padding:10px 4px 6px;';
+    divider.textContent = 'Search Results';
+    section.appendChild(divider);
+    return section;
+  }
+
+
   _pcGetStarred() {
     const k = this._pcStarredKey();
     if (this._starredMemCache?.[k]) return this._starredMemCache[k];
@@ -9735,6 +10215,35 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // Insert starred at top
     const starredSection = this._pcRenderStarredSection();
     if (starredSection) content.insertBefore(starredSection, content.firstChild);
+  }
+
+  async _mtInjectSections(content) {
+    if (!content) return;
+    content.querySelector('#mt-starred-section')?.remove();
+    content.querySelector('#mt-browse-local-btn')?.remove();
+
+    const browseBtn = document.createElement('div');
+    browseBtn.id = 'mt-browse-local-btn';
+    browseBtn.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 4px;border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer;-webkit-tap-highlight-color:transparent;';
+    browseBtn.innerHTML =
+      '<div style="width:40px;height:40px;border-radius:8px;background:rgba(255,69,58,0.15);flex-shrink:0;display:flex;align-items:center;justify-content:center;"><svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:#FF453A"><path d="M10,4H4C2.89,4 2,4.89 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V8C22,6.89 21.1,6 20,6H12L10,4Z"/></svg></div>' +
+      '<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:600;color:var(--primary-text-color,#fff);">Browse Home Assistant Media</div><div style="font-size:11px;color:rgba(255,255,255,0.45);margin-top:1px;">Movies &amp; shows in your local media folder</div></div>' +
+      '<svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:rgba(255,255,255,0.25);flex-shrink:0;"><path d="M8.59,16.59L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.59Z"/></svg>';
+    browseBtn.addEventListener('click', () => {
+      if (!this._maBrowserNavStack) this._maBrowserNavStack = [];
+      this._maBrowserNavStack.push({ tab: 'movie_tv', searchQuery: null, inSearchResults: false });
+      this._mtLocalStack = [];
+      // Start directly at HA's local media folder ("My Media") rather than
+      // the generic media_source root, which lists every configured source
+      // (TTS, camera snapshots, etc.) — 'local' is the standard identifier
+      // for the default local media directory HA ships with.
+      this._mtBrowseLocal('media-source://media_source/local', 'app', 'My Media');
+    });
+    content.insertBefore(browseBtn, content.firstChild);
+
+    if (this._config?.show_pins_in_sections === false) return;
+    const starredSection = this._mtRenderStarredSection();
+    if (starredSection) content.insertBefore(starredSection, content.firstChild.nextSibling);
   }
 
   // Context menu for a podcast tile/row
@@ -10310,6 +10819,449 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     this._haStorageSavePins();
   }
 
+  // ── Pinned Recaps — a frozen snapshot of a Listening Recap, same
+  // philosophy as Pin Queue as Playlist: a point-in-time copy, not a live
+  // link that keeps changing.
+  _pinnedRecapsKey() { return 'crow_pin_recaps'; }
+
+  _getPinnedRecaps() {
+    const k = this._pinnedRecapsKey();
+    if (this._starredMemCache?.[k]) return this._starredMemCache[k];
+    let list;
+    try { list = JSON.parse(localStorage.getItem(k) || '[]'); } catch (_) { list = []; }
+    if (!this._starredMemCache) this._starredMemCache = {};
+    this._starredMemCache[k] = list;
+    return list;
+  }
+
+  _savePinnedRecapsList(list) {
+    const k = this._pinnedRecapsKey();
+    if (!this._starredMemCache) this._starredMemCache = {};
+    this._starredMemCache[k] = list;
+    try { localStorage.setItem(k, JSON.stringify(list)); } catch (_) {}
+    this._haStorageSavePins();
+  }
+
+  // ── Pinned Watch Recaps — same philosophy as Pinned Recaps, just for
+  // TV/movie watch history instead of listening history.
+  _pinnedWatchRecapsKey() { return 'crow_pin_watch_recaps'; }
+
+  _getPinnedWatchRecaps() {
+    const k = this._pinnedWatchRecapsKey();
+    if (this._starredMemCache?.[k]) return this._starredMemCache[k];
+    let list;
+    try { list = JSON.parse(localStorage.getItem(k) || '[]'); } catch (_) { list = []; }
+    if (!this._starredMemCache) this._starredMemCache = {};
+    this._starredMemCache[k] = list;
+    return list;
+  }
+
+  _savePinnedWatchRecapsList(list) {
+    const k = this._pinnedWatchRecapsKey();
+    if (!this._starredMemCache) this._starredMemCache = {};
+    this._starredMemCache[k] = list;
+    try { localStorage.setItem(k, JSON.stringify(list)); } catch (_) {}
+    this._haStorageSavePins();
+  }
+
+  // Builds one pinned-recap row for the Pinned overview / category list.
+  _makePinnedRecapRow(recap) {
+    const self = this;
+    const wrap = document.createElement('div');
+    wrap.className = 'ma-item-wrap';
+    const el = document.createElement('div');
+    el.className = 'ma-item';
+    const trackCount = recap.topTracks?.length || 0;
+    el.innerHTML =
+      '<div class="ma-item-art"><svg viewBox="0 0 24 24" style="display:flex;fill:rgba(255,255,255,0.35)"><path d="M22,21H2V3H4V19H6V10H10V19H12V6H16V19H18V14H22V21Z"/></svg></div>' +
+      '<div class="ma-item-info"><div class="ma-item-title">' + (recap.name || 'Pinned Recently Listened To') + '</div>' +
+        '<div class="ma-item-sub">' + (recap.dateRangeLabel || (trackCount + ' track' + (trackCount === 1 ? '' : 's'))) + '</div>' +
+      '</div>' +
+      '<div class="ma-item-chevron"><svg viewBox="0 0 24 24"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg></div>';
+    wrap.appendChild(el);
+
+    let lpTimer = null, lpFired = false;
+    el.addEventListener('contextmenu', e => e.preventDefault());
+    el.addEventListener('pointerdown', () => {
+      lpFired = false;
+      lpTimer = setTimeout(() => { lpFired = true; self._showPinnedRecapContextMenu(el, recap); }, 480);
+    }, { passive: true });
+    el.addEventListener('pointerup',     () => clearTimeout(lpTimer), { passive: true });
+    el.addEventListener('pointercancel', () => { clearTimeout(lpTimer); lpFired = false; }, { passive: true });
+    el.addEventListener('pointermove',   () => clearTimeout(lpTimer), { passive: true });
+    el.addEventListener('click', () => {
+      if (lpFired) { lpFired = false; return; }
+      self._openPinnedRecapDetail(recap);
+    });
+
+    return wrap;
+  }
+
+  _showPinnedRecapContextMenu(anchor, recap) {
+    const r = this.shadowRoot;
+    document.querySelectorAll('.rb-tag-sheet').forEach(el => el.remove());
+    const backdrop = document.createElement('div');
+    backdrop.className = 'queue-dropdown-backdrop';
+    const menu = document.createElement('div');
+    menu.className = 'queue-dropdown-menu';
+    menu.innerHTML =
+      '<div class="queue-dropdown-item" id="recapRename" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M3,17.25V21H6.75L17.81,9.94L14.06,6.19L3,17.25M20.71,7.04C21.1,6.65 21.1,6 20.71,5.63L18.37,3.29C18,2.9 17.35,2.9 16.96,3.29L15.13,5.12L18.88,8.87L20.71,7.04Z"/></svg><span class="queue-dropdown-label">Rename</span></div>' +
+      '<div class="queue-dropdown-item danger" id="recapDelete" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg><span class="queue-dropdown-label">Unpin</span></div>';
+    const anchorRect = anchor.getBoundingClientRect();
+    const cardRect = r.host.getBoundingClientRect();
+    menu.style.position = 'absolute';
+    menu.style.top = (anchorRect.bottom - cardRect.top + 4) + 'px';
+    const infoPopupEl = r.getElementById('infoPopup');
+    const visibleInfoPopup = infoPopupEl?.classList.contains('visible') ? infoPopupEl : null;
+    const host = visibleInfoPopup || r.getElementById('maPopup') || r.host;
+    host.appendChild(backdrop);
+    host.appendChild(menu);
+    const _menuOpenedAt = Date.now();
+    const _menuReady = () => (Date.now() - _menuOpenedAt) > 320;
+    const closeMenu = () => { menu.remove(); backdrop.remove(); };
+    backdrop.addEventListener('pointerdown', () => { if (!_menuReady()) return; closeMenu(); });
+    menu.querySelector('#recapRename')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
+      this._showRenameRecapSheet(recap, () => {
+        const content = this.shadowRoot?.getElementById('maContent');
+        if (!content) return;
+        if (this._pinnedDetailActive && this._pinnedDetailCategory === 'recaps') this._openPinnedCategoryDetail('recaps');
+      });
+    });
+    menu.querySelector('#recapDelete')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
+      const list = this._getPinnedRecaps().filter(rc => rc.id !== recap.id);
+      this._savePinnedRecapsList(list);
+      this._showToast('Recently Listened To unpinned');
+      const content = this.shadowRoot?.getElementById('maContent');
+      if (!content) return;
+      if (this._pinnedDetailActive && this._pinnedDetailCategory === 'recaps') this._openPinnedCategoryDetail('recaps');
+    });
+  }
+
+  _showRenameRecapSheet(recap, onRenamed) {
+    const _pt = (k) => this._pt(k);
+    document.querySelectorAll('.rb-tag-sheet').forEach(el => el.remove());
+    const sheet = document.createElement('div');
+    sheet.className = 'rb-tag-sheet';
+    sheet.style.cssText = 'position:absolute;z-index:99999;display:flex;align-items:flex-end;justify-content:center;background:rgba(0,0,0,0.5);left:0;top:' + window.scrollY + 'px;width:' + document.documentElement.clientWidth + 'px;height:' + window.innerHeight + 'px;';
+    sheet.innerHTML = '<div style="width:100%;max-width:480px;background:var(--crow-panel-bg,#13131a);border-radius:20px 20px 0 0;padding:20px 20px 32px;box-shadow:0 -8px 40px rgba(0,0,0,0.6);">'
+      + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">'
+      + '<span style="font-size:15px;font-weight:700;color:' + _pt('text') + ';">Rename Recently Listened To</span>'
+      + '<button class="rb-tag-sheet-close" style="width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,0.1);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;"><svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:' + _pt('text') + '"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>'
+      + '</div>'
+      + '<input id="recapRenameInput" type="text" value="' + (recap.name || '').replace(/"/g, '&quot;') + '" style="width:100%;box-sizing:border-box;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);border-radius:10px;padding:10px 12px;font-size:14px;color:' + _pt('text') + ';font-family:inherit;margin-bottom:14px;" autocomplete="off" autocorrect="off" spellcheck="false">'
+      + '<button id="recapRenameBtn" style="width:100%;padding:11px;background:#0A84FF;border:none;border-radius:12px;color:#fff;font-size:14px;font-weight:600;font-family:inherit;cursor:pointer;">Save</button>'
+      + '</div>';
+    document.body.appendChild(sheet);
+    const _close = () => sheet.remove();
+    sheet.addEventListener('click', e => { if (e.target === sheet) _close(); });
+    sheet.querySelector('.rb-tag-sheet-close')?.addEventListener('click', _close);
+    const _input = sheet.querySelector('#recapRenameInput');
+    _input?.focus();
+    _input?.select();
+    sheet.querySelector('#recapRenameBtn')?.addEventListener('click', () => {
+      const newName = (_input?.value || '').trim();
+      if (!newName) { this._showToast('Name cannot be empty'); return; }
+      const list = this._getPinnedRecaps();
+      const target = list.find(rc => rc.id === recap.id);
+      if (!target) { _close(); return; }
+      target.name = newName;
+      this._savePinnedRecapsList(list);
+      _close();
+      this._showToast('Renamed to "' + newName + '"');
+      if (typeof onRenamed === 'function') onRenamed(target);
+    });
+  }
+
+  // Renders a static, frozen view of a pinned recap — same layout as the
+  // live Listening Recap panel, but sourced entirely from the saved
+  // snapshot rather than live-aggregated data. Tracks/artists stay tappable
+  // (AI Info / bio) for consistency with the rest of the app.
+  _openPinnedRecapDetail(recap, skipNavPush = false) {
+    const content = this.shadowRoot?.getElementById('maContent');
+    const titleEl  = this.shadowRoot?.getElementById('maTitle');
+    const backBtn  = this.shadowRoot?.getElementById('maBackBtn');
+    const tabsEl    = this.shadowRoot?.getElementById('maTabs');
+    const searchRow = this.shadowRoot?.querySelector('.ma-search-row');
+    if (!content) return;
+
+    const openedFromPinned = this._pinnedDetailActive === true;
+    if (!skipNavPush) {
+      this._pinnedDetailActive = false;
+      if (!this._maBrowserNavStack) this._maBrowserNavStack = [];
+      this._maBrowserNavStack.push(openedFromPinned
+        ? { tab: '__pinned_category__', _pinnedCategory: 'recaps', searchQuery: null, inSearchResults: false }
+        : { tab: this._maCurrentTab || 'playlist', searchQuery: null, inSearchResults: false }
+      );
+    }
+
+    if (tabsEl)    tabsEl.style.display    = 'none';
+    if (searchRow) searchRow.style.display = 'none';
+    if (backBtn)   backBtn.classList.remove('hidden');
+    if (titleEl)   titleEl.textContent = recap.name || 'Pinned Recently Listened To';
+
+    const esc = s => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const topArtists = recap.topArtists || [];
+    const topTracks  = recap.topTracks || [];
+
+    content.innerHTML = `
+      <div style="padding:4px 2px 16px;">
+        ${topTracks.length ? `
+        <div class="ma-drill-actions" style="margin-bottom:14px;">
+          <button class="ma-drill-action-btn" id="pinnedRecapPlayAll"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div><span class="ma-drill-btn-label">Play All</span></button>
+          <button class="ma-drill-action-btn" id="pinnedRecapAdd"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M19 11h-6V5h-2v6H5v2h6v6h2v-6h6z"/></svg></div><span class="ma-drill-btn-label">Add</span></button>
+          <button class="ma-drill-action-btn" id="pinnedRecapPlayNext"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M16,18H18V6H16M6,18L14.5,12L6,6V18Z"/></svg></div><span class="ma-drill-btn-label">Play Next</span></button>
+          <button class="ma-drill-action-btn" id="pinnedRecapUnpin"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg></div><span class="ma-drill-btn-label">Unpin</span></button>
+        </div>` : ''}
+        ${recap.dateRangeLabel ? `<div style="font-size:11px;color:${this._pt('dim')};margin-bottom:10px;">${esc(recap.dateRangeLabel)}</div>` : ''}
+        ${recap.narrative ? `<div style="font-size:14px;line-height:1.5;color:${this._pt('text')};margin-bottom:18px;">${esc(recap.narrative)}</div>` : ''}
+        ${topArtists.length ? `
+        <div style="font-size:10px;font-weight:700;color:rgba(99,179,237,0.8);letter-spacing:0.6px;text-transform:uppercase;margin-bottom:8px;">Top Artists</div>
+        <div id="pinnedRecapArtistList" style="margin-bottom:16px;"></div>` : ''}
+        ${topTracks.length ? `
+        <div style="font-size:10px;font-weight:700;color:rgba(99,179,237,0.8);letter-spacing:0.6px;text-transform:uppercase;margin-bottom:8px;">Top Tracks</div>
+        <div id="pinnedRecapTrackList"></div>` : ''}
+      </div>`;
+
+    content.querySelector('#pinnedRecapPlayAll')?.addEventListener('click', () => this._playRecapTracks(topTracks, 'replace'));
+    content.querySelector('#pinnedRecapAdd')?.addEventListener('click', () => this._playRecapTracks(topTracks, 'add'));
+    content.querySelector('#pinnedRecapPlayNext')?.addEventListener('click', () => this._playRecapTracks(topTracks, 'next'));
+    content.querySelector('#pinnedRecapUnpin')?.addEventListener('click', () => {
+      const list = this._getPinnedRecaps().filter(rc => rc.id !== recap.id);
+      this._savePinnedRecapsList(list);
+      this._showToast('Recently Listened To unpinned');
+      this._maNavBack();
+    });
+
+    const artistListEl = content.querySelector('#pinnedRecapArtistList');
+    if (artistListEl) {
+      topArtists.forEach((a, i) => {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer;';
+        row.innerHTML = `
+          <div style="width:20px;font-size:12px;color:${this._pt('dim')};">${i + 1}</div>
+          <div style="flex:1;font-size:13px;color:${this._pt('text')};">${esc(a.name)}</div>
+          <div style="font-size:11px;color:${this._pt('dim')};">${a.count} plays</div>`;
+        row.addEventListener('click', () => this._showCastBio(content, a.name, '', '', () => this._openPinnedRecapDetail(recap, true)));
+        artistListEl.appendChild(row);
+      });
+    }
+
+    const trackListEl = content.querySelector('#pinnedRecapTrackList');
+    if (trackListEl) {
+      const _fallbackNoteIcon = '<svg viewBox="0 0 24 24" style="display:flex;fill:rgba(255,255,255,0.3)"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>';
+      topTracks.forEach(t => {
+        const item = {
+          name: t.title,
+          artists: t.artist ? [{ name: t.artist }] : [],
+          album: t.album ? { name: t.album } : null,
+          _tab: 'track',
+        };
+        const wrap = document.createElement('div');
+        wrap.className = 'ma-item-wrap';
+        const el = document.createElement('div');
+        el.className = 'ma-item';
+        const itunesKey = (t.artist || t.album || t.title)
+          ? [t.artist, t.album || t.title].filter(Boolean).join('|').toLowerCase()
+          : '';
+        const cachedArt = t.artUrl || (itunesKey ? (this._itunesArtCache?.[itunesKey] || '') : '');
+        const artInner = cachedArt
+          ? _fallbackNoteIcon + '<img src="' + cachedArt + '" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;" onerror="this.remove()">'
+          : _fallbackNoteIcon;
+        el.innerHTML =
+          '<div class="ma-item-art" style="position:relative;">' + artInner + '</div>' +
+          '<div class="ma-item-info"><div class="ma-item-title">' + esc(t.title) + '</div>' +
+            (t.artist ? '<div class="ma-item-sub">' + esc(t.artist) + '</div>' : '') +
+          '</div>';
+        wrap.appendChild(el);
+        this._attachMAItemSwipe(wrap, item, 'track');
+        trackListEl.appendChild(wrap);
+        if (!cachedArt && itunesKey) this._fetchItunesArt(t.artist, t.album, t.title);
+      });
+    }
+  }
+
+  // Builds one pinned-watch-recap row for the Pinned overview / category list.
+  _makePinnedWatchRecapRow(recap) {
+    const self = this;
+    const wrap = document.createElement('div');
+    wrap.className = 'ma-item-wrap';
+    const el = document.createElement('div');
+    el.className = 'ma-item';
+    const itemCount = (recap.topShows?.length || 0) + (recap.topMovies?.length || 0);
+    el.innerHTML =
+      '<div class="ma-item-art"><svg viewBox="0 0 24 24" style="display:flex;fill:rgba(255,255,255,0.35)"><path d="M21,3H3C1.89,3 1,3.89 1,5V19A2,2 0 0,0 3,21H21A2,2 0 0,0 23,19V5C23,3.89 22.1,3 21,3M21,19H3V5H21V19M18,13.5L15.5,15.15L15.5,11.85L18,13.5M13,15.5L10.5,17.15L10.5,13.85L13,15.5M8,13.5L5.5,15.15L5.5,11.85L8,13.5Z"/></svg></div>' +
+      '<div class="ma-item-info"><div class="ma-item-title">' + (recap.name || 'Pinned Recently Watched') + '</div>' +
+        '<div class="ma-item-sub">' + (recap.dateRangeLabel || (itemCount + ' item' + (itemCount === 1 ? '' : 's'))) + '</div>' +
+      '</div>' +
+      '<div class="ma-item-chevron"><svg viewBox="0 0 24 24"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg></div>';
+    wrap.appendChild(el);
+
+    let lpTimer = null, lpFired = false;
+    el.addEventListener('contextmenu', e => e.preventDefault());
+    el.addEventListener('pointerdown', () => {
+      lpFired = false;
+      lpTimer = setTimeout(() => { lpFired = true; self._showPinnedWatchRecapContextMenu(el, recap); }, 480);
+    }, { passive: true });
+    el.addEventListener('pointerup',     () => clearTimeout(lpTimer), { passive: true });
+    el.addEventListener('pointercancel', () => { clearTimeout(lpTimer); lpFired = false; }, { passive: true });
+    el.addEventListener('pointermove',   () => clearTimeout(lpTimer), { passive: true });
+    el.addEventListener('click', () => {
+      if (lpFired) { lpFired = false; return; }
+      self._openPinnedWatchRecapDetail(recap);
+    });
+
+    return wrap;
+  }
+
+  _showPinnedWatchRecapContextMenu(anchor, recap) {
+    const r = this.shadowRoot;
+    document.querySelectorAll('.rb-tag-sheet').forEach(el => el.remove());
+    const backdrop = document.createElement('div');
+    backdrop.className = 'queue-dropdown-backdrop';
+    const menu = document.createElement('div');
+    menu.className = 'queue-dropdown-menu';
+    menu.innerHTML =
+      '<div class="queue-dropdown-item" id="watchRecapRename" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M3,17.25V21H6.75L17.81,9.94L14.06,6.19L3,17.25M20.71,7.04C21.1,6.65 21.1,6 20.71,5.63L18.37,3.29C18,2.9 17.35,2.9 16.96,3.29L15.13,5.12L18.88,8.87L20.71,7.04Z"/></svg><span class="queue-dropdown-label">Rename</span></div>' +
+      '<div class="queue-dropdown-item danger" id="watchRecapDelete" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg><span class="queue-dropdown-label">Unpin</span></div>';
+    const anchorRect = anchor.getBoundingClientRect();
+    const cardRect = r.host.getBoundingClientRect();
+    menu.style.position = 'absolute';
+    menu.style.top = (anchorRect.bottom - cardRect.top + 4) + 'px';
+    const infoPopupEl = r.getElementById('infoPopup');
+    const visibleInfoPopup = infoPopupEl?.classList.contains('visible') ? infoPopupEl : null;
+    const host = visibleInfoPopup || r.getElementById('maPopup') || r.host;
+    host.appendChild(backdrop);
+    host.appendChild(menu);
+    const _menuOpenedAt = Date.now();
+    const _menuReady = () => (Date.now() - _menuOpenedAt) > 320;
+    const closeMenu = () => { menu.remove(); backdrop.remove(); };
+    backdrop.addEventListener('pointerdown', () => { if (!_menuReady()) return; closeMenu(); });
+    menu.querySelector('#watchRecapRename')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
+      this._showRenameWatchRecapSheet(recap, () => {
+        if (this._pinnedDetailActive && this._pinnedDetailCategory === 'watch_recaps') this._openPinnedCategoryDetail('watch_recaps');
+      });
+    });
+    menu.querySelector('#watchRecapDelete')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
+      const list = this._getPinnedWatchRecaps().filter(rc => rc.id !== recap.id);
+      this._savePinnedWatchRecapsList(list);
+      this._showToast('Recently Watched unpinned');
+      if (this._pinnedDetailActive && this._pinnedDetailCategory === 'watch_recaps') this._openPinnedCategoryDetail('watch_recaps');
+    });
+  }
+
+  _showRenameWatchRecapSheet(recap, onRenamed) {
+    const _pt = (k) => this._pt(k);
+    document.querySelectorAll('.rb-tag-sheet').forEach(el => el.remove());
+    const sheet = document.createElement('div');
+    sheet.className = 'rb-tag-sheet';
+    sheet.style.cssText = 'position:absolute;z-index:99999;display:flex;align-items:flex-end;justify-content:center;background:rgba(0,0,0,0.5);left:0;top:' + window.scrollY + 'px;width:' + document.documentElement.clientWidth + 'px;height:' + window.innerHeight + 'px;';
+    sheet.innerHTML = '<div style="width:100%;max-width:480px;background:var(--crow-panel-bg,#13131a);border-radius:20px 20px 0 0;padding:20px 20px 32px;box-shadow:0 -8px 40px rgba(0,0,0,0.6);">'
+      + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">'
+      + '<span style="font-size:15px;font-weight:700;color:' + _pt('text') + ';">Rename Recently Watched</span>'
+      + '<button class="rb-tag-sheet-close" style="width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,0.1);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;"><svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:' + _pt('text') + '"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>'
+      + '</div>'
+      + '<input id="watchRecapRenameInput" type="text" value="' + (recap.name || '').replace(/"/g, '&quot;') + '" style="width:100%;box-sizing:border-box;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);border-radius:10px;padding:10px 12px;font-size:14px;color:' + _pt('text') + ';font-family:inherit;margin-bottom:14px;" autocomplete="off" autocorrect="off" spellcheck="false">'
+      + '<button id="watchRecapRenameBtn" style="width:100%;padding:11px;background:#0A84FF;border:none;border-radius:12px;color:#fff;font-size:14px;font-weight:600;font-family:inherit;cursor:pointer;">Save</button>'
+      + '</div>';
+    document.body.appendChild(sheet);
+    const _close = () => sheet.remove();
+    sheet.addEventListener('click', e => { if (e.target === sheet) _close(); });
+    sheet.querySelector('.rb-tag-sheet-close')?.addEventListener('click', _close);
+    const _input = sheet.querySelector('#watchRecapRenameInput');
+    _input?.focus();
+    _input?.select();
+    sheet.querySelector('#watchRecapRenameBtn')?.addEventListener('click', () => {
+      const newName = (_input?.value || '').trim();
+      if (!newName) { this._showToast('Name cannot be empty'); return; }
+      const list = this._getPinnedWatchRecaps();
+      const target = list.find(rc => rc.id === recap.id);
+      if (!target) { _close(); return; }
+      target.name = newName;
+      this._savePinnedWatchRecapsList(list);
+      _close();
+      this._showToast('Renamed to "' + newName + '"');
+      if (typeof onRenamed === 'function') onRenamed(target);
+    });
+  }
+
+  // Renders a static, frozen view of a pinned Watch Recap. No hero bar —
+  // queueing movies/episodes isn't a coherent playback action the way
+  // queueing songs is, so this is view-only plus Rename/Unpin (via
+  // long-press on the row, same as the pinned overview list).
+  _openPinnedWatchRecapDetail(recap, skipNavPush = false) {
+    const content = this.shadowRoot?.getElementById('maContent');
+    const titleEl  = this.shadowRoot?.getElementById('maTitle');
+    const backBtn  = this.shadowRoot?.getElementById('maBackBtn');
+    const tabsEl    = this.shadowRoot?.getElementById('maTabs');
+    const searchRow = this.shadowRoot?.querySelector('.ma-search-row');
+    if (!content) return;
+
+    const openedFromPinned = this._pinnedDetailActive === true;
+    if (!skipNavPush) {
+      this._pinnedDetailActive = false;
+      if (!this._maBrowserNavStack) this._maBrowserNavStack = [];
+      this._maBrowserNavStack.push(openedFromPinned
+        ? { tab: '__pinned_category__', _pinnedCategory: 'watch_recaps', searchQuery: null, inSearchResults: false }
+        : { tab: this._maCurrentTab || 'playlist', searchQuery: null, inSearchResults: false }
+      );
+    }
+
+    if (tabsEl)    tabsEl.style.display    = 'none';
+    if (searchRow) searchRow.style.display = 'none';
+    if (backBtn)   backBtn.classList.remove('hidden');
+    if (titleEl)   titleEl.textContent = recap.name || 'Pinned Recently Watched';
+
+    const esc = s => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const topShows  = recap.topShows  || [];
+    const topMovies = recap.topMovies || [];
+
+    content.innerHTML = `
+      <div style="padding:4px 2px 16px;">
+        ${recap.dateRangeLabel ? `<div style="font-size:11px;color:${this._pt('dim')};margin-bottom:10px;">${esc(recap.dateRangeLabel)}</div>` : ''}
+        ${recap.narrative ? `<div style="font-size:14px;line-height:1.5;color:${this._pt('text')};margin-bottom:18px;">${esc(recap.narrative)}</div>` : ''}
+        ${topShows.length ? `
+        <div style="font-size:10px;font-weight:700;color:rgba(99,179,237,0.8);letter-spacing:0.6px;text-transform:uppercase;margin-bottom:8px;">Top Shows</div>
+        <div id="pinnedWatchRecapShowList" style="margin-bottom:16px;"></div>` : ''}
+        ${topMovies.length ? `
+        <div style="font-size:10px;font-weight:700;color:rgba(99,179,237,0.8);letter-spacing:0.6px;text-transform:uppercase;margin-bottom:8px;">Top Movies</div>
+        <div id="pinnedWatchRecapMovieList"></div>` : ''}
+      </div>`;
+
+    const _openVideoInfo = (title, isTV) => {
+      const infoPopup = this.shadowRoot?.getElementById('infoPopup');
+      const infoContent = this.shadowRoot?.getElementById('infoContent');
+      const infoTitleEl = this.shadowRoot?.getElementById('infoPopupTitle');
+      if (infoPopup) {
+        infoPopup.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
+        infoPopup.style.setProperty('backdrop-filter', 'none');
+        infoPopup.style.setProperty('-webkit-backdrop-filter', 'none');
+        infoPopup.classList.add('visible');
+      }
+      if (infoContent) infoContent.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
+      if (infoTitleEl) infoTitleEl.textContent = 'Media Info';
+      this._infoPopupOpenedAt = Date.now();
+      this._activeInfoPanelKind = null;
+      this.shadowRoot?.getElementById('queueMenuBtn')?.classList.add('hidden');
+      this._fetchVideoInfo(title, isTV);
+    };
+
+    const showListEl = content.querySelector('#pinnedWatchRecapShowList');
+    if (showListEl) {
+      topShows.forEach((s, i) => {
+        const row = this._buildWatchRecapRow(i + 1, s.title, s.count + ' episode' + (s.count === 1 ? '' : 's'), true, () => _openVideoInfo(s.title, true), i);
+        showListEl.appendChild(row);
+      });
+    }
+
+    const movieListEl = content.querySelector('#pinnedWatchRecapMovieList');
+    if (movieListEl) {
+      topMovies.forEach((m, i) => {
+        const row = this._buildWatchRecapRow(i + 1, m.title, m.count + ' play' + (m.count === 1 ? '' : 's'), false, () => _openVideoInfo(m.title, false), topShows.length + i);
+        movieListEl.appendChild(row);
+      });
+    }
+  }
+
   // Builds one pinned-queue row — extracted so it can be reused both by the
   // per-tab pinned section and the consolidated Pinned overview.
   _makeSavedQueueRow(sq) {
@@ -10379,6 +11331,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       { key: 'stations',   label: 'Radio',       color: '#FF9F0A', path: 'M19,6.41L4.86,2.28L4.29,4.2L7,5V7H5A2,2 0 0,0 3,9V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V9A2,2 0 0,0 19,7H9V5.75L19,8.55V6.41M7,9A2,2 0 0,1 9,11A2,2 0 0,1 7,13A2,2 0 0,1 5,11A2,2 0 0,1 7,9M17,18H7V16H17V18M19,14H11V10H19V14Z' },
       { key: 'podcasts',   label: 'Podcasts',    color: '#BF5AF2', path: 'M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12,7A5,5 0 0,0 7,12C7,14.76 8.58,17.15 11,18.27V16.06C9.8,15.16 9,13.68 9,12A3,3 0 0,1 12,9A3,3 0 0,1 15,12C15,13.68 14.2,15.16 13,16.06V18.27C15.42,17.15 17,14.76 17,12A5,5 0 0,0 12,7M12,11A1,1 0 0,0 11,12A1,1 0 0,0 12,13A1,1 0 0,0 13,12A1,1 0 0,0 12,11Z' },
       { key: 'audiobooks', label: 'Audiobooks',  color: '#32ADE6', path: 'M18,22A2,2 0 0,0 20,20V4C20,2.89 19.1,2 18,2H12V9L9.5,7.5L7,9V2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18Z' },
+      { key: 'recaps',     label: 'Recently Listened To', color: '#64D2FF', path: 'M22,21H2V3H4V19H6V10H10V19H12V6H16V19H18V14H22V21Z' },
+      { key: 'watch_recaps', label: 'Recently Watched', color: '#FF453A', path: 'M21,3H3C1.89,3 1,3.89 1,5V19A2,2 0 0,0 3,21H21A2,2 0 0,0 23,19V5C23,3.89 22.1,3 21,3M21,19H3V5H21V19M18,13.5L15.5,15.15L15.5,11.85L18,13.5M13,15.5L10.5,17.15L10.5,13.85L13,15.5M8,13.5L5.5,15.15L5.5,11.85L8,13.5Z' },
+      { key: 'movies_tv',  label: 'Movies & TV', color: '#FF3B30', path: 'M21,3H3C1.89,3 1,3.89 1,5V19A2,2 0 0,0 3,21H21A2,2 0 0,0 23,19V5C23,3.89 22.1,3 21,3M21,19H3V5H21V19M18,13.5L15.5,15.15L15.5,11.85L18,13.5M13,15.5L10.5,17.15L10.5,13.85L13,15.5M8,13.5L5.5,15.15L5.5,11.85L8,13.5Z' },
     ];
   }
 
@@ -10390,6 +11345,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       case 'stations':   return this._rbGetStarred();
       case 'podcasts':   return this._pcGetStarred();
       case 'audiobooks': return this._abGetStarred();
+      case 'recaps':     return this._getPinnedRecaps();
+      case 'watch_recaps': return this._getPinnedWatchRecaps();
+      case 'movies_tv':  return this._mtGetStarred();
       default: return [];
     }
   }
@@ -10412,6 +11370,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       case 'stations':   return this._rbMakeStationRow(item, entity, true);
       case 'podcasts':   return this._pcMakeRow(item, true);
       case 'audiobooks': return this._abMakeRow(item, true);
+      case 'movies_tv':  return this._mtMakeRow(item, true);
+      case 'recaps':     return this._makePinnedRecapRow(item);
+      case 'watch_recaps': return this._makePinnedWatchRecapRow(item);
       default: return document.createElement('div');
     }
   }
@@ -10469,6 +11430,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       case 'stations':   return item.name || '';
       case 'podcasts':   return item.collectionName || '';
       case 'audiobooks': return item.title || '';
+      case 'recaps':     return item.name || '';
+      case 'watch_recaps': return item.name || '';
+      case 'movies_tv':  return item.title || '';
       default: return '';
     }
   }
@@ -10789,7 +11753,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       list.appendChild(empty);
     } else {
       const _fallbackNoteIcon = '<svg viewBox="0 0 24 24" style="display:flex;fill:rgba(255,255,255,0.3)"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>';
-      tracks.forEach(t => {
+      tracks.forEach((t, _tIdx) => {
         // Same shape _showAITrackInfo/_showEnqueueMenu already expect — no
         // uri, so playback and pinning fall back to fuzzy title+artist
         // search, exactly like a pinned non-MA track.
@@ -10826,7 +11790,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           '</div>' +
           '<div class="ma-item-chevron"><svg viewBox="0 0 24 24"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg></div>';
         wrap.appendChild(el);
-        this._attachMAItemSwipe(wrap, item, 'track');
+        this._attachMAItemSwipe(wrap, item, 'track', { savedQueueRemove: { sqId: sq.id, trackIndex: _tIdx } });
         list.appendChild(wrap);
 
         if (!artSrc && itunesKey) this._fetchItunesArt(t.artist, t.album, t.title);
@@ -11358,6 +12322,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     popup.classList.add('visible');
     this._infoPopupOpenedAt = Date.now();
     if (titleEl) titleEl.textContent = book.title || 'Audiobook';
+    this._activeInfoPanelKind = null;
     r.getElementById('queueMenuBtn')?.classList.add('hidden');
     const _abShareBtn = r.getElementById('infoShareBtn');
     if (_abShareBtn) {
@@ -11899,6 +12864,16 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const content = this.shadowRoot.getElementById('maContent');
     this.shadowRoot?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
 
+    // Guards against overlapping searches — typing quickly (debounced call
+    // pending) then pressing Enter immediately (fires a search right away)
+    // can leave an older, slower-to-resolve request racing a newer one.
+    // Whichever happens to finish last would otherwise win regardless of
+    // which one is actually current, which was silently replacing search
+    // results with a stale render (in the worst case, the default
+    // unfiltered library list from an earlier empty-query state).
+    this._maSearchGen = (this._maSearchGen || 0) + 1;
+    const _mySearchGen = this._maSearchGen;
+
     // Remember which tab is active before deactivating them
     const activeTabEl = this.shadowRoot.querySelector('.ma-tab.active');
     const activeTabKey = activeTabEl ? activeTabEl.dataset.tab : (this._maCurrentTab || null);
@@ -11911,8 +12886,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       // navigation) writing into the same #maContent — if something newer
       // has started by the time this resolves, this backs off silently
       // instead of clobbering it (or getting silently clobbered itself).
-      this._maContentGen = (this._maContentGen || 0) + 1;
-      const _myGen = this._maContentGen;
+      const _myGen = _mySearchGen;
       content.innerHTML = this._psLoading('Searching radio stations…');
       try {
         // A bounded timeout guarantees this always resolves to something
@@ -11928,7 +12902,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         }
         if (!rbRes.ok) throw new Error('HTTP ' + rbRes.status);
         const stations = await rbRes.json();
-        if (this._maContentGen !== _myGen) return;
+        if (this._maSearchGen !== _myGen) return;
         if (!stations?.length) {
           content.innerHTML = this._psAutoClose(this._psEmpty('M9.5,3A6.5,6.5 0 0,1 16,9.5C16,11.11 15.41,12.59 14.44,13.73L14.71,14H15.5L20.5,19L19,20.5L14,15.5V14.71L13.73,14.44C12.59,15.41 11.11,16 9.5,16A6.5,6.5 0 0,1 3,9.5A6.5,6.5 0 0,1 9.5,3M9.5,5C7,5 5,7 5,9.5C5,12 7,14 9.5,14C12,14 14,12 14,9.5C14,7 12,5 9.5,5Z', 'No stations found', 'Nothing matched "' + query + '" — try a different search'), null, 8000, 'rbNoResBtn', 'rbNoResRing');
           this._psAutoCloseStart(this.shadowRoot, null, () => { this._maInSearchResults = false; this.shadowRoot?.querySelectorAll('.ma-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'radio')); this._loadMATab('radio'); }, 8000, 'rbNoResBtn', 'rbNoResRing');
@@ -11953,7 +12927,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         content.appendChild(rbList);
         this._haRbInjectBrowseEntry(content);
       } catch(e) {
-        if (this._maContentGen !== _myGen) return;
+        if (this._maSearchGen !== _myGen) return;
         console.error('[Radio search] failed:', e);
         content.innerHTML = '';
         const errDiv = document.createElement('div');
@@ -12004,6 +12978,42 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         closeBtn.textContent = 'Go back';
         closeBtn.style.cssText = 'margin-top:12px;padding:6px 14px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:8px;color:#fff;font-size:12px;font-family:inherit;cursor:pointer;';
         closeBtn.addEventListener('click', () => { this._maInSearchResults = false; this.shadowRoot?.querySelectorAll('.ma-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'podcast')); this._loadMATab('podcast'); });
+        errDiv.appendChild(closeBtn);
+        content.appendChild(errDiv);
+      }
+      return;
+    }
+
+    // Movie/TV tab: search iTunes instead of MA library
+    if (activeTabKey === 'movie_tv' || this._maCurrentTab === 'movie_tv') {
+      this.shadowRoot?.getElementById('maContent')?.querySelector('.ma-drill-actions')?.remove();
+      content.innerHTML = this._psLoading('Searching movies & TV…');
+      try {
+        const results = await this._mtSearch(query);
+        if (!results.length) {
+          content.innerHTML = this._psAutoClose(this._psEmpty('M21,3H3C1.89,3 1,3.89 1,5V19A2,2 0 0,0 3,21H21A2,2 0 0,0 23,19V5C23,3.89 22.1,3 21,3M21,19H3V5H21V19M18,13.5L15.5,15.15L15.5,11.85L18,13.5M13,15.5L10.5,17.15L10.5,13.85L13,15.5M8,13.5L5.5,15.15L5.5,11.85L8,13.5Z', 'Nothing found', 'Nothing matched "' + query + '" — try a different search'), null, 8000, 'mtNoResBtn', 'mtNoResRing');
+          this._psAutoCloseStart(this.shadowRoot, null, () => { this._maInSearchResults = false; this.shadowRoot?.querySelectorAll('.ma-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'movie_tv')); this._loadMATab('movie_tv'); }, 8000, 'mtNoResBtn', 'mtNoResRing');
+          return;
+        }
+        this.shadowRoot.querySelectorAll('.ma-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'movie_tv'));
+        content.innerHTML = '';
+
+        const list = document.createElement('div');
+        list.style.cssText = 'display:flex;flex-direction:column;';
+        results.forEach(item => list.appendChild(this._mtMakeRow(item, false)));
+
+        const starredSection = this._config?.show_pins_in_sections !== false ? this._mtRenderStarredSection() : null;
+        if (starredSection) content.appendChild(starredSection);
+        content.appendChild(list);
+      } catch(e) {
+        content.innerHTML = '';
+        const errDiv = document.createElement('div');
+        errDiv.style.cssText = 'margin:16px 4px;background:rgba(255,165,0,0.1);border:1px solid rgba(255,165,0,0.3);border-radius:12px;padding:14px;';
+        errDiv.innerHTML = '<div style="font-size:13px;font-weight:600;color:rgba(255,165,0,0.9);margin-bottom:6px;">🎬 iTunes search unavailable</div><div style="font-size:12px;color:rgba(255,255,255,0.6);line-height:1.5;">Movie & TV search uses the iTunes Search API, which is currently rejecting requests. This is a known issue on Apple\'s end (undocumented rate-limiting) rather than a problem with your connection — it usually resolves on its own after a few minutes.</div>';
+        const closeBtn = document.createElement('button');
+        closeBtn.textContent = 'Go back';
+        closeBtn.style.cssText = 'margin-top:12px;padding:6px 14px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:8px;color:#fff;font-size:12px;font-family:inherit;cursor:pointer;';
+        closeBtn.addEventListener('click', () => { this._maInSearchResults = false; this.shadowRoot?.querySelectorAll('.ma-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'movie_tv')); this._loadMATab('movie_tv'); });
         errDiv.appendChild(closeBtn);
         content.appendChild(errDiv);
       }
@@ -12134,6 +13144,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         return_response: true
       };
       const res = await this._hass.connection.sendMessagePromise(msg);
+      if (this._maSearchGen !== _mySearchGen) return;
       // MA returns results grouped by media type: { artists: [...], albums: [...], tracks: [...], ... }
       // Handle both res.response and res.response.items (newer MA versions)
       const response = res?.response?.items ? res.response : res?.response;
@@ -12491,6 +13502,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const r = this.shadowRoot;
     const state = this._hass?.states[this._entity];
     if (!state) return;
+    this._activeInfoPanelKind = 'queue';
     // Hide queue building overlay in case it was left open from a previous panel
     r?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
 
@@ -14918,7 +15930,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   }
 
   /**
-   * Listening Recap — local play-history log + AI narrative
+   * Recently Listened To — local play-history log + AI narrative
    * ─────────────────────────────────────────────────────────────────────
    * Log entries are appended by the _trackChanged handler in the hass
    * setter (see _lastTrackMeta / _trackStartTs). Aggregation (top artists,
@@ -14937,6 +15949,104 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // Shared exclusion check used by both the live watcher (set hass) and the
   // history backfill — kept as one function so the two paths can't drift
   // out of sync with different rules.
+  // Classifies a media state for Watch Recap purposes. Deliberately strict
+  // — precision over recall, since the fallback branch of _detectMediaType
+  // treats anything ambiguous (including YouTube) as 'movie', which would
+  // be wrong to trust blindly here.
+  //  - TV: trusts _detectMediaType()'s 'tv' classification as-is, since that
+  //    already requires a positive signal (series title, season/episode
+  //    numbers, or an explicit tvshow/episode content type).
+  //  - Movie: only counts if media_content_type is EXPLICITLY 'movie', not
+  //    the generic 'video' bucket everything unclear (including YouTube)
+  //    falls into.
+  //  - Explicit YouTube backstop regardless of how it classifies.
+  // Returns { kind: 'tv'|'movie'|null, title, seriesTitle }.
+  _classifyWatchMedia(attrs, pseudoState) {
+    const uri = (attrs?.media_content_id || '').toLowerCase();
+    if (uri.includes('youtube')) return { kind: null };
+
+    const detected = this._detectMediaType(pseudoState || { attributes: attrs });
+
+    if (detected === 'tv') {
+      let seriesTitle = attrs?.media_series_title || '';
+      const episodeTitle = attrs?.media_title || seriesTitle;
+      if (!seriesTitle) {
+        // No clean series title provided — best-effort extraction from
+        // media_title, which can arrive as something like "Show Name -
+        // Episode 5" from apps that don't populate media_series_title at
+        // all. Deliberately only strips a trailing episode marker — a
+        // leading number is NOT safe to strip, since plenty of real titles
+        // start with one ("24", "9-1-1", "3 Body Problem", "5 Cops", etc.).
+        seriesTitle = (attrs?.media_title || '')
+          .replace(/\s*[-:]\s*Episode\s*\d+\s*$/i, '')
+          .replace(/\s*S\d{1,2}E\d{1,3}\s*$/i, '')
+          .trim();
+      }
+      if (!seriesTitle) return { kind: null };
+      return { kind: 'tv', title: episodeTitle, seriesTitle };
+    }
+
+    if (detected === 'movie') {
+      const title = attrs?.media_title || '';
+      if (!title) return { kind: null };
+      return { kind: 'movie', title, seriesTitle: title };
+    }
+
+    return { kind: null };
+  }
+
+  // Watch Recap's version of _logListenEntry — same per-entry-key storage
+  // shape, same dedup/pruning approach, just a separate store (watchLog)
+  // and a longer dedup window since episodes/movies run far longer than
+  // songs, so music's 10-minute window would be too tight here.
+  _logWatchEntry(meta, tsOverride) {
+    try {
+      if (!meta?.title) return;
+      const lsKey = 'crow_ai_local_watchLog';
+      const store = JSON.parse(localStorage.getItem(lsKey) || '{}');
+      const now = tsOverride || Date.now();
+
+      const dedupWindowMs = 30 * 60 * 1000;
+      const isDupe = Object.values(store).some(e => {
+        const d = e?.data;
+        if (!d || d.title !== meta.title || (d.entity || '') !== (meta.entity || '')) return false;
+        return Math.abs((e.ts || 0) - now) <= dedupWindowMs;
+      });
+      if (isDupe) return;
+
+      const entryKey = 'w' + now + '_' + Math.random().toString(36).slice(2, 6);
+      store[entryKey] = {
+        data: {
+          title: meta.title,
+          seriesTitle: meta.seriesTitle || meta.title,
+          mediaType: meta.mediaType || 'movie',
+          entity: meta.entity || '',
+          durationMs: (meta.duration || 0) * 1000,
+        },
+        ts: now,
+      };
+      const cutoff = Date.now() - 90 * 24 * 3600 * 1000;
+      Object.keys(store).forEach(k => { if ((store[k].ts || 0) < cutoff) delete store[k]; });
+      const keys = Object.keys(store);
+      if (keys.length > 2000) {
+        keys.sort((a, b) => (store[a].ts || 0) - (store[b].ts || 0))
+            .slice(0, keys.length - 2000)
+            .forEach(k => delete store[k]);
+      }
+      localStorage.setItem(lsKey, JSON.stringify(store));
+      this._haStorageSaveAIImmediate('watchLog');
+    } catch (_) { /* localStorage unavailable — silently skip logging */ }
+  }
+
+  _getWatchLogEntries() {
+    try {
+      const store = JSON.parse(localStorage.getItem('crow_ai_local_watchLog') || '{}');
+      return Object.values(store)
+        .filter(entry => entry && entry.data)
+        .map(entry => ({ ...entry.data, ts: entry.ts }));
+    } catch (_) { return []; }
+  }
+
   _recapShouldExclude(artist, title, attrs, pseudoState) {
     // Narrow notification/announcement filter — deliberately NOT a blanket
     // URI-scheme match (that's what silently excluded every real MA track
@@ -14944,7 +16054,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // has: no real artist + a bare filename-style title.
     const artistLower = (artist || '').trim().toLowerCase();
     const hasRealArtist = artistLower !== '[unknown]' && artistLower !== 'unknown';
-    const looksLikeFilenameSlug = /^[a-z0-9]+(-[a-z0-9]+){2,}$/i.test((title || '').trim());
+    const looksLikeFilenameSlug = /^[a-z0-9]+([-_][a-z0-9]+){1,}$/i.test((title || '').trim());
     if (!hasRealArtist && looksLikeFilenameSlug) return true;
 
     // Music-only — podcast/audiobook rely on this card's own "currently
@@ -14956,7 +16066,17 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const isPodcast   = (!pseudoState && !!this._pcNowPlaying) || contentType === 'podcast';
     const isAudiobook = (!pseudoState && !!this._abNowPlaying) || contentType === 'audiobook';
     const isRadio      = this._isLiveStream(pseudoState || { attributes: attrs });
-    return isPodcast || isAudiobook || isRadio;
+    if (isPodcast || isAudiobook || isRadio) return true;
+
+    // Video content — TV shows, movies, YouTube, etc. — reuses the same
+    // classifier already used elsewhere in the app (quick-menu Trivia/Mood
+    // Match gating, content warnings) rather than a new set of heuristics.
+    // It defaults to 'movie' for anything ambiguous that isn't clearly
+    // music, so this is a strict "must positively look like music" gate.
+    const _pseudoForType = pseudoState || { attributes: attrs };
+    if (this._detectMediaType(_pseudoForType) !== 'music') return true;
+
+    return false;
   }
 
   // Reconstructs plays that happened while this card wasn't mounted/visible
@@ -14971,6 +16091,20 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // Runs once per card load (like _haStorageLoad), and only looks back as
   // far as each entity's last checkpoint (or 48h on the very first run, to
   // avoid a huge initial fetch) — not the entity's entire history.
+  // Advances a single entity's backfill checkpoint to now — called by the
+  // live watcher right after it logs a play, so the history backfill (which
+  // has no visibility into what the live watcher already caught) doesn't
+  // independently re-fetch and re-log the same time window later.
+  _advanceHistoryCheckpoint(entId) {
+    try {
+      const key = 'crow_ai_local_historyCheckpoint';
+      const checkpoints = JSON.parse(localStorage.getItem(key) || '{}');
+      checkpoints[entId] = Date.now();
+      localStorage.setItem(key, JSON.stringify(checkpoints));
+      this._haStorageSaveAI('historyCheckpoint');
+    } catch (_) {}
+  }
+
   async _backfillListenHistoryFromHA() {
     if (this._historyBackfillDone) return;
     this._historyBackfillDone = true;
@@ -15020,24 +16154,20 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           ts: h.lu !== undefined ? h.lu * 1000 : new Date(h.last_updated || h.last_changed || 0).getTime(),
         })).filter(e => e.ts && !isNaN(e.ts)).sort((a, b) => a.ts - b.ts);
 
-        let prevMeta = null, prevStartTs = null;
+        let prevMeta = null, prevStartTs = null, prevKind = null;
         for (const entry of normalized) {
           if (entry.state !== 'playing') continue;
           const artist = entry.attrs.media_artist || '';
           const title  = entry.attrs.media_title  || '';
-          if (!artist || !title) continue;
-          if (this._recapShouldExclude(artist, title, entry.attrs, { state: entry.state, attributes: entry.attrs })) continue;
+          if (!title) continue;
 
-          const key = artist + '|||' + title + '|||' + (entry.attrs.media_album_name || '');
-          if (prevMeta && prevMeta.key !== key) {
-            const elapsedMs = entry.ts - (prevStartTs || entry.ts);
-            const durMs = (prevMeta.duration || 0) * 1000;
-            const qualifies = elapsedMs >= 30000 || (durMs > 0 && elapsedMs >= durMs * 0.5);
-            if (qualifies) this._logListenEntry(prevMeta, prevStartTs);
-          }
-          if (!prevMeta || prevMeta.key !== key) {
-            prevMeta = {
-              key, artist, title,
+          let kind = null, key = null, entryMeta = null;
+          if (artist) {
+            if (this._recapShouldExclude(artist, title, entry.attrs, { state: entry.state, attributes: entry.attrs })) continue;
+            kind = 'music';
+            key = 'music|' + artist + '|||' + title + '|||' + (entry.attrs.media_album_name || '');
+            entryMeta = {
+              artist, title,
               album: entry.attrs.media_album_name || '',
               entity: entId,
               mediaType: 'music',
@@ -15045,6 +16175,35 @@ class CrowAIMediaPlayerCard extends HTMLElement {
               uri: entry.attrs.media_content_id || '',
               isMaEntity: true,
             };
+          } else {
+            const cls = this._classifyWatchMedia(entry.attrs, { state: entry.state, attributes: entry.attrs });
+            if (!cls.kind) continue;
+            kind = cls.kind;
+            key = kind + '|' + cls.seriesTitle + '|||' + cls.title;
+            entryMeta = {
+              title: cls.title,
+              seriesTitle: cls.seriesTitle,
+              entity: entId,
+              mediaType: kind,
+              duration: entry.attrs.media_duration || 0,
+            };
+          }
+
+          if (prevMeta && prevMeta.key !== key) {
+            const elapsedMs = entry.ts - (prevStartTs || entry.ts);
+            const durMs = (prevMeta.duration || 0) * 1000;
+            const qualifies = prevKind === 'music'
+              ? (elapsedMs >= 30000 || (durMs > 0 && elapsedMs >= durMs * 0.5))
+              : (elapsedMs >= 10000); // TV/movie — just needs a genuine start, not a full watch
+            if (qualifies) {
+              if (prevKind === 'music') this._logListenEntry(prevMeta, prevStartTs);
+              else this._logWatchEntry(prevMeta, prevStartTs);
+            }
+          }
+          if (!prevMeta || prevMeta.key !== key) {
+            entryMeta.key = key;
+            prevMeta = entryMeta;
+            prevKind = kind;
             prevStartTs = entry.ts;
           }
         }
@@ -15065,6 +16224,21 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       const lsKey = 'crow_ai_local_listenLog';
       const store = JSON.parse(localStorage.getItem(lsKey) || '{}');
       const now = tsOverride || Date.now();
+
+      // Dedup safety net — skip if the same artist/title/entity was already
+      // logged within 10 minutes of this timestamp. Checkpoint-advancing
+      // (see _advanceHistoryCheckpoint) prevents most re-processing, but a
+      // race between two cards' backfills both reading a stale checkpoint
+      // before either writes back could still double-log the same real
+      // play; this catches that case regardless of source.
+      const dedupWindowMs = 10 * 60 * 1000;
+      const isDupe = Object.values(store).some(e => {
+        const d = e?.data;
+        if (!d || d.artist !== meta.artist || d.title !== meta.title || (d.entity || '') !== (meta.entity || '')) return false;
+        return Math.abs((e.ts || 0) - now) <= dedupWindowMs;
+      });
+      if (isDupe) return;
+
       const entryKey = 't' + now + '_' + Math.random().toString(36).slice(2, 6);
       store[entryKey] = {
         data: {
@@ -15122,8 +16296,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     popup.classList.add('visible');
     this._infoPopupOpenedAt = Date.now();
     this._queuePanelDirection = null;
-    r.getElementById('queueMenuBtn')?.classList.add('hidden');
-    if (titleEl) titleEl.textContent = '📊 Listening Recap';
+    this._activeInfoPanelKind = 'recap';
+    r.getElementById('queueMenuBtn')?.classList.remove('hidden');
+    if (titleEl) titleEl.textContent = '📊 Recently Listened To';
 
     if (!this._aiPanelGeneration) this._aiPanelGeneration = 0;
     const _myGen = ++this._aiPanelGeneration;
@@ -15170,8 +16345,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       }
     });
     const top = (obj, n) => Object.entries(obj).sort((a, b) => (b[1].count || b[1]) - (a[1].count || a[1])).slice(0, n);
-    const topArtists = top(artistCounts, 10);
-    const topTracks  = top(trackCounts, 10).map(([, v]) => v);
+    const _recapCap = this._recapShowExpanded ? 50 : 10;
+    const topArtists = top(artistCounts, _recapCap);
+    const topTracks  = top(trackCounts, _recapCap).map(([, v]) => v);
     const totalPlays = recent.length;
     const totalMins  = Math.round(totalMs / 60000);
 
@@ -15193,9 +16369,21 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     }
     if (_stale()) return;
 
+    // Stashed so the shared "⋮" menu (built separately, on demand) can
+    // access the current snapshot data without needing this whole render
+    // function to re-run.
+    this._lastRecapData = { narrative, topArtists, topTracks };
+
     const esc = s => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     content.innerHTML = `
       <div style="padding:4px 2px 16px;">
+        ${topTracks.length ? `
+        <div class="ma-drill-actions" style="margin-bottom:14px;">
+          <button class="ma-drill-action-btn" id="recapHeroPlayAll"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div><span class="ma-drill-btn-label">Play All</span></button>
+          <button class="ma-drill-action-btn" id="recapHeroAdd"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M19 11h-6V5h-2v6H5v2h6v6h2v-6h6z"/></svg></div><span class="ma-drill-btn-label">Add</span></button>
+          <button class="ma-drill-action-btn" id="recapHeroPlayNext"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M16,18H18V6H16M6,18L14.5,12L6,6V18Z"/></svg></div><span class="ma-drill-btn-label">Play Next</span></button>
+          <button class="ma-drill-action-btn" id="recapHeroPin"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg></div><span class="ma-drill-btn-label">Pin</span></button>
+        </div>` : ''}
         ${narrative ? `<div style="font-size:14px;line-height:1.5;color:${this._pt('text')};margin-bottom:18px;">${esc(narrative)}</div>` : ''}
         ${topArtists.length ? `
         <div style="font-size:10px;font-weight:700;color:rgba(99,179,237,0.8);letter-spacing:0.6px;text-transform:uppercase;margin-bottom:8px;">Top Artists</div>
@@ -15203,81 +16391,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         ${topTracks.length ? `
         <div style="font-size:10px;font-weight:700;color:rgba(99,179,237,0.8);letter-spacing:0.6px;text-transform:uppercase;margin-bottom:8px;">Top Tracks</div>
         <div id="recapTrackList"></div>
-        <div style="font-size:11px;color:${this._pt('dim')};margin-top:10px;text-align:center;">Top 10 · last 7 days</div>` : ''}
-        <button id="recapResetBtn" style="width:100%;margin-top:20px;padding:10px 14px;border-radius:10px;border:1px solid rgba(255,69,58,0.3);background:rgba(255,69,58,0.1);color:#ff453a;font-size:13px;font-weight:500;cursor:pointer;font-family:inherit;">Clear Recap History</button>
+        <div style="font-size:11px;color:${this._pt('dim')};margin-top:10px;text-align:center;">Top ${_recapCap} · last 7 days</div>` : ''}
       </div>`;
 
-    content.querySelector('#recapResetBtn')?.addEventListener('click', () => {
-      const _savedHtml = content.innerHTML;
-      const _savedScroll = content.scrollTop;
-      content.innerHTML =
-        '<div class="panel-state confirm">' +
-          '<div class="panel-state-icon"><svg viewBox="0 0 24 24"><path d="M9,3V4H4V6H5V19A2,2 0 0,0 7,21H17A2,2 0 0,0 19,19V6H20V4H15V3H9M7,6H17V19H7V6M9,8V17H11V8H9M13,8V17H15V8H13Z"/></svg></div>' +
-          '<div class="panel-state-title">Reset listening data?</div>' +
-          '<div class="panel-state-body">This permanently deletes your Recap history. This can\u2019t be undone.</div>' +
-          '<div class="panel-state-confirm-btns">' +
-            '<button class="panel-state-btn-cancel" id="recapResetCancel">Cancel</button>' +
-            '<button class="panel-state-btn-danger" id="recapResetConfirm">Reset</button>' +
-          '</div>' +
-        '</div>';
-      content.querySelector('#recapResetCancel')?.addEventListener('click', () => {
-        content.innerHTML = _savedHtml;
-        content.scrollTop = _savedScroll;
-        content.querySelector('#recapResetBtn')?.addEventListener('click', () => this._showAIRecap(), { once: true });
-      }, { once: true });
-      content.querySelector('#recapResetConfirm')?.addEventListener('click', async () => {
-        // Reset (not delete) history checkpoints to "now" for every entity
-        // this card or others might be tracking. Deleting them would make
-        // the backfill treat it as a first-ever run and look back 48h again
-        // — re-fetching and re-inserting exactly what's being cleared here.
-        // Setting them to now marks "already caught up" so nothing before
-        // this point gets backfilled again on the next card load.
-        let _checkpoints = {};
-        try { _checkpoints = JSON.parse(localStorage.getItem('crow_ai_local_historyCheckpoint') || '{}'); } catch (_) {}
-        const _nowTs = Date.now();
-        const _watchEntitiesForClear = [
-          ...(Array.isArray(this._config?.entities) ? this._config.entities : []),
-          ...(Array.isArray(this._config?.ma_entities) ? this._config.ma_entities : []),
-          ...Object.keys(_checkpoints),
-        ].filter((v, i, a) => a.indexOf(v) === i);
-        _watchEntitiesForClear.forEach(eid => { _checkpoints[eid] = _nowTs; });
-        try { localStorage.setItem('crow_ai_local_historyCheckpoint', JSON.stringify(_checkpoints)); } catch (_) {}
-        // Global marker, separate from per-entity checkpoints — covers a
-        // different room's card that has never run backfill at all yet (so
-        // has no checkpoint entry for its own entities), which would
-        // otherwise still look back the full default 48h and re-insert
-        // pre-clear history the first time it loads.
-        try { localStorage.setItem('crow_ai_local_recapClearedAt', JSON.stringify({ ts: _nowTs })); } catch (_) {}
-
-        try {
-          localStorage.removeItem('crow_ai_local_listenLog');
-          localStorage.removeItem('crow_ai_local_maRecapState');
-        } catch (_) {}
-        this._maRecapState = {};
-        // Cancel any pending debounced write for these caches — otherwise a
-        // stale timer could still fire afterwards and re-push old data.
-        clearTimeout(this._haAISaveTimers?.listenLog);
-        clearTimeout(this._haAISaveTimers?.maRecapState);
-        // Write the clear straight to HA now rather than via the debounced
-        // _haStorageSaveAI (2s delay) — if the card gets torn down and
-        // recreated (e.g. dashboard navigation) before that timer fires, the
-        // next load would pull the old, not-yet-cleared data back down from
-        // HA and silently undo the clear.
-        if (this._config?.ai_info_persistent_storage === true && this._hass?.connection) {
-          try {
-            const conn = this._hass.connection;
-            const res = await conn.sendMessagePromise({ type: 'frontend/get_user_data', key: 'crow_ai_local' });
-            const full = (res?.value && typeof res.value === 'object') ? res.value : {};
-            full.listenLog = {};
-            full.maRecapState = {};
-            full.historyCheckpoint = _checkpoints;
-            full.recapClearedAt = { ts: _nowTs };
-            await conn.sendMessagePromise({ type: 'frontend/set_user_data', key: 'crow_ai_local', value: full });
-          } catch (_) { /* best-effort — local clear already happened either way */ }
-        }
-        this._showAIRecap();
-      }, { once: true });
-    });
+    content.querySelector('#recapHeroPlayAll')?.addEventListener('click', () => this._playRecapTracks(topTracks, 'replace'));
+    content.querySelector('#recapHeroAdd')?.addEventListener('click', () => this._playRecapTracks(topTracks, 'add'));
+    content.querySelector('#recapHeroPlayNext')?.addEventListener('click', () => this._playRecapTracks(topTracks, 'next'));
+    content.querySelector('#recapHeroPin')?.addEventListener('click', () => this._promptPinRecap());
 
     // ── Top Artists — tap opens the AI bio panel, same one used elsewhere
     // in the app (_showCastBio). Passing a custom onBack re-renders the
@@ -15342,6 +16462,592 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     }
   }
 
+  // Watch Recap — same architecture as Listening Recap (_showAIRecap), just
+  // for TV/movies: Top Shows (grouped by series, each episode counts as a
+  // play) and Top Movies, instead of Top Artists/Top Tracks. Deliberately
+  // no Play All/Add/Play Next hero bar — queueing up a string of movies
+  // back-to-back isn't a coherent action the way queueing songs is.
+  // Shared row builder for Watch Recap's Top Shows/Top Movies — used by both
+  // the live panel and the pinned detail view. Artwork is cache-first (so
+  // re-opening the same recap is instant) with a queued iTunes fetch
+  // otherwise, reusing the same fallback helper built for the AI Info
+  // panel's own artwork fallback — swapped into the row once resolved
+  // rather than blocking the whole list on every image loading first.
+  // Deterministic color from a title — same title always gets the same
+  // color (unlike Math.random, which would flicker to a different color
+  // on every re-render). Used as the guaranteed final fallback when no
+  // artwork source comes through at all.
+  _hashTitleToColor(title) {
+    let hash = 0;
+    const s = title || '';
+    for (let i = 0; i < s.length; i++) hash = ((hash << 5) - hash + s.charCodeAt(i)) | 0;
+    const hue = Math.abs(hash) % 360;
+    // Return a real hex color, not an hsl() string — callers append a
+    // hex-style alpha suffix (e.g. fallbackColor + '33') to build
+    // translucent variants for the gradient/glow, which only produces
+    // valid CSS on a hex value. Appending that suffix to an hsl(...)
+    // string is invalid CSS and gets silently dropped by the browser,
+    // which is exactly what was happening — the icon itself worked
+    // because it used the color with no suffix, but the gradient/glow
+    // never actually applied.
+    const h = hue / 360, sat = 0.55, l = 0.45;
+    const c = (1 - Math.abs(2 * l - 1)) * sat;
+    const x = c * (1 - Math.abs((h * 6) % 2 - 1));
+    const m = l - c / 2;
+    let r, g, b;
+    if (h < 1/6)      { r = c; g = x; b = 0; }
+    else if (h < 2/6) { r = x; g = c; b = 0; }
+    else if (h < 3/6) { r = 0; g = c; b = x; }
+    else if (h < 4/6) { r = 0; g = x; b = c; }
+    else if (h < 5/6) { r = x; g = 0; b = c; }
+    else              { r = c; g = 0; b = x; }
+    const toHex = v => Math.round((v + m) * 255).toString(16).padStart(2, '0');
+    return '#' + toHex(r) + toHex(g) + toHex(b);
+  }
+
+  _buildWatchRecapRow(rank, title, subtitleLabel, isTV, onClick, staggerIndex) {
+    const esc = s => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const rowGlowOn = this._config?.row_glow === true;
+    const fallbackColor = this._hashTitleToColor(title);
+
+    const wrap = document.createElement('div');
+    wrap.className = 'ma-item-wrap';
+    const el = document.createElement('div');
+    el.className = 'ma-item';
+
+    const _fallbackIcon = '<svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:rgba(255,255,255,0.55)"><path d="M21,3H3C1.89,3 1,3.89 1,5V19A2,2 0 0,0 3,21H21A2,2 0 0,0 23,19V5C23,3.89 22.1,3 21,3M21,19H3V5H21V19M18,13.5L15.5,15.15L15.5,11.85L18,13.5M13,15.5L10.5,17.15L10.5,13.85L13,15.5M8,13.5L5.5,15.15L5.5,11.85L8,13.5Z"/></svg>';
+
+    el.innerHTML =
+      '<div class="ma-item-art" style="position:relative;background:' + fallbackColor + ';">' + _fallbackIcon + '</div>' +
+      '<div class="ma-item-info"><div class="ma-item-title">' + esc(title) + '</div>' +
+        '<div class="ma-item-sub">' + esc(subtitleLabel) + '</div>' +
+      '</div>';
+    wrap.appendChild(el);
+    wrap.addEventListener('click', onClick);
+    if (rowGlowOn) {
+      el.style.setProperty('background', 'linear-gradient(90deg, ' + fallbackColor + '33 0%, transparent 60%)', 'important');
+      el.style.setProperty('box-shadow', 'inset 0 0 0 1px ' + fallbackColor + '40', 'important');
+    }
+
+    // Swap the hashed-color square for a real poster once one resolves.
+    // Staggered by row position (700ms apart, same spacing used elsewhere
+    // for iTunes/Wikipedia lookups) so opening a 10+ row list doesn't fire
+    // a burst of simultaneous requests. The hashed color stays as the
+    // fallback if nothing comes back.
+    setTimeout(() => {
+      this._fetchVideoArtWithWiki(title, null, isTV ? 'tv' : 'movie').then(url => {
+        if (!url) return;
+        const artEl = el.querySelector('.ma-item-art');
+        if (!artEl) return;
+        const img = document.createElement('img');
+        img.alt = '';
+        img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;';
+        img.addEventListener('error', () => { img.remove(); }); // keep hashed color + icon underneath on load failure
+        img.addEventListener('load', () => {
+          artEl.style.background = 'none';
+          artEl.querySelector('svg')?.remove();
+        });
+        artEl.appendChild(img);
+        img.src = url;
+      }).catch(() => {});
+    }, (staggerIndex || 0) * 700);
+
+    return wrap;
+  }
+
+  async _showWatchRecap() {
+    const r = this.shadowRoot;
+    const popup = r.getElementById('infoPopup');
+    const content = r.getElementById('infoContent');
+    const titleEl = r.getElementById('infoPopupTitle');
+    if (!popup || !content) return;
+
+    popup.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
+    popup.style.setProperty('backdrop-filter', 'none');
+    popup.style.setProperty('-webkit-backdrop-filter', 'none');
+    popup.style.setProperty('isolation', 'isolate');
+    popup.style.setProperty('transform', 'translateZ(0)');
+    content.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
+    const _haCard = r.querySelector('ha-card');
+    if (_haCard) _haCard.style.setProperty('--crow-card-blur', 'none');
+
+    popup.classList.add('visible');
+    this._infoPopupOpenedAt = Date.now();
+    this._queuePanelDirection = null;
+    this._activeInfoPanelKind = 'watchRecap';
+    r.getElementById('queueMenuBtn')?.classList.remove('hidden');
+    if (titleEl) titleEl.textContent = '🎬 Recently Watched';
+
+    if (!this._aiPanelGeneration) this._aiPanelGeneration = 0;
+    const _myGen = ++this._aiPanelGeneration;
+    const _stale = () => this._aiPanelGeneration !== _myGen;
+
+    const entries = this._getWatchLogEntries();
+    const cutoff = Date.now() - 7 * 24 * 3600 * 1000; // last 7 days
+    const recent = entries.filter(e => e.ts >= cutoff);
+
+    if (!recent.length) {
+      content.innerHTML = this._psEmpty(
+        'M21,3H3C1.89,3 1,3.89 1,5V19A2,2 0 0,0 3,21H21A2,2 0 0,0 23,19V5C23,3.89 22.1,3 21,3M21,19H3V5H21V19M18,13.5L15.5,15.15L15.5,11.85L18,13.5M13,15.5L10.5,17.15L10.5,13.85L13,15.5M8,13.5L5.5,15.15L5.5,11.85L8,13.5Z',
+        'Not enough watching yet',
+        'Keep watching shows and movies this week and check back for a recap.'
+      );
+      return;
+    }
+
+    // ── Aggregate locally — no AI needed for the numbers themselves ──────
+    const showCounts = {}, movieCounts = {};
+    recent.forEach(e => {
+      if (e.mediaType === 'tv' && e.seriesTitle) {
+        if (!showCounts[e.seriesTitle]) showCounts[e.seriesTitle] = { count: 0, title: e.seriesTitle };
+        showCounts[e.seriesTitle].count++;
+      } else if (e.mediaType === 'movie' && e.title) {
+        if (!movieCounts[e.title]) movieCounts[e.title] = { count: 0, title: e.title };
+        movieCounts[e.title].count++;
+      }
+    });
+    const top = (obj, n) => Object.entries(obj).sort((a, b) => b[1].count - a[1].count).slice(0, n).map(([, v]) => v);
+    const _watchCap = this._watchRecapShowExpanded ? 50 : 10;
+    const topShows  = top(showCounts, _watchCap);
+    const topMovies = top(movieCounts, _watchCap);
+    const totalPlays = recent.length;
+
+    content.innerHTML = this._psLoading('Building your watch recap…');
+
+    const hasAI = await this._aiCheckAvailable();
+    if (_stale()) return;
+
+    let narrative = '';
+    if (hasAI) {
+      const statSummary = `Top shows (by episodes watched): ${topShows.slice(0, 5).map(s => s.title + ' (' + s.count + ' episodes)').join(', ') || 'none'}. ` +
+        `Top movies: ${topMovies.slice(0, 5).map(m => m.title).join(', ') || 'none'}. ` +
+        `Total plays: ${totalPlays}.`;
+      const prompt = `Here is a week of someone's TV and movie watching stats: ${statSummary} Write a warm, 2-3 sentence recap summarising their week of watching, in a friendly Spotify-Wrapped style tone. Speak directly to them about their own watching — don't write as a company or service thanking them for "letting us be part of your journey" or similar phrasing; this is their own personal summary, not a product message. No markdown, no headers, no quotes.`;
+      try {
+        const raw = await this._aiConverse(prompt);
+        narrative = (raw || '').trim();
+      } catch (_) { /* narrative is optional — stats still render below */ }
+    }
+    if (_stale()) return;
+
+    this._lastWatchRecapData = { narrative, topShows, topMovies };
+
+    const esc = s => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    content.innerHTML = `
+      <div style="padding:4px 2px 16px;">
+        ${narrative ? `<div style="font-size:14px;line-height:1.5;color:${this._pt('text')};margin-bottom:18px;">${esc(narrative)}</div>` : ''}
+        ${topShows.length ? `
+        <div style="font-size:10px;font-weight:700;color:rgba(99,179,237,0.8);letter-spacing:0.6px;text-transform:uppercase;margin-bottom:8px;">Top Shows</div>
+        <div id="watchRecapShowList" style="margin-bottom:16px;"></div>` : ''}
+        ${topMovies.length ? `
+        <div style="font-size:10px;font-weight:700;color:rgba(99,179,237,0.8);letter-spacing:0.6px;text-transform:uppercase;margin-bottom:8px;">Top Movies</div>
+        <div id="watchRecapMovieList"></div>` : ''}
+        <div style="font-size:11px;color:${this._pt('dim')};margin-top:10px;text-align:center;">Top ${_watchCap} · last 7 days</div>
+      </div>`;
+
+    // Tapping a show/movie opens the same AI Info panel used when tapping
+    // artwork directly — series title for TV (matches how that lookup
+    // already works everywhere else; an individual episode title wouldn't
+    // resolve to anything useful), movie title for movies.
+    const _openVideoInfo = (title, isTV) => {
+      const titleElNow = r.getElementById('infoPopupTitle');
+      if (titleElNow) titleElNow.textContent = 'Media Info';
+      this._fetchVideoInfo(title, isTV);
+    };
+
+    const showListEl = content.querySelector('#watchRecapShowList');
+    if (showListEl) {
+      topShows.forEach((s, i) => {
+        const row = this._buildWatchRecapRow(i + 1, s.title, s.count + ' episode' + (s.count === 1 ? '' : 's'), true, () => _openVideoInfo(s.title, true), i);
+        showListEl.appendChild(row);
+      });
+    }
+
+    const movieListEl = content.querySelector('#watchRecapMovieList');
+    if (movieListEl) {
+      topMovies.forEach((m, i) => {
+        const row = this._buildWatchRecapRow(i + 1, m.title, m.count + ' play' + (m.count === 1 ? '' : 's'), false, () => _openVideoInfo(m.title, false), topShows.length + i);
+        movieListEl.appendChild(row);
+      });
+    }
+  }
+
+  // Dropdown menu for Watch Recap's shared "⋮" header button — Pin/Clear
+  // only, no playback actions (see _showWatchRecap's comment on why).
+  _showWatchRecapOptionsMenu() {
+    const r = this.shadowRoot;
+    const existing = r.getElementById('queueDropdownMenu');
+    if (existing) { existing.remove(); r.getElementById('queueDropdownBackdrop')?.remove(); return; }
+
+    const anchor = r.getElementById('queueMenuBtn');
+    if (!anchor) return;
+
+    const backdrop = document.createElement('div');
+    backdrop.className = 'queue-dropdown-backdrop';
+    backdrop.id = 'queueDropdownBackdrop';
+    const menu = document.createElement('div');
+    menu.className = 'queue-dropdown-menu';
+    menu.id = 'queueDropdownMenu';
+    menu.innerHTML =
+      '<div class="queue-dropdown-item" id="watchRecapMenuExpand" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M3,18H21V16H3V18M3,13H21V11H3V13M3,6V8H21V6H3Z"/></svg><span class="queue-dropdown-label">' + (this._watchRecapShowExpanded ? 'Show Top 10' : 'Show Top 50') + '</span></div>' +
+      '<div class="queue-dropdown-item" id="watchRecapMenuPin" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg><span class="queue-dropdown-label">Pin This Recently Watched</span></div>' +
+      '<div class="queue-dropdown-item danger" id="watchRecapMenuClear" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/></svg><span class="queue-dropdown-label">Clear Watch History</span></div>';
+
+    const anchorRect = anchor.getBoundingClientRect();
+    const cardRect = r.host.getBoundingClientRect();
+    menu.style.position = 'absolute';
+    menu.style.top = (anchorRect.bottom - cardRect.top + 4) + 'px';
+    const popup = r.getElementById('infoPopup');
+    popup.appendChild(backdrop);
+    popup.appendChild(menu);
+
+    const _menuOpenedAt = Date.now();
+    const _menuReady = () => (Date.now() - _menuOpenedAt) > 320;
+    const closeMenu = () => { menu.remove(); backdrop.remove(); };
+    backdrop.addEventListener('pointerdown', () => { if (!_menuReady()) return; closeMenu(); });
+    menu.querySelector('#watchRecapMenuExpand')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
+      this._watchRecapShowExpanded = !this._watchRecapShowExpanded;
+      this._showWatchRecap();
+    });
+    menu.querySelector('#watchRecapMenuPin')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
+      this._promptPinWatchRecap();
+    });
+    menu.querySelector('#watchRecapMenuClear')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
+      this._confirmClearWatchHistory();
+    });
+  }
+
+  _promptPinWatchRecap() {
+    const data = this._lastWatchRecapData;
+    if (!data || (!data.topShows?.length && !data.topMovies?.length)) {
+      this._showToast('Nothing to pin yet');
+      return;
+    }
+    const startDate = new Date(Date.now() - 7 * 24 * 3600 * 1000);
+    const endDate   = new Date();
+    const fmt = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const dateRangeLabel = `${fmt(startDate)} \u2013 ${fmt(endDate)}`;
+    const autoName = `Week of ${fmt(startDate)}`;
+    const snapshot = {
+      id: 'watchrecap_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+      name: autoName,
+      dateRangeLabel,
+      narrative: data.narrative,
+      topShows: data.topShows.map(s => ({ title: s.title, count: s.count })),
+      topMovies: data.topMovies.map(m => ({ title: m.title, count: m.count })),
+      pinnedAt: Date.now(),
+    };
+    this._showSaveWatchRecapNameSheet(snapshot);
+  }
+
+  _showSaveWatchRecapNameSheet(snapshot) {
+    const _pt = (k) => this._pt(k);
+    document.querySelectorAll('.rb-tag-sheet').forEach(el => el.remove());
+    const sheet = document.createElement('div');
+    sheet.className = 'rb-tag-sheet';
+    sheet.style.cssText = 'position:absolute;z-index:99999;display:flex;align-items:flex-end;justify-content:center;background:rgba(0,0,0,0.5);left:0;top:' + window.scrollY + 'px;width:' + document.documentElement.clientWidth + 'px;height:' + window.innerHeight + 'px;';
+    sheet.innerHTML = '<div style="width:100%;max-width:480px;background:var(--crow-panel-bg,#13131a);border-radius:20px 20px 0 0;padding:20px 20px 32px;box-shadow:0 -8px 40px rgba(0,0,0,0.6);">'
+      + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">'
+      + '<span style="font-size:15px;font-weight:700;color:' + _pt('text') + ';">Pin Recently Watched</span>'
+      + '<button class="rb-tag-sheet-close" style="width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,0.1);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;"><svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:' + _pt('text') + '"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>'
+      + '</div>'
+      + '<div style="font-size:12px;color:' + _pt('dim') + ';margin-bottom:10px;">' + (snapshot.dateRangeLabel || '') + '</div>'
+      + '<input id="watchRecapNameInput" type="text" value="' + (snapshot.name || '').replace(/"/g, '&quot;') + '" style="width:100%;box-sizing:border-box;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);border-radius:10px;padding:10px 12px;font-size:14px;color:' + _pt('text') + ';font-family:inherit;margin-bottom:14px;" autocomplete="off" autocorrect="off" spellcheck="false">'
+      + '<button id="watchRecapSaveBtn" style="width:100%;padding:11px;background:#0A84FF;border:none;border-radius:12px;color:#fff;font-size:14px;font-weight:600;font-family:inherit;cursor:pointer;">Pin</button>'
+      + '</div>';
+    document.body.appendChild(sheet);
+    const _close = () => sheet.remove();
+    sheet.addEventListener('click', e => { if (e.target === sheet) _close(); });
+    sheet.querySelector('.rb-tag-sheet-close')?.addEventListener('click', _close);
+    const _input = sheet.querySelector('#watchRecapNameInput');
+    _input?.focus();
+    _input?.select();
+    sheet.querySelector('#watchRecapSaveBtn')?.addEventListener('click', () => {
+      const name = (_input?.value || '').trim() || snapshot.name;
+      const list = this._getPinnedWatchRecaps();
+      list.unshift({ ...snapshot, name });
+      this._savePinnedWatchRecapsList(list);
+      _close();
+      this._showToast('\ud83d\udccd Pinned "' + name + '"');
+    });
+  }
+
+  _confirmClearWatchHistory() {
+    const content = this.shadowRoot?.getElementById('infoContent');
+    if (!content) return;
+    const _savedHtml = content.innerHTML;
+    const _savedScroll = content.scrollTop;
+    content.innerHTML =
+      '<div class="panel-state confirm">' +
+        '<div class="panel-state-icon"><svg viewBox="0 0 24 24"><path d="M9,3V4H4V6H5V19A2,2 0 0,0 7,21H17A2,2 0 0,0 19,19V6H20V4H15V3H9M7,6H17V19H7V6M9,8V17H11V8H9M13,8V17H15V8H13Z"/></svg></div>' +
+        '<div class="panel-state-title">Reset watch history?</div>' +
+        '<div class="panel-state-body">This permanently deletes your Recently Watched history. This can\u2019t be undone.</div>' +
+        '<div class="panel-state-confirm-btns">' +
+          '<button class="panel-state-btn-cancel" id="watchRecapResetCancel">Cancel</button>' +
+          '<button class="panel-state-btn-danger" id="watchRecapResetConfirm">Reset</button>' +
+        '</div>' +
+      '</div>';
+    content.querySelector('#watchRecapResetCancel')?.addEventListener('click', () => {
+      content.innerHTML = _savedHtml;
+      content.scrollTop = _savedScroll;
+    }, { once: true });
+    content.querySelector('#watchRecapResetConfirm')?.addEventListener('click', async () => {
+      try {
+        localStorage.removeItem('crow_ai_local_watchLog');
+      } catch (_) {}
+      clearTimeout(this._haAISaveTimers?.watchLog);
+      if (this._config?.ai_info_persistent_storage === true && this._hass?.connection) {
+        try {
+          const conn = this._hass.connection;
+          const res = await conn.sendMessagePromise({ type: 'frontend/get_user_data', key: 'crow_ai_local' });
+          const full = (res?.value && typeof res.value === 'object') ? res.value : {};
+          full.watchLog = {};
+          await conn.sendMessagePromise({ type: 'frontend/set_user_data', key: 'crow_ai_local', value: full });
+        } catch (_) { /* best-effort — local clear already happened either way */ }
+      }
+      // Note: unlike Listening Recap's clear, this doesn't reset the shared
+      // history-backfill checkpoints — those are entity-wide (covering both
+      // music and watch content per entity), and resetting them here would
+      // also silently discard any not-yet-backfilled music history for the
+      // same entities. Watch content backfilled again after this clear is a
+      // much smaller/rarer risk than that trade-off.
+      this._showWatchRecap();
+    }, { once: true });
+  }
+
+  // Dropdown menu for the shared "⋮" header button when the Recap panel is
+  // open — same visual pattern as the Queue panel's own dropdown menu.
+  _showRecapOptionsMenu() {
+    const r = this.shadowRoot;
+    const existing = r.getElementById('queueDropdownMenu');
+    if (existing) { existing.remove(); r.getElementById('queueDropdownBackdrop')?.remove(); return; }
+
+    const anchor = r.getElementById('queueMenuBtn');
+    if (!anchor) return;
+
+    const backdrop = document.createElement('div');
+    backdrop.className = 'queue-dropdown-backdrop';
+    backdrop.id = 'queueDropdownBackdrop';
+    const menu = document.createElement('div');
+    menu.className = 'queue-dropdown-menu';
+    menu.id = 'queueDropdownMenu';
+    menu.innerHTML =
+      '<div class="queue-dropdown-item" id="recapMenuExpand" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M3,18H21V16H3V18M3,13H21V11H3V13M3,6V8H21V6H3Z"/></svg><span class="queue-dropdown-label">' + (this._recapShowExpanded ? 'Show Top 10' : 'Show Top 50') + '</span></div>' +
+      '<div class="queue-dropdown-item" id="recapMenuPlayAll" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg><span class="queue-dropdown-label">Play All</span></div>' +
+      '<div class="queue-dropdown-item" id="recapMenuAdd" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M19 11h-6V5h-2v6H5v2h6v6h2v-6h6z"/></svg><span class="queue-dropdown-label">Add</span></div>' +
+      '<div class="queue-dropdown-item" id="recapMenuPlayNext" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M16,18H18V6H16M6,18L14.5,12L6,6V18Z"/></svg><span class="queue-dropdown-label">Play Next</span></div>' +
+      '<div class="queue-dropdown-item" id="recapMenuPin" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg><span class="queue-dropdown-label">Pin This Recently Listened To</span></div>' +
+      '<div class="queue-dropdown-item danger" id="recapMenuClear" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/></svg><span class="queue-dropdown-label">Clear Listening History</span></div>';
+
+    const anchorRect = anchor.getBoundingClientRect();
+    const cardRect = r.host.getBoundingClientRect();
+    menu.style.position = 'absolute';
+    menu.style.top = (anchorRect.bottom - cardRect.top + 4) + 'px';
+    const popup = r.getElementById('infoPopup');
+    popup.appendChild(backdrop);
+    popup.appendChild(menu);
+
+    const _menuOpenedAt = Date.now();
+    const _menuReady = () => (Date.now() - _menuOpenedAt) > 320;
+    const closeMenu = () => { menu.remove(); backdrop.remove(); };
+    backdrop.addEventListener('pointerdown', () => { if (!_menuReady()) return; closeMenu(); });
+    menu.querySelector('#recapMenuExpand')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
+      this._recapShowExpanded = !this._recapShowExpanded;
+      this._showAIRecap();
+    });
+    menu.querySelector('#recapMenuPlayAll')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
+      this._playRecapTracks(this._lastRecapData?.topTracks || [], 'replace');
+    });
+    menu.querySelector('#recapMenuAdd')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
+      this._playRecapTracks(this._lastRecapData?.topTracks || [], 'add');
+    });
+    menu.querySelector('#recapMenuPlayNext')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
+      this._playRecapTracks(this._lastRecapData?.topTracks || [], 'next');
+    });
+    menu.querySelector('#recapMenuPin')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
+      this._promptPinRecap();
+    });
+    menu.querySelector('#recapMenuClear')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
+      this._confirmClearRecapHistory();
+    });
+  }
+
+  // Plays a recap's Top Tracks list — same fuzzy title+artist search used by
+  // Pinned Songs/Saved Queues, since recap entries don't carry a stored URI.
+  // mode 'replace' = Play All (clears queue, starts fresh); 'add' = append
+  // to the end of the queue; 'next' = insert the whole list right after the
+  // currently playing track, in order. For 'next', each individual
+  // enqueue:'next' call inserts immediately after the current track — so
+  // processing the list in REVERSE means each earlier track's call pushes
+  // the previously-inserted ones back, landing in the correct forward order
+  // once all calls are done (same principle as the queue-reorder fix
+  // elsewhere in this file).
+  async _playRecapTracks(tracks, mode) {
+    if (!tracks?.length) { this._showToast('Nothing to play'); return; }
+    const targetEntity = this._maEntityIds?.has(this._entity) ? this._entity : (this._getValidMASpeakers(true)[0] || null);
+    if (!targetEntity) { this._showToast('Music Assistant required'); return; }
+    this._closeMABrowser();
+    this._showLoadingToast(mode === 'replace' ? 'Starting playback…' : 'Adding to Queue…');
+
+    const ordered = mode === 'next' ? [...tracks].reverse() : tracks;
+    let calledOk = 0;
+    for (let i = 0; i < ordered.length; i++) {
+      const t = ordered[i];
+      const _name = t.title || '';
+      if (!_name) continue;
+      try {
+        await this._hass.connection.sendMessagePromise({
+          type: 'call_service', domain: 'music_assistant', service: 'play_media',
+          service_data: {
+            entity_id: targetEntity,
+            media_id: (_name + (t.artist ? ' ' + t.artist : '')).trim(),
+            media_type: 'track',
+            enqueue: mode === 'next' ? 'next' : ((mode === 'replace' && i === 0) ? 'replace' : 'add'),
+            ...(mode === 'replace' && i === 0 ? { radio_mode: false } : {})
+          }
+        });
+        calledOk++;
+      } catch (_) {}
+    }
+
+    this._hideLoadingToast();
+    if (calledOk > 0) {
+      const _label = mode === 'replace' ? 'Playing ' + calledOk + ' tracks'
+        : mode === 'next' ? 'Added ' + calledOk + ' tracks to play next'
+        : 'Added ' + calledOk + ' tracks to queue';
+      this._showToast('✓ ' + _label, 3500);
+    } else {
+      this._showToast('Could not play these tracks — check Music Assistant');
+    }
+  }
+
+  // Opens the editable-name sheet for pinning the currently displayed
+  // Recap — same "edit before saving" flow as Pin Queue as Playlist.
+  _promptPinRecap() {
+    const data = this._lastRecapData;
+    if (!data || (!data.topArtists?.length && !data.topTracks?.length)) {
+      this._showToast('Nothing to pin yet');
+      return;
+    }
+    const startDate = new Date(Date.now() - 7 * 24 * 3600 * 1000);
+    const endDate   = new Date();
+    const fmt = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const dateRangeLabel = `${fmt(startDate)} \u2013 ${fmt(endDate)}`;
+    const autoName = `Week of ${fmt(startDate)}`;
+    const snapshot = {
+      id: 'recap_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+      name: autoName,
+      dateRangeLabel,
+      narrative: data.narrative,
+      topArtists: data.topArtists.map(([name, count]) => ({ name, count })),
+      topTracks: data.topTracks.map(t => ({ title: t.title, artist: t.artist, album: t.album || '' })),
+      pinnedAt: Date.now(),
+    };
+    this._showSaveRecapNameSheet(snapshot);
+  }
+
+  // Naming bottom-sheet for a recap snapshot — same visual pattern as
+  // _showSaveQueueNameSheet, editable before it's actually saved.
+  _showSaveRecapNameSheet(snapshot) {
+    const _pt = (k) => this._pt(k);
+    document.querySelectorAll('.rb-tag-sheet').forEach(el => el.remove());
+    const sheet = document.createElement('div');
+    sheet.className = 'rb-tag-sheet';
+    sheet.style.cssText = 'position:absolute;z-index:99999;display:flex;align-items:flex-end;justify-content:center;background:rgba(0,0,0,0.5);left:0;top:' + window.scrollY + 'px;width:' + document.documentElement.clientWidth + 'px;height:' + window.innerHeight + 'px;';
+    sheet.innerHTML = '<div style="width:100%;max-width:480px;background:var(--crow-panel-bg,#13131a);border-radius:20px 20px 0 0;padding:20px 20px 32px;box-shadow:0 -8px 40px rgba(0,0,0,0.6);">'
+      + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">'
+      + '<span style="font-size:15px;font-weight:700;color:' + _pt('text') + ';">Pin Recently Listened To</span>'
+      + '<button class="rb-tag-sheet-close" style="width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,0.1);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;"><svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:' + _pt('text') + '"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>'
+      + '</div>'
+      + '<div style="font-size:12px;color:' + _pt('dim') + ';margin-bottom:10px;">' + (snapshot.dateRangeLabel || '') + '</div>'
+      + '<input id="recapNameInput" type="text" value="' + (snapshot.name || '').replace(/"/g, '&quot;') + '" style="width:100%;box-sizing:border-box;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);border-radius:10px;padding:10px 12px;font-size:14px;color:' + _pt('text') + ';font-family:inherit;margin-bottom:14px;" autocomplete="off" autocorrect="off" spellcheck="false">'
+      + '<button id="recapSaveBtn" style="width:100%;padding:11px;background:#0A84FF;border:none;border-radius:12px;color:#fff;font-size:14px;font-weight:600;font-family:inherit;cursor:pointer;">Pin</button>'
+      + '</div>';
+    document.body.appendChild(sheet);
+    const _close = () => sheet.remove();
+    sheet.addEventListener('click', e => { if (e.target === sheet) _close(); });
+    sheet.querySelector('.rb-tag-sheet-close')?.addEventListener('click', _close);
+    const _input = sheet.querySelector('#recapNameInput');
+    _input?.focus();
+    _input?.select();
+    sheet.querySelector('#recapSaveBtn')?.addEventListener('click', () => {
+      const name = (_input?.value || '').trim() || snapshot.name;
+      const list = this._getPinnedRecaps();
+      list.unshift({ ...snapshot, name });
+      this._savePinnedRecapsList(list);
+      _close();
+      this._showToast('\ud83d\udccd Pinned "' + name + '"');
+    });
+  }
+
+  // iOS-style confirmation, then clears Recap history entirely — pulled out
+  // of the render function so it can be triggered from the shared "⋮" menu.
+  _confirmClearRecapHistory() {
+    const content = this.shadowRoot?.getElementById('infoContent');
+    if (!content) return;
+    const _savedHtml = content.innerHTML;
+    const _savedScroll = content.scrollTop;
+    content.innerHTML =
+      '<div class="panel-state confirm">' +
+        '<div class="panel-state-icon"><svg viewBox="0 0 24 24"><path d="M9,3V4H4V6H5V19A2,2 0 0,0 7,21H17A2,2 0 0,0 19,19V6H20V4H15V3H9M7,6H17V19H7V6M9,8V17H11V8H9M13,8V17H15V8H13Z"/></svg></div>' +
+        '<div class="panel-state-title">Reset listening data?</div>' +
+        '<div class="panel-state-body">This permanently deletes your Recently Listened To history. This can\u2019t be undone.</div>' +
+        '<div class="panel-state-confirm-btns">' +
+          '<button class="panel-state-btn-cancel" id="recapResetCancel">Cancel</button>' +
+          '<button class="panel-state-btn-danger" id="recapResetConfirm">Reset</button>' +
+        '</div>' +
+      '</div>';
+    content.querySelector('#recapResetCancel')?.addEventListener('click', () => {
+      content.innerHTML = _savedHtml;
+      content.scrollTop = _savedScroll;
+    }, { once: true });
+    content.querySelector('#recapResetConfirm')?.addEventListener('click', async () => {
+      // Reset (not delete) history checkpoints to "now" for every entity
+      // this card or others might be tracking. Deleting them would make
+      // the backfill treat it as a first-ever run and look back 48h again
+      // — re-fetching and re-inserting exactly what's being cleared here.
+      // Setting them to now marks "already caught up" so nothing before
+      // this point gets backfilled again on the next card load.
+      let _checkpoints = {};
+      try { _checkpoints = JSON.parse(localStorage.getItem('crow_ai_local_historyCheckpoint') || '{}'); } catch (_) {}
+      const _nowTs = Date.now();
+      const _watchEntitiesForClear = [
+        ...(Array.isArray(this._config?.entities) ? this._config.entities : []),
+        ...(Array.isArray(this._config?.ma_entities) ? this._config.ma_entities : []),
+        ...Object.keys(_checkpoints),
+      ].filter((v, i, a) => a.indexOf(v) === i);
+      _watchEntitiesForClear.forEach(eid => { _checkpoints[eid] = _nowTs; });
+      try { localStorage.setItem('crow_ai_local_historyCheckpoint', JSON.stringify(_checkpoints)); } catch (_) {}
+      // Global marker, separate from per-entity checkpoints — covers a
+      // different room's card that has never run backfill at all yet (so
+      // has no checkpoint entry for its own entities), which would
+      // otherwise still look back the full default 48h and re-insert
+      // pre-clear history the first time it loads.
+      try { localStorage.setItem('crow_ai_local_recapClearedAt', JSON.stringify({ ts: _nowTs })); } catch (_) {}
+
+      try {
+        localStorage.removeItem('crow_ai_local_listenLog');
+        localStorage.removeItem('crow_ai_local_maRecapState');
+      } catch (_) {}
+      this._maRecapState = {};
+      clearTimeout(this._haAISaveTimers?.listenLog);
+      clearTimeout(this._haAISaveTimers?.maRecapState);
+      if (this._config?.ai_info_persistent_storage === true && this._hass?.connection) {
+        try {
+          const conn = this._hass.connection;
+          const res = await conn.sendMessagePromise({ type: 'frontend/get_user_data', key: 'crow_ai_local' });
+          const full = (res?.value && typeof res.value === 'object') ? res.value : {};
+          full.listenLog = {};
+          full.maRecapState = {};
+          full.historyCheckpoint = _checkpoints;
+          full.recapClearedAt = { ts: _nowTs };
+          await conn.sendMessagePromise({ type: 'frontend/set_user_data', key: 'crow_ai_local', value: full });
+        } catch (_) { /* best-effort — local clear already happened either way */ }
+      }
+      this._showAIRecap();
+    }, { once: true });
+  }
+
 
   // Silently pre-warm the video info cache so long-press on artwork is instant
   async _prefetchVideoInfo(title) {
@@ -15353,7 +17059,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       .replace(/\s*\(\d{4}\)\s*$/, '')                          // always strip trailing year
       .replace(_isSeriesTitle ? /(?!)/ : /\s*[-:]\s*[^-:]+$/, '') // only strip colon if not series title
       .trim() || title;
-    const cacheKey = ('videoinfo3|' + cleanTitle).toLowerCase(); // v2: preserves series title colons
+    const cacheKey = ('videoinfo4|' + cleanTitle).toLowerCase(); // v4: enforces known movie/TV format, invalidates old unfiltered results
     if (!this._aiVideoInfoCache) this._aiVideoInfoCache = new Map();
     if (this._aiVideoInfoCache.has(cacheKey)) return;
     // Check localStorage before firing an AI call
@@ -15732,6 +17438,39 @@ Include ALL tracks. Use null for unknown fields.`;
    * Shown when tapping the AI Info swipe panel, inline AI btn, or More Info in enqueue menu.
    * Uses the existing infoPopup panel — same solid background as queue/MA info.
    */
+  // Header pin button (#infoPinBtn) is a single, persistent element shared
+  // across whatever content is currently shown inside the info panel — it's
+  // NOT part of the content that gets swapped out when navigating within
+  // the panel (e.g. track → album). Any view that wants pin support has to
+  // explicitly re-wire this button for its own item; otherwise it keeps
+  // whichever handler the previous view left behind, silently pinning the
+  // wrong thing (exactly what was happening: pinning an album re-used the
+  // track's still-attached click handler instead of a fresh one for the
+  // album).
+  _wireInfoPinButton(pinItem, pinTab, labelNoun) {
+    const r = this.shadowRoot;
+    const _pinBtn = r.getElementById('infoPinBtn');
+    const _pinSvg = r.getElementById('infoPinSvg');
+    if (!_pinBtn || !_pinSvg || !pinItem?.uri) {
+      if (_pinBtn) { _pinBtn.classList.add('hidden'); _pinBtn.onclick = null; }
+      return;
+    }
+    const _update = () => {
+      const _pinned = this._maLibIsStarred(pinItem, pinTab);
+      _pinSvg.style.fill = _pinned ? '#FFD60A' : 'rgba(255,255,255,0.5)';
+      _pinBtn.title = _pinned ? ('Unpin ' + labelNoun) : ('Pin ' + labelNoun);
+    };
+    _pinBtn.classList.remove('hidden');
+    _update();
+    _pinBtn.onclick = () => {
+      const nowPinned = this._maLibToggleStar(pinItem, pinTab);
+      if (nowPinned === null) return;
+      _update();
+      this._showToast(nowPinned ? ('\ud83d\udccd ' + labelNoun + ' pinned') : (labelNoun + ' unpinned'));
+      this._maLibRefreshPinnedUI(pinTab);
+    };
+  }
+
   async _showAITrackInfo(trackTitle, artistName, context = {}) {
     const r = this.shadowRoot;
     if (!trackTitle && !artistName) return;
@@ -16382,38 +18121,18 @@ Include ALL tracks. Use null for unknown fields.`;
     const _trackUri = context.queueUri
       || this._hass?.states[this._entity]?.attributes?.media_content_id
       || ((trackTitle || artistName) ? ('title-artist://' + (trackTitle || '').toLowerCase().trim() + '|' + (artistName || '').toLowerCase().trim()) : '');
-    const _pinBtn = r.getElementById('infoPinBtn');
-    const _pinSvg = r.getElementById('infoPinSvg');
-    if (_pinBtn && _pinSvg && _trackUri) {
-      const _pinItem = {
-        uri:          _trackUri,
-        name:         trackTitle,
-        artist:       artistName,
-        // _maLibRenderStarredSection's subtitle reads item.artists (an array,
-        // matching MA's own library item shape) — not the singular 'artist'
-        // field above, so without this the artist silently never displayed.
-        artists:      artistName ? [{ name: artistName }] : [],
-        image:        specificArt || '',
-        media_type:   'track',
-      };
-      const _updateTrackPinBtn = () => {
-        const _pinned = this._maLibIsStarred(_pinItem, 'track');
-        _pinSvg.style.fill = _pinned ? '#FFD60A' : 'rgba(255,255,255,0.5)';
-        _pinBtn.title = _pinned ? 'Unpin Song' : 'Pin Song';
-      };
-      _pinBtn.classList.remove('hidden');
-      _updateTrackPinBtn();
-      _pinBtn.onclick = () => {
-        const nowPinned = this._maLibToggleStar(_pinItem, 'track');
-        if (nowPinned === null) return;
-        _updateTrackPinBtn();
-        this._showToast(nowPinned ? '📍 Song pinned' : 'Song unpinned');
-        this._maLibRefreshPinnedUI('track');
-      };
-    } else if (_pinBtn) {
-      _pinBtn.classList.add('hidden');
-      _pinBtn.onclick = null;
-    }
+    const _pinItem = {
+      uri:          _trackUri,
+      name:         trackTitle,
+      artist:       artistName,
+      // _maLibRenderStarredSection's subtitle reads item.artists (an array,
+      // matching MA's own library item shape) — not the singular 'artist'
+      // field above, so without this the artist silently never displayed.
+      artists:      artistName ? [{ name: artistName }] : [],
+      image:        specificArt || '',
+      media_type:   'track',
+    };
+    this._wireInfoPinButton(_trackUri ? _pinItem : null, 'track', 'Song');
 
     // Hide AI Mood button if it causes overflow (not enough room)
     requestAnimationFrame(() => {
@@ -16439,6 +18158,7 @@ Include ALL tracks. Use null for unknown fields.`;
           content.innerHTML = _savedContent;
           if (titleEl) titleEl.textContent = _savedTitle;
           this._rewireCastClicks(content, artistName, artUrl);
+          this._wireInfoPinButton(_trackUri ? _pinItem : null, 'track', 'Song');
         });
       });
     }
@@ -17250,6 +18970,18 @@ Include ALL tracks. Use null for unknown fields.`;
       if (onBack) onBack();
       else this._closeInfoPopup();
     });
+
+    // Pin button — wired to the album, not whatever the previous view (a
+    // track, most likely) had it pointed at.
+    const _albumPinItem = (albumName || artistName) ? {
+      uri:        'album-artist://' + (albumName || '').toLowerCase().trim() + '|' + (artistName || '').toLowerCase().trim(),
+      name:       albumName,
+      artist:     artistName,
+      artists:    artistName ? [{ name: artistName }] : [],
+      image:      artUrl || '',
+      media_type: 'album',
+    } : null;
+    this._wireInfoPinButton(_albumPinItem, 'album', 'Album');
 
     // Album art tap → lightbox
     const _albumArtOpenedAt = Date.now();
@@ -19864,9 +21596,17 @@ Include ALL tracks. Use null for unknown fields.`;
 
   _closeInfoPopup() {
     const r = this.shadowRoot;
+    this._activeInfoPanelKind = null;
     // Remove any artwork/bio lightbox that was opened from within this panel —
     // it mounts on cardOuter and would otherwise persist across panel changes.
     r.getElementById('cardOuter')?.querySelectorAll('.crow-bio-lightbox').forEach(el => el.remove());
+    // Remove any still-open dropdown menu/backdrop too — closing the whole
+    // popup while a context menu is open is the most common way one of
+    // these gets orphaned, since nothing else would ever trigger its own
+    // dismissal afterwards. Left behind, it's a transparent overlay stuck
+    // at its old anchor position that can silently block clicks on
+    // whatever unrelated screen renders there later.
+    r.querySelectorAll('.queue-dropdown-menu, .queue-dropdown-backdrop').forEach(el => el.remove());
     // Cancel any in-progress batch queue building
     this._maBatchLoading = false;
     clearTimeout(this._maBatchLoadingTimer);
@@ -19951,10 +21691,98 @@ Include ALL tracks. Use null for unknown fields.`;
     return 'movie';
   }
 
-  async _fetchVideoInfo(title) {
+  // Wikipedia fallback for movie/TV info when the AI lookup comes back
+  // empty — same reliable lookup pattern already used for cast/artist bio
+  // photos (direct title lookup, then a search-based fallback for titles
+  // that don't match a Wikipedia article exactly), just pulling the
+  // extract text too instead of only the thumbnail. Not a replacement for
+  // the richer AI-sourced panel (no cast, rating, genres) — just something
+  // rather than a dead end when the AI genuinely has nothing.
+  async _fetchWikipediaVideoFallback(title, isTV) {
+    if (!title) return null;
+    const _cooling = () => this._wikiRateLimitUntil && Date.now() < this._wikiRateLimitUntil;
+    if (_cooling()) return null;
+
+    const _summary = async (t) => {
+      const url = 'https://en.wikipedia.org/api/rest_v1/page/summary/'
+        + encodeURIComponent(t.replace(/ /g, '_'));
+      const resp = await fetch(url, { headers: { Accept: 'application/json' } });
+      if (resp.status === 429) {
+        this._wikiRateLimitUntil = Date.now() + 30000;
+        return null;
+      }
+      if (!resp.ok) return null;
+      const data = await resp.json();
+      if (data?.type === 'disambiguation') return null;
+      if (!data?.extract) return null;
+      return {
+        title: data.title || t,
+        extract: data.extract,
+        thumbnail: data.thumbnail?.source || data.originalimage?.source || null,
+        url: data.content_urls?.desktop?.page || null,
+      };
+    };
+
+    // Try the disambiguated form first — Wikipedia's own convention for a
+    // movie/show that shares its title with something else (a holiday, a
+    // book, another film entirely) is "Title (film)" / "Title (TV series)".
+    // A bare title match can land on a completely unrelated article; e.g.
+    // "Independence Day" alone resolves to the holiday, not the 1996 film.
+    let result = null;
+    if (isTV !== undefined) {
+      result = await _summary(title + (isTV ? ' (TV series)' : ' (film)'));
+    }
+    if (!result) result = await _summary(title);
+    if (!result && !_cooling()) {
+      try {
+        const searchUrl = 'https://en.wikipedia.org/w/rest.php/v1/search/page?limit=1&q=' + encodeURIComponent(title);
+        const searchResp = await fetch(searchUrl, { headers: { Accept: 'application/json' } });
+        if (searchResp.status === 429) {
+          this._wikiRateLimitUntil = Date.now() + 30000;
+        } else if (searchResp.ok) {
+          const searchData = await searchResp.json();
+          const best = searchData?.pages?.[0];
+          const bestKey = best?.key || best?.title;
+          if (bestKey) result = await _summary(bestKey);
+        }
+      } catch (_) { /* fall through to null */ }
+    }
+    return result;
+  }
+
+  // Quick iTunes artwork lookup, used as a fallback in _fetchVideoInfo when
+  // nothing else provided artwork (no caller override, nothing relevant
+  // currently playing). Just the artwork — no need for the full dedup/
+  // grouping logic _mtSearch does for a whole results list, since this only
+  // needs the single best match for one already-known title.
+  async _fetchItunesArtworkFallback(title, isTV) {
+    if (!title) return null;
+    try {
+      const media = isTV ? 'tvShow' : 'movie';
+      const entity = isTV ? 'tvSeason' : 'movie';
+      // limit=1 trusted iTunes' top result blindly — fine when it has
+      // artwork, but for a common/ambiguous title the single top match can
+      // easily lack one while a nearby result has it. Search a few more
+      // and take the first that actually has artwork.
+      const url = 'https://itunes.apple.com/search?term=' + encodeURIComponent(title) + '&media=' + media + '&entity=' + entity + '&limit=5&country=gb';
+      const res = await fetch(url);
+      if (res.status === 429) { console.warn('[CrowAI] iTunes rate-limited (quick fallback)', title); return null; }
+      if (!res.ok) { console.warn('[CrowAI] iTunes quick fallback HTTP error', res.status, title); return null; }
+      const data = await res.json();
+      const withArt = (data?.results || []).find(r => r.artworkUrl100);
+      if (!withArt) console.warn('[CrowAI] iTunes quick fallback — no result with artwork', title);
+      return withArt ? withArt.artworkUrl100.replace('100x100bb', '600x600bb') : null;
+    } catch (e) {
+      console.warn('[CrowAI] iTunes quick fallback network/parse error', title, e);
+      return null;
+    }
+  }
+
+  async _fetchVideoInfo(title, isKnownSeriesTitle, localFileMeta) {
     // Capture and clear the art override at the START so it's available throughout
     const overrideArt = this._videoInfoArtOverride || null;
     this._videoInfoArtOverride = null;
+    this._videoInfoPickerState = null;
     const r       = this.shadowRoot;
     const content = r.getElementById('infoContent');
     if (!content || !title) return;
@@ -19973,20 +21801,80 @@ Include ALL tracks. Use null for unknown fields.`;
     if (_haCard) _haCard?.style.setProperty('--crow-card-blur', 'none');
 
     const attrs  = this._hass?.states[this._entity]?.attributes || {};
-    const entityArt = (attrs.entity_picture_local || attrs.entity_picture || '').replace(/^http:\/\//i, 'https://');
-    const artUrl = overrideArt || entityArt;
+    // entityArt (whatever's currently playing on this entity) is only a
+    // sensible fallback in the original "tapped artwork while it's playing"
+    // context. When a caller explicitly states isKnownSeriesTitle (Watch
+    // Recap rows, Movies & TV search) or provides localFileMeta (Local
+    // Media), we're looking up a specific title that has nothing to do
+    // with current playback — using entityArt there was showing whatever
+    // happened to be playing (e.g. a radio station) instead of the actual
+    // title being looked up.
+    const entityArt = (isKnownSeriesTitle === undefined && !localFileMeta)
+      ? (attrs.entity_picture_local || attrs.entity_picture || '').replace(/^http:\/\//i, 'https://')
+      : '';
+    let artUrl = overrideArt || entityArt;
 
     // Clean the title thoroughly:
     // 1. Use series title if available (Apple TV sends episode title in media_title)
     // 2. Strip trailing year in brackets e.g. "Heat (1995)" → "Heat"
     // 3. Strip episode subtitle after dash or colon e.g. "Doctor Who: Twice Upon a Time" → "Doctor Who"
-    // Use title verbatim if it came from media_series_title (already the clean show name).
-    // Only strip colon-subtitles when falling back to media_title (e.g. episode titles).
-    const _isSeriesTitle = !!(this._hass?.states[this._entity]?.attributes?.media_series_title);
+    // isKnownSeriesTitle lets a caller that already knows the answer (search
+    // results, Watch Recap rows) say so explicitly, rather than guessing
+    // from whatever's currently playing on this entity — which is often
+    // completely unrelated to the title being looked up, and was causing
+    // shows with a colon in their own name (e.g. "Star Trek: The Next
+    // Generation" vs "Star Trek: Voyager") to both get stripped down to
+    // "Star Trek" and collide on the same cached result.
+    const _isSeriesTitle = isKnownSeriesTitle !== undefined
+      ? isKnownSeriesTitle
+      : !!(this._hass?.states[this._entity]?.attributes?.media_series_title);
     let cleanTitle = title
       .replace(/\s*\(\d{4}\)\s*$/, '')                          // always strip trailing year
       .replace(_isSeriesTitle ? /(?!)/ : /\s*[-:]\s*[^-:]+$/, '') // only strip colon if not series title
       .trim() || title;
+
+    // No artwork came from the caller (override) or the currently-playing
+    // entity — likely opened from a context that never had artwork to pass
+    // through in the first place (e.g. a Watch Recap row, which only stores
+    // title/count, not artwork). Fetch one directly rather than showing a
+    // blank placeholder.
+    if (!artUrl) {
+      artUrl = await this._fetchItunesArtworkFallback(cleanTitle, _isSeriesTitle) || '';
+    }
+
+    // Pin button — constructed from whatever we've resolved so far (clean
+    // title, kind, artwork), so it works the same way regardless of which
+    // context opened this panel (artwork tap, Watch Recap row, Movies & TV
+    // search result).
+    const _mtPin    = r.getElementById('infoPinBtn');
+    const _mtPinSvg = r.getElementById('infoPinSvg');
+    const _mtPinItem = {
+      id: (_isSeriesTitle ? 'tv_' : 'movie_') + cleanTitle.toLowerCase(),
+      kind: _isSeriesTitle ? 'tv' : 'movie',
+      title: cleanTitle,
+      subtitle: '',
+      artworkUrl100: artUrl || '',
+    };
+    const _updateMtPinBtn = () => {
+      if (!_mtPin || !_mtPinSvg) return;
+      const pinned = this._mtIsStarred(_mtPinItem);
+      _mtPinSvg.style.fill = pinned ? '#FFD60A' : 'rgba(255,255,255,0.5)';
+      _mtPin.title = pinned ? 'Unpin' : 'Pin';
+    };
+    if (_mtPin) {
+      _mtPin.classList.remove('hidden');
+      _updateMtPinBtn();
+      _mtPin.onclick = () => {
+        const nowPinned = this._mtToggleStar(_mtPinItem);
+        _updateMtPinBtn();
+        this._showToast(nowPinned ? '\ud83d\udccd Pinned' : 'Unpinned');
+        // Refresh whichever list is underneath this panel — otherwise
+        // navigating back shows a stale pinned section that doesn't
+        // reflect what was just toggled here.
+        if (this._maCurrentTab === 'movie_tv') this._loadMATab('movie_tv');
+        if (this._pinnedDetailActive && this._pinnedDetailCategory === 'movies_tv') this._openPinnedCategoryDetail('movies_tv');
+      };
+    }
 
     r?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
     content.innerHTML = `
@@ -19998,7 +21886,7 @@ Include ALL tracks. Use null for unknown fields.`;
     const hasAI = await this._aiCheckAvailable();
     if (!hasAI) { this._aiShowNoAgentBanner(popup); return; }
 
-    const cacheKey = ('videoinfo3|' + cleanTitle).toLowerCase(); // v2: preserves series title colons
+    const cacheKey = ('videoinfo4|' + cleanTitle).toLowerCase(); // v4: enforces known movie/TV format, invalidates old unfiltered results
     if (!this._aiVideoInfoCache) this._aiVideoInfoCache = new Map();
     if (!this._aiVideoInfoCache.has(cacheKey)) {
       const _lsPersisted = this._aiLocalGet('videoInfo', cacheKey);
@@ -20028,11 +21916,25 @@ Include ALL tracks. Use null for unknown fields.`;
       }
 
       // If we have a series title, add specificity to avoid returning sibling shows
-      const _isTVContext = !!attrs.media_series_title;
+      const _isTVContext = _isSeriesTitle;
+      // When we know for certain which format this was (Watch Recap rows,
+      // Movies & TV search — anywhere isKnownSeriesTitle is passed
+      // explicitly rather than guessed), don't just hint the format and
+      // hope the AI honors it — exclude the other format outright. A
+      // same-titled work in the wrong format (an older, more-famous TV
+      // series vs a newer movie with the identical title, or vice versa)
+      // was still getting returned uncontested even with a soft hint.
+      const _knownFormat = isKnownSeriesTitle !== undefined;
       const _exactInstruction = _isTVContext
-        ? 'IMPORTANT: Return ONLY the exact show "' + cleanTitle + '" — do NOT include other shows in the same franchise, spin-offs, or related series. Return exactly 1 entry.'
-        : 'For titles with multiple versions (e.g. Doctor Who 1963 + 2005), include both. Return up to 5 entries.';
-      const prompt = 'You are a movie and TV encyclopedia with knowledge up to 2024. I need information about "' + cleanTitle + '". CRITICAL: You MUST use your training knowledge to answer this. Do NOT say you cannot access the internet. ' + _exactInstruction + ' Return as a raw JSON array. Start with [ end with ]. Include up to 15 cast members, a "fun_fact" string with one genuinely interesting or surprising fact, and a "similar" array of 4 similar titles. Movie: [{"type":"movie","title":"Heat","year":"1995","genres":["Crime"],"rating":"8.3","overview":"...","cast":["Al Pacino"],"director":"Michael Mann","status":"Released","vibe":"Intense","fun_fact":"Al Pacino and Robert De Niro share only one scene together.","similar":[{"title":"Michael Mann\'s Collateral","year":"2004","type":"movie"},{"title":"Heat 2","year":"2022","type":"movie"}]}] TV: [{"type":"tv","title":"Doctor Who","year":"2005","genres":["Sci-Fi"],"rating":"8.6","overview":"...","cast":["David Tennant"],"seasons":14,"status":"Continuing","vibe":"Epic","fun_fact":"The show originally ran from 1963 to 1989 before being revived in 2005.","similar":[{"title":"Torchwood","year":"2006","type":"tv"},{"title":"The Sarah Jane Adventures","year":"2007","type":"tv"}]}] If truly unknown return [].' ;
+        ? 'IMPORTANT: Return ONLY the exact show "' + cleanTitle + '" — do NOT include other shows in the same franchise, spin-offs, or related series' + (_knownFormat ? ', and do NOT return a movie of the same name even if one exists' : '') + '. Return exactly 1 entry.'
+        // Titles get reused across decades and formats (e.g. an older,
+        // famous TV series vs a newer movie with the identical title).
+        // Guessing the more famous one is worse than asking — when there's
+        // genuine ambiguity, return every distinct version you know of so
+        // the actual one can be picked, rather than confidently returning
+        // only the best-known one.
+        : 'IMPORTANT: This was watched as a movie' + (_knownFormat ? ' — only return entries with "type":"movie"; do NOT return a TV series of the same name even if one is more famous' : '') + '. If multiple distinct movies share this exact title (different years, different films entirely), include ALL of them, not just the most famous one — a newer or less well-known release can still be the right one. Return up to 5 entries.';
+      const prompt = 'You are a movie and TV encyclopedia. Use the full breadth of your training knowledge, including recent releases — do not assume you only know about older titles. I need information about "' + cleanTitle + '". CRITICAL: You MUST use your training knowledge to answer this. Do NOT say you cannot access the internet. ' + _exactInstruction + ' Return as a raw JSON array. Start with [ end with ]. Include up to 15 cast members, a "fun_fact" string with one genuinely interesting or surprising fact, and a "similar" array of 4 similar titles. Movie: [{"type":"movie","title":"Heat","year":"1995","genres":["Crime"],"rating":"8.3","overview":"...","cast":["Al Pacino"],"director":"Michael Mann","status":"Released","vibe":"Intense","fun_fact":"Al Pacino and Robert De Niro share only one scene together.","similar":[{"title":"Michael Mann\'s Collateral","year":"2004","type":"movie"},{"title":"Heat 2","year":"2022","type":"movie"}]}] TV: [{"type":"tv","title":"Doctor Who","year":"2005","genres":["Sci-Fi"],"rating":"8.6","overview":"...","cast":["David Tennant"],"seasons":14,"status":"Continuing","vibe":"Epic","fun_fact":"The show originally ran from 1963 to 1989 before being revived in 2005.","similar":[{"title":"Torchwood","year":"2006","type":"tv"},{"title":"The Sarah Jane Adventures","year":"2007","type":"tv"}]}] If truly unknown return [].' ;
 
       try {
         const resp = await this._hass.connection.sendMessagePromise({
@@ -20047,10 +21949,64 @@ Include ALL tracks. Use null for unknown fields.`;
         if (start === -1 || end === -1 || end <= start) throw new Error('No JSON array in response');
         results = JSON.parse(stripped.slice(start, end + 1));
         if (!Array.isArray(results) || !results.length) throw new Error('Empty results');
+        // Enforce the known format ourselves rather than trusting the AI
+        // followed the prompt instruction — a same-titled work in the
+        // wrong format was still slipping through even when explicitly
+        // told not to. Only apply when we actually know the format
+        // (isKnownSeriesTitle passed explicitly); if filtering would wipe
+        // out every result, keep the originals rather than showing nothing
+        // — better a possibly-wrong answer than none, and it still lets
+        // the person adjust with Ask/Other Matches.
+        if (isKnownSeriesTitle !== undefined) {
+          const _expectedType = _isSeriesTitle ? 'tv' : 'movie';
+          const _filtered = results.filter(r => (r?.type || 'movie') === _expectedType);
+          if (_filtered.length) results = _filtered;
+        }
         this._aiVideoInfoCache.set(cacheKey, results);
         this._aiSessionSet('videoInfo', cacheKey, results);
         this._aiLocalSet('videoInfo', cacheKey, results);
       } catch(e) {
+        // AI came back empty — try Wikipedia before giving up entirely.
+        // Won't have cast/rating/genres, but a summary is better than
+        // nothing, especially for titles the AI's training data doesn't
+        // cover or a mangled title that didn't resolve to anything.
+        const wikiFallback = await this._fetchWikipediaVideoFallback(cleanTitle, _isSeriesTitle);
+        if (wikiFallback) {
+          content.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
+          this.shadowRoot?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
+          const _escW = s => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+          content.innerHTML = `
+            <div style="padding:24px;">
+              ${wikiFallback.thumbnail ? `<img src="${wikiFallback.thumbnail}" alt="" style="width:100%;max-width:220px;display:block;margin:0 auto 16px;border-radius:10px;">` : ''}
+              <div style="font-size:17px;font-weight:700;color:${this._pt("text")};text-align:center;margin-bottom:4px;">${_escW(wikiFallback.title)}</div>
+              <div style="font-size:11px;color:${this._pt("dim")};text-align:center;margin-bottom:16px;">From Wikipedia \u2014 no AI info available for this title</div>
+              <div style="font-size:14px;line-height:1.6;color:${this._pt("text")};">${_escW(wikiFallback.extract)}</div>
+              ${wikiFallback.url ? `<div style="margin-top:16px;text-align:center;"><a href="${wikiFallback.url}" target="_blank" rel="noopener" style="font-size:12px;color:#63b3ed;">Read more on Wikipedia \u2192</a></div>` : ''}
+            </div>`;
+          return;
+        }
+        // Both AI and Wikipedia came up empty. If this came from browsing a
+        // local file, show what we actually know about it (raw filename,
+        // format, thumbnail if any) rather than a dead end — there's no
+        // online match, but the file itself still has real information.
+        if (localFileMeta) {
+          content.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
+          this.shadowRoot?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
+          const _escL = s => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+          const _fmt = localFileMeta.extension ? localFileMeta.extension.toUpperCase() : (localFileMeta.mediaContentType || 'Unknown format');
+          content.innerHTML = `
+            <div style="padding:24px;">
+              ${localFileMeta.thumbnail ? `<img src="${_escL(localFileMeta.thumbnail)}" alt="" style="width:100%;max-width:220px;display:block;margin:0 auto 16px;border-radius:10px;">` :
+                `<div style="display:flex;justify-content:center;margin-bottom:16px;"><svg viewBox="0 0 24 24" style="width:56px;height:56px;fill:${this._pt('icon')}"><path d="M21,3H3C1.89,3 1,3.89 1,5V19A2,2 0 0,0 3,21H21A2,2 0 0,0 23,19V5C23,3.89 22.1,3 21,3M21,19H3V5H21V19M18,13.5L15.5,15.15L15.5,11.85L18,13.5M13,15.5L10.5,17.15L10.5,13.85L13,15.5M8,13.5L5.5,15.15L5.5,11.85L8,13.5Z"/></svg></div>`}
+              <div style="font-size:17px;font-weight:700;color:${this._pt("text")};text-align:center;margin-bottom:4px;word-break:break-word;">${_escL(cleanTitle)}</div>
+              <div style="font-size:11px;color:${this._pt("dim")};text-align:center;margin-bottom:20px;">No online match found \u2014 showing what\u2019s known from the file itself</div>
+              <div style="background:rgba(255,255,255,0.05);border-radius:10px;padding:14px;">
+                <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.06);"><span style="font-size:12px;color:${this._pt('dim')};">Filename</span><span style="font-size:12px;color:${this._pt('text')};text-align:right;max-width:65%;word-break:break-word;">${_escL(localFileMeta.rawFilename)}</span></div>
+                <div style="display:flex;justify-content:space-between;padding:6px 0;"><span style="font-size:12px;color:${this._pt('dim')};">Format</span><span style="font-size:12px;color:${this._pt('text')};">${_escL(_fmt)}</span></div>
+              </div>
+            </div>`;
+          return;
+        }
         content.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
         this.shadowRoot?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
         content.innerHTML = `
@@ -20068,16 +22024,18 @@ Include ALL tracks. Use null for unknown fields.`;
       if (!this._aiVideoInfoSelectedCache) this._aiVideoInfoSelectedCache = new Map();
       const savedIdx = this._aiVideoInfoSelectedCache.get(cacheKey);
       if (savedIdx !== undefined && results[savedIdx]) {
+        this._videoInfoPickerState = { results, artUrls: null, artUrl, cacheKey };
         this._renderVideoInfoDetail(content, results[savedIdx], artUrl);
       } else {
         this._renderVideoInfoPicker(content, results, artUrl, cacheKey);
       }
     } else {
+      this._videoInfoPickerState = null;
       this._renderVideoInfoDetail(content, results[0], artUrl);
     }
   }
 
-  async _renderVideoInfoPicker(content, results, artUrl, cacheKey) {
+  async _renderVideoInfoPicker(content, results, artUrl, cacheKey, preFetchedArtUrls) {
     content.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
     this.shadowRoot?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
 
@@ -20118,6 +22076,11 @@ Include ALL tracks. Use null for unknown fields.`;
             this._aiVideoInfoSelectedCache.set(cacheKey, idx);
           }
           const selectedArt = (artUrls && artUrls[idx]) || artUrl;
+          // Stash everything needed to re-show this exact picker instantly
+          // (already-fetched artwork included) — lets the detail view offer
+          // a way back to reconsider, without re-running the AI artwork
+          // query or re-fetching every option's poster again.
+          this._videoInfoPickerState = { results, artUrls, artUrl, cacheKey };
           self._renderVideoInfoDetail(content, results[idx], selectedArt);
         });
       });
@@ -20125,6 +22088,14 @@ Include ALL tracks. Use null for unknown fields.`;
 
     // Render immediately with placeholders so list is responsive
     renderList(null);
+
+    if (preFetchedArtUrls) {
+      // Returning to a picker we've already resolved artwork for — reuse
+      // it directly instead of re-querying the AI and re-fetching every
+      // poster again.
+      renderList(preFetchedArtUrls);
+      return;
+    }
 
     // Ask the AI for precise, unambiguous image search queries for each result
     // then use those to fetch artwork — avoids franchise/disambiguation collisions
@@ -20218,7 +22189,10 @@ Include ALL tracks. Use null for unknown fields.`;
       </div>` : '';
 
     this.shadowRoot?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
+    const _pickerState = this._videoInfoPickerState;
+    const _showOtherMatches = _pickerState && Array.isArray(_pickerState.results) && _pickerState.results.length > 1;
     content.innerHTML = `
+      ${_showOtherMatches ? `<div id="video-other-matches-btn" style="display:inline-flex;align-items:center;gap:5px;background:rgba(99,179,237,0.1);border:1px solid rgba(99,179,237,0.25);border-radius:20px;padding:4px 10px;cursor:pointer;-webkit-tap-highlight-color:transparent;margin-bottom:10px;"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:#63b3ed;flex-shrink:0"><path d="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z"/></svg><span style="font-size:11px;color:#63b3ed;font-weight:600;">Other Matches</span></div>` : ''}
       <div class="info-hero">
         <div class="info-hero-art" style="background:${this._pt("bg")};">${heroArtHtml}</div>
         <div class="info-hero-meta">
@@ -20281,9 +22255,15 @@ Include ALL tracks. Use null for unknown fields.`;
     // Wire genre tag clicks
     this._wireGenreTagClicks(content);
 
-    // Always fetch the correct poster from iTunes by title+year.
-    // If we have an overrideArt (e.g. from a similar-item click), show it immediately
-    // as a placeholder, then replace it with the iTunes-matched poster for this title.
+    // "Other Matches" — back to the disambiguation picker, if this detail
+    // view came from one.
+    content.querySelector('#video-other-matches-btn')?.addEventListener('click', () => {
+      if (!_pickerState) return;
+      this._renderVideoInfoPicker(content, _pickerState.results, _pickerState.artUrl, _pickerState.cacheKey, _pickerState.artUrls || null);
+    });
+
+    // Prefer already-provided artwork (from the disambiguation picker, a
+    // similar-item click, etc.) over a fresh iTunes fetch — see below.
     const heroArt = content.querySelector('.info-hero-art');
     // Fetch correct poster by title/year from iTunes — always replaces the spinner.
     // Uses DOM API (not innerHTML) to avoid escaping issues with the fallback SVG.
@@ -20309,22 +22289,30 @@ Include ALL tracks. Use null for unknown fields.`;
       ha.style.pointerEvents = 'auto';
       ha.onclick = () => this._showBioPhotoLightbox(src, data.title || '', content, true);
     };
-    this._fetchVideoArtWithWiki(data.title, data.year, data.type || 'movie').then(imgUrl => {
-      if (imgUrl) {
-        _setHeroPoster(imgUrl);
-      } else if (artUrl && artUrl !== '_no_entity_art_') {
-        _setHeroPoster(artUrl);
-      } else {
-        const ha = content.querySelector('.info-hero-art');
-        if (ha) {
-          ha.innerHTML = '';
-          const fb = document.createElement('div');
-          fb.style.cssText = 'width:100%;height:100%;display:flex;align-items:center;justify-content:center;';
-          fb.innerHTML = artFallbackSvg;
-          ha.appendChild(fb);
+    // If we already have artwork (e.g. selected from the disambiguation
+    // picker, which used a precise AI-generated query specific to that
+    // exact title/year — more accurate than a fresh generic lookup could
+    // be) use it directly rather than racing a new fetch that could
+    // override a correct result with a worse one, or simply fail outright
+    // if the API happens to be having a bad moment.
+    if (artUrl && artUrl !== '_no_entity_art_') {
+      _setHeroPoster(artUrl);
+    } else {
+      this._fetchVideoArtWithWiki(data.title, data.year, data.type || 'movie').then(imgUrl => {
+        if (imgUrl) {
+          _setHeroPoster(imgUrl);
+        } else {
+          const ha = content.querySelector('.info-hero-art');
+          if (ha) {
+            ha.innerHTML = '';
+            const fb = document.createElement('div');
+            fb.style.cssText = 'width:100%;height:100%;display:flex;align-items:center;justify-content:center;';
+            fb.innerHTML = artFallbackSvg;
+            ha.appendChild(fb);
+          }
         }
-      }
-    });
+      });
+    }
 
     // Wire similar row clicks → load detail for that title
     if (data.similar && data.similar.length) {
@@ -22146,29 +24134,75 @@ Include ALL tracks. Use null for unknown fields.`;
     if (!title) return null;
     const _cacheKey = (title + '|' + (year || '') + '|' + (type || 'movie')).toLowerCase();
     if (!this._itunesMoviePosterCache) this._itunesMoviePosterCache = new Map();
-    if (this._itunesMoviePosterCache.has(_cacheKey)) return this._itunesMoviePosterCache.get(_cacheKey);
+    // blob: URLs only live for the current document session — a page reload
+    // (WKWebView backgrounding, dashboard refresh, etc.) invalidates them
+    // silently. Trusting a cached blob: URL without checking it's still
+    // alive is exactly what was showing the placeholder icon for titles
+    // that resolved via Wikipedia in a previous session. Verify liveness
+    // the same way _wikiBlobCache already does, and fall through to a
+    // real re-fetch rather than returning a dead URL.
+    const _isDeadBlob = async (u) => {
+      if (!u || !u.startsWith('blob:')) return false;
+      try { const t = await fetch(u); return !t.ok; } catch (_) { return true; }
+    };
+    if (this._itunesMoviePosterCache.has(_cacheKey)) {
+      const cached = this._itunesMoviePosterCache.get(_cacheKey);
+      if (!(await _isDeadBlob(cached))) return cached;
+      this._itunesMoviePosterCache.delete(_cacheKey);
+    }
     const _lsCached = this._aiLocalGet('moviePoster', _cacheKey);
-    if (_lsCached) { this._itunesMoviePosterCache.set(_cacheKey, _lsCached); return _lsCached; }
+    if (_lsCached) {
+      if (!(await _isDeadBlob(_lsCached))) {
+        this._itunesMoviePosterCache.set(_cacheKey, _lsCached);
+        return _lsCached;
+      }
+      try {
+        const store = JSON.parse(localStorage.getItem('crow_ai_local_moviePoster') || '{}');
+        delete store[_cacheKey];
+        localStorage.setItem('crow_ai_local_moviePoster', JSON.stringify(store));
+      } catch (_) {}
+    }
 
     // ── Step 1: Try Wikipedia with multiple title variants ───────────────────
     const isTv = type === 'tv';
+    // The picker's disambiguation flow already asks the AI for "the most
+    // specific and unambiguous Wikipedia article title" (e.g. "Doctor Who
+    // (2005 TV series)") and passes that straight in as `title` — it's
+    // already qualified. Appending more suffixes onto that would produce
+    // malformed doubled variants like "Doctor Who (2005 TV series) (2005
+    // TV series)", which is what was happening here. Detect that case and
+    // use the title as given, falling back to its bare form only.
+    const _bareTitle = title.replace(/\s*\([^)]*\)\s*$/, '').trim();
+    const _alreadyQualified = _bareTitle && _bareTitle !== title;
+
     // Catalog/article titles often use "&" (e.g. "Fast & Furious") while
     // AI-generated titles tend to spell out "and" — try the opposite form too.
+    const _andSource = _alreadyQualified ? _bareTitle : title;
     let altTitle = null;
-    if (/\s+&\s+/.test(title)) altTitle = title.replace(/\s+&\s+/, ' and ');
-    else if (/\s+and\s+/i.test(title)) altTitle = title.replace(/\s+and\s+/i, ' & ');
-    const variants = [
-      title,
-      altTitle,
-      title + (isTv ? ' (TV series)' : ' (film)'),
-      altTitle ? altTitle + (isTv ? ' (TV series)' : ' (film)') : null,
-      year ? title + ' (' + year + (isTv ? ' TV series)' : ' film)') : null,
-      year ? title + ' (' + year + ')' : null,
-    ].filter(Boolean);
+    if (/\s+&\s+/.test(_andSource)) altTitle = _andSource.replace(/\s+&\s+/, ' and ');
+    else if (/\s+and\s+/i.test(_andSource)) altTitle = _andSource.replace(/\s+and\s+/i, ' & ');
+
+    // Most-specific first. The bare title is the riskiest variant — common
+    // words/phrases (e.g. "Independence Day") often resolve to a real,
+    // unrelated Wikipedia article (a holiday, a place, etc.) rather than a
+    // disambiguation page, so it passes the disambiguation check and hands
+    // back a wrong-but-valid thumbnail. Qualified forms like "(1996 film)"
+    // essentially can't collide with anything else, so try those first and
+    // only fall back to the bare title as a last resort.
+    const variants = _alreadyQualified
+      ? [title, _bareTitle, altTitle].filter(Boolean)
+      : [
+          year ? title + ' (' + year + (isTv ? ' TV series)' : ' film)') : null,
+          year ? title + ' (' + year + ')' : null,
+          title + (isTv ? ' (TV series)' : ' (film)'),
+          altTitle ? altTitle + (isTv ? ' (TV series)' : ' (film)') : null,
+          title,
+          altTitle,
+        ].filter(Boolean);
 
     let url = null;
     for (const variant of variants) {
-      url = await this._fetchWikipediaThumb(variant).catch(() => null);
+      url = await this._fetchWikipediaThumb(variant, true).catch(() => null);
       if (url) break;
     }
 
@@ -22177,10 +24211,17 @@ Include ALL tracks. Use null for unknown fields.`;
       url = await this._fetchItunesMoviePoster(title, year || '', type || 'movie').catch(() => null);
     }
 
-    // Cache result (positive or null)
+    // Cache result (positive or null). blob: URLs (from the Wikipedia path)
+    // are only kept in the in-memory cache for this session — persisting
+    // them to localStorage would just hand a future session a dead URL.
+    // The Wikipedia layer already persists the underlying remote https
+    // URL separately (_wikiThumbUrlCache) and re-derives a fresh blob from
+    // it next time, so nothing is lost by not persisting the blob here.
     if (url) {
       this._itunesMoviePosterCache.set(_cacheKey, url);
-      this._aiLocalSet('moviePoster', _cacheKey, url);
+      if (!url.startsWith('blob:')) this._aiLocalSet('moviePoster', _cacheKey, url);
+    } else {
+      console.warn('[CrowAI] Artwork fallback exhausted (Wikipedia + iTunes both failed)', title, year || '(no year)', 'variants tried:', variants);
     }
     return url || null;
   }
@@ -22307,7 +24348,9 @@ Include ALL tracks. Use null for unknown fields.`;
         this._aiLocalSet('moviePoster', _cacheKey, result);
       }
       return result;
-    } catch(e) { return null; }
+    } catch(e) {
+      return null;
+    }
   }
 
   // Fetch person photo via Wikipedia.
@@ -22360,17 +24403,17 @@ Include ALL tracks. Use null for unknown fields.`;
     } catch(e) {}
   }
 
-  async _fetchWikipediaThumb(name) {
+  async _fetchWikipediaThumb(name, validateIsMedia) {
     if (!name) return null;
     // Serialize Wikipedia requests through a queue to avoid overwhelming the API
     if (!this._wikiQueue) {
       this._wikiQueue = Promise.resolve();
     }
-    const result = await (this._wikiQueue = this._wikiQueue.then(() => this._fetchWikipediaThumbDirect(name)));
+    const result = await (this._wikiQueue = this._wikiQueue.then(() => this._fetchWikipediaThumbDirect(name, validateIsMedia)));
     return result;
   }
 
-  async _fetchWikipediaThumbDirect(name) {
+  async _fetchWikipediaThumbDirect(name, validateIsMedia) {
     if (!name) return null;
     try {
       // Cache the final blob URL itself — once we've downloaded and converted
@@ -22421,9 +24464,28 @@ Include ALL tracks. Use null for unknown fields.`;
             console.warn('[CrowAI] Wikipedia rate-limited — pausing Wikipedia lookups for 30s');
             return null;
           }
-          if (!resp.ok) return null; // 404 = no article, or another non-fatal error
+          if (!resp.ok) { console.warn('[CrowAI] Wikipedia summary miss', resp.status, title); return null; } // 404 = no article, or another non-fatal error
           const data = await resp.json();
-          if (data?.type === 'disambiguation') return null; // no single usable photo
+          if (data?.type === 'disambiguation') { console.warn('[CrowAI] Wikipedia disambiguation page, skipping', title); return null; } // no single usable photo
+          // Bare/common titles (e.g. "Independence Day") can resolve to a
+          // real, unrelated article instead of a disambiguation page —
+          // passes every check above while being completely the wrong
+          // subject ("Independence Day" resolves to the US federal holiday,
+          // not the film). A positive allowlist of expected phrasing (only
+          // accept if description contains "film"/"series"/etc.) turned out
+          // too fragile — Wikipedia's actual short descriptions vary a lot
+          // ("television programme" instead of "series", etc.) and got
+          // legitimate matches wrongly rejected. A negative check is safer:
+          // only reject when the description clearly names a non-media
+          // topic; anything else is given the benefit of the doubt.
+          if (validateIsMedia) {
+            const _desc = (data?.description || '').toLowerCase();
+            const _nonMediaHit = _desc && /\bholiday\b|\bobservance\b|\bnational day\b|\bcommemorat|\bday of the year\b|\bannual (event|celebration)\b|\bvideo game\b|\balbum by\b|\bsong by\b|\bnovel by\b|\bbook by\b|\bpolitical party\b|\bnewspaper\b|\bmagazine\b|\bvillage in\b|\bmunicipality\b|\bcounty in\b|\bcity in\b|\bdistrict in\b|\bspecies of\b|\bgenus of\b|\bmountain in\b|\briver in\b/.test(_desc);
+            if (_nonMediaHit) {
+              console.warn('[CrowAI] Wikipedia article looks like a non-media topic, skipping', title, 'got:', _desc);
+              return null;
+            }
+          }
           return data?.thumbnail?.source || data?.originalimage?.source || null;
         };
 
@@ -22524,6 +24586,12 @@ Include ALL tracks. Use null for unknown fields.`;
     if (tab === 'podcast') {
       content.innerHTML = '';
       this._pcInjectSections(content);
+      return;
+    }
+    // Movie/TV tab: skip MA library entirely — show pinned + search prompt only
+    if (tab === 'movie_tv') {
+      content.innerHTML = '';
+      this._mtInjectSections(content);
       return;
     }
     // Audiobook tab: skip MA library entirely — show pinned + search prompt only
@@ -22973,6 +25041,7 @@ Include ALL tracks. Use null for unknown fields.`;
   _buildTabActionBar(content, tab) {
     if (tab === 'radio') return; // No action bar for radio — stations play individually
     if (tab === 'podcast') return; // No action bar for podcasts — episodes play individually
+    if (tab === 'movie_tv') return; // No action bar — results tap straight into AI Info
     if (tab === 'audiobook') return; // No action bar for audiobooks — chapters play individually
     // No action bar on top-level browse tabs — Play All on thousands of tracks/artists/albums
     // is almost never intentional and can overwhelm MA. The action bar belongs only on
@@ -23179,7 +25248,7 @@ Include ALL tracks. Use null for unknown fields.`;
       lpTimer = setTimeout(() => {
         cancelLP(); lpFired = true;
         el.style.transition = ''; el.style.transform = '';
-        self._showEnqueueMenu(item, tab, el);
+        self._showEnqueueMenu(item, tab, el, opts);
       }, LP);
     }, { passive: true });
 
@@ -24210,7 +26279,7 @@ Include ALL tracks. Use null for unknown fields.`;
     this._updateMulticastPills();
   }
 
-  _showEnqueueMenu(item, tab, anchorEl) {
+  _showEnqueueMenu(item, tab, anchorEl, opts = {}) {
     this._closeEnqueueMenu();
     const r = this.shadowRoot;
     const self = this;
@@ -24277,12 +26346,13 @@ Include ALL tracks. Use null for unknown fields.`;
       ...(_isPinnable ? [{ mode: 'pin', label: _isPinned ? 'Unpin' : 'Pin', icon: '<path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/>' }] : []),
       ...(_itemArtist ? [{ mode: 'artist_radio', label: 'AI Artist Radio', icon: '<path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6zm4 0v2h-2V3h2z"/>' }] : []),
       ...(!_isCollection ? [{ mode: 'copy_link', label: 'Share', icon: '<path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z"/>' }] : []),
-      { mode: 'more_info', label: 'More Info', icon: '<path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/>' }
+      { mode: 'more_info', label: 'More Info', icon: '<path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/>' },
+      ...(opts.savedQueueRemove ? [{ mode: 'remove_from_saved_queue', label: 'Remove', icon: '<path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/>', danger: true }] : []),
     ];
 
     menu.innerHTML = speakerHtml +
       strategies.map(s =>
-        '<div class="enqueue-menu-item" data-mode="' + s.mode + '"><svg class="enqueue-menu-icon" viewBox="0 0 24 24">' + s.icon + '</svg><div class="enqueue-menu-label">' + s.label + '</div></div>'
+        '<div class="enqueue-menu-item' + (s.danger ? ' enqueue-menu-item-danger' : '') + '" data-mode="' + s.mode + '"><svg class="enqueue-menu-icon" viewBox="0 0 24 24" style="' + (s.danger ? 'fill:#ff453a' : '') + '">' + s.icon + '</svg><div class="enqueue-menu-label" style="' + (s.danger ? 'color:#ff453a' : '') + '">' + s.label + '</div></div>'
       ).join('');
 
     r.appendChild(menu);
@@ -24335,6 +26405,8 @@ Include ALL tracks. Use null for unknown fields.`;
         } else if (mode === 'artist_radio') {
           const _radioArtist = _itemArtist.split(/\s*[&,]\s*/)[0].trim() || _itemArtist;
           self._playArtistRadio(_radioArtist);
+        } else if (mode === 'remove_from_saved_queue') {
+          self._confirmRemoveFromSavedQueue(opts.savedQueueRemove, item);
         } else if (mode === 'play_all') {
           const targets = [..._selectedSpeakers];
           if (targets.length > 1) {
@@ -24349,6 +26421,47 @@ Include ALL tracks. Use null for unknown fields.`;
         }
       });
     });
+  }
+
+  // iOS-style confirmation before permanently removing a track from a
+  // pinned/saved queue's stored snapshot. Matches the same confirm pattern
+  // already used for Clear Queue and Clear Recap History.
+  _confirmRemoveFromSavedQueue(savedQueueRemove, item) {
+    if (!savedQueueRemove) return;
+    const { sqId, trackIndex } = savedQueueRemove;
+    const content = this.shadowRoot?.getElementById('maContent');
+    if (!content) return;
+
+    const _title  = item?.name || item?.title || 'this track';
+    const _escTitle = (_title || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const _savedHtml   = content.innerHTML;
+    const _savedScroll = content.scrollTop;
+
+    content.innerHTML =
+      '<div class="panel-state confirm">' +
+        '<div class="panel-state-icon"><svg viewBox="0 0 24 24"><path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/></svg></div>' +
+        '<div class="panel-state-title">Remove from queue?</div>' +
+        '<div class="panel-state-body">"' + _escTitle + '" will be removed from this pinned queue. This can\u2019t be undone.</div>' +
+        '<div class="panel-state-confirm-btns">' +
+          '<button class="panel-state-btn-cancel" id="sqRemoveTrackCancel">Cancel</button>' +
+          '<button class="panel-state-btn-danger" id="sqRemoveTrackConfirm">Remove</button>' +
+        '</div>' +
+      '</div>';
+
+    content.querySelector('#sqRemoveTrackCancel')?.addEventListener('click', () => {
+      content.innerHTML = _savedHtml;
+      content.scrollTop = _savedScroll;
+    }, { once: true });
+
+    content.querySelector('#sqRemoveTrackConfirm')?.addEventListener('click', () => {
+      const list = this._getSavedQueues();
+      const sq = list.find(s => s.id === sqId);
+      if (!sq || !Array.isArray(sq.tracks)) { content.innerHTML = _savedHtml; content.scrollTop = _savedScroll; return; }
+      sq.tracks.splice(trackIndex, 1);
+      this._saveSavedQueuesList(list);
+      this._showToast('Removed from queue');
+      this._openSavedQueueDetail(sq, true);
+    }, { once: true });
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -25453,6 +27566,8 @@ Include ALL tracks. Use null for unknown fields.`;
     menu.className = 'enqueue-menu';
     menu.id = 'enqueueMenu';
 
+    var isCurrent = !!anchorEl?.closest('.queue-row-wrap')?.classList.contains('is-current');
+
     var _qPinItem = uri ? { uri, name: title, artist, media_type: 'track' } : null;
     var _qIsPinned = _qPinItem ? this._maLibIsStarred(_qPinItem, 'track') : false;
     var strategies = [
@@ -25462,7 +27577,7 @@ Include ALL tracks. Use null for unknown fields.`;
       { mode: 'add',          label: 'Add to Queue',       icon: '<path d="M19 11h-6V5h-2v6H5v2h6v6h2v-6h6z"/>' },
       ...(_qPinItem ? [{ mode: 'pin', label: _qIsPinned ? 'Unpin Song' : 'Pin Song', icon: '<path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/>' }] : []),
       ...(artist ? [{ mode: 'artist_radio', label: 'AI Artist Radio', icon: '<path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6zm4 0v2h-2V3h2z"/>'}] : []),
-      ...(!isHistory ? [{ mode: 'remove', label: 'Remove from Queue', icon: '<path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/>', danger: true }] : []),
+      ...((!isHistory && !isCurrent) ? [{ mode: 'remove', label: 'Remove from Queue', icon: '<path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/>', danger: true }] : []),
       { mode: 'copy_link',    label: 'Share', icon: '<path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z"/>' },
       { mode: 'more_info',    label: 'More Info',          icon: '<path d="M11,9H13V7H11M12,20C7.59,20 4,16.41 4,12C4,7.59 7.59,4 12,4C16.41,4 20,7.59 20,12C20,16.41 16.41,20 12,20M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M11,17H13V11H11V17Z"/>' }
     ];
@@ -26678,7 +28793,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                 <div class="toggle-item" style="align-items:flex-start;gap:12px;margin-top:12px;">
                   <div style="flex:1;">
                     <div class="toggle-label">Persistent AI Info Storage</div>
-                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Off: AI lookups (track info, recommendations, bios, etc.) and Listening Recap history cached on this device only. On: also saved permanently.</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Off: AI lookups (track info, recommendations, bios, etc.) and Recently Listened To history cached on this device only. On: also saved permanently.</div>
                   </div>
                   <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="ai_info_persistent_storage"><span class="toggle-track"></span></label>
                 </div>
@@ -26737,7 +28852,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
             <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid rgba(255,255,255,0.07);">
               <div>
                 <div style="font-size:14px;font-weight:500;">Row Glow</div>
-                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Adds a subtle accent-colour glow to rows throughout the app \u2014 library browser, queue panel, Listening Recap, and pinned tracks/artists/albums/playlists.</div>
+                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Adds a subtle accent-colour glow to rows throughout the app \u2014 library browser, queue panel, Recently Listened To, and pinned tracks/artists/albums/playlists.</div>
               </div>
               <label class="toggle-switch" style="flex-shrink:0"><input type="checkbox" id="row_glow"><span class="toggle-track"></span></label>
             </div>
