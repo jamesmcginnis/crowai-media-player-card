@@ -1126,7 +1126,31 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
     // Cross-card group sync removed — HA state (group_members attr) is source of truth
 
-    requestAnimationFrame(() => { this._applyStartupMode(); this._applyIconTheme(); });
+    requestAnimationFrame(() => {
+      this._applyStartupMode();
+      this._applyIconTheme();
+      // Restore the library to where it was left off after a full app
+      // close/reopen. The soft-close mechanism (_maSoftClosePending) only
+      // survives within the same page session — it's just JS instance
+      // state, gone the moment WKWebView actually reloads the page. This is
+      // a separate, localStorage-backed layer specifically for that case.
+      // Only fires if the library wasn't explicitly closed (X/backdrop
+      // clears this) and the saved state is reasonably fresh.
+      const _libState = this._getLibraryOpenState();
+      if (_libState) {
+        this._openMABrowser();
+        if (_libState.tab && _libState.tab !== '__ios_root__') {
+          const _restoreLabels = {
+            track: 'Songs', artist: 'Artists', album: 'Albums', playlist: 'Playlists',
+            recently_added: 'Recently Added', radio: 'Radio', podcast: 'Podcasts',
+            audiobook: 'Audiobooks', movie_tv: 'Movies & TV', pinned: 'Pinned',
+            favourites: 'Favourites', recommended: 'Made for You',
+            recent_searches: 'Recent Searches',
+          };
+          this._maNavigateToTab(_libState.tab, _restoreLabels[_libState.tab] || _libState.tab, this.shadowRoot?.getElementById('maIosView'));
+        }
+      }
+    });
   }
 
   disconnectedCallback() {
@@ -3147,6 +3171,86 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         .multicast-pill.mc-pill-active .mc-pill-label svg { fill: var(--accent,#007AFF); }
         @keyframes pill-pulse { 0%,100% { opacity:1; box-shadow:0 0 0 0 rgba(0,122,255,0.5); } 50% { opacity:0.82; box-shadow:0 0 0 5px rgba(0,122,255,0); } }
         .multicast-pill.mc-pill-loading { animation: pill-pulse 1.1s ease-in-out infinite; border-color: var(--accent,#007AFF); }
+        .mc-summary-count {
+          background: var(--accent,#007AFF); color: #fff; font-size: 10px; font-weight: 700;
+          border-radius: 10px; padding: 1px 6px; margin-left: 2px; flex-shrink: 0;
+        }
+        .mc-solo-add-btn {
+          display: inline-flex; align-items: center; justify-content: center;
+          width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;
+          background: rgba(0,0,0,0.52); border: 1px solid rgba(255,255,255,0.22);
+          backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+          cursor: pointer; pointer-events: all; -webkit-tap-highlight-color: transparent;
+        }
+        .mc-solo-add-btn svg { width: 12px; height: 12px; fill: rgba(255,255,255,0.85); pointer-events: none; }
+        .mc-solo-add-btn:active { background: rgba(255,255,255,0.12); }
+
+        /* Multicast sheet — replaces the old per-speaker pill row for grouped
+           playback. One compact summary pill is shown instead; this sheet is
+           where the full member list, focus, remove, add, and sync actions live. */
+        .mc-sheet-backdrop {
+          position: absolute; inset: 0; z-index: 30; background: rgba(0,0,0,0.4);
+        }
+        .mc-sheet {
+          position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 31;
+          background: var(--crow-panel-bg, #13131a);
+          border: 1px solid var(--crow-panel-row-border,rgba(255,255,255,0.14));
+          border-radius: 16px;
+          max-height: 78%;
+          display: flex; flex-direction: column;
+          overflow: hidden;
+          box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+        }
+        .mc-sheet-header {
+          display: flex; align-items: center; justify-content: space-between;
+          padding: 14px 8px 10px 16px; flex-shrink: 0;
+        }
+        .mc-sheet-title { font-size: 14px; font-weight: 700; color: var(--crow-panel-text,rgba(255,255,255,0.9)); }
+        .mc-sheet-close {
+          width: 28px; height: 28px; border-radius: 50%;
+          background: var(--crow-panel-btn-bg,rgba(255,255,255,0.1)); border: none;
+          display: flex; align-items: center; justify-content: center;
+          cursor: pointer; -webkit-tap-highlight-color: transparent; flex-shrink: 0;
+        }
+        .mc-sheet-close:active { background: var(--crow-panel-row-bg-active,rgba(255,255,255,0.22)); }
+        .mc-sheet-close svg { width: 12px; height: 12px; fill: var(--crow-panel-text-dim,rgba(255,255,255,0.6)); }
+        .mc-sheet-list { overflow-y: auto; flex: 1; padding: 0 8px 4px; }
+        .mc-sheet-row {
+          display: flex; align-items: center; gap: 10px;
+          padding: 9px 8px; border-radius: 10px;
+          cursor: pointer; -webkit-tap-highlight-color: transparent;
+        }
+        .mc-sheet-row:active { background: var(--crow-panel-row-bg-active,rgba(255,255,255,0.06)); }
+        .mc-sheet-row.mc-sheet-row-active { background: rgba(0,122,255,0.12); }
+        .mc-sheet-row-icon {
+          width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0;
+          background: var(--crow-panel-btn-bg,rgba(255,255,255,0.08));
+          display: flex; align-items: center; justify-content: center;
+        }
+        .mc-sheet-row-icon svg { width: 14px; height: 14px; fill: var(--crow-panel-text-dim,rgba(255,255,255,0.6)); }
+        .mc-sheet-row.mc-sheet-row-active .mc-sheet-row-icon svg { fill: var(--accent,#007AFF); }
+        .mc-sheet-row-name { flex: 1; min-width: 0; font-size: 13px; color: var(--crow-panel-text,rgba(255,255,255,0.9)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .mc-sheet-row-remove {
+          width: 26px; height: 26px; border-radius: 50%; border: none; background: transparent;
+          display: flex; align-items: center; justify-content: center; cursor: pointer;
+          -webkit-tap-highlight-color: transparent; flex-shrink: 0;
+        }
+        .mc-sheet-row-remove:active { background: var(--crow-panel-row-bg-active,rgba(255,255,255,0.1)); }
+        .mc-sheet-row-remove svg { width: 12px; height: 12px; fill: rgba(255,255,255,0.35); pointer-events: none; }
+        .mc-sheet-row-remove:active svg { fill: rgba(255,100,100,0.9); }
+        .mc-sheet-footer {
+          display: flex; gap: 8px; padding: 10px 12px 14px; flex-shrink: 0;
+          border-top: 1px solid var(--crow-panel-row-border,rgba(255,255,255,0.08));
+        }
+        .mc-sheet-footer-btn {
+          flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;
+          padding: 9px 10px; border-radius: 10px; border: 1px solid var(--crow-panel-row-border,rgba(255,255,255,0.15));
+          background: var(--crow-panel-btn-bg,rgba(255,255,255,0.06)); color: var(--crow-panel-text,rgba(255,255,255,0.9));
+          font-size: 12px; font-weight: 600; font-family: inherit; cursor: pointer;
+          -webkit-tap-highlight-color: transparent;
+        }
+        .mc-sheet-footer-btn:active { background: var(--crow-panel-row-bg-active,rgba(255,255,255,0.12)); }
+        .mc-sheet-footer-btn svg { width: 13px; height: 13px; fill: currentColor; pointer-events: none; }
 
         /* Add speaker pill — accent coloured, appears when speakers are available to add */
         .mc-add-pill {
@@ -3829,15 +3933,18 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             <button class="ma-tab" data-tab="audiobook">Audiobooks</button>
           </div>
           <!-- Persistent iOS library search bar — shown above maContent in iOS view mode -->
-          <div class="ma-ios-search-bar hidden" id="maIosSearchBar" style="padding:8px 10px 6px;flex-shrink:0;">
-            <div style="position:relative;display:flex;align-items:center;">
+          <div class="ma-ios-search-bar hidden" id="maIosSearchBar" style="padding:8px 10px 6px;flex-shrink:0;display:flex;align-items:center;gap:6px;">
+            <div style="position:relative;display:flex;align-items:center;flex:1;min-width:0;">
               <svg viewBox="0 0 24 24" style="position:absolute;left:10px;width:14px;height:14px;fill:${this._pt("dim")};pointer-events:none;"><path d="M9.5,3A6.5,6.5 0 0,1 16,9.5C16,11.11 15.41,12.59 14.44,13.73L14.71,14H15.5L20.5,19L19,20.5L14,15.5V14.71L13.73,14.44C12.59,15.41 11.11,16 9.5,16A6.5,6.5 0 0,1 3,9.5A6.5,6.5 0 0,1 9.5,3M9.5,5C7,5 5,7 5,9.5C5,12 7,14 9.5,14C12,14 14,12 14,9.5C14,7 12,5 9.5,5Z"/></svg>
-              <input id="maIosSearchInput" type="text" placeholder="Search… (Enter to search all music)"
-                style="width:100%;background:${this._pt("btnBg")};border:1px solid ${this._pt("border")};border-radius:10px;padding:8px 32px 8px 32px;color:${this._pt("text")};font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',sans-serif;outline:none;box-sizing:border-box;" placeholder="Search… (Enter to search all music)">
+              <input id="maIosSearchInput" type="text" placeholder="Search…"
+                style="width:100%;background:${this._pt("btnBg")};border:1px solid ${this._pt("border")};border-radius:10px;padding:8px 32px 8px 32px;color:${this._pt("text")};font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',sans-serif;outline:none;box-sizing:border-box;" placeholder="Search…">
               <button id="maIosSearchClear" style="display:none;position:absolute;right:8px;top:50%;transform:translateY(-50%);width:18px;height:18px;border-radius:50%;background:rgba(255,255,255,0.2);border:none;cursor:pointer;align-items:center;justify-content:center;padding:0;">
                 <svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:${this._pt("text")};display:block;"><path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/></svg>
               </button>
             </div>
+            <button id="maIosAiSearchBtn" title="AI Search" class="hidden" style="flex-shrink:0;width:34px;height:34px;border-radius:10px;background:${this._pt("btnBg")};border:1px solid rgba(99,179,237,0.35);display:flex;align-items:center;justify-content:center;cursor:pointer;-webkit-tap-highlight-color:transparent;padding:0;">
+              <svg viewBox="0 0 24 24" style="width:15px;height:15px;fill:#63b3ed;"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+            </button>
           </div>
           <div class="ma-content" id="maContent">
             <div class="ma-loading">Loading</div>
@@ -5133,6 +5240,14 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           this._loadMATab(this._maCurrentTab);
         }
       });
+      const iosAiBtn = r.getElementById('maIosAiSearchBtn');
+      iosAiBtn?.addEventListener('click', () => {
+        const _tab = r.querySelector('.ma-tab.active')?.dataset?.tab || this._maCurrentTab;
+        if (!['track', 'artist', 'album'].includes(_tab)) return;
+        const q = iosInput.value.trim();
+        if (!q) { iosInput.focus(); return; }
+        this._doAiLibrarySearch(_tab, q);
+      });
     }
 
 
@@ -6232,8 +6347,45 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const itunesInFlight = !!itunesCacheKey &&
       (!(itunesCacheKey in this._itunesArtCache) || this._itunesArtCache[itunesCacheKey] === null);
 
-    // Effective URL: entity_picture first, iTunes cache as silent fallback
-    const effectiveUrl = artUrl || cachedItunes;
+    // Some sources (MA especially, for internet radio streams outside its own
+    // curated catalog) never populate entity_picture for a live stream at all
+    // — falling straight to the generic fallback icon even though the card
+    // already knows the station's real logo via the same lookup the LIVE pill
+    // uses. Both lookups are synchronous (localStorage/in-memory only), so
+    // this is safe to do inline here with no network call and no re-render
+    // choreography needed.
+    let rbFaviconArt = null;
+    if (!artUrl && this._isLiveStream(state)) {
+      const _lastPlayedSt = this._rbGetLastPlayed(this._entity, state.attributes.media_content_id || '');
+      if (_lastPlayedSt?.favicon) {
+        rbFaviconArt = _lastPlayedSt.favicon;
+      } else {
+        const _rawId = state.attributes.media_content_id || '';
+        const _streamUrl = _rawId.replace(/^builtin:\/\/radio\//i, '');
+        const _cachedSt = _streamUrl ? this._rbCachedStation(_streamUrl) : null;
+        if (_cachedSt?.favicon) rbFaviconArt = _cachedSt.favicon;
+      }
+
+      // Still nothing cached — proactively run the same lookup the LIVE pill
+      // does manually, instead of waiting for a tap. Guarded so it fires at
+      // most once per distinct stream (updateContent runs on every state
+      // push, several times a second during playback) — _rbAutoLookupDone
+      // is an in-memory Set, so a fresh attempt happens per session/track,
+      // not endlessly repeated for a station that genuinely has no match.
+      if (!rbFaviconArt && isPlaying) {
+        const _autoKey = this._entity + '|' + (state.attributes.media_content_id || state.attributes.media_album_name || state.attributes.media_title || '');
+        if (!this._rbAutoLookupDone) this._rbAutoLookupDone = new Set();
+        if (_autoKey.length > this._entity.length + 1 && !this._rbAutoLookupDone.has(_autoKey)) {
+          this._rbAutoLookupDone.add(_autoKey);
+          this._rbAutoResolveStationArt(this._entity);
+        }
+      }
+    }
+
+    // Effective URL: entity_picture first, then the radio station favicon
+    // fallback (streams only), then iTunes cache as a last resort (already
+    // forced null for streams above, so no conflict between the two).
+    const effectiveUrl = artUrl || rbFaviconArt || cachedItunes;
 
     // ── Artwork display ──────────────────────────────────────────────────────
 
@@ -8021,15 +8173,24 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   _openMABrowser() {
     // Don't open the library during an announcement
     if (this._announceActive) return;
-    this._maNavReset();
     // Dismiss any track confirm popup that may have been left open
     this._hideTrackConfirm();
-    // Remove any stray artwork/bio lightbox left over from a previous AI Info panel
     const r = this.shadowRoot;
     r.getElementById('cardOuter')?.querySelectorAll('.crow-bio-lightbox').forEach(el => el.remove());
     const popup = r.getElementById('maPopup');
     this._maBrowserOpenedAt = Date.now(); // used by backdrop guard
     popup.classList.add('visible');
+
+    // Resuming after a soft-close (playing/adding/queuing something from
+    // within the library) — nothing was reset or torn down, so the DOM
+    // already shows the exact tab/drill-in/scroll position from before.
+    // Just reveal it again rather than re-running the whole open sequence.
+    if (this._maSoftClosePending) {
+      this._maSoftClosePending = false;
+      return;
+    }
+
+    this._maNavReset();
     const searchInput = r.getElementById('maSearchInput');
     const clearBtn    = r.getElementById('maSearchClear');
 
@@ -8078,10 +8239,58 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     else this._maTabRenderCache?.clear();
   }
 
-  _closeMABrowser() {
+  // Persists "the library was open, showing tab X" across a full app
+  // close/reopen — the soft-close mechanism above only survives within the
+  // same page session (it's just JS instance state), which is lost entirely
+  // once WKWebView actually reloads. This is a separate, localStorage-backed
+  // layer specifically for that case. Keyed per-card (first configured
+  // entity) so multiple cards on a dashboard don't clobber each other's
+  // saved state, matching the existing remember_view convention.
+  _libraryStateKey() {
+    return 'crow_library_open_' + (this._config?.entities?.[0] || '');
+  }
+  _saveLibraryOpenState(tab) {
+    try {
+      localStorage.setItem(this._libraryStateKey(), JSON.stringify({ tab: tab || null, ts: Date.now() }));
+    } catch (_) {}
+  }
+  _clearLibraryOpenState() {
+    try { localStorage.removeItem(this._libraryStateKey()); } catch (_) {}
+  }
+  // Only auto-reopen if the saved state is reasonably fresh — otherwise a
+  // library left open once, days ago, would force itself open on every
+  // future app launch indefinitely.
+  _getLibraryOpenState() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(this._libraryStateKey()) || 'null');
+      const TTL = 6 * 3600 * 1000; // 6 hours
+      if (raw && (Date.now() - (raw.ts || 0)) < TTL) return raw;
+    } catch (_) {}
+    return null;
+  }
+
+  _closeMABrowser(soft) {
     // Remove any stray artwork/bio lightbox created while browsing
     this.shadowRoot?.getElementById('cardOuter')?.querySelectorAll('.crow-bio-lightbox').forEach(el => el.remove());
     this.shadowRoot.getElementById('maPopup').classList.remove('visible');
+
+    if (soft) {
+      // Used when the close is just an incidental side-effect of playing,
+      // adding to queue, or playing next from within the library — not a
+      // deliberate "I'm done browsing" close. Deliberately DON'T touch
+      // _maCurrentTab/_maBrowserNavStack/etc or clear #maContent: leaving
+      // everything exactly as it was means the next _openMABrowser() can
+      // just re-show the popup as-is (same tab, same drill-in, same
+      // scroll position) instead of resetting to the top of the library.
+      // The row-glow IntersectionObserver is left connected too — a
+      // hidden popup naturally stops producing intersection events, so
+      // there's nothing to disconnect/reconnect.
+      this._maSoftClosePending = true;
+      return;
+    }
+
+    this._maSoftClosePending = false;
+    this._clearLibraryOpenState();
     // Save search state so it can be restored when the library reopens.
     // Only save if there's an active search — navigating with no query means nothing to restore.
     if (this._maLastSearch && this._maInSearchResults) {
@@ -8151,10 +8360,120 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     }
   }
 
+  // Recent Searches — a flat, capped-at-50, most-recent-first log of actual
+  // searches performed anywhere in the library (per-tab MA search, the
+  // AI-interpreted per-tab search, and the standalone AI Search panel).
+  // Persisted to localStorage so it survives reloads, matching every other
+  // "recent"/"pinned" list in the card.
+  _maGetRecentSearches() {
+    try {
+      const list = JSON.parse(localStorage.getItem('crow_ma_recent_searches') || '[]');
+      return Array.isArray(list) ? list : [];
+    } catch (_) { return []; }
+  }
+
+  _maRecordRecentSearch(tab, query) {
+    if (!query || !query.trim()) return;
+    const q = query.trim();
+    let list = this._maGetRecentSearches();
+    // Re-searching something already in the list moves it to the top
+    // instead of creating a duplicate entry.
+    list = list.filter(e => !(e.tab === tab && (e.query || '').toLowerCase() === q.toLowerCase()));
+    list.unshift({ tab, query: q, ts: Date.now() });
+    if (list.length > 50) list = list.slice(0, 50);
+    try { localStorage.setItem('crow_ma_recent_searches', JSON.stringify(list)); } catch (_) {}
+  }
+
+  _maClearRecentSearches() {
+    try { localStorage.removeItem('crow_ma_recent_searches'); } catch (_) {}
+  }
+
+  _renderRecentSearchesTab(content) {
+    if (!content) return;
+    const _recent = this._maGetRecentSearches();
+    const esc = s => (s || '').toString().replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    if (!_recent.length) {
+      content.innerHTML = this._psEmpty(
+        'M9.5,3A6.5,6.5 0 0,1 16,9.5C16,11.11 15.41,12.59 14.44,13.73L14.71,14H15.5L20.5,19L19,20.5L14,15.5V14.71L13.73,14.44C12.59,15.41 11.11,16 9.5,16A6.5,6.5 0 0,1 3,9.5A6.5,6.5 0 0,1 9.5,3M9.5,5C7,5 5,7 5,9.5C5,12 7,14 9.5,14C12,14 14,12 14,9.5C14,7 12,5 9.5,5Z',
+        'No recent searches',
+        'Searches you run anywhere in the library will show up here.'
+      );
+      return;
+    }
+
+    const _tabLabels = {
+      track: 'Songs', artist: 'Artists', album: 'Albums', playlist: 'Playlists',
+      recently_added: 'Recently Added', radio: 'Radio', podcast: 'Podcasts',
+      audiobook: 'Audiobooks', movie_tv: 'Movies & TV',
+      ai_track: 'AI · Songs', ai_artist: 'AI · Artists', ai_album: 'AI · Albums',
+      ai_search: 'AI Search',
+    };
+
+    content.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:flex-end;padding:2px 4px 8px;">
+        <span id="recentSearchesClearBtn" style="font-size:12px;color:#63b3ed;cursor:pointer;-webkit-tap-highlight-color:transparent;">Clear</span>
+      </div>
+      <div id="recentSearchesList"></div>`;
+
+    const list = content.querySelector('#recentSearchesList');
+    _recent.forEach((e, i) => {
+      const wrap = document.createElement('div');
+      wrap.className = 'ma-item-wrap';
+      const el = document.createElement('div');
+      el.className = 'ma-item';
+      el.innerHTML =
+        `<div class="ma-item-art" style="position:relative;background:${this._pt("bg")};display:flex;align-items:center;justify-content:center;">
+          <svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:rgba(255,255,255,0.35)"><path d="M9.5,3A6.5,6.5 0 0,1 16,9.5C16,11.11 15.41,12.59 14.44,13.73L14.71,14H15.5L20.5,19L19,20.5L14,15.5V14.71L13.73,14.44C12.59,15.41 11.11,16 9.5,16A6.5,6.5 0 0,1 3,9.5A6.5,6.5 0 0,1 9.5,3M9.5,5C7,5 5,7 5,9.5C5,12 7,14 9.5,14C12,14 14,12 14,9.5C14,7 12,5 9.5,5Z"/></svg>
+        </div>
+        <div class="ma-item-info"><div class="ma-item-title">${esc(e.query)}</div>
+          <div class="ma-item-sub">${esc(_tabLabels[e.tab] || e.tab)}</div>
+        </div>`;
+      wrap.appendChild(el);
+      wrap.addEventListener('click', () => {
+        if (e.tab.startsWith('ai_') && e.tab !== 'ai_search') {
+          const _realTab = e.tab.slice(3);
+          this._maCurrentTab = _realTab;
+          this._doAiLibrarySearch(_realTab, e.query);
+        } else if (e.tab === 'ai_search') {
+          this._showAISearchPanel(e.query);
+        } else {
+          this._maCurrentTab = e.tab;
+          this._searchMA(e.query);
+        }
+      });
+      list.appendChild(wrap);
+    });
+
+    content.querySelector('#recentSearchesClearBtn')?.addEventListener('click', () => {
+      const _savedHtml = content.innerHTML;
+      const _savedScroll = content.scrollTop;
+      content.innerHTML =
+        '<div class="panel-state confirm">' +
+          '<div class="panel-state-icon"><svg viewBox="0 0 24 24"><path d="M9,3V4H4V6H5V19A2,2 0 0,0 7,21H17A2,2 0 0,0 19,19V6H20V4H15V3H9M7,6H17V19H7V6M9,8V17H11V8H9M13,8V17H15V8H13Z"/></svg></div>' +
+          '<div class="panel-state-title">Clear recent searches?</div>' +
+          '<div class="panel-state-body">This permanently deletes your search history. This can\u2019t be undone.</div>' +
+          '<div class="panel-state-confirm-btns">' +
+            '<button class="panel-state-btn-cancel" id="recentSearchesClearCancel">Cancel</button>' +
+            '<button class="panel-state-btn-danger" id="recentSearchesClearConfirm">Clear</button>' +
+          '</div>' +
+        '</div>';
+      content.querySelector('#recentSearchesClearCancel')?.addEventListener('click', () => {
+        content.innerHTML = _savedHtml;
+        content.scrollTop = _savedScroll;
+      }, { once: true });
+      content.querySelector('#recentSearchesClearConfirm')?.addEventListener('click', () => {
+        this._maClearRecentSearches();
+        this._renderRecentSearchesTab(content);
+      }, { once: true });
+    });
+  }
+
   _renderMAIosView() {
     const r = this.shadowRoot;
     const el = r.getElementById('maIosView');
     if (!el) return;
+    this._saveLibraryOpenState('__ios_root__');
     // Remove any stray lightbox — the root view is the safest catch-all since
     // every navigation path that lands here eventually calls this function.
     r.getElementById('cardOuter')?.querySelectorAll('.crow-bio-lightbox').forEach(e => e.remove());
@@ -8170,6 +8489,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     r.querySelectorAll('.queue-dropdown-menu, .queue-dropdown-backdrop').forEach(e => e.remove());
 
     const CATS = [
+      { tab: 'recent_searches', label: 'Recent Searches', color: '#8E8E93', path: 'M9.5,3A6.5,6.5 0 0,1 16,9.5C16,11.11 15.41,12.59 14.44,13.73L14.71,14H15.5L20.5,19L19,20.5L14,15.5V14.71L13.73,14.44C12.59,15.41 11.11,16 9.5,16A6.5,6.5 0 0,1 3,9.5A6.5,6.5 0 0,1 9.5,3M9.5,5C7,5 5,7 5,9.5C5,12 7,14 9.5,14C12,14 14,12 14,9.5C14,7 12,5 9.5,5Z' },
       { tab: 'recently_added', label: 'Recently Added', color: '#00C7BE', path: 'M13,3A9,9 0 0,0 4,12H1L4.89,15.89L4.96,16.03L9,12H6A7,7 0 0,1 13,5A7,7 0 0,1 20,12A7,7 0 0,1 13,19C11.07,19 9.32,18.21 8.06,16.94L6.64,18.36C8.27,19.99 10.52,21 13,21A9,9 0 0,0 22,12A9,9 0 0,0 13,3M14,8H12V13L16.28,15.54L17,14.33L13.5,12.25V8H14Z' },
       { tab: 'pinned',         label: 'Pinned',         color: '#FFD60A', path: 'M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z' },
       { tab: 'favourites',  label: 'Favourites',    color: '#FF9500', path: 'M12,17.27L18.18,21L16.54,13.97L22,9.24L14.81,8.62L12,2L9.19,8.62L2,9.24L7.45,13.97L5.82,21L12,17.27Z' },
@@ -8193,8 +8513,46 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       </div>`
     ).join('');
 
+    // AI Search box — same feature already reachable via the media player's
+    // long-press context menu (qm_ai_search), just surfaced here too so it
+    // doesn't require leaving the library to get to it. MA-only, same gating
+    // as the context menu entry.
+    const _hasMA = this._maEntityIds?.size > 0;
+    const aiSearchHtml = _hasMA ? `
+      <div style="padding:8px 10px 6px;flex-shrink:0;">
+        <div style="position:relative;display:flex;align-items:center;">
+          <svg viewBox="0 0 24 24" style="position:absolute;left:10px;width:14px;height:14px;fill:${this._pt("dim")};pointer-events:none;"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+          <input id="maIosAiSearchInput" type="text" placeholder="AI Search…"
+            style="width:100%;background:${this._pt("btnBg")};border:1px solid ${this._pt("border")};border-radius:10px;padding:8px 32px 8px 32px;color:${this._pt("text")};font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',sans-serif;outline:none;box-sizing:border-box;"
+            autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+          <button id="maIosAiSearchClear" style="display:none;position:absolute;right:8px;top:50%;transform:translateY(-50%);width:18px;height:18px;border-radius:50%;background:rgba(255,255,255,0.2);border:none;cursor:pointer;align-items:center;justify-content:center;padding:0;">
+            <svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:${this._pt("text")};display:block;"><path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/></svg>
+          </button>
+        </div>
+      </div>` : '';
+
     el.innerHTML = `
+      ${aiSearchHtml}
       <div class="ma-ios-categories" id="maIosCatList">${catHtml}</div>`;
+
+    if (_hasMA) {
+      const _aiInput = el.querySelector('#maIosAiSearchInput');
+      const _aiClear = el.querySelector('#maIosAiSearchClear');
+      const _runAiSearch = () => {
+        const q = (_aiInput?.value || '').trim();
+        if (!q) { _aiInput?.focus(); return; }
+        this._showAISearchPanel(q);
+      };
+      _aiInput?.addEventListener('keydown', e => { if (e.key === 'Enter') _runAiSearch(); });
+      _aiInput?.addEventListener('input', () => {
+        if (_aiClear) _aiClear.style.display = _aiInput.value ? 'flex' : 'none';
+      });
+      _aiClear?.addEventListener('click', () => {
+        _aiInput.value = '';
+        _aiClear.style.display = 'none';
+        _aiInput.focus();
+      });
+    }
 
     // Apply glow to rows
     if (glowOn) {
@@ -8213,45 +8571,55 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       row.addEventListener('click', () => {
         const tab   = row.dataset.tab;
         const label = row.querySelector('.ma-ios-cat-label')?.textContent || tab;
-        const rr    = this.shadowRoot;
-
-        // Push a sentinel so _maNavBack knows to return to iOS list
-        if (!this._maBrowserNavStack) this._maBrowserNavStack = [];
-        this._maBrowserNavStack.push({ tab: '__ios_root__', label: 'Library' });
-
-        // Hide iOS view, keep tabs/search hidden, but keep iOS search bar visible
-        el.classList.add('hidden');
-        rr.getElementById('maTabs')?.setAttribute('style', 'display:none');
-        rr.querySelector('.ma-search-row')?.setAttribute('style', 'display:none');
-        // Only show iOS search bar for the four main searchable types
-        const _searchableTabs = new Set(['artist', 'album', 'track', 'playlist', 'radio', 'podcast', 'audiobook', 'movie_tv', 'recently_added']);
-        const _iosBar = rr.getElementById('maIosSearchBar');
-        if (_iosBar) _iosBar.classList.toggle('hidden', !_searchableTabs.has(tab));
-        // Update placeholder to reflect whether full search is available
-        const _iosInput = rr.getElementById('maIosSearchInput');
-        if (_iosInput) {
-          _iosInput.placeholder = tab === 'radio' ? 'Search radio stations… (press Enter)' : tab === 'podcast' ? 'Search podcasts… (press Enter)' : tab === 'audiobook' ? 'Search audiobooks… (press Enter)' : tab === 'movie_tv' ? 'Search movies & TV… (press Enter)' : _searchableTabs.has(tab) ? 'Search… (Enter to search all music)' : 'Search…';
-          _iosInput._fullSearchEnabled = _searchableTabs.has(tab);
-        }
-        if (_iosBar) _iosBar.classList.remove('hidden');
-        // Pinned is a pure category browser (like this root list itself) —
-        // no search makes sense at this level, so keep it hidden regardless
-        // of the general toggle above.
-        if (tab === 'pinned' && _iosBar) _iosBar.classList.add('hidden');
-
-        // Show content + back button — clear first to avoid stale content flash
-        const maContent = rr.getElementById('maContent');
-        const backBtn   = rr.getElementById('maBackBtn');
-        const titleEl   = rr.getElementById('maTitle');
-        if (maContent) { maContent.innerHTML = ''; maContent.style.display = ''; }
-        if (titleEl)   titleEl.textContent = label;
-        if (backBtn)   backBtn.classList.remove('hidden');
-
-        this._maCurrentTab = tab;
-        rr.querySelectorAll('.ma-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
-        this._loadMATab(tab);
+        this._maNavigateToTab(tab, label, el);
       });
     });
+  }
+
+  // Shared navigation logic for "leave the root category list and load a
+  // specific tab" — used both by tapping a category row and by restoring
+  // the library to where it was left off after a full app close/reopen
+  // (see _saveLibraryOpenState / connectedCallback).
+  _maNavigateToTab(tab, label, iosRootEl) {
+    const rr = this.shadowRoot;
+    const el = iosRootEl || rr.getElementById('maIosView');
+
+    // Push a sentinel so _maNavBack knows to return to iOS list
+    if (!this._maBrowserNavStack) this._maBrowserNavStack = [];
+    this._maBrowserNavStack.push({ tab: '__ios_root__', label: 'Library' });
+
+    // Hide iOS view, keep tabs/search hidden, but keep iOS search bar visible
+    el?.classList.add('hidden');
+    rr.getElementById('maTabs')?.setAttribute('style', 'display:none');
+    rr.querySelector('.ma-search-row')?.setAttribute('style', 'display:none');
+    // Only show iOS search bar for the four main searchable types
+    const _searchableTabs = new Set(['artist', 'album', 'track', 'playlist', 'radio', 'podcast', 'audiobook', 'movie_tv', 'recently_added']);
+    const _iosBar = rr.getElementById('maIosSearchBar');
+    if (_iosBar) _iosBar.classList.toggle('hidden', !_searchableTabs.has(tab));
+    // Update placeholder to reflect whether full search is available
+    const _iosInput = rr.getElementById('maIosSearchInput');
+    if (_iosInput) {
+      _iosInput.placeholder = tab === 'radio' ? 'Search radio stations…' : tab === 'podcast' ? 'Search podcasts…' : tab === 'audiobook' ? 'Search audiobooks…' : tab === 'movie_tv' ? 'Search movies & TV…' : 'Search…';
+      _iosInput._fullSearchEnabled = _searchableTabs.has(tab);
+    }
+    rr.getElementById('maIosAiSearchBtn')?.classList.toggle('hidden', !['track', 'artist', 'album'].includes(tab));
+    if (_iosBar) _iosBar.classList.remove('hidden');
+    // Pinned is a pure category browser (like this root list itself) —
+    // no search makes sense at this level, so keep it hidden regardless
+    // of the general toggle above.
+    if (tab === 'pinned' && _iosBar) _iosBar.classList.add('hidden');
+
+    // Show content + back button — clear first to avoid stale content flash
+    const maContent = rr.getElementById('maContent');
+    const backBtn   = rr.getElementById('maBackBtn');
+    const titleEl   = rr.getElementById('maTitle');
+    if (maContent) { maContent.innerHTML = ''; maContent.style.display = ''; }
+    if (titleEl)   titleEl.textContent = label || tab;
+    if (backBtn)   backBtn.classList.remove('hidden');
+
+    this._maCurrentTab = tab;
+    rr.querySelectorAll('.ma-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+    this._loadMATab(tab);
   }
   _maNavReset() {
     this._maBrowserNavStack = [];
@@ -8374,7 +8742,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       if (maContent2) maContent2.style.display = 'none';
       if (tabsEl)     tabsEl.style.display     = 'none';
       if (searchRow)  searchRow.style.display  = 'none';
-      if (iosView2)   iosView2.classList.remove('hidden');
       this.shadowRoot?.getElementById('maIosSearchBar')?.classList.add('hidden');
       // Clear iOS search bar when returning to category list
       const _iosInput = this.shadowRoot?.getElementById('maIosSearchInput');
@@ -8385,6 +8752,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       this._maLastSearch = null;
       const titleEl3 = this.shadowRoot?.getElementById('maTitle');
       if (titleEl3) titleEl3.textContent = 'Library';
+      // Re-render (not just unhide) so anything that changed while browsing
+      // — a newly recorded search, a newly pinned item, etc. — shows up
+      // immediately instead of waiting for the library to be fully closed
+      // and reopened.
+      this._renderMAIosView();
+      if (iosView2) iosView2.classList.remove('hidden');
       return;
     }
     // Sentinel for returning to a specific Pinned category (e.g. Queues)
@@ -9722,12 +10095,19 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // — so an in-memory-only tracker works right after pressing Play, but goes
   // blank (and falls back to a much less reliable name search) the moment
   // WKWebView reloads the page.
-  _rbSaveLastPlayed(entityId, st) {
+  //
+  // contentId (the entity's media_content_id at save time) is stored
+  // alongside the station and re-checked on read — without this, switching
+  // to a different station on the same entity would keep returning the
+  // previous station's info/artwork forever, since nothing else here would
+  // ever notice the content had changed underneath it.
+  _rbSaveLastPlayed(entityId, st, contentId) {
     if (!entityId || !st) return;
-    this._lastPlayedRbStation = st;
+    if (!this._lastPlayedRbMem) this._lastPlayedRbMem = {};
+    this._lastPlayedRbMem[entityId] = { st, contentId: contentId || '' };
     try {
       const store = JSON.parse(localStorage.getItem('crow_rb_last_played') || '{}');
-      store[entityId] = { st, ts: Date.now() };
+      store[entityId] = { st, ts: Date.now(), contentId: contentId || '' };
       localStorage.setItem('crow_rb_last_played', JSON.stringify(store));
     } catch (_) {}
   }
@@ -9736,14 +10116,24 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // (instant, same session), falling back to localStorage (survives reloads).
   // The persisted copy expires after a while so a station switched via voice
   // or an automation days ago doesn't get shown as if it were still current.
-  _rbGetLastPlayed(entityId) {
-    if (this._lastPlayedRbStation) return this._lastPlayedRbStation;
+  // Pass the entity's current media_content_id as contentId to reject a
+  // cached entry whose stored contentId doesn't match — i.e. the station has
+  // since changed. Omit it (or pass '') to skip that check, e.g. when no
+  // content_id is available to compare against.
+  _rbGetLastPlayed(entityId, contentId) {
     if (!entityId) return null;
+    const _mem = this._lastPlayedRbMem?.[entityId];
+    if (_mem && (!contentId || !_mem.contentId || _mem.contentId === contentId)) {
+      return _mem.st;
+    }
     try {
       const store = JSON.parse(localStorage.getItem('crow_rb_last_played') || '{}');
       const entry = store[entityId];
       const TTL = 12 * 3600 * 1000; // 12 hours
-      if (entry?.st && (Date.now() - (entry.ts || 0)) < TTL) return entry.st;
+      if (entry?.st && (Date.now() - (entry.ts || 0)) < TTL
+          && (!contentId || !entry.contentId || entry.contentId === contentId)) {
+        return entry.st;
+      }
     } catch (_) {}
     return null;
   }
@@ -10061,7 +10451,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const menu = document.createElement('div');
     menu.className = 'queue-dropdown-menu';
     menu.innerHTML =
-      '<div class="queue-dropdown-item" id="mtPin" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg><span class="queue-dropdown-label">' + (isPinned ? 'Unpin' : 'Pin') + '</span></div>';
+      '<div class="queue-dropdown-item" id="mtPin" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg><span class="queue-dropdown-label">' + (isPinned ? 'Unpin' : 'Pin') + '</span></div>' +
+      '<div class="queue-dropdown-item" id="mtSoundtrack" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6zm0 16c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3-7.82V5h2v4.18l-2 2z"/><path d="M19 3l-4.5 4.5 1.42 1.42 3.08-3.09V11h2V4.41L19 3z"/></svg><span class="queue-dropdown-label">Find Soundtrack</span></div>';
     const anchorRect = anchor.getBoundingClientRect();
     const cardRect = r.host.getBoundingClientRect();
     menu.style.position = 'absolute';
@@ -10078,6 +10469,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       this._showToast(nowPinned ? 'Pinned' : 'Unpinned');
       if (this._maCurrentTab === 'movie_tv') this._loadMATab('movie_tv');
       if (this._pinnedDetailActive && this._pinnedDetailCategory === 'movies_tv') this._openPinnedCategoryDetail('movies_tv');
+    });
+    menu.querySelector('#mtSoundtrack')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
+      this._showAISearchPanel(`Music from ${item.title}`);
     });
   }
 
@@ -10440,7 +10834,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       localStorage.setItem('crow_pc_episode_cache', JSON.stringify(store));
     } catch(_) {}
     this._closeInfoPopup();
-    this._closeMABrowser();
+    this._closeMABrowser(true);
     // Update badge immediately
     setTimeout(() => { this._updatePodcastBadge(); }, 300);
   }
@@ -11476,7 +11870,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       bar.className = 'ma-drill-actions';
       bar.innerHTML =
         '<button class="ma-drill-action-btn" id="pinnedSongsPlayAll"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div><span class="ma-drill-btn-label">Play All</span></button>' +
-        '<button class="ma-drill-action-btn" id="pinnedSongsAdd"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M19 11h-6V5h-2v6H5v2h6v6h2v-6h6z"/></svg></div><span class="ma-drill-btn-label">Add</span></button>';
+        '<button class="ma-drill-action-btn" id="pinnedSongsAdd"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M19 11h-6V5h-2v6H5v2h6v6h2v-6h6z"/></svg></div><span class="ma-drill-btn-label">Add</span></button>' +
+        '<button class="ma-drill-action-btn" id="pinnedSongsNext"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M16,18H18V6H16M6,18L14.5,12L6,6V18Z"/></svg></div><span class="ma-drill-btn-label">Play Next</span></button>';
       content.appendChild(bar);
 
       const _getQueueLength = async (targetEntity) => {
@@ -11498,16 +11893,18 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       const _playPinnedSongs = async (mode) => {
         const targetEntity = this._maEntityIds?.has(this._entity) ? this._entity : (this._getValidMASpeakers(true)[0] || null);
         if (!targetEntity) { this._showToast('Music Assistant required'); return; }
-        this._closeMABrowser();
-        this._showLoadingToast(mode === 'add' ? 'Adding to Queue…' : 'Starting playback…');
+        // Only "Play All" (replace) leaves the library — Add/Play Next keep
+        // it open so more items can be queued without re-navigating back in.
+        if (mode === 'replace') this._closeMABrowser(true);
+        this._showLoadingToast(mode === 'add' ? 'Adding to Queue…' : mode === 'next' ? 'Queuing next…' : 'Starting playback…');
 
-        // For "Add", verify against real queue length — MA's play_media can
-        // report success at the service-call level even when a fuzzy
-        // title+artist search fails to resolve a match and nothing actually
-        // gets enqueued, so a clean call here isn't proof anything happened.
-        // "Play All" (replace) starts a fresh queue, so this check doesn't
-        // apply there the same way.
-        const _queueLenBefore = mode === 'add' ? await _getQueueLength(targetEntity) : null;
+        // For "Add"/"Play Next", verify against real queue length — MA's
+        // play_media can report success at the service-call level even when
+        // a fuzzy title+artist search fails to resolve a match and nothing
+        // actually gets enqueued, so a clean call here isn't proof anything
+        // happened. "Play All" (replace) starts a fresh queue, so this check
+        // doesn't apply there the same way.
+        const _queueLenBefore = (mode === 'add' || mode === 'next') ? await _getQueueLength(targetEntity) : null;
 
         let calledOk = 0;
         for (let i = 0; i < items.length; i++) {
@@ -11522,7 +11919,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
                 entity_id: targetEntity,
                 media_id: (_name + (_artist ? ' ' + _artist : '')).trim(),
                 media_type: 'track',
-                enqueue: (mode === 'replace' && i === 0) ? 'replace' : 'add',
+                enqueue: mode === 'next' ? 'next' : (mode === 'replace' && i === 0) ? 'replace' : 'add',
                 // Pinned Songs is a deliberately curated, finite list — see
                 // the same reasoning in _playSavedQueue.
                 ...(mode === 'replace' && i === 0 ? { radio_mode: false } : {})
@@ -11533,7 +11930,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         }
 
         let added = calledOk;
-        if (mode === 'add' && _queueLenBefore !== null) {
+        if ((mode === 'add' || mode === 'next') && _queueLenBefore !== null) {
           const _queueLenAfter = await _getQueueLength(targetEntity);
           if (_queueLenAfter !== null) {
             added = Math.max(0, Math.min(calledOk, _queueLenAfter - _queueLenBefore));
@@ -11544,8 +11941,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         if (added > 0) {
           this._showToast(mode === 'add'
             ? '✓ Added ' + added + ' pinned songs'
-            : '✓ Playing ' + added + ' pinned songs', 3500);
-        } else if (calledOk > 0 && mode === 'add') {
+            : mode === 'next'
+              ? '✓ Playing ' + added + ' pinned songs next'
+              : '✓ Playing ' + added + ' pinned songs', 3500);
+        } else if (calledOk > 0 && (mode === 'add' || mode === 'next')) {
           // The calls didn't throw, but the queue genuinely didn't grow —
           // tell the truth instead of a false success toast.
           this._showToast('Nothing was actually added — Music Assistant couldn\'t match these songs', 4000);
@@ -11555,6 +11954,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       };
       bar.querySelector('#pinnedSongsPlayAll')?.addEventListener('click', () => _playPinnedSongs('replace'));
       bar.querySelector('#pinnedSongsAdd')?.addEventListener('click', () => _playPinnedSongs('add'));
+      bar.querySelector('#pinnedSongsNext')?.addEventListener('click', () => _playPinnedSongs('next'));
     }
 
     // Search bar — filters this category's pinned items by name.
@@ -11666,7 +12066,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (!tracks.length) { this._showToast('This pinned queue is empty'); return; }
     const targetEntity = this._maEntityIds?.has(this._entity) ? this._entity : (this._getValidMASpeakers(true)[0] || null);
     if (!targetEntity) { this._showToast('Music Assistant required'); return; }
-    this._closeMABrowser();
+    if (mode === 'replace') this._closeMABrowser(true);
     this._showLoadingToast(mode === 'add' ? 'Adding to queue…' : 'Starting playback…');
     let added = 0;
     for (let i = 0; i < tracks.length; i++) {
@@ -12172,7 +12572,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       } catch(_) {}
     }
     this._closeInfoPopup();
-    this._closeMABrowser();
+    this._closeMABrowser(true);
     setTimeout(() => { this._updateAudiobookBadge(); }, 300);
   }
 
@@ -12561,7 +12961,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
               this._showToast('\u26a0\ufe0f Could not play ' + st.name);
             }
           });
-          this._closeMABrowser();
+          this._closeMABrowser(true);
         } else if (mode === 'pin') {
           const nowPinned = this._rbToggleStar(st);
           if (nowPinned === null) return;
@@ -12760,19 +13160,19 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           service_data: playCall.service_data
         }).then(() => {
           this._closeInfoPopup();
-          this._closeMABrowser();
+          this._closeMABrowser(true);
         }).catch(() => {
           // Only fall back to a direct-URL play for real stream URLs — an MA
           // library URI or HA media-source id isn't a playable URL on its own.
           if (!st._maUri && !st._haMediaContentId) this._playMediaDirect(_rbPlayTarget, (st.url_resolved || st.url), 'music', st.name);
           else this._showToast('\u26a0\ufe0f Could not play ' + st.name);
           this._closeInfoPopup();
-          this._closeMABrowser();
+          this._closeMABrowser(true);
         });
       } else {
         this._playMediaDirect(this._entity, (st.url_resolved || st.url), 'music', st.name);
         this._closeInfoPopup();
-        this._closeMABrowser();
+        this._closeMABrowser(true);
       }
     });
 
@@ -12878,6 +13278,11 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const activeTabEl = this.shadowRoot.querySelector('.ma-tab.active');
     const activeTabKey = activeTabEl ? activeTabEl.dataset.tab : (this._maCurrentTab || null);
 
+    // Only record deliberate (Enter-triggered) searches, not the 500ms
+    // live-filter debounce calls that also flow through here with
+    // libraryOnly=true on every few keystrokes.
+    if (!libraryOnly) this._maRecordRecentSearch(activeTabKey || 'search', query);
+
     // Radio tab: search radio-browser.info directly.
     if (activeTabKey === 'radio' || this._maCurrentTab === 'radio') {
       // Clear the action bar — it doesn't apply to a radio station list
@@ -12953,6 +13358,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       content.innerHTML = this._psLoading('Searching podcasts…');
       try {
         const results = await this._pcSearch(query);
+        if (this._maSearchGen !== _mySearchGen) return; // superseded by a newer search
         if (!results.length) {
           content.innerHTML = this._psAutoClose(this._psEmpty('M9.5,3A6.5,6.5 0 0,1 16,9.5C16,11.11 15.41,12.59 14.44,13.73L14.71,14H15.5L20.5,19L19,20.5L14,15.5V14.71L13.73,14.44C12.59,15.41 11.11,16 9.5,16A6.5,6.5 0 0,1 3,9.5A6.5,6.5 0 0,1 9.5,3M9.5,5C7,5 5,7 5,9.5C5,12 7,14 9.5,14C12,14 14,12 14,9.5C14,7 12,5 9.5,5Z', 'No podcasts found', 'Nothing matched "' + query + '" — try a different search'), null, 8000, 'pcNoResBtn', 'pcNoResRing');
           this._psAutoCloseStart(this.shadowRoot, null, () => { this._maInSearchResults = false; this.shadowRoot?.querySelectorAll('.ma-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'podcast')); this._loadMATab('podcast'); }, 8000, 'pcNoResBtn', 'pcNoResRing');
@@ -12970,6 +13376,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         if (starredSection) content.appendChild(starredSection);
         content.appendChild(list);
       } catch(e) {
+        if (this._maSearchGen !== _mySearchGen) return;
         content.innerHTML = '';
         const errDiv = document.createElement('div');
         errDiv.style.cssText = 'margin:16px 4px;background:rgba(255,165,0,0.1);border:1px solid rgba(255,165,0,0.3);border-radius:12px;padding:14px;';
@@ -12990,6 +13397,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       content.innerHTML = this._psLoading('Searching movies & TV…');
       try {
         const results = await this._mtSearch(query);
+        if (this._maSearchGen !== _mySearchGen) return; // superseded by a newer search
         if (!results.length) {
           content.innerHTML = this._psAutoClose(this._psEmpty('M21,3H3C1.89,3 1,3.89 1,5V19A2,2 0 0,0 3,21H21A2,2 0 0,0 23,19V5C23,3.89 22.1,3 21,3M21,19H3V5H21V19M18,13.5L15.5,15.15L15.5,11.85L18,13.5M13,15.5L10.5,17.15L10.5,13.85L13,15.5M8,13.5L5.5,15.15L5.5,11.85L8,13.5Z', 'Nothing found', 'Nothing matched "' + query + '" — try a different search'), null, 8000, 'mtNoResBtn', 'mtNoResRing');
           this._psAutoCloseStart(this.shadowRoot, null, () => { this._maInSearchResults = false; this.shadowRoot?.querySelectorAll('.ma-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'movie_tv')); this._loadMATab('movie_tv'); }, 8000, 'mtNoResBtn', 'mtNoResRing');
@@ -13006,6 +13414,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         if (starredSection) content.appendChild(starredSection);
         content.appendChild(list);
       } catch(e) {
+        if (this._maSearchGen !== _mySearchGen) return;
         content.innerHTML = '';
         const errDiv = document.createElement('div');
         errDiv.style.cssText = 'margin:16px 4px;background:rgba(255,165,0,0.1);border:1px solid rgba(255,165,0,0.3);border-radius:12px;padding:14px;';
@@ -13027,6 +13436,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       const _abGoBack = () => { this._maInSearchResults = false; this.shadowRoot?.querySelectorAll('.ma-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'audiobook')); this._loadMATab('audiobook'); };
       try {
         const results = await this._abSearch(query);
+        if (this._maSearchGen !== _mySearchGen) return; // superseded by a newer search
 
         // Handle "did you mean" signal from _abSearch
         if (results && results.empty) {
@@ -13106,6 +13516,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         }
         content.appendChild(list);
       } catch(e) {
+        if (this._maSearchGen !== _mySearchGen) return;
         content.innerHTML = '';
         const errDiv = document.createElement('div');
         errDiv.style.cssText = 'margin:16px 4px;background:rgba(255,165,0,0.1);border:1px solid rgba(255,165,0,0.3);border-radius:12px;padding:14px;';
@@ -13283,6 +13694,349 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     }
   }
 
+
+  // AI-interpreted search for the Songs/Artists/Albums library tabs — same
+  // underlying idea as the standalone AI Search panel (_showAISearchPanel),
+  // but scoped to one media type at a time and rendered inline in the
+  // library tab itself (matching how Radio/Podcasts/Movies & TV search
+  // already render inline) rather than as a separate popup.
+  async _doAiLibrarySearch(tab, query) {
+    const content = this.shadowRoot.getElementById('maContent');
+    if (!content || !query) return;
+    this._maLastSearch = query;
+    this._maInSearchResults = true;
+    this._maRecordRecentSearch('ai_' + tab, query);
+    this.shadowRoot?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
+    content.querySelector('.ma-drill-actions')?.remove();
+
+    // Shared with _searchMA — pressing Enter for a literal MA/Apple Music
+    // search while an AI search is still in flight (or the reverse) should
+    // cancel whichever one is now stale rather than letting both race and
+    // having the slower one clobber the faster one's results.
+    this._maSearchGen = (this._maSearchGen || 0) + 1;
+    const _myGen = this._maSearchGen;
+
+    const _goBack = () => {
+      this._maInSearchResults = false;
+      this.shadowRoot?.querySelectorAll('.ma-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+      this._loadMATab(tab);
+    };
+
+    if (!this._aiLibSearchCache) this._aiLibSearchCache = new Map();
+    const cacheKey = (tab + '|' + query).toLowerCase();
+    if (!this._aiLibSearchCache.has(cacheKey)) {
+      const _ls = this._aiLocalGet('libSearch', cacheKey);
+      if (_ls) this._aiLibSearchCache.set(cacheKey, _ls);
+    }
+    if (!this._aiLibSearchCache.has(cacheKey)) {
+      const _ss = this._aiSessionGet('libSearch', cacheKey);
+      if (_ss) this._aiLibSearchCache.set(cacheKey, _ss);
+    }
+
+    let items = this._aiLibSearchCache.get(cacheKey);
+    if (!items) {
+      const _loadingLabel = tab === 'artist' ? 'Finding artists…' : tab === 'album' ? 'Finding albums…' : 'Finding tracks…';
+      content.innerHTML = this._psLoading(_loadingLabel);
+
+      const hasAI = await this._aiCheckAvailable();
+      if (this._maSearchGen !== _myGen) return; // superseded by a newer search
+      if (!hasAI) {
+        content.innerHTML = '';
+        const errDiv = document.createElement('div');
+        errDiv.style.cssText = 'margin:16px 4px;background:rgba(255,165,0,0.1);border:1px solid rgba(255,165,0,0.3);border-radius:12px;padding:14px;';
+        errDiv.innerHTML = '<div style="font-size:13px;font-weight:600;color:rgba(255,165,0,0.9);margin-bottom:6px;">No AI Found</div><div style="font-size:12px;color:rgba(255,255,255,0.6);line-height:1.5;">Add a conversation agent via <strong style="color:#63b3ed">Settings → Voice Assistants</strong>.</div>';
+        const closeBtn = document.createElement('button');
+        closeBtn.textContent = 'Go back';
+        closeBtn.style.cssText = 'margin-top:12px;padding:6px 14px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:8px;color:#fff;font-size:12px;font-family:inherit;cursor:pointer;';
+        closeBtn.addEventListener('click', _goBack);
+        errDiv.appendChild(closeBtn);
+        content.appendChild(errDiv);
+        return;
+      }
+
+      const agentId = this._config?.ai_conversation_agent || 'conversation.home_assistant';
+      const prompt = tab === 'artist'
+        ? `You are a music search assistant. The user wants: "${query}". Suggest 18 specific artists that match this description. Be varied — mix well-known and lesser-known acts, different eras if appropriate. Respond ONLY with a JSON array: [{"name":"Artist Name","reason":"5 word max reason"}]`
+        : tab === 'album'
+        ? `You are a music search assistant. The user wants: "${query}". Suggest 18 specific albums (with artist) that match this description. Be varied across artists and eras. Respond ONLY with a JSON array: [{"title":"Album Title","artist":"Artist Name","reason":"5 word max reason"}]`
+        : `You are a music search assistant. The user wants: "${query}". Suggest 18 specific tracks that match this description. Be varied across artists and eras. Respond ONLY with a JSON array: [{"title":"Track Title","artist":"Artist Name","reason":"5 word max reason"}]`;
+
+      try {
+        const resp = await this._hass.connection.sendMessagePromise({
+          type: 'conversation/process', text: prompt,
+          agent_id: agentId, language: navigator.language || 'en'
+        });
+        if (this._maSearchGen !== _myGen) return;
+        const raw = resp?.response?.speech?.plain?.speech || '';
+        const s = raw.indexOf('['), e = raw.lastIndexOf(']');
+        if (s === -1 || e <= s) throw new Error('No JSON');
+        items = JSON.parse(raw.slice(s, e + 1));
+        if (!Array.isArray(items) || !items.length) throw new Error('Empty');
+        this._aiLibSearchCache.set(cacheKey, items);
+        this._aiSessionSet('libSearch', cacheKey, items);
+        this._aiLocalSet('libSearch', cacheKey, items);
+      } catch (err) {
+        if (this._maSearchGen !== _myGen) return;
+        content.innerHTML = '';
+        const errDiv = document.createElement('div');
+        errDiv.style.cssText = 'margin:16px 4px;background:rgba(255,165,0,0.1);border:1px solid rgba(255,165,0,0.3);border-radius:12px;padding:14px;';
+        errDiv.innerHTML = '<div style="font-size:13px;font-weight:600;color:rgba(255,165,0,0.9);margin-bottom:6px;">🤖 AI search failed</div><div style="font-size:12px;color:rgba(255,255,255,0.6);line-height:1.5;">Try rephrasing your search, or check your AI conversation agent.</div>';
+        const closeBtn = document.createElement('button');
+        closeBtn.textContent = 'Go back';
+        closeBtn.style.cssText = 'margin-top:12px;padding:6px 14px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:8px;color:#fff;font-size:12px;font-family:inherit;cursor:pointer;';
+        closeBtn.addEventListener('click', _goBack);
+        errDiv.appendChild(closeBtn);
+        content.appendChild(errDiv);
+        return;
+      }
+    }
+
+    if (this._maSearchGen !== _myGen) return;
+    this._renderAiLibSearchResults(tab, query, items);
+  }
+
+  _renderAiLibSearchResults(tab, query, items) {
+    const content = this.shadowRoot.getElementById('maContent');
+    if (!content) return;
+    this.shadowRoot?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
+    this.shadowRoot.querySelectorAll('.ma-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+
+    const _label = tab === 'artist' ? 'artists' : tab === 'album' ? 'albums' : 'tracks';
+    const esc = s => (s || '').toString().replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    content.innerHTML = `
+      <div style="font-size:10px;font-weight:700;color:rgba(99,179,237,0.5);letter-spacing:0.6px;text-transform:uppercase;margin:6px 4px 10px;">
+        <svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:#63b3ed;vertical-align:middle;margin-right:3px"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>
+        ${items.length} ${_label} for "${esc(query)}"
+      </div>
+      <div class="ma-drill-actions" id="aiLibSearchActions" style="margin-bottom:10px;">
+        <button class="ma-drill-action-btn" data-action="replace"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div><span class="ma-drill-btn-label">Play All</span></button>
+        <button class="ma-drill-action-btn" data-action="add"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M19 11h-6V5h-2v6H5v2h6v6h2v-6h6z"/></svg></div><span class="ma-drill-btn-label">Add All</span></button>
+        <button class="ma-drill-action-btn" data-action="next"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M16,18H18V6H16M6,18L14.5,12L6,6V18Z"/></svg></div><span class="ma-drill-btn-label">Play Next</span></button>
+      </div>
+      <div id="aiLibSearchList"></div>`;
+
+    const list = content.querySelector('#aiLibSearchList');
+    const self = this;
+
+    if (tab === 'artist') {
+      items.forEach((a, i) => {
+        const wrap = document.createElement('div');
+        wrap.className = 'ai-rec-wrap';
+        wrap.style.cssText = 'position:relative;overflow:hidden;border-radius:12px;margin-bottom:6px;';
+        wrap.innerHTML =
+          `<div class="artist-radio-row" data-idx="${i}" data-artist="${esc(a.name)}"
+            style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:${this._pt("bg")};cursor:pointer;">
+            <div class="artist-radio-art" data-art-idx="${i}"
+              style="width:40px;height:40px;border-radius:50%;background:rgba(99,179,237,0.1);border:1px solid rgba(99,179,237,0.15);display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden;">
+              <svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:#63b3ed;opacity:0.7"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+            </div>
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:13px;font-weight:600;color:${this._pt("text")};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(a.name)}</div>
+              ${a.reason ? `<div style="font-size:10px;color:rgba(99,179,237,0.5);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(a.reason)}</div>` : ''}
+            </div>
+            <svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:${this._pt("dim")};flex-shrink:0"><path d="M8 5v14l11-7z"/></svg>
+          </div>`;
+        list.appendChild(wrap);
+        setTimeout(() => {
+          this._fetchWikipediaThumb(a.name).then(blobUrl => {
+            if (!blobUrl) return;
+            const artEl = content.querySelector(`.artist-radio-art[data-art-idx="${i}"]`);
+            if (!artEl || artEl.querySelector('img')) return;
+            const img = document.createElement('img');
+            img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block';
+            img.src = blobUrl;
+            artEl.innerHTML = '';
+            artEl.appendChild(img);
+          });
+        }, i * 700);
+      });
+
+      content.querySelectorAll('.artist-radio-row').forEach(row => {
+        let lpTimer = null, lpFired = false;
+        const cancelLP = () => { if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; } };
+        row.addEventListener('pointerdown', () => {
+          lpFired = false;
+          lpTimer = setTimeout(() => { cancelLP(); lpFired = true; self._showAITrackInfo('', row.dataset.artist); }, 480);
+        }, { passive: true });
+        row.addEventListener('pointerup', () => cancelLP(), { passive: true });
+        row.addEventListener('pointercancel', () => { cancelLP(); lpFired = false; }, { passive: true });
+        row.addEventListener('pointermove', () => cancelLP(), { passive: true });
+        row.addEventListener('click', () => {
+          if (lpFired) { lpFired = false; return; }
+          self._playArtistRadio(row.dataset.artist);
+        });
+      });
+    } else {
+      // Tracks and albums both use the same square-art list-row look already
+      // established for Watch Recap / library rows.
+      items.forEach((it, i) => {
+        const title  = tab === 'album' ? it.title : it.title;
+        const artist = it.artist || '';
+        const wrap = document.createElement('div');
+        wrap.className = 'ma-item-wrap';
+        const el = document.createElement('div');
+        el.className = 'ma-item';
+        el.innerHTML =
+          `<div class="ma-item-art" data-ai-lib-art-idx="${i}" style="position:relative;background:${this._pt("bg")};display:flex;align-items:center;justify-content:center;">
+            <svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:rgba(255,255,255,0.35)"><path d="M12,3V13.55C11.41,13.21 10.73,13 10,13A4,4 0 0,0 6,17A4,4 0 0,0 10,21A4,4 0 0,0 14,17V7H18V3H12Z"/></svg>
+          </div>
+          <div class="ma-item-info"><div class="ma-item-title">${esc(title)}</div>
+            <div class="ma-item-sub">${esc(artist)}</div>
+            ${it.reason ? `<div style="font-size:10px;color:rgba(99,179,237,0.5);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(it.reason)}</div>` : ''}
+          </div>`;
+        wrap.appendChild(el);
+        list.appendChild(wrap);
+
+        setTimeout(() => {
+          this._fetchItunesArtForTrack(artist, tab === 'album' ? '' : title).then(img => {
+            if (!img) return;
+            const artEl = content.querySelector(`[data-ai-lib-art-idx="${i}"]`);
+            if (!artEl || artEl.querySelector('img')) return;
+            artEl.innerHTML = `<img src="${img}" style="width:100%;height:100%;object-fit:cover;display:block;">`;
+          });
+        }, i * 700);
+
+        wrap.addEventListener('click', () => {
+          if (tab === 'album') {
+            this._showAIAlbumTracks(content, title, artist, '', () => this._renderAiLibSearchResults(tab, query, items));
+          } else {
+            self._showAITrackInfo(title, artist, { fromSearch: true });
+          }
+        });
+
+        let lpTimer = null, lpFired = false;
+        const cancelLP = () => { if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; } };
+        wrap.addEventListener('pointerdown', () => {
+          lpFired = false;
+          lpTimer = setTimeout(() => {
+            cancelLP(); lpFired = true;
+            self._showAiLibItemEnqueueMenu(wrap, tab, title, artist);
+          }, 480);
+        }, { passive: true });
+        wrap.addEventListener('pointerup', () => cancelLP(), { passive: true });
+        wrap.addEventListener('pointercancel', () => { cancelLP(); lpFired = false; }, { passive: true });
+        wrap.addEventListener('pointermove', () => cancelLP(), { passive: true });
+      });
+    }
+
+    // Play All / Add All / Play Next — same batching pattern as the AI
+    // Search panel's own action bar, scoped to this tab's media type.
+    const _barTarget = (() => {
+      const _allMA = self._getValidMASpeakers ? self._getValidMASpeakers(true) : [];
+      if (self._lastMAPlayTarget && _allMA.includes(self._lastMAPlayTarget)) return self._lastMAPlayTarget;
+      if (_allMA.length) return _allMA[0];
+      return self._entity;
+    })();
+    const _mediaType = tab === 'artist' ? 'artist' : tab === 'album' ? 'album' : 'track';
+    const _mediaId = it => tab === 'artist' ? it.name : `${it.title} ${it.artist || ''}`.trim();
+
+    content.querySelector('#aiLibSearchActions')?.querySelectorAll('.ma-drill-action-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const action = btn.dataset.action;
+        if (!items.length) return;
+        self._maBatchLoading = true;
+        clearTimeout(self._maBatchLoadingTimer);
+        self._maBatchLoadingTimer = setTimeout(() => { self._maBatchLoading = false; }, 20000);
+        self._pillPulse(20000);
+        let successCount = 0;
+        if (action === 'replace') {
+          const [first, ...rest] = items;
+          try {
+            await self._hass.connection.sendMessagePromise({
+              type: 'call_service', domain: 'music_assistant', service: 'play_media',
+              service_data: { entity_id: _barTarget, media_id: _mediaId(first), media_type: _mediaType, enqueue: 'replace' }
+            });
+            successCount++;
+          } catch (_) {}
+          for (const it of rest) {
+            try {
+              await self._hass.connection.sendMessagePromise({
+                type: 'call_service', domain: 'music_assistant', service: 'play_media',
+                service_data: { entity_id: _barTarget, media_id: _mediaId(it), media_type: _mediaType, enqueue: 'add' }
+              });
+              successCount++;
+            } catch (_) {}
+          }
+          self._closeMABrowser(true);
+        } else {
+          const enqueueMode = action === 'next' ? 'next' : 'add';
+          for (const it of items) {
+            try {
+              await self._hass.connection.sendMessagePromise({
+                type: 'call_service', domain: 'music_assistant', service: 'play_media',
+                service_data: { entity_id: _barTarget, media_id: _mediaId(it), media_type: _mediaType, enqueue: enqueueMode }
+              });
+              successCount++;
+            } catch (_) {}
+          }
+        }
+        self._maBatchLoading = false;
+        clearTimeout(self._maBatchLoadingTimer);
+        self._pillPulse(0);
+        const _spkName = self._hass?.states[_barTarget]?.attributes?.friendly_name || 'speaker';
+        if (action !== 'replace') {
+          const label = action === 'next' ? 'Playing next' : 'Added to queue';
+          self._showToast(`${label} — ${successCount} ${_label} on ${_spkName}`, 3000);
+        }
+      });
+    });
+  }
+
+  // Minimal Play Now / Add / Play Next menu for AI album & artist search
+  // rows — the full _showEnqueueMenu expects real library items (pinning,
+  // Discogs links, etc.); these are AI suggestions with no verified library
+  // URI, so a lighter purpose-built menu avoids relying on data we don't have.
+  _showAiLibItemEnqueueMenu(anchorEl, tab, title, artist) {
+    this._closeEnqueueMenu?.();
+    const r = this.shadowRoot;
+    const backdrop = document.createElement('div');
+    backdrop.className = 'enqueue-backdrop';
+    backdrop.id = 'enqueueBackdrop';
+    const _openedAt = Date.now();
+    backdrop.addEventListener('pointerdown', () => { if (Date.now() - _openedAt > 200) this._closeEnqueueMenu?.(); });
+    r.appendChild(backdrop);
+
+    const menu = document.createElement('div');
+    menu.className = 'enqueue-menu';
+    menu.id = 'enqueueMenu';
+    const _mediaType = tab === 'artist' ? 'artist' : 'album';
+    const _mediaId = tab === 'artist' ? title : `${title} ${artist || ''}`.trim();
+    const _label = _mediaType === 'artist' ? 'Play All' : 'Play All';
+    const strategies = [
+      { mode: 'replace', label: _label, icon: '<path d="M8 5v14l11-7z"/>' },
+      { mode: 'next',    label: 'Play Next', icon: '<path d="M3 13h8V5H3v8zm0 8h8v-6H3v6zm10 0h8v-8h-8v8zm0-18v6h8V3h-8z"/>' },
+      { mode: 'add',      label: 'Add to Queue', icon: '<path d="M19 11h-6V5h-2v6H5v2h6v6h2v-6h6z"/>' },
+    ];
+    menu.innerHTML = strategies.map(s =>
+      `<button class="enqueue-menu-item" data-mode="${s.mode}"><svg viewBox="0 0 24 24">${s.icon}</svg><span>${s.label}</span></button>`
+    ).join('');
+    r.appendChild(menu);
+
+    const anchorRect = anchorEl.getBoundingClientRect();
+    const cardRect = r.host.getBoundingClientRect();
+    menu.style.top = (anchorRect.bottom - cardRect.top + 4) + 'px';
+    menu.style.left = Math.max(8, Math.min(anchorRect.left - cardRect.left, cardRect.width - 220)) + 'px';
+
+    menu.querySelectorAll('.enqueue-menu-item').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const mode = btn.dataset.mode;
+        this._closeEnqueueMenu?.();
+        const targetEntity = this._maEntityIds?.has(this._entity) ? this._entity : (this._getValidMASpeakers(true)[0] || null);
+        if (!targetEntity) { this._showToast('Music Assistant required'); return; }
+        try {
+          await this._hass.connection.sendMessagePromise({
+            type: 'call_service', domain: 'music_assistant', service: 'play_media',
+            service_data: { entity_id: targetEntity, media_id: _mediaId, media_type: _mediaType, enqueue: mode === 'replace' ? 'replace' : mode }
+          });
+          if (mode === 'replace') { this._closeMABrowser(true); }
+          else this._showToast(mode === 'next' ? 'Playing next' : 'Added to queue', 2500);
+        } catch (_) {
+          this._showToast('Could not play — check Music Assistant');
+        }
+      });
+    });
+  }
 
   _showTrackConfirm(trackTitle, artistName) {
     const r = this.shadowRoot;
@@ -15294,6 +16048,59 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     return { rawState, contentId, attemptOk };
   }
 
+  // Proactive counterpart to the LIVE pill's manual lookup — same MA-queue /
+  // pinned / radio-browser name-search strategies, fired automatically once
+  // per stream (see the call site in updateContent) instead of requiring a
+  // tap first. Deliberately skips the pill's Strategy 0/1 (those are plain
+  // synchronous cache reads already done inline before this gets called) and
+  // only does the async ones that can discover a station for the first time.
+  async _rbAutoResolveStationArt(entityId) {
+    try {
+      const attrs = this._hass?.states[entityId]?.attributes || {};
+      let _stationName = '';
+      if (this._maEntityIds?.has(entityId)) {
+        try {
+          const qRes = await this._hass.connection.sendMessagePromise({
+            type: 'call_service', domain: 'music_assistant', service: 'get_queue',
+            service_data: { entity_id: entityId }, return_response: true
+          });
+          const qData = qRes?.response?.[entityId] || qRes?.response || null;
+          _stationName = qData?.current_item?.name || qData?.current_item?.media_item?.name || '';
+        } catch (_) {}
+      }
+      if (!_stationName) _stationName = attrs.media_album_name || attrs.media_title || '';
+      if (!_stationName) return;
+      const _nl = _stationName.toLowerCase();
+
+      // Pinned stations first — instant, no network.
+      let best = this._rbGetStarred().find(s => s.name?.toLowerCase() === _nl) || null;
+
+      if (!best) {
+        const res = await fetch(
+          'https://de1.api.radio-browser.info/json/stations/search?name='
+          + encodeURIComponent(_stationName) + '&limit=30&hidebroken=true&order=votes&reverse=true'
+        );
+        if (!res.ok) return;
+        const stations = await res.json();
+        if (!stations || !stations.length) return;
+        best = stations.find(s => s.name.toLowerCase() === _nl)
+            || stations.find(s => s.name.toLowerCase().startsWith(_nl))
+            || stations.find(s => _nl.startsWith(s.name.toLowerCase()))
+            || stations[0];
+        this._rbCacheStation(best);
+      }
+      if (!best) return;
+      this._rbSaveLastPlayed(entityId, best, attrs.media_content_id || '');
+
+      // Only refresh if this entity is still the one showing — avoid
+      // clobbering a UI that's moved on to something else while this
+      // lookup was in flight.
+      if (this._entity === entityId && this._hass?.states[entityId]) {
+        this.updateContent(this._hass.states[entityId]);
+      }
+    } catch (_) { /* best-effort — the manual LIVE pill remains a fallback */ }
+  }
+
   _updateLiveStationBadge() {
     const badge = this.shadowRoot?.getElementById('liveStationBadge');
     if (!badge) return;
@@ -15309,7 +16116,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const _contentId = state?.attributes?.media_content_id || '';
     const _isRadioContentId = /^builtin:\/\/radio\//i.test(_contentId);
     const isMaEntity = this._maEntityIds?.has(this._entity);
-    const shouldShow = isMaEntity && isActive && (isLive || _isRadioContentId);
+    // _isLiveStream is already entity-agnostic (duration/content-type based,
+    // not an MA-only tag), so the pill shouldn't be MA-gated — a non-MA
+    // speaker playing the exact same live stream deserves the same tappable
+    // "what's this station" pill. _isRadioContentId specifically checks for
+    // MA's own builtin:// URI scheme, so that half stays MA-only, but isLive
+    // alone is enough to show the pill for any entity.
+    const shouldShow = isActive && (isLive || (isMaEntity && _isRadioContentId));
     if (!shouldShow) {
       badge.style.display = 'none';
       // Reset radioModeIndicator position
@@ -15344,7 +16157,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         // cached it under — and for any station that overwrites media_title
         // with the currently playing song once tuned in (very common), which
         // otherwise permanently hides the station's own name from HA's state.
-        const _lastPlayed = this._rbGetLastPlayed(this._entity);
+        const _lastPlayed = this._rbGetLastPlayed(this._entity, _attrs.media_content_id || '');
         if (_lastPlayed) { this._showRbMoreInfo(_lastPlayed); return; }
 
         // Strategy 1: check pinned stations by name — instant, no network
@@ -15354,7 +16167,18 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         const _streamUrl = _rawId.replace(/^builtin:\/\/radio\//i, '');
         if (_streamUrl) {
           const _cached = this._rbCachedStation(_streamUrl);
-          if (_cached) { this._showRbMoreInfo(_cached); return; }
+          if (_cached) {
+            // Also save under the entity-keyed cache — the artwork fallback
+            // checks that one first, and it isn't tied to matching MA's
+            // exact media_content_id format the way the URL-keyed cache is,
+            // so this closes the gap for stations played outside this
+            // card's own Play button (Siri, HomeKit, etc.) but identified
+            // here via the LIVE pill.
+            this._rbSaveLastPlayed(this._entity, _cached, _rawId);
+            this.updateContent(this._hass.states[this._entity]);
+            this._showRbMoreInfo(_cached);
+            return;
+          }
         }
 
         // Strategy 2: check pinned stations by name
@@ -15375,7 +16199,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         if (_stationName) {
           const _pinned = this._rbGetStarred();
           const _pinnedMatch = _pinned.find(s => s.name?.toLowerCase() === _stationName.toLowerCase());
-          if (_pinnedMatch) { this._showRbMoreInfo(_pinnedMatch); return; }
+          if (_pinnedMatch) {
+            this._rbSaveLastPlayed(this._entity, _pinnedMatch, _rawId);
+            this.updateContent(this._hass.states[this._entity]);
+            this._showRbMoreInfo(_pinnedMatch);
+            return;
+          }
         }
 
         // Strategy 3: radio-browser name search — same as the search results long-press
@@ -15394,6 +16223,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
                           || stations.find(s => _nl.startsWith(s.name.toLowerCase()))
                           || stations[0];
                 this._rbCacheStation(best); // cache for next time
+                this._rbSaveLastPlayed(this._entity, best, _rawId); // also key by entity — see note above
+                this.updateContent(this._hass.states[this._entity]);
                 this._showRbMoreInfo(best);
                 return;
               }
@@ -15965,6 +16796,20 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const uri = (attrs?.media_content_id || '').toLowerCase();
     if (uri.includes('youtube')) return { kind: null };
 
+    // Some sources (DVR/PVR recordings especially) fall back to a bare
+    // record/air date in media_title when real title metadata wasn't
+    // available — "12 February 2014", "2014-02-12", "12/02/2014", etc.
+    // That's not a usable movie/show title, just noise, so it's rejected
+    // outright rather than logged as if it were a real title.
+    const _looksLikeBareDate = title => {
+      const t = (title || '').trim();
+      if (!t) return false;
+      return /^\d{1,2}\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{4}$/i.test(t)
+        || /^(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2},?\s+\d{4}$/i.test(t)
+        || /^\d{4}-\d{2}-\d{2}$/.test(t)
+        || /^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}$/.test(t);
+    };
+
     const detected = this._detectMediaType(pseudoState || { attributes: attrs });
 
     if (detected === 'tv') {
@@ -15982,13 +16827,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           .replace(/\s*S\d{1,2}E\d{1,3}\s*$/i, '')
           .trim();
       }
-      if (!seriesTitle) return { kind: null };
+      if (!seriesTitle || _looksLikeBareDate(seriesTitle)) return { kind: null };
       return { kind: 'tv', title: episodeTitle, seriesTitle };
     }
 
     if (detected === 'movie') {
       const title = attrs?.media_title || '';
-      if (!title) return { kind: null };
+      if (!title || _looksLikeBareDate(title)) return { kind: null };
       return { kind: 'movie', title, seriesTitle: title };
     }
 
@@ -16041,8 +16886,21 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   _getWatchLogEntries() {
     try {
       const store = JSON.parse(localStorage.getItem('crow_ai_local_watchLog') || '{}');
+      // Same bare-date check _classifyWatchMedia now applies before logging
+      // — applied again here as a read-time filter so entries already
+      // sitting in localStorage from before that fix existed (e.g.
+      // "12 February 2014") disappear immediately, without needing the
+      // person to clear their entire watch history to get rid of them.
+      const _looksLikeBareDate = title => {
+        const t = (title || '').trim();
+        if (!t) return false;
+        return /^\d{1,2}\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{4}$/i.test(t)
+          || /^(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2},?\s+\d{4}$/i.test(t)
+          || /^\d{4}-\d{2}-\d{2}$/.test(t)
+          || /^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}$/.test(t);
+      };
       return Object.values(store)
-        .filter(entry => entry && entry.data)
+        .filter(entry => entry && entry.data && !_looksLikeBareDate(entry.data.title) && !_looksLikeBareDate(entry.data.seriesTitle))
         .map(entry => ({ ...entry.data, ts: entry.ts }));
     } catch (_) { return []; }
   }
@@ -16886,7 +17744,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (!tracks?.length) { this._showToast('Nothing to play'); return; }
     const targetEntity = this._maEntityIds?.has(this._entity) ? this._entity : (this._getValidMASpeakers(true)[0] || null);
     if (!targetEntity) { this._showToast('Music Assistant required'); return; }
-    this._closeMABrowser();
+    if (mode === 'replace') this._closeMABrowser(true);
     this._showLoadingToast(mode === 'replace' ? 'Starting playback…' : 'Adding to Queue…');
 
     const ordered = mode === 'next' ? [...tracks].reverse() : tracks;
@@ -17199,7 +18057,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       if (!hasAI) { this._aiShowNoAgentBanner(popup); return; }
       const agentId = this._config?.ai_conversation_agent || 'conversation.home_assistant';
       const typeLabel = isTv ? 'TV show' : 'movie';
-      const prompt = `I'm watching the ${typeLabel} "${displayTitle}". Suggest 6 similar ${typeLabel}s I might enjoy. Respond ONLY with JSON array (no markdown):\n[{"title":"Title","year":"YYYY","type":"tv or movie","genre":"Genre","reason":"10 word max reason","fun_fact":"One interesting fact about this title"}]`;
+      const prompt = `I'm watching the ${typeLabel} "${displayTitle}". Suggest 18 similar ${typeLabel}s I might enjoy. Respond ONLY with JSON array (no markdown):\n[{"title":"Title","year":"YYYY","type":"tv or movie","genre":"Genre","reason":"10 word max reason","fun_fact":"One interesting fact about this title"}]`;
       try {
         const resp = await this._hass.connection.sendMessagePromise({
           type: 'conversation/process', text: prompt,
@@ -17317,7 +18175,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     try {
       const agentId = this._config?.ai_conversation_agent || 'conversation.home_assistant';
       const typeLabel = mediaType === 'tv' ? 'TV show' : 'movie';
-      const prompt = `I'm watching the ${typeLabel} "${title}". Suggest 6 similar ${typeLabel}s I might enjoy. Respond ONLY with JSON array (no markdown):\n[{"title":"Title","year":"YYYY","genre":"Genre","reason":"10 word max reason","fun_fact":"One interesting fact about this title"}]`;
+      const prompt = `I'm watching the ${typeLabel} "${title}". Suggest 18 similar ${typeLabel}s I might enjoy. Respond ONLY with JSON array (no markdown):\n[{"title":"Title","year":"YYYY","genre":"Genre","reason":"10 word max reason","fun_fact":"One interesting fact about this title"}]`;
       const resp = await this._hass.connection.sendMessagePromise({
         type: 'conversation/process', text: prompt,
         agent_id: agentId, language: navigator.language || 'en'
@@ -17349,7 +18207,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     try {
       const agentId = this._config?.ai_conversation_agent || 'conversation.home_assistant';
       const parts = [trackTitle && `"${trackTitle}"`, artistName && `by ${artistName}`, albumName && `(album: ${albumName})`].filter(Boolean).join(' ');
-      const prompt = `I'm listening to ${parts}. Suggest 6 similar tracks I might enjoy. Respond ONLY with JSON array (no markdown):\n[{"title":"Track Name","artist":"Artist Name","reason":"10 word max reason","fun_fact":"One interesting fact about this track or artist"}]`;
+      const prompt = `I'm listening to ${parts}. Suggest 18 similar tracks I might enjoy. Respond ONLY with JSON array (no markdown):\n[{"title":"Track Name","artist":"Artist Name","reason":"10 word max reason","fun_fact":"One interesting fact about this track or artist"}]`;
       const resp = await this._hass.connection.sendMessagePromise({
         type: 'conversation/process', text: prompt,
         agent_id: agentId, language: navigator.language || 'en'
@@ -17382,7 +18240,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     try {
       const agentId = this._config?.ai_conversation_agent || 'conversation.home_assistant';
       // Identical prompt to _showAITrackInfo so both functions share the same cached result
-      const prompt = `You are a music encyclopedia. For the track "${trackTitle}" by "${primaryArtist}", provide a JSON object (no markdown, raw JSON only):\n{\n  "year": "release year",\n  "album": "album name",\n  "label": "record label",\n  "genre": ["genre1","genre2"],\n  "duration": "duration e.g. 3:42",\n  "fact": "One fascinating fact in 1-2 sentences. If this track does not exist or you are not confident, set this to null.",\n  "vibe": "3-word vibe e.g. Euphoric indie anthem",\n  "members": ["Member Name 1","Member Name 2"],\n  "similar": [{"title":"Track","artist":"Artist"},{"title":"Track","artist":"Artist"},{"title":"Track","artist":"Artist"}],\n  "found": true\n}\nFor members: list the band members (2-6 names). If the artist is a solo performer, set members to [\"${primaryArtist}\"] (just their own name as a single-element array). IMPORTANT: If you cannot find reliable information about this specific track, set "found" to false and all other fields to null. Do NOT invent or hallucinate details. Respond with ONLY the JSON.`;
+      const prompt = `You are a music encyclopedia. For the track "${trackTitle}" by "${primaryArtist}", provide a JSON object (no markdown, raw JSON only):\n{\n  "year": "release year",\n  "album": "album name",\n  "label": "record label",\n  "genre": ["genre1","genre2"],\n  "duration": "duration e.g. 3:42",\n  "fact": "One fascinating fact in 1-2 sentences. If this track does not exist or you are not confident, set this to null.",\n  "vibe": "3-word vibe e.g. Euphoric indie anthem",\n  "members": ["Member Name 1","Member Name 2"],\n  "similar": [{"title":"Track","artist":"Artist"},{"title":"Track","artist":"Artist"}],\n  "found": true\n}\nFor similar: list exactly 10 similar tracks in that array, varied across artists, not just 2-3. For members: list the band members (2-6 names). If the artist is a solo performer, set members to [\"${primaryArtist}\"] (just their own name as a single-element array). IMPORTANT: If you cannot find reliable information about this specific track, set "found" to false and all other fields to null. Do NOT invent or hallucinate details. Respond with ONLY the JSON.`;
       const resp = await this._hass.connection.sendMessagePromise({
         type: 'conversation/process', text: prompt, agent_id: agentId, language: navigator.language || 'en'
       });
@@ -17514,11 +18372,114 @@ Include ALL tracks. Use null for unknown fields.`;
 
     // Show loading spinner
     r?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
+
+    // Play/Add/Play Next and Pin never actually depend on the AI response —
+    // only the fact/meta-grid/members/similar-tracks sections below do. The
+    // old behavior blocked the ENTIRE panel (including those controls)
+    // behind a full-screen spinner for the whole AI round-trip, which could
+    // take several seconds. Render the hero + action bar + pin immediately
+    // and interactive, and confine the "loading" state to just the details
+    // section underneath, which gets filled in once the AI call resolves
+    // (the full re-render further down naturally replaces this shell —
+    // nothing here needs manual cleanup).
+    const _quickArt = (context.overrideArt || (!context.fromSearch && (
+        this._hass?.states[this._entity]?.attributes?.entity_picture_local
+        || this._hass?.states[this._entity]?.attributes?.entity_picture
+        || this._hass?.states[this._entity]?.attributes?.album_art
+      )) || '').toString().replace(/^http:\/\//i, 'https://');
+    const _quickArtHtml = _quickArt
+      ? `<img src="${_quickArt}" class="info-hero-art-img" style="width:100%;height:100%;object-fit:cover;display:block;cursor:zoom-in;" onerror="this.style.display='none'">`
+      : `<svg viewBox="0 0 24 24" style="width:24px;height:24px;fill:${this._pt('dim')}"><path d="M12,3V13.55C11.41,13.21 10.73,13 10,13C7.79,13 6,14.79 6,17C6,19.21 7.79,21 10,21C12.21,21 14,19.21 14,17V7H18V3H12Z"/></svg>`;
+
     content.innerHTML = `
-      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:10px;padding:24px;">
-        <div style="width:28px;height:28px;border:2.5px solid rgba(99,179,237,0.25);border-top-color:#63b3ed;border-radius:50%;animation:ma-spin 0.8s linear infinite;"></div>
+      <div id="ai-info-action-bar" class="ma-drill-actions" style="margin-bottom:14px;">
+        <button class="ma-drill-action-btn ai-info-action-btn" data-action="replace">
+          <div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>
+          <span class="ma-drill-btn-label">Play Now</span>
+        </button>
+        <button class="ma-drill-action-btn ai-info-action-btn" data-action="add">
+          <div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M19 11h-6V5h-2v6H5v2h6v6h2v-6h6z"/></svg></div>
+          <span class="ma-drill-btn-label">Add</span>
+        </button>
+        <button class="ma-drill-action-btn ai-info-action-btn" data-action="next">
+          <div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zm2-8.14L11.03 12 8 14.14V9.86zM16 6h2v12h-2z"/></svg></div>
+          <span class="ma-drill-btn-label">Play Next</span>
+        </button>
+      </div>
+      <div style="display:flex;gap:12px;margin-bottom:14px;">
+        <div style="width:64px;height:64px;border-radius:10px;overflow:hidden;flex-shrink:0;background:${this._pt("bg")};display:flex;align-items:center;justify-content:center;">${_quickArtHtml}</div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:15px;font-weight:700;color:${this._pt('text')};letter-spacing:-0.3px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${trackTitle||''}</div>
+          <div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:5px;align-items:center;">
+            <div style="display:inline-flex;align-items:center;gap:5px;background:rgba(99,179,237,0.1);border:1px solid rgba(99,179,237,0.25);border-radius:20px;padding:4px 10px;flex-shrink:0;max-width:160px;overflow:hidden;box-sizing:border-box;line-height:1;height:26px;"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:#63b3ed;flex-shrink:0"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg><span style="font-size:11px;color:#63b3ed;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${artistName||''}</span></div>
+          </div>
+        </div>
+      </div>
+      <div id="ai-track-details-loading" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:20px 0;">
+        <div style="width:22px;height:22px;border:2.5px solid rgba(99,179,237,0.25);border-top-color:#63b3ed;border-radius:50%;animation:ma-spin 0.8s linear infinite;"></div>
         <div style="font-size:12px;color:${this._pt("dim")};">Asking AI…</div>
       </div>`;
+
+    // Wire action bar immediately — identical target-resolution/play logic
+    // to the one used once the full AI response is in (see below); duplicated
+    // here rather than shared because this shell gets fully replaced once
+    // that render happens, so there's no state to reconcile between them.
+    {
+      const _qBarAllMA = (() => {
+        let ma = this._getValidMASpeakers(true);
+        if (!ma.length) ma = [...(this._maEntityIds||[])].filter(e => this._hass?.states[e]);
+        return ma;
+      })();
+      const _qBarTarget = (_qBarAllMA.includes(this._lastMAPlayTarget) ? this._lastMAPlayTarget : null)
+        || this._resolveMATargetEntity()
+        || _qBarAllMA[0]
+        || this._entity;
+      content.querySelectorAll('.ai-info-action-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const action = btn.dataset.action;
+          if (!_qBarAllMA.length) { this._showToast('Music Assistant required'); return; }
+          if (action === 'replace' && context.queueItemId) {
+            const _target = context.queueEntity || this._entity;
+            const _hasMoveNext = !!(this._hass?.services?.mass_queue?.move_queue_item_next);
+            try {
+              if (_hasMoveNext && context.queueItemId) {
+                await this._hass.callService('mass_queue', 'move_queue_item_next', {
+                  entity: _target, queue_item_id: context.queueItemId
+                });
+              } else {
+                await this._hass.connection.sendMessagePromise({
+                  type: 'call_service', domain: 'music_assistant', service: 'play_media',
+                  service_data: { entity_id: _target, media_id: trackTitle + ' ' + artistName, media_type: 'track', enqueue: 'next' }
+                });
+              }
+            } catch(e) { this._showToast('Could not play track'); return; }
+            await new Promise(res => setTimeout(res, 300));
+            try { await this._hass.callService('media_player', 'media_next_track', { entity_id: _target }); } catch(_) {}
+            this._queuePanelDirection = null;
+            this._closeInfoPopup();
+            return;
+          }
+          this._lastMAPlayTarget = _qBarTarget;
+          const _played = await this._playTrackViaMAToast(trackTitle, artistName, _qBarTarget, action);
+          if (action === 'replace' && _played) { this._closeInfoPopup(); this._closeMABrowser(true); }
+        });
+      });
+    }
+
+    // Wire pin button immediately too — same URI/item construction as the
+    // full render uses later, so pinning during the loading window and
+    // pinning after it both key to the same identity.
+    {
+      const _qTrackUri = context.queueUri
+        || this._hass?.states[this._entity]?.attributes?.media_content_id
+        || ((trackTitle || artistName) ? ('title-artist://' + (trackTitle || '').toLowerCase().trim() + '|' + (artistName || '').toLowerCase().trim()) : '');
+      const _qPinItem = {
+        uri: _qTrackUri, name: trackTitle, artist: artistName,
+        artists: artistName ? [{ name: artistName }] : [],
+        image: _quickArt || '', media_type: 'track',
+      };
+      this._wireInfoPinButton(_qTrackUri ? _qPinItem : null, 'track', 'Song');
+    }
 
     const glassOn = this._config?.card_liquid_glass !== false;
     // Try to get iTunes art specifically for this track.
@@ -17594,10 +18555,12 @@ Include ALL tracks. Use null for unknown fields.`;
     if (_stale()) return;
     if (!hasAI) {
       r?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
-      content.innerHTML = `<div style="padding:24px;text-align:center;">
+      const _noAiEl = content.querySelector('#ai-track-details-loading');
+      const _noAiHtml = `<div style="padding:12px 4px;text-align:center;">
         <div style="font-size:14px;font-weight:600;color:${this._pt("text")};margin-bottom:8px;">No AI Found</div>
         <div style="font-size:12px;color:${this._pt("dim")};line-height:1.5;">Add a conversation agent via <strong style="color:#63b3ed">Settings → Voice Assistants</strong>.</div>
       </div>`;
+      if (_noAiEl) _noAiEl.outerHTML = _noAiHtml; else content.innerHTML = _noAiHtml;
       return;
     }
 
@@ -17621,7 +18584,7 @@ Include ALL tracks. Use null for unknown fields.`;
       const primaryArtist = artistName.split(/\s*[&,]\s*/)[0].trim() || artistName;
       const queryArtist = primaryArtist !== artistName ? primaryArtist : artistName;
 
-      const prompt = `You are a music encyclopedia. For the track "${trackTitle}" by "${queryArtist}", provide a JSON object (no markdown, raw JSON only):\n{\n  \"year\": \"release year\",\n  \"chart\": \"highest chart position e.g. UK #1 or US #4 Billboard Hot 100, or null if truly unknown\",\n  \"reception\": \"one short phrase e.g. 4x Platinum or Critically acclaimed or GRAMMY winner, null only if no notable reception\",\n  \"album\": \"album name\",\n  \"label\": \"record label\",\n  \"genre\": [\"genre1\",\"genre2\"],\n  \"duration\": \"duration e.g. 3:42\",\n  \"fact\": \"One fascinating fact in 1-2 sentences. If this track does not exist or you are not confident, set this to null.\",\n  \"vibe\": \"3-word vibe e.g. Euphoric indie anthem\",\n  \"members\": [\"Member Name 1\",\"Member Name 2\"],\n  \"similar\": [{\"title\":\"Track\",\"artist\":\"Artist\"},{\"title\":\"Track\",\"artist\":\"Artist\"},{\"title\":\"Track\",\"artist\":\"Artist\"}],\n  \"found\": true\n}\\nFor members: list the band members (2-6 names). If the artist is a solo performer, set members to [\"${queryArtist}\"] (just their own name as a single-element array). IMPORTANT: If you cannot find reliable information about this specific track, set \"found\" to false and all other fields to null. Do NOT invent or hallucinate details. Respond with ONLY the JSON.`;
+      const prompt = `You are a music encyclopedia. For the track "${trackTitle}" by "${queryArtist}", provide a JSON object (no markdown, raw JSON only):\n{\n  \"year\": \"release year\",\n  \"chart\": \"highest chart position e.g. UK #1 or US #4 Billboard Hot 100, or null if truly unknown\",\n  \"reception\": \"one short phrase e.g. 4x Platinum or Critically acclaimed or GRAMMY winner, null only if no notable reception\",\n  \"album\": \"album name\",\n  \"label\": \"record label\",\n  \"genre\": [\"genre1\",\"genre2\"],\n  \"duration\": \"duration e.g. 3:42\",\n  \"fact\": \"One fascinating fact in 1-2 sentences. If this track does not exist or you are not confident, set this to null.\",\n  \"vibe\": \"3-word vibe e.g. Euphoric indie anthem\",\n  \"members\": [\"Member Name 1\",\"Member Name 2\"],\n  \"similar\": [{\"title\":\"Track\",\"artist\":\"Artist\"},{\"title\":\"Track\",\"artist\":\"Artist\"}],\n  \"found\": true\n}\\nFor similar: list exactly 10 similar tracks in that array, varied across artists, not just 2-3. For members: list the band members (2-6 names). If the artist is a solo performer, set members to [\"${queryArtist}\"] (just their own name as a single-element array). IMPORTANT: If you cannot find reliable information about this specific track, set \"found\" to false and all other fields to null. Do NOT invent or hallucinate details. Respond with ONLY the JSON.`;
       try {
         const resp = await this._hass.connection.sendMessagePromise({
           type: 'conversation/process', text: prompt,
@@ -17841,7 +18804,7 @@ Include ALL tracks. Use null for unknown fields.`;
                 media_id: _fb.title + (_fb.artist ? ' ' + _fb.artist : ''),
                 media_type: 'track', enqueue: _enq }
             });
-            if (_act === 'replace') { this._closeInfoPopup(); this._closeMABrowser(); }
+            if (_act === 'replace') { this._closeInfoPopup(); this._closeMABrowser(true); }
           } catch(_) {
             this._playMediaDirect(_fbTarget, _fb.title, 'music', _fb.title);
           }
@@ -18092,7 +19055,7 @@ Include ALL tracks. Use null for unknown fields.`;
 
         this._lastMAPlayTarget = _barTarget;
         const _played = await this._playTrackViaMAToast(trackTitle, artistName, _barTarget, action);
-        if (action === 'replace' && _played) { this._closeInfoPopup(); this._closeMABrowser(); }
+        if (action === 'replace' && _played) { this._closeInfoPopup(); this._closeMABrowser(true); }
       });
     });
 
@@ -18494,7 +19457,7 @@ Include ALL tracks. Use null for unknown fields.`;
 
       const parts = [track && `"${track}"`, artist && `by ${artist}`, album && `(album: ${album})`].filter(Boolean).join(' ');
       const agentId = this._config?.ai_conversation_agent || 'conversation.home_assistant';
-      const prompt = `I'm listening to ${parts}. Suggest 6 similar tracks I might enjoy. Respond ONLY with JSON array (no markdown):
+      const prompt = `I'm listening to ${parts}. Suggest 18 similar tracks I might enjoy. Respond ONLY with JSON array (no markdown):
 [{"title":"Track Name","artist":"Artist Name","reason":"10 word max reason","fun_fact":"One interesting fact about this track or artist"}]`;
       try {
         const resp = await this._hass.connection.sendMessagePromise({
@@ -19259,7 +20222,7 @@ Include ALL tracks. Use null for unknown fields.`;
     const hasAI = await this._aiCheckAvailable();
     if (!hasAI) { this._maBatchLoading = false; this._showToast('No AI agent found — check Settings → Voice Assistants'); return; }
 
-    const TARGET_COUNT = 6;
+    const TARGET_COUNT = 18;
     const _normKey = (title, artistName) => (String(title || '').toLowerCase().trim() + '|' + String(artistName || '').toLowerCase().trim()).replace(/[^a-z0-9|]/g, '');
 
     // ── Dedup source 1: what's already sitting in the live queue ──
@@ -21067,6 +22030,7 @@ Include ALL tracks. Use null for unknown fields.`;
         const q = (_activeInp?.value || inp?.value || '').trim();
         if (!q) return;
         if (_stale()) return;
+        this._maRecordRecentSearch('ai_search', q);
         // Check cache first — same search query returns same results
         if (!this._aiSearchResultCache) this._aiSearchResultCache = new Map();
         const _sqKey = ('search|' + q).toLowerCase();
@@ -21086,7 +22050,7 @@ Include ALL tracks. Use null for unknown fields.`;
         }
         _renderSearch(q, null, true);
         const agentId = this._config?.ai_conversation_agent || 'conversation.home_assistant';
-        const prompt = `You are a music search assistant. The user wants: "${q}". Suggest 8 specific tracks that match this description. Be varied across artists and eras. Respond ONLY with a JSON array:
+        const prompt = `You are a music search assistant. The user wants: "${q}". Suggest 18 specific tracks that match this description. Be varied across artists and eras. Respond ONLY with a JSON array:
 [{"title":"Track Title","artist":"Artist Name","reason":"5 word max reason"}]`;
         try {
           const resp = await this._hass.connection.sendMessagePromise({
@@ -21934,7 +22898,7 @@ Include ALL tracks. Use null for unknown fields.`;
         // the actual one can be picked, rather than confidently returning
         // only the best-known one.
         : 'IMPORTANT: This was watched as a movie' + (_knownFormat ? ' — only return entries with "type":"movie"; do NOT return a TV series of the same name even if one is more famous' : '') + '. If multiple distinct movies share this exact title (different years, different films entirely), include ALL of them, not just the most famous one — a newer or less well-known release can still be the right one. Return up to 5 entries.';
-      const prompt = 'You are a movie and TV encyclopedia. Use the full breadth of your training knowledge, including recent releases — do not assume you only know about older titles. I need information about "' + cleanTitle + '". CRITICAL: You MUST use your training knowledge to answer this. Do NOT say you cannot access the internet. ' + _exactInstruction + ' Return as a raw JSON array. Start with [ end with ]. Include up to 15 cast members, a "fun_fact" string with one genuinely interesting or surprising fact, and a "similar" array of 4 similar titles. Movie: [{"type":"movie","title":"Heat","year":"1995","genres":["Crime"],"rating":"8.3","overview":"...","cast":["Al Pacino"],"director":"Michael Mann","status":"Released","vibe":"Intense","fun_fact":"Al Pacino and Robert De Niro share only one scene together.","similar":[{"title":"Michael Mann\'s Collateral","year":"2004","type":"movie"},{"title":"Heat 2","year":"2022","type":"movie"}]}] TV: [{"type":"tv","title":"Doctor Who","year":"2005","genres":["Sci-Fi"],"rating":"8.6","overview":"...","cast":["David Tennant"],"seasons":14,"status":"Continuing","vibe":"Epic","fun_fact":"The show originally ran from 1963 to 1989 before being revived in 2005.","similar":[{"title":"Torchwood","year":"2006","type":"tv"},{"title":"The Sarah Jane Adventures","year":"2007","type":"tv"}]}] If truly unknown return [].' ;
+      const prompt = 'You are a movie and TV encyclopedia. Use the full breadth of your training knowledge, including recent releases — do not assume you only know about older titles. I need information about "' + cleanTitle + '". CRITICAL: You MUST use your training knowledge to answer this. Do NOT say you cannot access the internet. ' + _exactInstruction + ' Return as a raw JSON array. Start with [ end with ]. Include up to 15 cast members, a "fun_fact" string with one genuinely interesting or surprising fact, and a "similar" array of 10 similar titles. Movie: [{"type":"movie","title":"Heat","year":"1995","genres":["Crime"],"rating":"8.3","overview":"...","cast":["Al Pacino"],"director":"Michael Mann","status":"Released","vibe":"Intense","fun_fact":"Al Pacino and Robert De Niro share only one scene together.","similar":[{"title":"Michael Mann\'s Collateral","year":"2004","type":"movie"},{"title":"Heat 2","year":"2022","type":"movie"}]}] TV: [{"type":"tv","title":"Doctor Who","year":"2005","genres":["Sci-Fi"],"rating":"8.6","overview":"...","cast":["David Tennant"],"seasons":14,"status":"Continuing","vibe":"Epic","fun_fact":"The show originally ran from 1963 to 1989 before being revived in 2005.","similar":[{"title":"Torchwood","year":"2006","type":"tv"},{"title":"The Sarah Jane Adventures","year":"2007","type":"tv"}]}] If truly unknown return [].' ;
 
       try {
         const resp = await this._hass.connection.sendMessagePromise({
@@ -22153,6 +23117,47 @@ Include ALL tracks. Use null for unknown fields.`;
     // Store for rewiring after back navigation from bio/seasons
     content.dataset.videoDataJson = JSON.stringify(data);
     content.dataset.videoArtUrl   = artUrl || '';
+
+    // Header pin button — wired here rather than only by the caller, since
+    // this function is the actual final render step and gets called
+    // directly from many places (Similar row clicks, disambiguation picker
+    // selections, cast/season back-navigation, etc.) that bypass
+    // _fetchVideoInfo's own early wiring entirely. Without this, the button
+    // kept showing whichever title's pinned state was wired last — e.g. a
+    // pinned movie's own detail page, then tapping into an unrelated
+    // Similar title, still showing "pinned" for that unrelated title.
+    // Always rebuilt from `data`/`artUrl` (this function's own params), so
+    // it's correct for whatever is actually on screen regardless of caller.
+    {
+      const _vidR = this.shadowRoot;
+      const _mtPin    = _vidR?.getElementById('infoPinBtn');
+      const _mtPinSvg = _vidR?.getElementById('infoPinSvg');
+      if (_mtPin && _mtPinSvg) {
+        const _pinTitle = (data.title || '').trim();
+        const _mtPinItem = {
+          id: (data.type === 'tv' ? 'tv_' : 'movie_') + _pinTitle.toLowerCase(),
+          kind: data.type === 'tv' ? 'tv' : 'movie',
+          title: _pinTitle,
+          subtitle: '',
+          artworkUrl100: artUrl || '',
+        };
+        const _updateMtPinBtn = () => {
+          const pinned = this._mtIsStarred(_mtPinItem);
+          _mtPinSvg.style.fill = pinned ? '#FFD60A' : 'rgba(255,255,255,0.5)';
+          _mtPin.title = pinned ? 'Unpin' : 'Pin';
+        };
+        _mtPin.classList.remove('hidden');
+        _updateMtPinBtn();
+        _mtPin.onclick = () => {
+          const nowPinned = this._mtToggleStar(_mtPinItem);
+          _updateMtPinBtn();
+          this._showToast(nowPinned ? '\ud83d\udccd Pinned' : 'Unpinned');
+          if (this._maCurrentTab === 'movie_tv') this._loadMATab('movie_tv');
+          if (this._pinnedDetailActive && this._pinnedDetailCategory === 'movies_tv') this._openPinnedCategoryDetail('movies_tv');
+        };
+      }
+    }
+
     const genreTags = (data.genres || []).slice(0, 3).map(g => `<span class="info-tag bio-genre-tag" data-tag="${g.replace(/"/g,'&quot;')}">${g}</span>`).join('');
     const _seasonsCount = data.type === 'tv' && data.seasons ? data.seasons : 0;
     const metaItems = [data.year, data.status].filter(Boolean);
@@ -24556,6 +25561,7 @@ Include ALL tracks. Use null for unknown fields.`;
 
   async _loadMATab(tab) {
     this._maCurrentTab = tab;
+    this._saveLibraryOpenState(tab);
     const content = this.shadowRoot.getElementById('maContent');
 
     // ── In-memory item cache — instant tab switching ────────────────────
@@ -24579,6 +25585,14 @@ Include ALL tracks. Use null for unknown fields.`;
     if (tab === 'pinned') {
       content.innerHTML = '';
       this._renderPinnedOverview(content);
+      return;
+    }
+
+    // Recent Searches: same shape as Pinned — a client-side, localStorage-only
+    // list with no MA/network involvement.
+    if (tab === 'recent_searches') {
+      content.innerHTML = '';
+      this._renderRecentSearchesTab(content);
       return;
     }
 
@@ -25134,13 +26148,10 @@ Include ALL tracks. Use null for unknown fields.`;
           const [first, ...rest] = items;
           _batchEnqueue(first, first._tab || tab, 'replace');
           rest.forEach(it => _batchEnqueue(it, it._tab || tab, 'add'));
-          this._closeMABrowser();
+          this._closeMABrowser(true);
         } else {
           items.forEach(it => _batchEnqueue(it, it._tab || tab, enqueueMode));
         }
-
-        // Close the library panel immediately
-        this._closeMABrowser();
 
         // Refresh queue panel after MA finishes — 15ms/item, 4s min, 12s max
         const delay = Math.min(12000, Math.max(4000, items.length * 15));
@@ -25731,7 +26742,7 @@ Include ALL tracks. Use null for unknown fields.`;
     this._maRecentPlaySuccess = true;
     clearTimeout(this._maRecentPlaySuccessTimer);
     this._maRecentPlaySuccessTimer = setTimeout(() => { this._maRecentPlaySuccess = false; }, 5000);
-    if (_played) this._closeMABrowser();
+    if (_played) this._closeMABrowser(true);
   }
   // Join secondaries to primary first, play on primary only.
   // MA's server-side sync ensures all joined speakers play the same content.
@@ -25810,7 +26821,7 @@ Include ALL tracks. Use null for unknown fields.`;
       }
     }
 
-    if (_played) this._closeMABrowser();
+    if (_played) this._closeMABrowser(true);
     this._updateMulticastPills();
   }
 
@@ -25834,6 +26845,7 @@ Include ALL tracks. Use null for unknown fields.`;
     if (!this._entity) {
       row.classList.add('hidden');
       row.innerHTML = '';
+      this._closeMulticastSheet();
       return;
     }
 
@@ -25851,89 +26863,216 @@ Include ALL tracks. Use null for unknown fields.`;
     const currentIsConfiguredMA = this._getValidMASpeakers(true).some(eid =>
       eid === this._entity || this._resolveMAEntity(eid) === this._entity
     );
-    const addableSpeakers = currentIsConfiguredMA ? this._getValidMASpeakers(true).filter(eid => {
+    // Static MA group entities (e.g. "MA Bedroom HomePods" — 2 physical
+    // HomePods already pre-configured as one virtual player in Music
+    // Assistant) can't be nested into a separate ad-hoc join — MA doesn't
+    // support grouping a group. Offering one as "addable" here silently
+    // fails the join every time, which is exactly what was happening.
+    // _getValidMASpeakers() defaults to excluding these for exactly this
+    // reason; this call was overriding that with includeGroups=true.
+    const addableSpeakers = currentIsConfiguredMA ? this._getValidMASpeakers().filter(eid => {
       const resolved = this._resolveMAEntity(eid);
       return !groupMemberResolved.has(resolved) && !groupMemberResolved.has(eid);
     }) : [];
-    const canAdd    = addableSpeakers.length > 0;
+    const isActivelyPlaying = this._hass?.states[this._entity]?.state === 'playing';
+    const canAdd    = addableSpeakers.length > 0 && isActivelyPlaying;
     const canRemove = entities.length > 1 && !isStatic; // never show × on static MA groups
 
+    // Stash for the sheet (opened separately, on tap) so it doesn't have to
+    // recompute all of this itself.
+    this._multicastEntities     = entities;
+    this._multicastAddable      = addableSpeakers;
+    this._multicastCanAdd       = canAdd;
+    this._multicastCanRemove    = canRemove;
+    this._multicastGroupMembers = groupMembers;
+
+    const esc = s => (s || '').toString().replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const speakerSvg = `<svg viewBox="0 0 24 24"><path d="M17,2H7A2,2 0 0,0 5,4V20A2,2 0 0,0 7,22H17A2,2 0 0,0 19,20V4A2,2 0 0,0 17,2M12,19A2,2 0 0,1 10,17A2,2 0 0,1 12,15A2,2 0 0,1 14,17A2,2 0 0,1 12,19M15,9H9V4H15V9Z"/></svg>`;
+    const addSvg     = `<svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>`;
+
+    row.classList.remove('hidden');
+
+    if (entities.length <= 1) {
+      // Solo playback — same single compact pill it's always been (tap opens
+      // the queue panel). If other MA speakers are available to group with,
+      // a small separate "+" button sits beside it — this is the one case
+      // where a full sheet would be overkill for a single action.
+      const name = this._hass?.states[this._entity]?.attributes?.friendly_name || this._entity;
+      const key = 'solo-' + this._entity + (canAdd ? '-a' : '');
+      if (row.dataset.pillKey !== key) {
+        row.dataset.pillKey = key;
+        row.innerHTML =
+          `<div class="multicast-pill mc-pill-active" id="mcSummaryPill">` +
+            `<div class="mc-pill-label" style="cursor:pointer;pointer-events:all">${speakerSvg}<span>${esc(name)}</span></div>` +
+          `</div>` +
+          (canAdd ? `<button class="mc-solo-add-btn" id="mcSoloAddBtn" title="Add speaker">${addSvg}</button>` : '');
+
+        row.querySelector('#mcSummaryPill')?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const popup = this.shadowRoot?.getElementById('infoPopup');
+          if (popup?.classList.contains('visible')) this._closeInfoPopup();
+          else this._showQueuePanel('next', true);
+        });
+        row.querySelector('#mcSoloAddBtn')?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this._showAddSpeakerPicker(addableSpeakers, groupMembers);
+        });
+      }
+    } else {
+      // Grouped playback — one compact summary pill instead of one-per-speaker.
+      // Shows the currently-focused speaker plus how many others are playing
+      // along with it; tap opens the full member list in a sheet. A small
+      // "+" stays visible alongside it (same as solo mode) for quick access
+      // to adding another speaker without needing to open the sheet first —
+      // the sheet's own footer Add button is still there as an alternative.
+      const focusedName = this._hass?.states[this._entity]?.attributes?.friendly_name || this._entity;
+      const otherCount  = entities.length - 1;
+      const key = 'group-' + entities.slice().sort().join(',') + '-' + this._entity + (canAdd ? '-a' : '');
+      if (row.dataset.pillKey !== key) {
+        row.dataset.pillKey = key;
+        row.innerHTML =
+          `<div class="multicast-pill mc-pill-active" id="mcSummaryPill">` +
+            `<div class="mc-pill-label" style="cursor:pointer;pointer-events:all">${speakerSvg}<span>${esc(focusedName)}</span><span class="mc-summary-count">+${otherCount}</span></div>` +
+          `</div>` +
+          (canAdd ? `<button class="mc-solo-add-btn" id="mcGroupAddBtn" title="Add speaker">${addSvg}</button>` : '');
+        row.querySelector('#mcSummaryPill')?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this._showMulticastSheet();
+        });
+        row.querySelector('#mcGroupAddBtn')?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this._showAddSpeakerPicker(addableSpeakers, groupMembers);
+        });
+      }
+    }
+
+    // Keep an already-open sheet's contents live instead of leaving it
+    // showing stale membership while the person is looking at it.
+    if (this._multicastSheetOpen) this._renderMulticastSheetList();
+  }
+
+  // Builds and shows the multicast member sheet — the full list of grouped
+  // speakers (with focus/remove per row) plus Add/Sync actions, reached by
+  // tapping the collapsed summary pill.
+  _showMulticastSheet() {
+    this._closeMulticastSheet(); // no stacking — one at a time
+    const r = this.shadowRoot;
+    const cardOuter = r?.getElementById('cardOuter');
+    if (!cardOuter) return;
+
+    const backdrop = document.createElement('div');
+    backdrop.className = 'mc-sheet-backdrop';
+    const sheet = document.createElement('div');
+    sheet.className = 'mc-sheet';
+    sheet.innerHTML =
+      `<div class="mc-sheet-header">` +
+        `<span class="mc-sheet-title">Playing on ${this._multicastEntities.length} speakers</span>` +
+        `<button class="mc-sheet-close" id="mcSheetClose"><svg viewBox="0 0 24 24"><path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/></svg></button>` +
+      `</div>` +
+      `<div class="mc-sheet-list" id="mcSheetList"></div>` +
+      `<div class="mc-sheet-footer" id="mcSheetFooter"></div>`;
+
+    const _openedAt = Date.now();
+    backdrop.addEventListener('pointerdown', () => {
+      if (Date.now() - _openedAt > 200) this._closeMulticastSheet();
+    });
+    sheet.querySelector('#mcSheetClose')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this._closeMulticastSheet();
+    });
+
+    cardOuter.appendChild(backdrop);
+    cardOuter.appendChild(sheet);
+    this._multicastSheetEl = sheet;
+    this._multicastSheetBackdropEl = backdrop;
+    this._multicastSheetOpen = true;
+
+    this._renderMulticastSheetList();
+  }
+
+  _closeMulticastSheet() {
+    this._multicastSheetEl?.remove();
+    this._multicastSheetBackdropEl?.remove();
+    this._multicastSheetEl = null;
+    this._multicastSheetBackdropEl = null;
+    this._multicastSheetOpen = false;
+  }
+
+  // (Re)renders the sheet's member list and footer from current state —
+  // called both when the sheet first opens and whenever _updateMulticastPills
+  // runs while it's already open, so it stays live rather than going stale.
+  _renderMulticastSheetList() {
+    const sheet = this._multicastSheetEl;
+    if (!sheet) return;
+    const entities      = this._multicastEntities || [];
+    const addableSpeakers = this._multicastAddable || [];
+    const canAdd         = this._multicastCanAdd;
+    const canRemove      = this._multicastCanRemove;
+    const groupMembers   = this._multicastGroupMembers;
+
+    // If the group has collapsed to 1 (or 0) members while the sheet was
+    // open — e.g. the last other speaker was removed — just close it rather
+    // than showing an empty/degenerate sheet.
+    if (entities.length <= 1) { this._closeMulticastSheet(); return; }
+
+    sheet.querySelector('.mc-sheet-title').textContent = `Playing on ${entities.length} speakers`;
+
+    const esc = s => (s || '').toString().replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const speakerSvg = `<svg viewBox="0 0 24 24"><path d="M17,2H7A2,2 0 0,0 5,4V20A2,2 0 0,0 7,22H17A2,2 0 0,0 19,20V4A2,2 0 0,0 17,2M12,19A2,2 0 0,1 10,17A2,2 0 0,1 12,15A2,2 0 0,1 14,17A2,2 0 0,1 12,19M15,9H9V4H15V9Z"/></svg>`;
     const removeSvg  = `<svg viewBox="0 0 24 24"><path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/></svg>`;
     const syncSvg    = `<svg viewBox="0 0 24 24"><path d="M3,9H7V5L3,9M3,15H7V19L3,15M17,5V9H21L17,5M17,15V19H21L17,15M8,7V17H16V7H8Z"/></svg>`;
     const addSvg     = `<svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>`;
 
-    row.classList.remove('hidden');
-
-    // Rebuild only the pills that need updating — avoid full innerHTML replacement
-    // which destroys button elements mid-tap (HA sends state updates ~1/s during
-    // multicast, and click fires ~100-200ms after pointerdown).
-    // Strategy: stamp a data-render-key on each child; skip rebuilding matching ones.
-    const newHtml = entities.map(eid => {
+    const list = sheet.querySelector('#mcSheetList');
+    list.innerHTML = entities.map(eid => {
       const name    = this._hass?.states[eid]?.attributes?.friendly_name || eid;
       const focused = eid === this._entity;
-      return `<div class="multicast-pill${focused ? ' mc-pill-active' : ''}" data-eid="${eid}" data-pill-key="${eid}${focused ? '-f' : ''}${canRemove ? '-r' : ''}">` +
-        `<div class="mc-pill-label" style="cursor:pointer;pointer-events:all">${speakerSvg}<span>${name}</span></div>` +
-        (canRemove
-          ? `<div class="mc-pill-divider"></div>` +
-            `<button class="mc-pill-btn mc-remove" data-eid="${eid}" title="Stop ${name}">${removeSvg}</button>`
-          : '') +
-        `</div>`;
-    }).join('') +
-    (canAdd  ? `<button class="mc-add-pill" id="mcAddSpeakerBtn" data-pill-key="add${addableSpeakers.join(',')}">${addSvg}Add</button>` : '') +
-    (canRemove ? `<button class="mc-sync-vol-btn" id="mcSyncVolBtn" data-pill-key="sync">${syncSvg}</button>` : '');
+      return `<div class="mc-sheet-row${focused ? ' mc-sheet-row-active' : ''}" data-eid="${eid}">` +
+        `<div class="mc-sheet-row-icon">${speakerSvg}</div>` +
+        `<span class="mc-sheet-row-name">${esc(name)}</span>` +
+        (canRemove ? `<button class="mc-sheet-row-remove" data-eid="${eid}" title="Stop ${esc(name)}">${removeSvg}</button>` : '') +
+      `</div>`;
+    }).join('');
 
-    // Check if DOM already matches what we'd render — if so, skip entirely
-    const existingKeys = [...row.querySelectorAll('[data-pill-key]')].map(el => el.dataset.pillKey).join('|');
-    const newKeys = [...(new DOMParser().parseFromString(`<div>${newHtml}</div>`, 'text/html')
-      .querySelectorAll('[data-pill-key]'))].map(el => el.dataset.pillKey).join('|');
-
-    if (existingKeys !== newKeys) {
-      row.innerHTML = newHtml;
-
-      row.querySelectorAll('.mc-pill-label').forEach(label => {
-        label.addEventListener('click', (e) => {
-          e.stopPropagation();
-          const eid = label.closest('.multicast-pill')?.dataset?.eid;
-          if (!eid) return;
-          // Focus this entity for volume control
-          if (eid !== this._entity) {
-            this._entity = eid;
-            this._manualSelection = true;
-            this._updateMulticastPills();
-            const state = this._hass?.states?.[eid];
-            if (state) this.updateContent(state);
-          }
-          // Also open the queue panel for this speaker
-          const popup = this.shadowRoot?.getElementById('infoPopup');
-          const isOpen = popup?.classList.contains('visible');
-          if (isOpen) {
-            this._closeInfoPopup();
-          } else {
-            this._showQueuePanel('next', true);
-          }
-        });
+    list.querySelectorAll('.mc-sheet-row').forEach(row => {
+      row.addEventListener('click', (e) => {
+        if (e.target.closest('.mc-sheet-row-remove')) return;
+        const eid = row.dataset.eid;
+        if (!eid) return;
+        this._closeMulticastSheet();
+        if (eid !== this._entity) {
+          this._entity = eid;
+          this._manualSelection = true;
+          this._updateMulticastPills();
+          const state = this._hass?.states?.[eid];
+          if (state) this.updateContent(state);
+        }
+        const popup = this.shadowRoot?.getElementById('infoPopup');
+        if (popup?.classList.contains('visible')) this._closeInfoPopup();
+        else this._showQueuePanel('next', true);
       });
-
-      row.querySelectorAll('.mc-remove').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          this._removeFromMulticast(btn.dataset.eid);
-        });
-      });
-
-      const addBtn = row.querySelector('#mcAddSpeakerBtn');
-      if (addBtn) addBtn.addEventListener('click', (e) => {
+    });
+    list.querySelectorAll('.mc-sheet-row-remove').forEach(btn => {
+      btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        this._showAddSpeakerPicker(addableSpeakers, groupMembers);
+        this._removeFromMulticast(btn.dataset.eid);
       });
+    });
 
-      const syncBtn = row.querySelector('#mcSyncVolBtn');
-      if (syncBtn) syncBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this._syncGroupVolume();
-      });
-    }
+    const footer = sheet.querySelector('#mcSheetFooter');
+    footer.innerHTML =
+      (canAdd ? `<button class="mc-sheet-footer-btn" id="mcSheetAddBtn">${addSvg}<span>Add Speaker</span></button>` : '') +
+      (canRemove ? `<button class="mc-sheet-footer-btn" id="mcSheetSyncBtn">${syncSvg}<span>Sync Volume</span></button>` : '');
+    footer.querySelector('#mcSheetAddBtn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this._closeMulticastSheet();
+      this._showAddSpeakerPicker(addableSpeakers, groupMembers);
+    });
+    footer.querySelector('#mcSheetSyncBtn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this._syncGroupVolume();
+      this._showToast('Volume synced');
+    });
   }
 
   // Removes one speaker from the active multicast group and stops it,
@@ -25961,9 +27100,17 @@ Include ALL tracks. Use null for unknown fields.`;
     const _mediaType  = _sourceState?.attributes?.media_content_type || 'music';
     const _rawPos     = _sourceState?.attributes?.media_position;
     const _updatedAt  = _sourceState?.attributes?.media_position_updated_at;
+    const _mediaDuration = _sourceState?.attributes?.media_duration || null;
     let _resumePos = null;
     if (_rawPos !== undefined && _rawPos !== null && _updatedAt) {
       _resumePos = _rawPos + (Date.now() - new Date(_updatedAt).getTime()) / 1000;
+      // Clamp to the track's actual duration — the unjoin/stop/restart
+      // roundtrip below takes at least ~1.4s (600ms + 800ms, plus the
+      // play_media/next_track calls in between), so a track that was near
+      // its end when removal happened can produce a resume position past
+      // the end, which MA rejects outright ("Can not seek outside of
+      // duration range") rather than clamping it itself.
+      if (_mediaDuration) _resumePos = Math.min(_resumePos, Math.max(0, _mediaDuration - 2));
     }
 
     // Step 1: unjoin — removes eid from MA's group, updates group_members in HA state
@@ -25974,10 +27121,23 @@ Include ALL tracks. Use null for unknown fields.`;
 
     // Step 3: restart keepers at the captured position.
     // media_play after media_stop can advance the queue, so we replay the exact
-    // track instead — but enqueue:'replace' would discard the rest of the
-    // queue and start a brand new one with just this track. Use enqueue:'next'
-    // + a skip instead, the same pattern used elsewhere in the card for
-    // "play this specific track" without disrupting anything queued after it.
+    // track instead of just resuming — but HOW depends on whether the entity
+    // being removed was the master or a secondary member:
+    //
+    // - Removing a secondary member: keepers[0] is still the original master,
+    //   its own queue is untouched. enqueue:'next' + a skip re-inserts the
+    //   exact track and resumes it without discarding anything queued after
+    //   it — same pattern used elsewhere in the card for "play this specific
+    //   track" without disrupting the rest of the queue.
+    // - Removing the master itself: keepers[0] was only ever a secondary
+    //   member passively following the master's stream — it has no queue of
+    //   its own. Trying to insert "next" and skip to it fails outright
+    //   ("Queue X has no item(s) loaded"), since there's nothing existing to
+    //   insert next TO or skip FROM. It needs enqueue:'replace' instead,
+    //   which starts a queue directly rather than assuming one already
+    //   exists — the "preserve the rest of the queue" concern doesn't apply
+    //   here anyway, since keepers[0] never had a queue to preserve.
+    const _removingMaster = eid === groupMembers[0];
     if (keepers.length && _mediaId) {
       const self = this;
       setTimeout(() => {
@@ -25987,16 +27147,17 @@ Include ALL tracks. Use null for unknown fields.`;
             entity_id: keepers[0], group_members: keepers.slice(1)
           }).catch(() => {});
         }
-        // Insert the same track as "next" (preserving the rest of the queue),
-        // then skip to it so it becomes current again.
         self._hass?.connection?.sendMessagePromise({
           type: 'call_service', domain: 'music_assistant', service: 'play_media',
           service_data: {
             entity_id: keepers[0], media_id: _mediaId,
-            media_type: _mediaType, enqueue: 'next',
+            media_type: _mediaType, enqueue: _removingMaster ? 'replace' : 'next',
             ...(self._config?.ma_radio_mode ? { radio_mode: true } : {})
           }
         }).then(() => {
+          // Only the "insert next, then skip to it" path needs the skip —
+          // 'replace' already starts playing the track directly.
+          if (_removingMaster) return;
           return self._hass?.callService('media_player', 'media_next_track', { entity_id: keepers[0] }).catch(() => {});
         }).then(() => {
           // Seek to the captured position once playback starts
@@ -26004,7 +27165,9 @@ Include ALL tracks. Use null for unknown fields.`;
             setTimeout(() => {
               self._hass?.callService('media_player', 'media_seek', {
                 entity_id: keepers[0], seek_position: Math.floor(_resumePos)
-              }).catch(() => {});
+              }).catch((err) => {
+                console.warn('[CrowAI] Resume-position seek failed after removing a speaker', err);
+              });
             }, 800);
           }
         }).catch(() => {});
@@ -26023,28 +27186,28 @@ Include ALL tracks. Use null for unknown fields.`;
         || this._entity;
     }
 
-    // Optimistic pill removal — remove from DOM immediately for instant feedback.
-    // Don't call updateContent here: HA state still has the old group_members
-    // (unjoin hasn't propagated yet), so updateContent → _updateMulticastPills
-    // would see the same DOMParser keys and put the pill back.
-    // The pill will be cleanly removed on the next set hass() once HA reflects
-    // the updated group_members from MA.
-    const row = this.shadowRoot?.getElementById('multicastPillsRow');
-    if (row) {
-      const pill = row.querySelector('.multicast-pill[data-eid="' + eid + '"]');
-      if (pill) {
-        pill.remove();
-        // Force key mismatch on next render so the rebuild fires correctly
-        row.dataset.renderKey = '';
-      }
-      const remaining = row.querySelectorAll('.multicast-pill');
-      if (remaining.length <= 1) {
-        remaining.forEach(p => {
-          p.querySelector('.mc-remove')?.remove();
-          p.querySelector('.mc-pill-divider')?.remove();
-        });
+    // Optimistic removal — update the sheet (if open) and the stashed member
+    // list immediately for instant feedback, rather than waiting for HA to
+    // reflect the updated group_members from MA. Don't call updateContent
+    // here: HA state still has the old group_members (unjoin hasn't
+    // propagated yet), which would just put things back via
+    // _updateMulticastPills' normal key-comparison rebuild.
+    if (Array.isArray(this._multicastEntities)) {
+      this._multicastEntities = this._multicastEntities.filter(e => e !== eid);
+    }
+    if (this._multicastSheetOpen) {
+      if (this._multicastEntities && this._multicastEntities.length <= 1) {
+        this._closeMulticastSheet();
+      } else {
+        this._multicastSheetEl?.querySelector('.mc-sheet-row[data-eid="' + eid + '"]')?.remove();
+        const title = this._multicastSheetEl?.querySelector('.mc-sheet-title');
+        if (title) title.textContent = `Playing on ${this._multicastEntities.length} speakers`;
       }
     }
+    // Force the collapsed pill's key to mismatch so the next render rebuilds
+    // its "+N" count instead of skipping as unchanged.
+    const row = this.shadowRoot?.getElementById('multicastPillsRow');
+    if (row) row.dataset.pillKey = '';
 
     this._lastArtKey = null;
     // Do NOT call updateContent here — see comment above.
@@ -26263,17 +27426,53 @@ Include ALL tracks. Use null for unknown fields.`;
     // When in an existing group, group_members[0] is the MA master entity.
     const masterEid   = groupMembers ? groupMembers[0] : this._entity;
     const resolvedNew = this._resolveMAEntity(eid);
-
-    // Join the new speaker to the master. MA's join is additive — it adds the
-    // new speaker to any existing group without affecting current members, and
-    // automatically syncs it to the master's current playback position.
-    this._hass.callService('media_player', 'join', {
-      entity_id: masterEid,
-      group_members: [resolvedNew]
-    }).catch(() => {});
-
     const name = this._hass?.states[eid]?.attributes?.friendly_name || eid;
-    this._showToast(`Adding ${name}\u2026`, 1800);
+
+    const existingOthers = (groupMembers || []).filter(m => m !== masterEid);
+    const allMembers = [...new Set([...existingOthers, resolvedNew])];
+
+    this._showToast(`Adding ${name}\u2026`, 2500);
+
+    const doJoin = () => this._hass.callService('media_player', 'join', {
+      entity_id: masterEid,
+      group_members: allMembers
+    });
+
+    // Sending the full desired member list (not just the new one) turned
+    // out not to be enough on its own — a second "join" call on an
+    // already-grouped master can resolve cleanly with no error while the
+    // new speaker still never actually shows up in group_members. Fully
+    // releasing the existing group first and rejoining everyone (existing +
+    // new) in one clean call is a structurally different attempt at
+    // sidestepping whatever that limitation is, rather than trying to
+    // extend an already-active group in place.
+    const attempt = existingOthers.length
+      ? this._hass.callService('media_player', 'unjoin', { entity_id: masterEid })
+          .catch(() => {})
+          .then(() => new Promise(res => setTimeout(res, 600)))
+          .then(doJoin)
+      : doJoin();
+
+    attempt.then(() => {
+      // The service call resolving cleanly isn't proof it actually worked
+      // (that's exactly what was happening before) — verify group_members
+      // genuinely includes the new speaker a couple seconds later, and say
+      // so plainly either way instead of leaving it ambiguous.
+      setTimeout(() => {
+        const _check = this._getGroupMembers() || [];
+        const _resolvedCheck = _check.map(m => this._resolveMAEntity(m));
+        const _joined = _check.includes(resolvedNew) || _resolvedCheck.includes(resolvedNew);
+        if (!_joined) {
+          console.warn('[CrowAI] Speaker add did not take effect', { masterEid, resolvedNew, allMembers, currentMembers: _check });
+          this._showToast(`${name} didn't actually join — this may be a Music Assistant limitation`, 4500);
+        }
+        this._updateMulticastPills();
+      }, 2500);
+    }).catch((err) => {
+      console.warn('[CrowAI] Failed to add speaker to group', { masterEid, resolvedNew, allMembers, err });
+      this._showToast(`Couldn't add ${name} — ${err?.message || 'check Music Assistant'}`, 4000);
+    });
+
     // Refresh pills immediately with optimistic state so the + Add pill reappears
     // for any remaining addable speakers without waiting for set hass().
     this._updateMulticastPills();
@@ -26564,7 +27763,7 @@ Include ALL tracks. Use null for unknown fields.`;
       this._hideTrackConfirm();
       if (!selectedEntity) { this._showToast('No MA speaker found \u2014 add one in the card editor'); return; }
       const _played = await this._playTrackViaMAToast(trackTitle, artistName, selectedEntity, 'replace');
-      if (_played) { this._closeInfoPopup(); this._closeMABrowser(); }
+      if (_played) { this._closeInfoPopup(); this._closeMABrowser(true); }
     };
 
     const _doCancel = () => {
@@ -27572,6 +28771,7 @@ Include ALL tracks. Use null for unknown fields.`;
     var _qIsPinned = _qPinItem ? this._maLibIsStarred(_qPinItem, 'track') : false;
     var strategies = [
       ...(!isHistory ? [{ mode: 'reorder', label: 'Reorder Queue', icon: '<path d="M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V19Z"/>'}] : []),
+      ...((!isHistory && !isCurrent) ? [{ mode: 'move_top', label: 'Move to Top of Queue', icon: '<path d="M4,15L12,7L20,15H4Z"/>' }] : []),
       { mode: 'replace',      label: 'Play Now',           icon: '<path d="M8 5v14l11-7z"/>' },
       { mode: 'next',         label: 'Play Next',          icon: '<path d="M3 13h8V5H3v8zm0 8h8v-6H3v6zm10 0h8v-8h-8v8zm0-18v6h8V3h-8z"/>' },
       { mode: 'add',          label: 'Add to Queue',       icon: '<path d="M19 11h-6V5h-2v6H5v2h6v6h2v-6h6z"/>' },
@@ -27607,6 +28807,31 @@ Include ALL tracks. Use null for unknown fields.`;
 
         if (mode === 'reorder') {
           self._toggleQueueReorder();
+          return;
+        }
+
+        if (mode === 'move_top') {
+          // True move of the existing queue item — not a fresh enqueue, so
+          // no risk of ending up with a duplicate copy of the track further
+          // down the queue the way a plain play_media(enqueue:'next') can.
+          const _hasMoveNext = !!(self._hass?.services?.mass_queue?.move_queue_item_next);
+          if (!_hasMoveNext || !queueItemId || isHistory) {
+            self._showToast('Install mass_queue integration to reorder the queue');
+            return;
+          }
+          try {
+            await self._hass.callService('mass_queue', 'move_queue_item_next', {
+              entity: self._entity, queue_item_id: queueItemId
+            });
+            self._showToast('Moved to top of queue');
+          } catch (err) {
+            const _errMsg = (err?.message || err?.error?.message || String(err)).toLowerCase();
+            if (_errMsg.includes('already played') || _errMsg.includes('buffered')) {
+              self._showToast('Track has already started playing — can\u2019t reorder it');
+            } else {
+              self._showToast('Could not move track');
+            }
+          }
           return;
         }
 
@@ -27836,7 +29061,7 @@ Include ALL tracks. Use null for unknown fields.`;
     }
 
     if (enqueueMode === 'replace' && _played) {
-      this._closeMABrowser();
+      this._closeMABrowser(true);
     }
   }
 
@@ -29213,16 +30438,23 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
     const newOrder = Array.from(this.shadowRoot.querySelectorAll('.check-item'))
       .filter(i => i.querySelector('label.toggle-switch input[type="checkbox"]:not(.entity-vol-toggle):not(.entity-ma-toggle)')?.checked)
       .map(i => i.getAttribute('data-id'));
-    this._updateConfig('entities', newOrder);
 
     // Prune ma_entities — remove any entity no longer in the card's entity list
     // so stale YAML entries can't cause invisible speakers to appear in the picker.
     const maEntities = Array.isArray(this._config.ma_entities) ? this._config.ma_entities : [];
     const newOrderSet = new Set(newOrder);
     const prunedMA = maEntities.filter(eid => newOrderSet.has(eid));
-    if (prunedMA.length !== maEntities.length) {
-      this._updateConfig('ma_entities', prunedMA);
-    }
+
+    // Both updates must land in a single dispatch. Two separate sequential
+    // _updateConfig calls each spread fresh from this._config — if the
+    // parent dashboard hasn't fed the first update's result back into
+    // this._config before the second call runs (a real race, made much more
+    // likely by any connection hiccup/reconnect in between), the second
+    // call's spread uses a stale `entities` value and silently reverts the
+    // first change while the second one (ma_entities) sticks — exactly the
+    // "toggled the speaker off, but it came back on and only the MA flag
+    // changed" symptom. One combined dispatch has no such window.
+    this._updateConfigMulti({ entities: newOrder, ma_entities: prunedMA });
   }
 
   _setupListeners() {
@@ -30606,6 +31838,43 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
     const cleanConfig = { ...this._config, [key]: value };
     Object.keys(DEFAULTS).forEach(k => {
       if (k !== key && cleanConfig[k] === DEFAULTS[k]) delete cleanConfig[k];
+    });
+    this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: cleanConfig }, bubbles: true, composed: true }));
+  }
+
+  // Same idea as _updateConfig, but merges several keys into a single
+  // dispatch. Needed anywhere two related keys must change together
+  // (e.g. _saveOrder's entities + ma_entities prune) — calling _updateConfig
+  // twice in a row means the second call spreads from this._config again,
+  // which may not yet reflect the first call's result if the parent
+  // dashboard hasn't fed it back before the second call runs, silently
+  // reverting the first change. One combined dispatch has no such window.
+  _updateConfigMulti(updates) {
+    if (!this._config || !updates) return;
+    const DEFAULTS = {
+      auto_switch: true, show_entity_selector: true, show_vol_pct: true,
+      scroll_text: false, use_ha_theme: false, remember_view: false,
+      remember_last_entity: false, lyrics_persist: false, lyrics_cache_enabled: true,
+      lyrics_persistent_storage: false,
+      pins_persistent_storage: false,
+      show_pins_in_sections: true,
+      ai_info_persistent_storage: false,
+      itunes_persistent_storage: false,
+      wiki_persistent_storage: false,
+      ma_library_cache_enabled: true,
+      ma_radio_mode: false, ambient_glow: false, row_glow: false,
+      show_remote_button: true, ma_ios_library: true,
+      artwork_crossfade: false, show_ma_library_button: true,
+      resize_btn_spin: true, remote_art_blur: true, volume_hud: true,
+      itunes_art: true, controls_theme: 'classic', add_pill_color: '',
+      ai_conversation_agent: '',
+      share_service: 'youtube_music',
+      show_media_type_pill: false,
+    };
+    const updatedKeys = Object.keys(updates);
+    const cleanConfig = { ...this._config, ...updates };
+    Object.keys(DEFAULTS).forEach(k => {
+      if (!updatedKeys.includes(k) && cleanConfig[k] === DEFAULTS[k]) delete cleanConfig[k];
     });
     this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: cleanConfig }, bubbles: true, composed: true }));
   }
