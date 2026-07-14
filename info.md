@@ -1,10 +1,10 @@
 # CrowAI Media Player Card
 
-*** Expermimental ***
+*** Experimental ***
 
 CrowAI is a Home Assistant media player card built specifically for **iPhone**. Designed from the ground up for iPhone, it brings frosted-glass aesthetics, fluid touch animations, full Music Assistant integration, synced lyrics, a queue browser, multi-room multicast playback, rich AI-powered media info panels, and an Apple TV remote — all in a card that feels like a native iPhone app.
 
-CrowAI is about **discovery** as much as playback — AI-powered info panels, recommendations, artist radio, similar tracks/shows/movies, and a personal Listening Recap all help you find your next favourite song, album, TV show or film, not just control what's already playing.
+CrowAI is about **discovery** as much as playback — AI-powered info panels, recommendations, artist radio, similar tracks/shows/movies, AI-interpreted library search, and personal Recently Listened To / Recently Watched recaps all help you find your next favourite song, album, TV show or film, not just control what's already playing.
 
 > ⚠️ **Music Assistant is required** for the Music Library browser, queue management, Vibe Queue Builder, AI Artist Radio, multi-room multicast playback and all MA-specific features.
 
@@ -48,28 +48,33 @@ All AI features are powered by **Google Gemini** (required) via Home Assistant's
 
 **Free tier limits (gemini-2.0-flash):** 1,500 requests/day · 15 requests/minute — sufficient for normal daily use.
 
-- **AI Info Panel** — single-tap the artwork while music plays: year, label, length, fun fact, genre tags, band members / artist section, album pill, similar tracks; all cached per track
+- **AI Info Panel** — single-tap the artwork while music plays: year, label, length, fun fact, genre tags, band members / artist section, album pill, up to 10 similar tracks; all cached per track
 - **Song Intro** — a short, intriguing one-line fact about the playing track appears below the artist name a few seconds after it starts, then fades away; off by default, toggle in AI Settings
 - **Vibe Queue Builder** — 100+ vibes across Energy, Calm, Focus, Mood, Social, Decades, Genre, Time, Seasons and Binaural & Noise; builds a themed MA queue instantly; artist exclusion prevents repeats
-- **AI Search** — natural language search across your MA library
-- **Recommendations** — AI-curated track suggestions based on what's playing
+- **AI Search** — natural language search, up to 18 results per query; available as a standalone panel, a box at the top of the library, and a dedicated AI search button next to the Songs, Artists and Albums tab search bars (returning matching tracks, artists or albums respectively)
+- **Recent Searches** — a category at the top of the library listing every search you've run (MA, iTunes-backed and AI alike), capped at 50, most-recent-first; tap to re-run, with an iOS-style Clear confirmation
+- **Recommendations** — AI-curated track/movie/show suggestions based on what's playing, up to 18 results
 - **AI Artist Radio** — continuous radio queue around any artist
+- **Find Soundtrack** — from the quick menu while watching on Apple TV, or the long-press menu on any Pinned Movie/TV Show — opens an AI Search for that title's music
 - **Announce AI Improve** — rewrites your announcement in a natural, friendly tone
 - **Send Message AI** — improves your notification text
 - **Audiobook search** — AI-assisted query refinement when searching LibriVox/Archive.org for public-domain audiobooks
-- **Listening Recap** — a personal weekly snapshot of what you've been playing: top artists and tracks (last 7 days, up to 10 each) plus a short AI-written summary that regenerates fresh every time you open it
+- **Recently Listened To** — a personal weekly snapshot of what you've been playing: top artists and tracks (last 7 days, up to 10 each) plus a short AI-written summary that regenerates fresh every time you open it
+- **Recently Watched** — the same idea as Recently Listened To, for movies and TV shows: top shows and top movies over the last 7 days plus a fresh AI-written summary every time you open it
 
 ## Quick Menu
 
 Tap the playlist/queue button in the controls bar to open the contextual quick menu:
 
 - **Queue** — opens the queue panel (MA speakers only)
-- **AI Search** — natural language MA search
+- **AI Search** — natural language search, up to 18 results
 - **Music Library** — opens the MA library browser (MA speakers only)
 - **Vibe** — opens the Vibe Queue Builder
-- **Recommendations** — AI track recommendations
-- **Listening Recap** — your personal weekly top artists/tracks with an AI summary
-- **Add Similar Songs** — adds AI-suggested similar tracks to the queue
+- **Add Similar Songs** — adds up to 18 AI-suggested similar tracks to the queue
+- **Add Album** — adds the currently playing track's album to the queue
+- **Recommendations** — AI track/movie/show recommendations, up to 18 results
+- **Recently Listened To** — your personal weekly top artists/tracks with an AI summary
+- **Recently Watched** — your personal weekly top shows/movies with an AI summary
 - **AI Artist Radio** — builds an artist radio queue
 - **Radio Mode** — toggles MA radio mode on/off
 - **Lyrics** — toggles the lyrics panel
@@ -86,11 +91,11 @@ Tap the broadcast icon to open a popup showing all configured media players. Tap
 
 Play the same audio on multiple MA speakers simultaneously:
 
-- **Speaker pills** — always visible; one per active grouped speaker; locked while a queue is building
-- **Focus for volume** — tap any pill to control that speaker independently
-- **Sync volumes** — match all grouped speakers to the focused speaker's volume
-- **Add a speaker** — a **+ Add** pill appears when additional MA speakers are available
-- **Remove a speaker** — tap the × on any pill to remove that speaker from the group
+- **Summary pill** — a single compact pill showing the focused speaker's name and a "+N" count of others in the group, instead of a separate pill per speaker
+- **Tap to manage** — opens a sheet listing every speaker in the group; tap any to focus it for volume control, tap the × to remove it
+- **Sync volumes** — a button in the sheet matches all grouped speakers to the focused speaker's volume
+- **Add a speaker** — a "+" button appears next to the summary pill (and next to solo speakers, when others are available to group with) once something is actually playing
+- Pre-configured Music Assistant player groups (e.g. a permanently-synced stereo pair) can be played on individually, but can't be folded into a separate multi-room session — a Music Assistant limitation, not a card one
 
 ## Pinning (Library)
 
@@ -160,11 +165,13 @@ Share is available from the quick menu, the AI Info / Media Info panels, and the
 
 **Cast navigation:** tap any cast member to open their person page with bio, photo (tap to zoom), Known For credits and a fun fact — the same related-content pattern used throughout the card.
 
+**Find Soundtrack:** available from the media player's quick menu while watching on Apple TV, and from the long-press menu on any item in Pinned Movies & TV Shows — opens an AI Search for that title's music.
+
 ## Queue Panel
 
 - Now Playing row with animated sound bars — tap to open AI Info
 - Drag to reorder (MA only, requires Queue Actions integration)
-- Long-press any row: Play Now, Play Next, Add to Queue, AI Artist Radio, Share, More Info
+- Long-press any row: Play Now, Play Next, Move to Top of Queue, Add to Queue, Pin Song, AI Artist Radio, Remove from Queue, Share, More Info
 - Queue 3-dot menu: Music Library, Mood, AI Artist Radio, Radio Mode, Announce, Send Message, **Pin Queue as Playlist**, Clear Queue
 
 ## Announce
@@ -185,23 +192,28 @@ Push notifications to iPhones running the HA Companion App:
 
 ## Music Assistant Library Browser
 
-Tabs: Recently Added, Pinned, Favourites, Made for You (Recommended), Playlists, Artists, Albums, Songs, Radio, Podcasts, Audiobooks. (Classic tab-bar mode shows Recently Played instead of Recently Added/Pinned — toggle the layout in Appearance & Behaviour.)
+Tabs: Recent Searches, Recently Added, Pinned, Favourites, Made for You (Recommended), Playlists, Artists, Albums, Songs, Radio, Podcasts, Audiobooks. (Classic tab-bar mode shows Recently Played instead of Recently Added/Pinned — toggle the layout in Appearance & Behaviour.)
 
 - Tap any item to play; drill into collections with a back button
 - Action bar on every drill-down: Play All, Add to Queue, Play Next
 - Long-press tracks for the enqueue menu
+- **AI Search** — a box at the top of the library, plus a dedicated AI search button next to the search bar on the Songs, Artists and Albums tabs (returning matching tracks, artists or albums specifically)
+- **Recent Searches** — every search you've run, MA and AI alike, most-recent-first, capped at 50; tap to re-run, with an iOS-style Clear confirmation
 - **Podcasts tab** — search iTunes directly; pin favourites
 - **Audiobooks tab** — search free, public-domain titles on LibriVox via the Archive.org catalogue, with AI-assisted query refinement and chapter-by-chapter playback; pin favourites
 - **Radio tab** — search radio-browser.info directly, or use Browse Home Assistant Radio to explore categories from HA's own Radio Browser integration (requires the [Radio Browser](https://www.home-assistant.io/integrations/radio_browser/) integration under Settings → Devices & Services)
 - **Pinned tab** — everything you've pinned, grouped into Songs, Artists, Albums, Playlists, Queues, Radio, Podcasts and Audiobooks
+- **Remembers where you left off** — reopening the library returns to whichever tab you were last in, even after fully closing and reopening the app (within a few hours; a deliberate close resets it back to the top)
 
 ## Radio Mode
 
 Enable from the quick menu or visual editor. MA automatically queues similar songs after each track. Turns off automatically when switching to a non-MA speaker or clearing the queue.
 
-## Listening Recap
+**Live station identification:** a LIVE pill appears on the artwork while a radio stream plays, on any speaker type (MA or native). Tap it to see the station's format, country, votes, website and description; the artwork also automatically resolves to the station's own logo when available.
 
-Open from the quick menu (below Recommendations) for a personal snapshot of your recent listening.
+## Recently Listened To
+
+Open from the quick menu for a personal snapshot of your recent listening.
 
 - **Top Artists & Top Tracks** — up to 10 each, ranked by play count over a rolling last-7-days window
 - **AI summary** — a short, warm write-up of your week's listening, regenerated fresh every time the panel opens (not cached, so it always matches the numbers below it)
@@ -212,7 +224,17 @@ Open from the quick menu (below Recommendations) for a personal snapshot of your
 - **Shared across rooms on the same device** — logging is scoped to whatever entities a card is configured with, but the Recap panel itself doesn't filter by entity when displaying results. If you run separate cards per room on the same phone/browser, they all read from one shared history, so every card's Recap shows the combined total of everything any of your cards have logged — not a breakdown per room
 - **Catches up on missed plays** — each time a card loads, it also pulls that entity's own state history from Home Assistant (not just what it observes live) to backfill anything played while that card wasn't open — e.g. a different room's tab was active at the time. This needs Home Assistant's recorder to actually be tracking the entity; it looks back up to 48 hours on a card's first-ever load, then only as far as its last check after that
 - **Per-user** — if you and other household members use separate Home Assistant accounts, each person's Recap is tracked and stored separately, the same way Pins are
-- **Clear Recap History** — a button at the bottom of the panel (with an iOS-style confirmation) permanently deletes your Recap history and resets the history-backfill checkpoint, so cleared plays don't get silently reinstated the next time a card loads; enable **AI Info Persistent Storage** in Caches & Data so this history survives app restarts and WKWebView cache evictions
+- **Clear History** — a button at the bottom of the panel (with an iOS-style confirmation) permanently deletes your history and resets the history-backfill checkpoint, so cleared plays don't get silently reinstated the next time a card loads; enable **AI Info Persistent Storage** in Caches & Data so this history survives app restarts and WKWebView cache evictions
+
+## Recently Watched
+
+The same idea as Recently Listened To, but for movies and TV shows.
+
+- **Top Shows & Top Movies** — ranked by play count over a rolling last-7-days window
+- **AI summary** — a fresh, warm write-up of the week's viewing, regenerated every time the panel opens
+- **Tap a title** to open its Media Info panel
+- **What's excluded** — entries that turn out to just be a bare date (some sources report a recording's date instead of a real title when no title metadata is available) are filtered out automatically, both going forward and retroactively from anything already logged
+- **Clear History** — same iOS-style confirmation pattern as Recently Listened To; enable **AI Info Persistent Storage** in Caches & Data so this history survives app restarts
 
 ## Apple TV Remote
 
