@@ -139,10 +139,12 @@ Repository: [github.com/droans/mass_queue](https://github.com/droans/mass_queue)
 - 🔄 **Automatic device switching** — card follows whichever device starts playing
 - 🎵 **Full media controls** — play/pause, skip, shuffle, repeat, seek via progress bar
 - ⏩ **Double-tap to seek** — double-tap left or right of artwork to seek −15s or +15s
-- 🖼️ **Artwork tap actions** — single-tap opens AI Info (music) or Media Info (TV/movies); double-tap the left or right side to seek −15s/+15s; long-press opens lyrics
+- 💗 **Double-tap to pin** — double-tap the *center* of the artwork to pin whatever's currently playing — a song, movie, TV show, or radio station — with a burst of red hearts floating up from the tap point (grey for unpinning). For radio, this uses the same station identification as the LIVE pill, so it only works once the station's been resolved (usually near-instant, but a station that's never been looked up this session may need a moment, or a tap of the LIVE pill first)
+- 📍 **Pinned indicator** — a small pin badge appears in the bottom-left corner of the artwork whenever the currently playing track/movie/show/radio station is pinned, purely informational (not tappable), and updates live regardless of which of the card's several pin buttons was used
+- 🖼️ **Artwork tap actions** — single-tap opens AI Info (music) or Media Info (TV/movies); double-tap the left or right edge to seek −15s/+15s, double-tap the center to pin; long-press opens lyrics
 - 🖼️ **Artwork zoom** — tap the mini album art in the AI Info panel or album view to see a larger version
 - ✨ **Tactile button feedback** — glow and blur effects when buttons are pressed
-- 🔊 **Volume control** — slider or +/− buttons with optional routing to a separate volume entity
+- 🔊 **Volume control** — slider or +/− buttons with optional per-speaker routing to a separate volume entity (e.g. an amp or receiver), configured on that speaker's own settings page in the editor
 - 📊 **Volume HUD** — sleek overlay showing current level; fades after 1.5 seconds
 - 🔇 **Mute toggle** — tap the volume badge or speaker icon to instantly mute/unmute
 - 🖼️ **Album artwork** — automatic iTunes artwork lookup when no artwork is provided
@@ -239,7 +241,7 @@ Decade moods search your MA library for chart compilations first, then fall back
 Pin your favourites for one-tap access. All pins also live together in a consolidated **Pinned** section in the Music Library, with its own sub-categories: Songs, Artists, Albums, Playlists, Queues, Radio, Podcasts and Audiobooks.
 
 - **What can be pinned** — radio stations, podcasts, audiobooks, saved queues (see [Pin Queue as Playlist](#pin-queue-as-playlist)), and MA library tracks, artists, albums and playlists
-- **How to pin** — long-press any item (or use the pin icon in its info panel) and choose Pin/Unpin
+- **How to pin** — long-press any item (or use the pin icon in its info panel) and choose Pin/Unpin; for whatever's currently playing (a song, movie, TV show, or radio station), double-tapping the center of the artwork does the same thing instantly, with a heart-burst animation to confirm it
 - **Show Pins in Sections** *(on by default)* — when enabled, pinned items also still appear inline at the top of their own tab (e.g. Pinned Songs in the Songs tab); turn it off in **Caches & Data** so pins only appear in the consolidated Pinned section
 - **Management** — view and clear pins individually or all at once from **Caches & Data → Pinned Items** in the visual editor
 - Pins are stored on-device only by default and aren't synced between browsers or devices
@@ -357,8 +359,8 @@ The editor includes a filter box at the top (search any setting by name) and a *
 
 | Section | Settings |
 |---------|---------|
-| Manage & Reorder Media Players | Drag-and-drop reorder; enable/disable; startup volume; MA speaker toggle — all per entity |
-| Appearance & Behaviour *(collapsible)* | Follow HA Theme, Auto Switch, Remember Last Speaker, Media Player Selector, Music Library Layout (iOS-style category list vs. classic tab bar), Always Show Library Button, Show Remote Button, Default Radio Mode on Startup, iTunes Artwork Fallback, Show Volume HUD, Live/Podcast/Audiobook Pill, Volume Buttons, Volume Percentage, Scroll Long Text, Lyrics persistence and caching, and a **Startup & Navigation** sub-section (Startup View, Retain Current View, Remote Button Row Position, Volume Entity) |
+| Manage & Reorder Media Players | Drag-and-drop reorder; enable/disable; tap a speaker's name to open its own dedicated settings page (Startup Volume, Volume Entity, MA Speaker toggle) |
+| Appearance & Behaviour *(collapsible)* | Follow HA Theme, Auto Switch, Remember Last Speaker, Media Player Selector, Music Library Layout (iOS-style category list vs. classic tab bar), Always Show Library Button, Show Remote Button, Default Radio Mode on Startup, iTunes Artwork Fallback, Show Volume HUD, Live/Podcast/Audiobook Pill, Volume Buttons, Volume Percentage, Scroll Long Text, Lyrics persistence and caching, and a **Startup & Navigation** sub-section (Startup View, Retain Current View, Remote Button Row Position) |
 | Caches & Data *(collapsible)* | AI caches (bios, trivia, where-to-watch, content warnings, year-in-music, vibe history, AI response cache), artwork caches (iTunes, Wikipedia) with Persistent Storage toggles, library & radio caches (MA library, radio stations, HA registry), lyrics cache & scroll style with its own Persistent Storage toggle, and management of all pinned items including a **Show Pins in Sections** toggle, a Persistent Pin Storage toggle and a Clear Persistent Storage button |
 | Visual Effects | Card Liquid Glass, Remote Liquid Glass, Volume HUD Liquid Glass, Ambient Glow, Library & Queue Row Glow, Artwork Crossfade, Resize Button Spin |
 | ✨ AI Settings | AI Agent selector, Share Track service (YouTube Music, Apple Music, Spotify, Tidal, Amazon Music, Deezer), Announce TTS Service, Song Intro toggle |
