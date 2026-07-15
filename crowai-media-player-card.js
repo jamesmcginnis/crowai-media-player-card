@@ -27,7 +27,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   }
 
   static getStubConfig() {
-    return { entities: [], auto_switch: true, accent_color: '#007AFF', volume_accent: '#007AFF', title_color: '#ffffff', artist_color: '#ffffff', button_color: '#ffffff', player_bg: '#1c1c1e', player_bg_opacity: 100, show_entity_selector: true, volume_control: 'slider', startup_mode: 'compact', remember_view: false, volume_entity: '', ma_entities: [], show_vol_pct: true, vol_pct_color: 'rgba(255,255,255,0.45)', scroll_text: false, remember_last_entity: false, entity_startup_volumes: {}, lyrics_bg: '#0a0a0c', lyrics_text_color: '#ffffff', lyrics_scroll_mode: 'highlight', lyrics_persist: false, lyrics_cache_ttl: 7, lyrics_cache_enabled: true, lyrics_persistent_storage: false, pins_persistent_storage: false, show_pins_in_sections: true, ai_info_persistent_storage: false, itunes_persistent_storage: false, wiki_persistent_storage: false, ma_library_cache_enabled: true, ma_library_cache_ttl: 1, ma_radio_mode: false, show_ma_library_button: true, use_ha_theme: false, remote_buttons_position: 'bottom', ambient_glow: false, announce_tts_service: '', row_glow: false, show_remote_button: true, ma_ios_library: true, artwork_crossfade: false, icon_theme: 'robot', resize_btn_spin: true, remote_art_blur: true, volume_hud: true, itunes_art: true, controls_theme: 'classic', add_pill_color: '', card_liquid_glass: true, volume_hud_glass: false, ai_conversation_agent: '', share_service: 'youtube_music', song_intro_enabled: false, show_media_type_pill: false };
+    return { entities: [], auto_switch: true, accent_color: '#007AFF', volume_accent: '#007AFF', title_color: '#ffffff', artist_color: '#ffffff', button_color: '#ffffff', player_bg: '#1c1c1e', player_bg_opacity: 100, show_entity_selector: true, volume_control: 'slider', startup_mode: 'compact', remember_view: false, volume_entity: {}, ma_entities: [], show_vol_pct: true, vol_pct_color: 'rgba(255,255,255,0.45)', scroll_text: false, remember_last_entity: false, entity_startup_volumes: {}, lyrics_bg: '#0a0a0c', lyrics_text_color: '#ffffff', lyrics_scroll_mode: 'highlight', lyrics_persist: false, lyrics_cache_ttl: 7, lyrics_cache_enabled: true, lyrics_persistent_storage: false, pins_persistent_storage: false, show_pins_in_sections: true, ai_info_persistent_storage: false, itunes_persistent_storage: false, wiki_persistent_storage: false, ma_library_cache_enabled: true, ma_library_cache_ttl: 1, ma_radio_mode: false, show_ma_library_button: true, use_ha_theme: false, remote_buttons_position: 'bottom', ambient_glow: false, announce_tts_service: '', row_glow: false, show_remote_button: true, ma_ios_library: true, artwork_crossfade: false, icon_theme: 'robot', resize_btn_spin: true, remote_art_blur: true, volume_hud: true, itunes_art: true, controls_theme: 'classic', add_pill_color: '', card_liquid_glass: true, volume_hud_glass: false, ai_conversation_agent: '', share_service: 'youtube_music', song_intro_enabled: false, show_media_type_pill: false };
   }
 
   setConfig(config) {
@@ -47,7 +47,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       volume_control: 'slider',
       startup_mode: 'compact',
       remember_view: false,
-      volume_entity: '',
+      volume_entity: {},
       ma_entities: [],
       
       remember_last_entity: false,
@@ -1801,7 +1801,16 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
   get _volEntity() {
     const ve = this._config?.volume_entity;
-    return (ve && ve.trim()) ? ve.trim() : this._entity;
+    // New shape: an object keyed by entity_id, one override per speaker.
+    if (ve && typeof ve === 'object') {
+      const specific = ve[this._entity];
+      return (specific && specific.trim()) ? specific.trim() : this._entity;
+    }
+    // Legacy shape: a single global string, from before this became
+    // per-entity. Keep honouring it so existing YAML configs don't silently
+    // stop working after an update — it just applies to whichever speaker
+    // is currently selected, same as it always did.
+    return (ve && typeof ve === 'string' && ve.trim()) ? ve.trim() : this._entity;
   }
 
   render() {
@@ -10616,28 +10625,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     content.querySelector('#mt-starred-section')?.remove();
     content.querySelector('#mt-browse-local-btn')?.remove();
 
-    const browseBtn = document.createElement('div');
-    browseBtn.id = 'mt-browse-local-btn';
-    browseBtn.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 4px;border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer;-webkit-tap-highlight-color:transparent;';
-    browseBtn.innerHTML =
-      '<div style="width:40px;height:40px;border-radius:8px;background:rgba(255,69,58,0.15);flex-shrink:0;display:flex;align-items:center;justify-content:center;"><svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:#FF453A"><path d="M10,4H4C2.89,4 2,4.89 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V8C22,6.89 21.1,6 20,6H12L10,4Z"/></svg></div>' +
-      '<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:600;color:var(--primary-text-color,#fff);">Browse Home Assistant Media</div><div style="font-size:11px;color:rgba(255,255,255,0.45);margin-top:1px;">Movies &amp; shows in your local media folder</div></div>' +
-      '<svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:rgba(255,255,255,0.25);flex-shrink:0;"><path d="M8.59,16.59L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.59Z"/></svg>';
-    browseBtn.addEventListener('click', () => {
-      if (!this._maBrowserNavStack) this._maBrowserNavStack = [];
-      this._maBrowserNavStack.push({ tab: 'movie_tv', searchQuery: null, inSearchResults: false });
-      this._mtLocalStack = [];
-      // Start directly at HA's local media folder ("My Media") rather than
-      // the generic media_source root, which lists every configured source
-      // (TTS, camera snapshots, etc.) — 'local' is the standard identifier
-      // for the default local media directory HA ships with.
-      this._mtBrowseLocal('media-source://media_source/local', 'app', 'My Media');
-    });
-    content.insertBefore(browseBtn, content.firstChild);
-
     if (this._config?.show_pins_in_sections === false) return;
     const starredSection = this._mtRenderStarredSection();
-    if (starredSection) content.insertBefore(starredSection, content.firstChild.nextSibling);
+    if (starredSection) content.insertBefore(starredSection, content.firstChild);
   }
 
   // Context menu for a podcast tile/row
@@ -23643,7 +23633,13 @@ Include ALL tracks. Use null for unknown fields.`;
       const pillsHtml = services.map(svc => {
         const key   = (svc.service || svc).toLowerCase().trim();
         const label = svc.service || svc;
-        const note  = svc.note || ''; // e.g. "Season 1-3" or "Subscription"
+        // Defensive cap — the prompt asks for max 3 words, but AI responses
+        // aren't guaranteed to comply. A stray full sentence here would
+        // overflow off the edge of the screen with no wrapping, since these
+        // pills are white-space:nowrap by design. Truncating defensively
+        // means a misbehaving response degrades gracefully instead.
+        let note = (svc.note || '').trim();
+        if (note.length > 24) note = note.slice(0, 21) + '…';
         const color = SERVICE_COLORS[key] || '#63b3ed';
         const isHex = color.startsWith('#');
         const bgColor     = isHex ? _hexToRgba(color, 0.13) : color.replace(/[\d.]+\)$/, '0.13)');
@@ -23655,7 +23651,7 @@ Include ALL tracks. Use null for unknown fields.`;
                  background:${bgColor};border:1px solid ${borderColor};text-decoration:none;
                  font-size:12px;font-weight:600;color:${_text};white-space:nowrap;
                  -webkit-tap-highlight-color:transparent;flex-shrink:0;">
-          ${label}${note ? `<span style="font-size:10px;font-weight:400;color:${_dim};margin-left:1px">${note}</span>` : ''}
+          ${label}${note ? `<span style="font-size:10px;font-weight:400;color:${_dim};margin-left:1px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${note}</span>` : ''}
         </a>`;
       }).join('');
 
@@ -23701,7 +23697,7 @@ Include ALL tracks. Use null for unknown fields.`;
     if (!hasAI || !_section()) return;
 
     const typeLabel = type === 'tv' ? 'TV series' : 'movie';
-    const prompt = `Where can I watch the ${typeLabel} "${title}"${year ? ` (${year})` : ''} ? Respond ONLY with a JSON array, no markdown, no preamble: [{"service":"Netflix","note":""},{"service":"Amazon Prime Video","note":""}]`;
+    const prompt = `Where can I watch the ${typeLabel} "${title}"${year ? ` (${year})` : ''} ? Respond ONLY with a JSON array, no markdown, no preamble: [{"service":"Netflix","note":""},{"service":"Amazon Prime Video","note":""}]. The "note" field must be at most 3 words (e.g. "Subscription", "Rent/Buy", "Season 1-3") or an empty string — never a full sentence or disclaimer.`;
 
     try {
       const raw = await this._aiConverse(prompt);
@@ -28823,6 +28819,14 @@ Include ALL tracks. Use null for unknown fields.`;
             await self._hass.callService('mass_queue', 'move_queue_item_next', {
               entity: self._entity, queue_item_id: queueItemId
             });
+            // The service call updates MA's queue immediately, but this
+            // panel doesn't reflect that until it re-renders — without this,
+            // the move genuinely works but looks like nothing happened while
+            // still looking at the queue. Same delay-then-refresh pattern
+            // already used for the drag-to-reorder flow, which calls this
+            // exact same service.
+            await new Promise(res => setTimeout(res, 300));
+            await self._showQueuePanel(self._queuePanelDirection);
             self._showToast('Moved to top of queue');
           } catch (err) {
             const _errMsg = (err?.message || err?.error?.message || String(err)).toLowerCase();
@@ -29369,28 +29373,10 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
     if (rememberViewEl) rememberViewEl.checked = this._config.remember_view === true;
     const seg = root.getElementById('startup-mode-segmented');
     if (seg) seg.style.opacity = this._config.remember_view ? '0.4' : '1';
-    const volEntityInput = root.getElementById('volume_entity');
-    if (volEntityInput) {
-      const currentVe = this._config.volume_entity || '';
-      const veOpts = ['<option value="">Default (selected speaker)</option>'];
-      Object.keys(this._hass?.states || {})
-        .filter(eid => eid.startsWith('media_player.'))
-        .sort()
-        .forEach(eid => {
-          const friendly = this._hass.states[eid]?.attributes?.friendly_name || eid;
-          veOpts.push(`<option value="${eid}"${currentVe === eid ? ' selected' : ''}>${friendly}</option>`);
-        });
-      volEntityInput.innerHTML = veOpts.join('');
-      volEntityInput.value = currentVe;
-    }
     const remoteButtonsPos = this._config.remote_buttons_position || 'bottom';
     ['top', 'bottom'].forEach(v => {
       const el = root.getElementById('rbp_' + v);
       if (el) el.checked = remoteButtonsPos === v;
-    });
-    const maList = Array.isArray(this._config.ma_entities) ? this._config.ma_entities : [];
-    root.querySelectorAll('.entity-ma-toggle').forEach(t => {
-      t.checked = maList.includes(t.dataset.ent);
     });
   }
 
@@ -29405,7 +29391,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
 
     this.shadowRoot.innerHTML = `
       <style>
-        .container { display: flex; flex-direction: column; gap: 20px; padding: 12px; color: var(--primary-text-color); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+        .container { display: flex; flex-direction: column; gap: 20px; padding: 12px; color: var(--primary-text-color); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; position: relative; }
         .section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #888; margin-bottom: 2px; word-break: break-word; }
         .editor-tooltip { position:relative; display:inline-flex; align-items:center; }
         .editor-tooltip .tooltip-icon { width:14px;height:14px;border-radius:50%;background:rgba(99,179,237,0.15);border:1px solid rgba(99,179,237,0.3);color:rgba(99,179,237,0.7);font-size:9px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;margin-left:5px;user-select:none; }
@@ -29537,8 +29523,6 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
         input[type="text"] { width: 100%; box-sizing: border-box; background: var(--card-background-color); color: var(--primary-text-color); border: 1px solid var(--divider-color, rgba(128,128,128,0.2)); border-radius: 8px; padding: 10px 12px; font-size: 14px; }
         .checklist { max-height: 300px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
         .check-item { display: flex; flex-wrap: wrap; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--divider-color, rgba(128,128,128,0.2)); background: var(--card-background-color); min-height: 48px; }
-        .check-item-controls { display: none; width: 100%; padding: 6px 0 2px 38px; gap: 16px; flex-wrap: wrap; border-top: 1px solid var(--divider-color, rgba(128,128,128,0.2)); margin-top: 6px; }
-        .check-item-controls.visible { display: flex; }
         .entity-ctrl-group { display: flex; align-items: center; gap: 6px; }
         .entity-ctrl-label { font-size: 11px; color: var(--primary-text-color,rgba(0,0,0,0.5)); white-space: nowrap; }
         .check-item:last-child { border-bottom: none; }
@@ -29549,6 +29533,16 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
         .check-item .toggle-track::after { width: 22px; height: 22px; }
         .check-item .toggle-track { border-radius: 26px; }
         .check-item input[type="checkbox"] { display: none; }
+        /* Settings page toggles (Startup Volume, Music Assistant Speaker) use a
+           smaller 36x22 size that has no matching knob override, so the base
+           51x31 rule's translateX(20px) was being used against a much
+           narrower track — pushing the knob past the track's right edge when
+           checked. Same left:2px/2px-margin pattern as the other two sizes,
+           just scaled to this one: knob 18x18, translateX(14px). */
+        #entitySettingsVolToggle + .toggle-track::after,
+        #entitySettingsMaToggle + .toggle-track::after { width: 18px; height: 18px; }
+        #entitySettingsVolToggle:checked + .toggle-track::after,
+        #entitySettingsMaToggle:checked + .toggle-track::after { transform: translateX(14px); }
       </style>
       <div class="container">
 
@@ -29589,50 +29583,72 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                 return `
                   <div class="check-item" data-id="${ent}" draggable="${isSelected}">
                     <div class="drag-handle"><svg viewBox="0 0 24 24" style="width:20px;height:20px;fill:#888;display:block;"><path d="M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V21V19Z"/></svg></div>
-                    <span class="entity-name" style="margin-left:10px;flex:1;font-size:14px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</span>
                     ${isSelected ? `
-                    <button class="entity-expand-btn" data-ent="${ent}" style="background:none;border:none;padding:4px 6px;cursor:pointer;color:#888;font-size:11px;display:flex;align-items:center;gap:3px;flex-shrink:0;-webkit-tap-highlight-color:transparent;">
-                      <span class="entity-expand-label">${hasVol || isMaEnt ? `${isMaEnt ? 'MA · ' : ''}${hasVol ? volVal + '% vol' : ''}` : 'Settings'}</span>
-                      <svg class="entity-expand-chevron" viewBox="0 0 24 24" style="width:14px;height:14px;fill:#888;transition:transform 0.2s;flex-shrink:0;"><path d="M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z"/></svg>
-                    </button>` : ''}
-                    <label class="toggle-switch" style="flex-shrink:0;">
+                    <div class="entity-settings-btn" data-ent="${ent}" style="display:flex;align-items:center;flex:1;min-width:0;margin-left:10px;cursor:pointer;-webkit-tap-highlight-color:transparent;padding:6px 0;">
+                      <span class="entity-name" style="flex:1;font-size:14px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${name}</span>
+                      <svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:#888;flex-shrink:0;margin-left:6px;"><path d="M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z"/></svg>
+                    </div>` : `
+                    <span class="entity-name" style="margin-left:10px;flex:1;font-size:14px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</span>`}
+                    <label class="toggle-switch" style="flex-shrink:0;margin-left:10px;">
                       <input type="checkbox" ${isSelected ? 'checked' : ''}>
                       <span class="toggle-track"></span>
                     </label>
-                    ${isSelected ? `
-                    <div class="check-item-controls" style="display:none;">
-                      <div style="padding:12px 12px 12px 38px;display:flex;flex-direction:column;gap:12px;border-top:1px solid var(--divider-color,rgba(128,128,128,0.2));">
-                        <div style="display:flex;align-items:center;justify-content:space-between;">
-                          <div>
-                            <div style="font-size:13px;font-weight:500;margin-bottom:2px;">Startup Volume</div>
-                            <div style="font-size:11px;color:#888;">Set volume when this speaker is selected</div>
-                          </div>
-                          <div style="display:flex;align-items:center;gap:8px;">
-                            <label class="toggle-switch" style="width:36px;height:22px;flex-shrink:0;">
-                              <input type="checkbox" class="entity-vol-toggle" data-ent="${ent}" ${hasVol ? 'checked' : ''}>
-                              <span class="toggle-track" style="border-radius:22px;"></span>
-                            </label>
-                            <input type="number" class="entity-vol-input" data-ent="${ent}"
-                              min="0" max="100" step="1" value="${volVal}" placeholder="35"
-                              style="display:${hasVol ? 'block' : 'none'};width:48px;background:var(--card-background-color);border:1px solid var(--divider-color,rgba(128,128,128,0.2));border-radius:6px;padding:4px 6px;color:var(--primary-text-color,#111);font-size:13px;font-family:inherit;text-align:center;outline:none;">
-                            <span class="entity-vol-pct" style="display:${hasVol ? 'inline' : 'none'};font-size:12px;color:#888;">%</span>
-                          </div>
-                        </div>
-                        <div style="display:flex;align-items:center;justify-content:space-between;">
-                          <div>
-                            <div style="font-size:13px;font-weight:500;margin-bottom:2px;">Music Assistant Speaker</div>
-                            <div style="font-size:11px;color:#888;">Enables MA features for this speaker</div>
-                          </div>
-                          <label class="toggle-switch" style="width:36px;height:22px;flex-shrink:0;">
-                            <input type="checkbox" class="entity-ma-toggle" data-ent="${ent}" ${isMaEnt ? 'checked' : ''}>
-                            <span class="toggle-track" style="border-radius:22px;"></span>
-                          </label>
-                        </div>
-                      </div>
-                    </div>` : ''}
                   </div>
                 `;
               }).join('')}
+            </div>
+          </div>
+        </div>
+
+        <!-- Per-speaker settings page — pushed over the editor when "Settings" is
+             tapped on a speaker row, with its own back button. A real page-push
+             rather than an inline-expanding panel: with several speakers each
+             potentially needing Startup Volume, Volume Entity and MA Speaker set,
+             letting each one expand inline would make an already-long list
+             increasingly unwieldy the more speakers are configured. -->
+        <div id="entitySettingsPage" style="display:none;position:absolute;inset:0;background:var(--card-background-color,#1c1c1e);z-index:20;overflow-y:auto;padding:12px;box-sizing:border-box;">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;">
+            <button id="entitySettingsBack" style="background:none;border:none;padding:6px;margin:-6px;cursor:pointer;display:flex;align-items:center;-webkit-tap-highlight-color:transparent;">
+              <svg viewBox="0 0 24 24" style="width:22px;height:22px;fill:var(--primary-color,#007AFF);"><path d="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z"/></svg>
+            </button>
+            <div id="entitySettingsTitle" style="font-size:17px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></div>
+          </div>
+
+          <div class="card-block" style="padding:14px;display:flex;flex-direction:column;gap:16px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;">
+              <div>
+                <div style="font-size:13px;font-weight:500;margin-bottom:2px;">Startup Volume</div>
+                <div style="font-size:11px;color:#888;">Set volume when this speaker is selected</div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <label class="toggle-switch" style="width:36px;height:22px;flex-shrink:0;">
+                  <input type="checkbox" id="entitySettingsVolToggle">
+                  <span class="toggle-track" style="border-radius:22px;"></span>
+                </label>
+                <input type="number" id="entitySettingsVolInput"
+                  min="0" max="100" step="1" placeholder="35"
+                  style="width:56px;background:var(--card-background-color);border:1px solid var(--divider-color,rgba(128,128,128,0.2));border-radius:6px;padding:5px 6px;color:var(--primary-text-color,#111);font-size:13px;font-family:inherit;text-align:center;outline:none;">
+                <span id="entitySettingsVolPct" style="font-size:12px;color:#888;">%</span>
+              </div>
+            </div>
+
+            <div style="border-top:1px solid var(--divider-color,rgba(128,128,128,0.2));padding-top:16px;">
+              <div style="font-size:13px;font-weight:500;margin-bottom:2px;">Volume Entity</div>
+              <div style="font-size:11px;color:#888;margin-bottom:8px;line-height:1.4;">Route this speaker's volume control to a different media player entity (e.g. an amp or receiver) instead of controlling it directly.</div>
+              <select id="entitySettingsVolEntity" style="width:100%;box-sizing:border-box;padding:8px 10px;border-radius:8px;border:1px solid var(--divider-color,rgba(128,128,128,0.2));background:var(--card-background-color);color:var(--primary-text-color,#111);font-size:13px;font-family:inherit;">
+                <option value="">Default (control directly)</option>
+              </select>
+            </div>
+
+            <div style="display:flex;align-items:center;justify-content:space-between;border-top:1px solid var(--divider-color,rgba(128,128,128,0.2));padding-top:16px;">
+              <div>
+                <div style="font-size:13px;font-weight:500;margin-bottom:2px;">Music Assistant Speaker</div>
+                <div style="font-size:11px;color:#888;">Enables MA features for this speaker</div>
+              </div>
+              <label class="toggle-switch" style="width:36px;height:22px;flex-shrink:0;">
+                <input type="checkbox" id="entitySettingsMaToggle">
+                <span class="toggle-track" style="border-radius:22px;"></span>
+              </label>
             </div>
           </div>
         </div>
@@ -29782,14 +29798,6 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                     <input type="radio" name="remote_buttons_position" id="rbp_bottom" value="bottom"><label for="rbp_bottom">Bottom</label>
                     <input type="radio" name="remote_buttons_position" id="rbp_top"    value="top"><label for="rbp_top">Top</label>
                   </div>
-                </div>
-
-                <div class="select-row" style="padding:0;">
-                  <label for="volume_entity" style="font-size:13px;font-weight:500;">Volume Entity</label>
-                  <div class="hint" style="margin-bottom:4px;">Route volume control to a different media player entity (e.g. an amp or receiver) instead of the selected speaker. Leave as Default to control the selected speaker directly.</div>
-                  <select id="volume_entity">
-                    <option value="">Default (selected speaker)</option>
-                  </select>
                 </div>
               </div>
             </div>
@@ -30445,6 +30453,12 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
     const newOrderSet = new Set(newOrder);
     const prunedMA = maEntities.filter(eid => newOrderSet.has(eid));
 
+    // Same idea for the per-entity volume_entity overrides — an entity removed
+    // from the card shouldn't leave an orphaned routing entry behind.
+    const veMap = (this._config.volume_entity && typeof this._config.volume_entity === 'object') ? this._config.volume_entity : {};
+    const prunedVe = {};
+    Object.keys(veMap).forEach(eid => { if (newOrderSet.has(eid)) prunedVe[eid] = veMap[eid]; });
+
     // Both updates must land in a single dispatch. Two separate sequential
     // _updateConfig calls each spread fresh from this._config — if the
     // parent dashboard hasn't fed the first update's result back into
@@ -30454,23 +30468,63 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
     // first change while the second one (ma_entities) sticks — exactly the
     // "toggled the speaker off, but it came back on and only the MA flag
     // changed" symptom. One combined dispatch has no such window.
-    this._updateConfigMulti({ entities: newOrder, ma_entities: prunedMA });
+    this._updateConfigMulti({ entities: newOrder, ma_entities: prunedMA, volume_entity: prunedVe });
   }
+
+  // Opens the per-speaker settings page for a given entity, populating all
+  // three fields fresh from current config, plus the Volume Entity dropdown's
+  // option list (every other media_player entity in Home Assistant, same
+  // source list the old global dropdown used).
+  _openEntitySettingsPage(ent) {
+    const root = this.shadowRoot;
+    const page = root.getElementById('entitySettingsPage');
+    if (!page) return;
+    page.dataset.ent = ent;
+
+    const name = this._hass.states[ent]?.attributes?.friendly_name || ent;
+    const titleEl = root.getElementById('entitySettingsTitle');
+    if (titleEl) titleEl.textContent = name;
+
+    const hasVol = (this._config.entity_startup_volumes || {})[ent] != null;
+    const volVal = hasVol ? (this._config.entity_startup_volumes || {})[ent] : 35;
+    const volToggle = root.getElementById('entitySettingsVolToggle');
+    const volInput  = root.getElementById('entitySettingsVolInput');
+    if (volToggle) volToggle.checked = hasVol;
+    if (volInput)  volInput.value = volVal;
+
+    const isMaEnt = Array.isArray(this._config.ma_entities) && this._config.ma_entities.includes(ent);
+    const maToggle = root.getElementById('entitySettingsMaToggle');
+    if (maToggle) maToggle.checked = isMaEnt;
+
+    const veMap = (this._config.volume_entity && typeof this._config.volume_entity === 'object') ? this._config.volume_entity : {};
+    const currentVe = veMap[ent] || '';
+    const veSelect = root.getElementById('entitySettingsVolEntity');
+    if (veSelect) {
+      const opts = ['<option value="">Default (control directly)</option>'];
+      Object.keys(this._hass?.states || {})
+        .filter(eid => eid.startsWith('media_player.') && eid !== ent)
+        .sort()
+        .forEach(eid => {
+          const friendly = this._hass.states[eid]?.attributes?.friendly_name || eid;
+          opts.push(`<option value="${eid}"${currentVe === eid ? ' selected' : ''}>${friendly}</option>`);
+        });
+      veSelect.innerHTML = opts.join('');
+      veSelect.value = currentVe;
+    }
+
+    page.style.display = 'block';
+    page.scrollTop = 0;
+  }
+
 
   _setupListeners() {
     const root = this.shadowRoot;
     const list = root.getElementById('entityList');
-    // ── Accordion expand/collapse ─────────────────────────────────────────────
+    // ── Open per-speaker settings page ────────────────────────────────────────
     list.addEventListener('click', (e) => {
-      const btn = e.target.closest('.entity-expand-btn');
+      const btn = e.target.closest('.entity-settings-btn');
       if (!btn) return;
-      const item = btn.closest('.check-item');
-      const panel = item?.querySelector('.check-item-controls');
-      const chevron = btn.querySelector('.entity-expand-chevron');
-      if (!panel) return;
-      const open = panel.style.display === 'block';
-      panel.style.display = open ? 'none' : 'block';
-      if (chevron) chevron.style.transform = open ? '' : 'rotate(90deg)';
+      this._openEntitySettingsPage(btn.dataset.ent);
     });
 
     // ── Entity enable toggle ──────────────────────────────────────────────────
@@ -30491,127 +30545,88 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
           if (lastChecked) lastChecked.after(item);
           else list.prepend(item);
 
-          // Inject expand button + controls if not already present
-          if (!item.querySelector('.entity-expand-btn')) {
+          // Wrap the name in the clickable settings trigger if not already present
+          if (!item.querySelector('.entity-settings-btn')) {
             const ent = item.dataset.id;
             const nameEl = item.querySelector('.entity-name');
-            const mainToggle = item.querySelector('label.toggle-switch');
-
-            // Expand button
-            const expandBtn = document.createElement('button');
-            expandBtn.className = 'entity-expand-btn';
-            expandBtn.dataset.ent = ent;
-            expandBtn.style.cssText = 'background:none;border:none;padding:4px 6px;cursor:pointer;color:#888;font-size:11px;display:flex;align-items:center;gap:3px;flex-shrink:0;-webkit-tap-highlight-color:transparent;';
-            expandBtn.innerHTML = '<span class="entity-expand-label">Settings</span><svg class="entity-expand-chevron" viewBox="0 0 24 24" style="width:14px;height:14px;fill:#888;transition:transform 0.2s;flex-shrink:0;"><path d="M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z"/></svg>';
-            item.insertBefore(expandBtn, mainToggle);
-
-            // Controls panel
-            const panel = document.createElement('div');
-            panel.className = 'check-item-controls';
-            panel.style.display = 'none';
-            panel.innerHTML = `<div style="padding:12px 12px 12px 38px;display:flex;flex-direction:column;gap:12px;border-top:1px solid var(--divider-color,rgba(128,128,128,0.2));">
-              <div style="display:flex;align-items:center;justify-content:space-between;">
-                <div>
-                  <div style="font-size:13px;font-weight:500;margin-bottom:2px;">Startup Volume</div>
-                  <div style="font-size:11px;color:#888;">Set volume when this speaker is selected</div>
-                </div>
-                <div style="display:flex;align-items:center;gap:8px;">
-                  <label class="toggle-switch" style="width:36px;height:22px;flex-shrink:0;">
-                    <input type="checkbox" class="entity-vol-toggle" data-ent="${ent}">
-                    <span class="toggle-track" style="border-radius:22px;"></span>
-                  </label>
-                  <input type="number" class="entity-vol-input" data-ent="${ent}" min="0" max="100" step="1" placeholder="35"
-                    style="display:none;width:48px;background:var(--card-background-color);border:1px solid var(--divider-color,rgba(128,128,128,0.2));border-radius:6px;padding:4px 6px;color:var(--primary-text-color,#111);font-size:13px;font-family:inherit;text-align:center;outline:none;">
-                  <span class="entity-vol-pct" style="display:none;font-size:12px;color:#888;">%</span>
-                </div>
-              </div>
-              <div style="display:flex;align-items:center;justify-content:space-between;">
-                <div>
-                  <div style="font-size:13px;font-weight:500;margin-bottom:2px;">Music Assistant Speaker</div>
-                  <div style="font-size:11px;color:#888;">Enables MA features for this speaker</div>
-                </div>
-                <label class="toggle-switch" style="width:36px;height:22px;flex-shrink:0;">
-                  <input type="checkbox" class="entity-ma-toggle" data-ent="${ent}">
-                  <span class="toggle-track" style="border-radius:22px;"></span>
-                </label>
-              </div>
-            </div>`;
-            item.appendChild(panel);
+            if (nameEl) {
+              const wrap = document.createElement('div');
+              wrap.className = 'entity-settings-btn';
+              wrap.dataset.ent = ent;
+              wrap.style.cssText = 'display:flex;align-items:center;flex:1;min-width:0;margin-left:10px;cursor:pointer;-webkit-tap-highlight-color:transparent;padding:6px 0;';
+              nameEl.style.marginLeft = '0';
+              nameEl.parentNode.insertBefore(wrap, nameEl);
+              wrap.appendChild(nameEl);
+              const chevron = document.createElement('span');
+              chevron.innerHTML = '<svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:#888;flex-shrink:0;margin-left:6px;"><path d="M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z"/></svg>';
+              wrap.appendChild(chevron.firstElementChild);
+            }
           }
         }
 
         this._saveOrder();
       };
     });
-
-    // Helper: update the expand button summary label after settings change
-    const _updateExpandLabel = (ent) => {
-      const item = list.querySelector(`.check-item[data-id="${ent}"]`);
-      const btn  = item?.querySelector('.entity-expand-btn .entity-expand-label');
-      if (!btn) return;
-      const isMaEnt2 = Array.isArray(this._config.ma_entities) && this._config.ma_entities.includes(ent);
-      const hasVol2  = (this._config.entity_startup_volumes || {})[ent] != null;
-      const volVal2  = hasVol2 ? (this._config.entity_startup_volumes || {})[ent] : '';
-      btn.textContent = isMaEnt2 || hasVol2
-        ? `${isMaEnt2 ? 'MA · ' : ''}${hasVol2 ? volVal2 + '% vol' : ''}`.trim().replace(/· $/, '')
-        : 'Settings';
-    };
-
-    // Per-entity MA speaker and startup volume toggles
-    list.addEventListener('change', (e) => {
-      const maToggle = e.target.closest('.entity-ma-toggle');
-      if (maToggle) {
-        const ent = maToggle.dataset.ent;
-        const current = Array.isArray(this._config.ma_entities) ? [...this._config.ma_entities] : [];
-        if (maToggle.checked) {
-          if (!current.includes(ent)) current.push(ent);
-        } else {
-          const idx = current.indexOf(ent);
-          if (idx !== -1) current.splice(idx, 1);
-        }
-        this._updateConfig('ma_entities', current);
-        _updateExpandLabel(ent);
-        return;
+    // ── Per-speaker settings page ─────────────────────────────────────────────
+    root.getElementById('entitySettingsBack')?.addEventListener('click', () => {
+      const page = root.getElementById('entitySettingsPage');
+      if (page) page.style.display = 'none';
+    });
+    root.getElementById('entitySettingsVolToggle')?.addEventListener('change', (e) => {
+      const page = root.getElementById('entitySettingsPage');
+      const ent = page?.dataset.ent;
+      if (!ent) return;
+      const numInput = root.getElementById('entitySettingsVolInput');
+      const overrides = { ...(this._config.entity_startup_volumes || {}) };
+      if (e.target.checked) {
+        const n = Math.min(100, Math.max(0, parseInt(numInput?.value) || 35));
+        if (numInput) numInput.value = n;
+        overrides[ent] = n;
+      } else {
+        delete overrides[ent];
       }
-      const toggle = e.target.closest('.entity-vol-toggle');
-      if (toggle) {
-        const ent = toggle.dataset.ent;
-        const row = toggle.closest('.entity-ctrl-group') || toggle.closest('div[style]');
-        const numInput = list.querySelector(`.entity-vol-input[data-ent="${ent}"]`);
-        const pctLabel = numInput?.nextElementSibling;
-        const overrides = { ...(this._config.entity_startup_volumes || {}) };
-        if (toggle.checked) {
-          if (numInput) { numInput.style.display = 'block'; }
-          if (pctLabel) { pctLabel.style.display = 'inline'; }
-          const n = Math.min(100, Math.max(0, parseInt(numInput?.value) || 35));
-          if (numInput) numInput.value = n;
-          overrides[ent] = n;
-        } else {
-          if (numInput) { numInput.style.display = 'none'; numInput.value = ''; }
-          if (pctLabel) { pctLabel.style.display = 'none'; }
-          delete overrides[ent];
-        }
-        this._updateConfig('entity_startup_volumes', overrides);
-        _updateExpandLabel(ent);
-        return;
-      }
-
-      // Per-entity startup volume number input
-      const input = e.target.closest('.entity-vol-input');
-      if (!input) return;
-      const ent = input.dataset.ent;
-      const val = input.value.trim();
+      this._updateConfig('entity_startup_volumes', overrides);
+    });
+    root.getElementById('entitySettingsVolInput')?.addEventListener('change', (e) => {
+      const page = root.getElementById('entitySettingsPage');
+      const ent = page?.dataset.ent;
+      if (!ent) return;
+      const val = e.target.value.trim();
       const overrides = { ...(this._config.entity_startup_volumes || {}) };
       if (val === '') {
         delete overrides[ent];
+        const toggle = root.getElementById('entitySettingsVolToggle');
+        if (toggle) toggle.checked = false;
       } else {
         const n = Math.min(100, Math.max(0, parseInt(val) || 0));
         overrides[ent] = n;
-        input.value = n;
+        e.target.value = n;
       }
       this._updateConfig('entity_startup_volumes', overrides);
-      _updateExpandLabel(ent);
     });
+    root.getElementById('entitySettingsVolEntity')?.addEventListener('change', (e) => {
+      const page = root.getElementById('entitySettingsPage');
+      const ent = page?.dataset.ent;
+      if (!ent) return;
+      const veMap = (this._config.volume_entity && typeof this._config.volume_entity === 'object') ? { ...this._config.volume_entity } : {};
+      if (e.target.value) veMap[ent] = e.target.value;
+      else delete veMap[ent];
+      this._updateConfig('volume_entity', veMap);
+    });
+    root.getElementById('entitySettingsMaToggle')?.addEventListener('change', (e) => {
+      const page = root.getElementById('entitySettingsPage');
+      const ent = page?.dataset.ent;
+      if (!ent) return;
+      const current = Array.isArray(this._config.ma_entities) ? [...this._config.ma_entities] : [];
+      if (e.target.checked) {
+        if (!current.includes(ent)) current.push(ent);
+      } else {
+        const idx = current.indexOf(ent);
+        if (idx !== -1) current.splice(idx, 1);
+      }
+      this._updateConfig('ma_entities', current);
+    });
+
     root.getElementById('auto_switch').onchange = (e) => {
       this._updateConfig('auto_switch', e.target.checked);
       const row = root.getElementById('remember_last_entity_row');
@@ -31528,8 +31543,6 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       const seg = root.getElementById('startup-mode-segmented');
       if (seg) seg.style.opacity = e.target.checked ? '0.4' : '1';
     };
-    const volEntityEl = root.getElementById('volume_entity');
-    if (volEntityEl) volEntityEl.onchange = (e) => this._updateConfig('volume_entity', e.target.value);
     const startupVolInput = root.getElementById('startup_volume');
     if (startupVolInput) {
       startupVolInput.oninput = (e) => {
