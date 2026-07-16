@@ -27,7 +27,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   }
 
   static getStubConfig() {
-    return { entities: [], auto_switch: true, accent_color: '#007AFF', volume_accent: '#007AFF', title_color: '#ffffff', artist_color: '#ffffff', button_color: '#ffffff', player_bg: '#1c1c1e', player_bg_opacity: 100, show_entity_selector: true, volume_control: 'slider', startup_mode: 'compact', remember_view: false, volume_entity: {}, ma_entities: [], show_vol_pct: true, vol_pct_color: 'rgba(255,255,255,0.45)', scroll_text: false, remember_last_entity: false, entity_startup_volumes: {}, lyrics_bg: '#0a0a0c', lyrics_text_color: '#ffffff', lyrics_scroll_mode: 'highlight', lyrics_persist: false, lyrics_cache_ttl: 7, lyrics_cache_enabled: true, lyrics_persistent_storage: false, pins_persistent_storage: false, show_pins_in_sections: true, ai_info_persistent_storage: false, itunes_persistent_storage: false, wiki_persistent_storage: false, ma_library_cache_enabled: true, ma_library_cache_ttl: 1, ma_radio_mode: false, show_ma_library_button: true, use_ha_theme: false, remote_buttons_position: 'bottom', ambient_glow: false, announce_tts_service: '', row_glow: false, show_remote_button: true, ma_ios_library: true, artwork_crossfade: false, icon_theme: 'robot', resize_btn_spin: true, remote_art_blur: true, volume_hud: true, itunes_art: true, controls_theme: 'classic', add_pill_color: '', card_liquid_glass: true, volume_hud_glass: false, ai_conversation_agent: '', share_service: 'youtube_music', song_intro_enabled: false, show_media_type_pill: false };
+    return { entities: [], auto_switch: true, accent_color: '#007AFF', volume_accent: '#007AFF', title_color: '#ffffff', artist_color: '#ffffff', button_color: '#ffffff', player_bg: '#1c1c1e', player_bg_opacity: 100, show_entity_selector: true, volume_control: 'slider', startup_mode: 'compact', remember_view: false, volume_entity: {}, ma_entities: [], show_vol_pct: true, vol_pct_color: 'rgba(255,255,255,0.45)', scroll_text: false, remember_last_entity: false, entity_startup_volumes: {}, lyrics_bg: '#0a0a0c', lyrics_text_color: '#ffffff', lyrics_scroll_mode: 'highlight', lyrics_persist: false, lyrics_cache_ttl: 7, lyrics_cache_enabled: true, lyrics_persistent_storage: false, pins_persistent_storage: false, show_pins_in_sections: true, ai_info_persistent_storage: false, itunes_persistent_storage: false, wiki_persistent_storage: false, ma_library_cache_enabled: true, ma_library_cache_ttl: 1, ma_radio_mode: false, show_ma_library_button: true, use_ha_theme: false, remote_buttons_position: 'bottom', ambient_glow: false, announce_tts_service: '', row_glow: false, show_remote_button: true, artwork_crossfade: false, icon_theme: 'robot', resize_btn_spin: true, remote_art_blur: true, volume_hud: true, itunes_art: true, controls_theme: 'classic', add_pill_color: '', card_liquid_glass: true, volume_hud_glass: false, ai_conversation_agent: '', share_service: 'youtube_music', song_intro_enabled: false, show_media_type_pill: false };
   }
 
   setConfig(config) {
@@ -71,7 +71,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       announce_tts_service: '',
       row_glow: false,
       show_remote_button: true,
-      ma_ios_library: true,
       artwork_crossfade: false,
       icon_theme: 'robot',
       resize_btn_spin: true,
@@ -1880,6 +1879,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         .size-toggle-abs.spin-loop svg { animation: ma-spin 0.7s linear infinite; }
 
         .art-wrapper { width: 100%; aspect-ratio: 1; background: linear-gradient(135deg, rgba(40,40,45,0.8), rgba(28,28,30,0.9)); display: flex; align-items: center; justify-content: center; overflow: hidden; cursor: pointer; position: relative; -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; touch-action: pan-y; }
+        .pin-heart { will-change: transform, opacity; }
+        @keyframes pin-heart-float {
+          0%   { opacity: 0; transform: translate(-50%,-50%) rotate(var(--heart-rotate)) scale(0.5); }
+          15%  { opacity: 1; transform: translate(-50%,-50%) rotate(var(--heart-rotate)) scale(1.15); }
+          35%  { opacity: 1; transform: translate(calc(-50% + var(--heart-drift-x) * 0.35), calc(-50% - var(--heart-rise) * 0.35)) rotate(var(--heart-rotate)) scale(1); }
+          100% { opacity: 0; transform: translate(calc(-50% + var(--heart-drift-x)), calc(-50% - var(--heart-rise))) rotate(var(--heart-rotate)) scale(0.85); }
+        }
         .art-wrapper img { width: 100%; height: 100%; object-fit: cover; -webkit-touch-callout: none; pointer-events: none; }
 
 
@@ -2220,30 +2226,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
         }
         .ma-search-btn:active { background: #0062cc; transform: scale(0.96); }
-
-        .ma-tabs {
-          display: flex; overflow-x: auto; flex-shrink: 0;
-          padding: 8px 10px 6px; scrollbar-width: none; gap: 6px;
-        }
-        .ma-tabs::-webkit-scrollbar { display: none; }
-        .ma-tab {
-          display: inline-flex; align-items: center;
-          padding: 5px 12px; font-size: 12px; font-weight: 600;
-          color: var(--crow-panel-text-dim, rgba(255,255,255,0.45)); white-space: nowrap; cursor: pointer;
-          border-radius: 20px; flex-shrink: 0;
-          background: rgba(0,0,0,0.45);
-          border: 1px solid var(--crow-panel-row-border,rgba(255,255,255,0.16));
-          backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
-          transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
-          -webkit-tap-highlight-color: transparent;
-          user-select: none;
-        }
-        .ma-tab.active {
-          color: var(--accent, #007AFF);
-          background: rgba(0,0,0,0.55);
-          border-color: var(--accent, #007AFF);
-        }
-        .ma-tab:active { opacity: 0.75; }
 
         .ma-content { flex: 1; overflow-y: auto; padding: 10px 6px; }
         /* iOS Library view */
@@ -3789,6 +3771,14 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             </div>
           </div>
 
+          <!-- Pinned indicator (bottom-left of artwork) — passive, shows whenever the
+               currently playing track/movie/show is pinned. Purely informational,
+               no click handler, so it can't be confused with the double-tap-to-pin
+               gesture living on the same artwork. -->
+          <div id="pinnedIndicatorBadge" style="display:none;position:absolute;bottom:10px;left:10px;z-index:14;width:28px;height:28px;border-radius:50%;background:rgba(0,0,0,0.58);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.18);align-items:center;justify-content:center;pointer-events:none;" title="Pinned">
+            <svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:#FFD60A;"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg>
+          </div>
+
           <!-- Radio mode indicator (top-left of artwork) — shown when MA radio mode is active -->
           <div id="radioModeIndicator" style="display:none;position:absolute;top:10px;left:10px;z-index:20;width:28px;height:28px;border-radius:50%;background:rgba(0,0,0,0.55);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);border:1px solid rgba(255,255,255,0.25);align-items:center;justify-content:center;" title="Radio Mode On">
             <svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:${this._pt("text")};display:block;"><path d="M19,6.41L4.86,2.28L4.29,4.2L7,5V7H5A2,2 0 0,0 3,9V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V9A2,2 0 0,0 19,7H9V5.75L19,8.55V6.41M7,9A2,2 0 0,1 9,11A2,2 0 0,1 7,13A2,2 0 0,1 5,11A2,2 0 0,1 7,9M17,18H7V16H17V18M19,14H11V10H19V14Z"/></svg>
@@ -3914,9 +3904,14 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           <div class="ma-header">
             <button class="ma-back-btn hidden" id="maBackBtn"><svg viewBox="0 0 24 24"><path d="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z"/></svg></button>
             <span class="ma-title" id="maTitle">Music Library</span>
-            <button class="ma-close" id="maClose">
-              <svg viewBox="0 0 24 24"><path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/></svg>
-            </button>
+            <div class="ma-header-actions" style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+              <button class="ma-close hidden" id="recentPlaysMenuBtn" title="Options">
+                <svg viewBox="0 0 24 24"><path d="M12,16A2,2 0 0,1 14,18A2,2 0 0,1 12,20A2,2 0 0,1 10,18A2,2 0 0,1 12,16M12,10A2,2 0 0,1 14,12A2,2 0 0,1 12,14A2,2 0 0,1 10,12A2,2 0 0,1 12,10M12,4A2,2 0 0,1 14,6A2,2 0 0,1 12,8A2,2 0 0,1 10,6A2,2 0 0,1 12,4Z"/></svg>
+              </button>
+              <button class="ma-close" id="maClose">
+                <svg viewBox="0 0 24 24"><path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/></svg>
+              </button>
+            </div>
           </div>
           <!-- MA Search -->
           <div class="ma-search-row">
@@ -3927,19 +3922,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
               </button>
             </div>
             <button class="ma-search-btn" id="maSearchBtn">Search</button>
-          </div>
-          <div class="ma-tabs" id="maTabs">
-            <button class="ma-tab active" data-tab="recently_played">Recently Played</button>
-            <button class="ma-tab" data-tab="recommended">Recommended</button>
-            <button class="ma-tab" data-tab="favourites">Favourites</button>
-            <button class="ma-tab" data-tab="playlist">Playlists</button>
-            <button class="ma-tab" data-tab="artist">Artists</button>
-            <button class="ma-tab" data-tab="album">Albums</button>
-            <button class="ma-tab" data-tab="track">Songs</button>
-            <button class="ma-tab" data-tab="radio">Radio</button>
-            <button class="ma-tab" data-tab="podcast">Podcasts</button>
-            <button class="ma-tab" data-tab="audiobook">Audiobooks</button>
-            <button class="ma-tab" data-tab="audiobook">Audiobooks</button>
           </div>
           <!-- Persistent iOS library search bar — shown above maContent in iOS view mode -->
           <div class="ma-ios-search-bar hidden" id="maIosSearchBar" style="padding:8px 10px 6px;flex-shrink:0;display:flex;align-items:center;gap:6px;">
@@ -4162,12 +4144,24 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
       const rect = artEl.getBoundingClientRect();
       const relX = e.clientX - rect.left;
-      const isLeft  = relX < rect.width  * 0.35;
-      const isRight = relX > rect.width  * 0.65;
+      const isLeft   = relX < rect.width  * 0.35;
+      const isRight  = relX > rect.width  * 0.65;
+      const isCenter = !isLeft && !isRight;
       const now  = Date.now();
       const dt   = now - (this._artLastTap || 0);
       const isDoubleTap = dt < 300 && dt > 30;
       this._artLastTap = now;
+
+      if (isCenter && isDoubleTap) {
+        // Cancel any pending single-tap action — same reasoning as the edge
+        // double-tap below: the first tap of the pair already queued the
+        // 300ms single-tap timer, and this second tap arriving is what
+        // reveals it was actually a double-tap, so that queued action needs
+        // cancelling before it fires.
+        if (this._artTapTimer) { clearTimeout(this._artTapTimer); this._artTapTimer = null; }
+        this._handleArtworkDoubleTapPin(e.clientX - rect.left, e.clientY - rect.top);
+        return;
+      }
 
       if ((isLeft || isRight) && isDoubleTap) {
         // Cancel any pending single-tap action
@@ -4747,10 +4741,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             else if (item.id === 'qm_pin') {
               if (item._qmPinInfo) {
                 const nowPinned = this._toggleCurrentMediaPin(item._qmPinInfo);
-                if (nowPinned !== null && nowPinned !== undefined) this._showToast(nowPinned ? '📍 ' + item._qmPinInfo.label[0] + ' pinned' : item._qmPinInfo.label[0] + ' unpinned');
+                if (nowPinned !== null && nowPinned !== undefined) { this._showToast(nowPinned ? '📍 ' + item._qmPinInfo.label[0] + ' pinned' : item._qmPinInfo.label[0] + ' unpinned'); this._updatePinnedIndicator(); }
               } else if (item._qmPinItem) {
                 const nowPinned = this._maLibToggleStar(item._qmPinItem, 'track');
-                if (nowPinned !== null) { this._showToast(nowPinned ? '📍 Song pinned' : 'Song unpinned'); this._maLibRefreshPinnedUI('track'); }
+                if (nowPinned !== null) { this._showToast(nowPinned ? '📍 Song pinned' : 'Song unpinned'); this._maLibRefreshPinnedUI('track'); this._updatePinnedIndicator(); }
               }
             }
             else if (item.id === 'qm_info')     { expand().then(() => this._openInfoPopup()); }
@@ -5840,10 +5834,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           const _pItem = items.find(i => i.id === 'qmPinTrack');
           if (_pItem?._qdPinInfo) {
             const nowPinned = this._toggleCurrentMediaPin(_pItem._qdPinInfo);
-            if (nowPinned !== null && nowPinned !== undefined) this._showToast(nowPinned ? '📍 ' + _pItem._qdPinInfo.label[0] + ' pinned' : _pItem._qdPinInfo.label[0] + ' unpinned');
+            if (nowPinned !== null && nowPinned !== undefined) { this._showToast(nowPinned ? '📍 ' + _pItem._qdPinInfo.label[0] + ' pinned' : _pItem._qdPinInfo.label[0] + ' unpinned'); this._updatePinnedIndicator(); }
           } else if (_pItem?._qdPinItem) {
             const nowPinned = this._maLibToggleStar(_pItem._qdPinItem, 'track');
-            if (nowPinned !== null) { this._showToast(nowPinned ? '📍 Song pinned' : 'Song unpinned'); this._maLibRefreshPinnedUI('track'); }
+            if (nowPinned !== null) { this._showToast(nowPinned ? '📍 Song pinned' : 'Song unpinned'); this._maLibRefreshPinnedUI('track'); this._updatePinnedIndicator(); }
           }
         });
 
@@ -6074,6 +6068,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   updateContent(state) {
     const r = this.shadowRoot;
     if (!state || !r) return;
+    this._updatePinnedIndicator();
     // Cheap fingerprint guard — skip the expensive style/DOM update pass if nothing
     // meaningful changed. Volume, position, and shuffle are updated separately.
     if (document.hidden) {
@@ -6365,7 +6360,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // choreography needed.
     let rbFaviconArt = null;
     if (!artUrl && this._isLiveStream(state)) {
-      const _lastPlayedSt = this._rbGetLastPlayed(this._entity, state.attributes.media_content_id || '');
+      const _lastPlayedSt = this._rbGetLastPlayed(this._entity, this._rbStreamKey(state.attributes));
       if (_lastPlayedSt?.favicon) {
         rbFaviconArt = _lastPlayedSt.favicon;
       } else {
@@ -8236,10 +8231,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       this._maInSearchResults = false;
       this._maSavedSearch = null; // user explicitly cleared — don't restore on next open
       this._maCurrentTab = 'recently_played';
-      r.querySelectorAll('.ma-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'recently_played'));
       this._syncMAViewToggle();
-      if (!this._maIosViewActive()) this._loadMATab('recently_played');
-      else this._renderMAIosView();
+      this._renderMAIosView();
     }
   }
 
@@ -8328,18 +8321,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
   // ── iOS-style Library View ──────────────────────────────────────────────
 
-  _maIosViewActive() {
-    return true; // Modern library view is always active — classic view removed
-  }
-
-  _maIosViewSet(on) {
-    this._config = { ...this._config, ma_ios_library: on };
-    this.dispatchEvent(new CustomEvent('config-changed', { detail: { config: { ...this._config } }, bubbles: true, composed: true }));
-  }
-
   _syncMAViewToggle() {
     const r = this.shadowRoot;
-    const ios = this._maIosViewActive();
     const iosView    = r.getElementById('maIosView');
     const maContent  = r.getElementById('maContent');
     const maTabs     = r.getElementById('maTabs');
@@ -8347,26 +8330,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const iosSearchBar = r.getElementById('maIosSearchBar');
     if (!iosView) return;
 
-    if (ios) {
-      iosView.classList.remove('hidden');
-      maContent.style.display = 'none';
-      if (maTabs)       maTabs.style.display       = 'none';
-      if (searchRow)    searchRow.style.display    = 'none';
-      if (iosSearchBar) iosSearchBar.classList.add('hidden'); // hidden on category list
-      this._renderMAIosView();
-    } else {
-      iosView.classList.add('hidden');
-      maContent.style.display = '';
-      if (maTabs)       maTabs.style.display       = '';
-      if (searchRow)    searchRow.style.display    = '';
-      if (iosSearchBar) iosSearchBar.classList.add('hidden');
-      // Clear iOS search state when switching away
-      const iosInput = r.getElementById('maIosSearchInput');
-      const iosClear = r.getElementById('maIosSearchClear');
-      if (iosInput) iosInput.value = '';
-      if (iosClear) iosClear.style.display = 'none';
-      this._loadMATab(this._maCurrentTab || 'recently_played');
-    }
+    iosView.classList.remove('hidden');
+    maContent.style.display = 'none';
+    if (maTabs)       maTabs.style.display       = 'none';
+    if (searchRow)    searchRow.style.display    = 'none';
+    if (iosSearchBar) iosSearchBar.classList.add('hidden'); // hidden on category list
+    this._renderMAIosView();
   }
 
   // Recent Searches — a flat, capped-at-50, most-recent-first log of actual
@@ -8478,6 +8447,153 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     });
   }
 
+  // Reads straight from the same listening-history log that powers Recently
+  // Listened To (_getListenLogEntries) — no new logging, just a different
+  // presentation of the same data: a plain chronological list instead of
+  // weekly aggregated stats. Shows the last 10 by default; the 3-dot menu
+  // expands this same view to the last 50 instead of opening anything new.
+  _renderRecentPlaysTab(content) {
+    if (!content) return;
+    const esc = s => (s || '').toString().replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const _limit = this._recentPlaysExpanded ? 50 : 10;
+    const entries = this._getListenLogEntries()
+      .filter(e => e.title && e.artist)
+      .sort((a, b) => (b.ts || 0) - (a.ts || 0))
+      .slice(0, _limit);
+
+    const _relTime = ts => {
+      const diffSec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+      if (diffSec < 60) return 'Just now';
+      const diffMin = Math.floor(diffSec / 60);
+      if (diffMin < 60) return diffMin + 'm ago';
+      const diffHr = Math.floor(diffMin / 60);
+      if (diffHr < 24) return diffHr + 'h ago';
+      const diffDay = Math.floor(diffHr / 24);
+      if (diffDay < 7) return diffDay + 'd ago';
+      return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    };
+
+    content.innerHTML = `<div id="recentPlaysList"></div>`;
+
+    const list = content.querySelector('#recentPlaysList');
+    if (!entries.length) {
+      list.innerHTML = this._psEmpty(
+        'M12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12.5,7V12.25L17,14.92L16.25,16.15L11,13V7H12.5Z',
+        'No recent plays yet',
+        'Songs you play will show up here.'
+      );
+    } else {
+      const _fallbackNoteIcon = '<svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:rgba(255,255,255,0.35)"><path d="M12,3V13.55C11.41,13.21 10.73,13 10,13A4,4 0 0,0 6,17A4,4 0 0,0 10,21A4,4 0 0,0 14,17V7H18V3H12Z"/></svg>';
+      entries.forEach(e => {
+        const wrap = document.createElement('div');
+        wrap.className = 'ma-item-wrap';
+        const el = document.createElement('div');
+        el.className = 'ma-item';
+
+        // Same iTunes lookup/fetch pattern already used by Recently Listened
+        // To's own track rows — history entries never store an artwork URL,
+        // just title/artist/album, so this is the same situation. Checks
+        // the shared cache first (instant if any other view already fetched
+        // this same track), and if not cached, kicks off a fetch; a global
+        // mechanism keyed by data-itunes-key patches this exact element
+        // once that resolves, so no extra re-render wiring is needed here.
+        const itunesKey = (e.artist || e.album || e.title)
+          ? [e.artist, e.album || e.title].filter(Boolean).join('|').toLowerCase()
+          : '';
+        const cachedArt = itunesKey ? (this._itunesArtCache?.[itunesKey] || '') : '';
+        const keyAttr = itunesKey ? ' data-itunes-key="' + itunesKey.replace(/"/g, '&quot;') + '"' : '';
+        const artInner = cachedArt
+          ? _fallbackNoteIcon + '<img src="' + cachedArt + '" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;" onerror="this.remove()">'
+          : _fallbackNoteIcon;
+
+        el.innerHTML =
+          `<div class="ma-item-art"${keyAttr} style="position:relative;background:${this._pt("bg")};display:flex;align-items:center;justify-content:center;">
+            ${artInner}
+          </div>
+          <div class="ma-item-info"><div class="ma-item-title">${esc(e.title)}</div>
+            <div class="ma-item-sub">${esc(e.artist)} · ${_relTime(e.ts)}</div>
+          </div>`;
+        if (!cachedArt && itunesKey) this._fetchItunesArt(e.artist, e.album, e.title);
+        wrap.appendChild(el);
+        if (this._config?.row_glow === true && cachedArt) this._observeRowGlow(cachedArt, wrap, null);
+
+        // Fuzzy identity — history entries only ever store title/artist/album,
+        // never a real media URI, same situation as AI-suggested tracks
+        // elsewhere in the card. Same title-artist:// fallback used by
+        // double-tap-to-pin and the AI Info panel's own pin button, so
+        // pinning here and pinning there always agree on identity.
+        const item = {
+          uri: 'title-artist://' + e.title.toLowerCase().trim() + '|' + e.artist.toLowerCase().trim(),
+          name: e.title, title: e.title, artist: e.artist,
+          artists: [{ name: e.artist }],
+          album: e.album || '', media_type: 'track',
+        };
+
+        wrap.addEventListener('click', () => {
+          this._showAITrackInfo(e.title, e.artist, {});
+        });
+
+        let _lpTimer = null, _lpFired = false;
+        wrap.addEventListener('pointerdown', () => {
+          _lpFired = false;
+          _lpTimer = setTimeout(() => {
+            _lpFired = true;
+            this._showEnqueueMenu(item, 'track', wrap);
+          }, 480);
+        }, { passive: true });
+        wrap.addEventListener('pointerup',     () => clearTimeout(_lpTimer), { passive: true });
+        wrap.addEventListener('pointercancel', () => { clearTimeout(_lpTimer); _lpFired = false; }, { passive: true });
+        wrap.addEventListener('pointermove',   () => clearTimeout(_lpTimer), { passive: true });
+        wrap.addEventListener('click', (e) => { if (_lpFired) { e.stopPropagation(); e.preventDefault(); } }, true);
+
+        list.appendChild(wrap);
+      });
+    }
+  }
+
+  // Small dropdown for the 3-dot button — same visual pattern as the Queue
+  // panel's own 3-dot menu. Just one toggle: expand this same view to the
+  // last 50 plays instead of 10, or collapse back.
+  _showRecentPlaysMenu(anchorEl) {
+    const r = this.shadowRoot;
+    r.getElementById('rpMenuBackdrop')?.remove();
+    r.getElementById('rpMenu')?.remove();
+
+    const backdrop = document.createElement('div');
+    backdrop.id = 'rpMenuBackdrop';
+    backdrop.className = 'queue-dropdown-backdrop';
+    const _openedAt = Date.now();
+    backdrop.addEventListener('pointerdown', () => { if (Date.now() - _openedAt > 200) closeMenu(); });
+
+    const menu = document.createElement('div');
+    menu.id = 'rpMenu';
+    menu.className = 'queue-dropdown-menu';
+    const _expanded = !!this._recentPlaysExpanded;
+    menu.innerHTML =
+      `<div class="queue-dropdown-item" id="rpToggleLimit" role="button">
+        <svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12.5,7V12.25L17,14.92L16.25,16.15L11,13V7H12.5Z"/></svg>
+        <span class="queue-dropdown-label">${_expanded ? 'Show last 10' : 'Show last 50'}</span>
+      </div>`;
+
+    const anchorRect = anchorEl.getBoundingClientRect();
+    const cardRect = r.host.getBoundingClientRect();
+    menu.style.position = 'absolute';
+    menu.style.top = (anchorRect.bottom - cardRect.top + 4) + 'px';
+    menu.style.right = Math.max(4, cardRect.right - anchorRect.right) + 'px';
+
+    const host = r.getElementById('maPopup') || r.host;
+    host.appendChild(backdrop);
+    host.appendChild(menu);
+
+    const closeMenu = () => { menu.remove(); backdrop.remove(); };
+    menu.querySelector('#rpToggleLimit')?.addEventListener('click', () => {
+      closeMenu();
+      this._recentPlaysExpanded = !_expanded;
+      const content = this.shadowRoot?.getElementById('maContent');
+      this._renderRecentPlaysTab(content);
+    });
+  }
+
   _renderMAIosView() {
     const r = this.shadowRoot;
     const el = r.getElementById('maIosView');
@@ -8499,6 +8615,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
     const CATS = [
       { tab: 'recent_searches', label: 'Recent Searches', color: '#8E8E93', path: 'M9.5,3A6.5,6.5 0 0,1 16,9.5C16,11.11 15.41,12.59 14.44,13.73L14.71,14H15.5L20.5,19L19,20.5L14,15.5V14.71L13.73,14.44C12.59,15.41 11.11,16 9.5,16A6.5,6.5 0 0,1 3,9.5A6.5,6.5 0 0,1 9.5,3M9.5,5C7,5 5,7 5,9.5C5,12 7,14 9.5,14C12,14 14,12 14,9.5C14,7 12,5 9.5,5Z' },
+      { tab: 'recent_plays', label: 'Recently Played', color: '#64D2FF', path: 'M12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12.5,7V12.25L17,14.92L16.25,16.15L11,13V7H12.5Z' },
       { tab: 'recently_added', label: 'Recently Added', color: '#00C7BE', path: 'M13,3A9,9 0 0,0 4,12H1L4.89,15.89L4.96,16.03L9,12H6A7,7 0 0,1 13,5A7,7 0 0,1 20,12A7,7 0 0,1 13,19C11.07,19 9.32,18.21 8.06,16.94L6.64,18.36C8.27,19.99 10.52,21 13,21A9,9 0 0,0 22,12A9,9 0 0,0 13,3M14,8H12V13L16.28,15.54L17,14.33L13.5,12.25V8H14Z' },
       { tab: 'pinned',         label: 'Pinned',         color: '#FFD60A', path: 'M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z' },
       { tab: 'favourites',  label: 'Favourites',    color: '#FF9500', path: 'M12,17.27L18.18,21L16.54,13.97L22,9.24L14.81,8.62L12,2L9.19,8.62L2,9.24L7.45,13.97L5.82,21L12,17.27Z' },
@@ -8626,6 +8743,18 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (titleEl)   titleEl.textContent = label || tab;
     if (backBtn)   backBtn.classList.remove('hidden');
 
+    // Recently Played's 3-dot menu lives in the shared header (next to the close
+    // button) rather than inline in the content, so it needs the same
+    // per-tab show/hide treatment as everything else here. onclick (not
+    // addEventListener) is deliberate — this runs on every navigation, and a
+    // plain property assignment overwrites cleanly instead of stacking up
+    // duplicate listeners each time this tab is re-entered.
+    const _rpMenuBtn = rr.getElementById('recentPlaysMenuBtn');
+    if (_rpMenuBtn) {
+      _rpMenuBtn.classList.toggle('hidden', tab !== 'recent_plays');
+      _rpMenuBtn.onclick = tab === 'recent_plays' ? () => this._showRecentPlaysMenu(_rpMenuBtn) : null;
+    }
+
     this._maCurrentTab = tab;
     rr.querySelectorAll('.ma-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
     this._loadMATab(tab);
@@ -8656,8 +8785,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const searchRow = this.shadowRoot?.querySelector('.ma-search-row');
     if (backBtn) backBtn.classList.add('hidden');
     if (titleEl) titleEl.textContent = 'Library';
-    // In iOS view mode keep tabs and search hidden; _syncMAViewToggle manages them
-    const _iosMode = this._config?.ma_ios_library === true;
+    // iOS view mode is the only mode — tabs and the classic search row stay
+    // permanently hidden; _syncMAViewToggle manages the rest.
+    const _iosMode = true;
     if (tabsEl)    tabsEl.style.display    = _iosMode ? 'none' : '';
     if (searchRow) searchRow.style.display = _iosMode ? 'none' : '';
   }
@@ -8715,37 +8845,32 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     this._maSavedSearch = null; // back = starting fresh, don't restore on next open
     // When returning to root level
     if (!this._maBrowserNavStack.length) {
-      const _iosMode = this._config?.ma_ios_library === true;
-      if (_iosMode) {
-        // Return to iOS category list instead of showing tabs
-        if (backBtn) backBtn.classList.add('hidden');
-        const maContent = this.shadowRoot?.getElementById('maContent');
-        const iosView   = this.shadowRoot?.getElementById('maIosView');
-        if (maContent) maContent.style.display = 'none';
-        if (tabsEl)    tabsEl.style.display    = 'none';
-        if (searchRow) searchRow.style.display = 'none';
-        if (iosView)   iosView.classList.remove('hidden');
-        this.shadowRoot?.getElementById('maIosSearchBar')?.classList.add('hidden');
-        // Clear iOS search bar when returning to category list
-        const _iosInput = this.shadowRoot?.getElementById('maIosSearchInput');
-        const _iosClear = this.shadowRoot?.getElementById('maIosSearchClear');
-        if (_iosInput) _iosInput.value = '';
-        if (_iosClear) _iosClear.style.display = 'none';
-        this._maInSearchResults = false;
-        this._maLastSearch = null;
-        const titleEl2 = this.shadowRoot?.getElementById('maTitle');
-        if (titleEl2) titleEl2.textContent = 'Library';
-        return;
-      }
-      if (backBtn)    backBtn.classList.add('hidden');
-      if (tabsEl)     tabsEl.style.display = '';
-      if (searchRow)  searchRow.style.display = '';
+      // Return to iOS category list instead of showing tabs
+      if (backBtn) backBtn.classList.add('hidden');
+      const maContent = this.shadowRoot?.getElementById('maContent');
+      const iosView   = this.shadowRoot?.getElementById('maIosView');
+      if (maContent) maContent.style.display = 'none';
+      if (tabsEl)    tabsEl.style.display    = 'none';
+      if (searchRow) searchRow.style.display = 'none';
+      if (iosView)   iosView.classList.remove('hidden');
+      this.shadowRoot?.getElementById('maIosSearchBar')?.classList.add('hidden');
+      // Clear iOS search bar when returning to category list
+      const _iosInput = this.shadowRoot?.getElementById('maIosSearchInput');
+      const _iosClear = this.shadowRoot?.getElementById('maIosSearchClear');
+      if (_iosInput) _iosInput.value = '';
+      if (_iosClear) _iosClear.style.display = 'none';
+      this._maInSearchResults = false;
+      this._maLastSearch = null;
+      const titleEl2 = this.shadowRoot?.getElementById('maTitle');
+      if (titleEl2) titleEl2.textContent = 'Library';
+      return;
     }
     // Re-render the previous tab fresh (not from a DOM clone) so event
     // listeners are live. _loadMATab sets _maCurrentTab and title internally.
     // If the sentinel is the ios_root, return to iOS list instead of loading a tab
     if (prev.tab === '__ios_root__') {
       if (backBtn) backBtn.classList.add('hidden');
+      this.shadowRoot?.getElementById('recentPlaysMenuBtn')?.classList.add('hidden');
       const maContent2 = this.shadowRoot?.getElementById('maContent');
       const iosView2   = this.shadowRoot?.getElementById('maIosView');
       if (maContent2) maContent2.style.display = 'none';
@@ -9200,6 +9325,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             if (label) label.textContent = _isPinned ? 'Unpin' : 'Pin';
             this._showToast(_isPinned ? '\ud83d\udccd Pinned' : 'Unpinned');
             this._maLibRefreshPinnedUI(_pinnableTab);
+            this._updatePinnedIndicator();
           } else {
             const enqueueMode = action === 'add' ? 'add' : 'next';
             const validMA = this._getValidMASpeakers(true);
@@ -10129,6 +10255,24 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // cached entry whose stored contentId doesn't match — i.e. the station has
   // since changed. Omit it (or pass '') to skip that check, e.g. when no
   // content_id is available to compare against.
+  // A more robust "what's actually playing right now" key than
+  // media_content_id alone — non-MA/native entities frequently don't
+  // populate media_content_id at all for an arbitrary AirPlay-relayed
+  // stream, which made every _rbGetLastPlayed call effectively skip
+  // verification (an empty contentId was treated as "nothing to verify
+  // against, trust the cache"), so a switched station on such an entity
+  // never got detected — the cache just kept returning whichever station
+  // was resolved first. Falling back to media_album_name/media_title gives
+  // something to compare against even when content_id is empty. This can
+  // occasionally cause an unnecessary re-resolution — e.g. if a station
+  // overwrites media_title with the currently playing song, the key changes
+  // with the song, not just the station — but that's a minor inefficiency,
+  // not a correctness problem, and far better than never detecting a
+  // genuine station switch at all.
+  _rbStreamKey(attrs) {
+    return (attrs?.media_content_id || attrs?.media_album_name || attrs?.media_title || '');
+  }
+
   _rbGetLastPlayed(entityId, contentId) {
     if (!entityId) return null;
     const _mem = this._lastPlayedRbMem?.[entityId];
@@ -10476,6 +10620,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     menu.querySelector('#mtPin')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
       const nowPinned = this._mtToggleStar(item);
       this._showToast(nowPinned ? 'Pinned' : 'Unpinned');
+      this._updatePinnedIndicator();
       if (this._maCurrentTab === 'movie_tv') this._loadMATab('movie_tv');
       if (this._pinnedDetailActive && this._pinnedDetailCategory === 'movies_tv') this._openPinnedCategoryDetail('movies_tv');
     });
@@ -12957,6 +13102,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           if (nowPinned === null) return;
           this._showToast(nowPinned ? '📍 Station pinned' : 'Station unpinned');
           this._rbRefreshPinnedUI();
+          this._updatePinnedIndicator();
         } else if (mode === 'share') {
           const parts = [st.name];
           if (st.homepage) parts.push(st.homepage);
@@ -13049,6 +13195,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         _updatePinBtn();
         this._showToast(nowPinned ? '📍 Station pinned' : 'Station unpinned');
         this._rbRefreshPinnedUI();
+        this._updatePinnedIndicator();
       };
     }
 
@@ -15115,6 +15262,28 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     return false;
   }
 
+  // A more robust radio check for contexts where misclassifying a station as
+  // a regular track actually matters (double-tap-to-pin, the pinned
+  // indicator badge) — _isLiveStream's duration-based fallback misfires for
+  // stations whose ICY metadata happens to include a duration for the
+  // currently playing song, which some stations do and some don't. Rather
+  // than trusting duration either way, this also checks whether a station
+  // can actually be resolved for the current content_id via the same
+  // lookups the LIVE pill and artwork favicon fallback already use —
+  // successfully resolving a station is a far stronger signal than duration
+  // being present or absent, since a real track would never resolve there.
+  _isActuallyRadioStream(state) {
+    if (this._isLiveStream(state)) return true;
+    const attrs = state?.attributes || {};
+    const streamKey = this._rbStreamKey(attrs);
+    if (!streamKey) return false;
+    if (this._rbGetLastPlayed(this._entity, streamKey)) return true;
+    const rawContentId = attrs.media_content_id || '';
+    const streamUrl = rawContentId.replace(/^builtin:\/\/radio\//i, '');
+    if (streamUrl && this._rbCachedStation(streamUrl)) return true;
+    return false;
+  }
+
   // Shows the Announce panel inside the queue panel content area.
   // Lets the user type a message and choose which HA speakers to announce on
   // using the configured TTS service.
@@ -16080,7 +16249,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         this._rbCacheStation(best);
       }
       if (!best) return;
-      this._rbSaveLastPlayed(entityId, best, attrs.media_content_id || '');
+      this._rbSaveLastPlayed(entityId, best, this._rbStreamKey(attrs));
 
       // Only refresh if this entity is still the one showing — avoid
       // clobbering a UI that's moved on to something else while this
@@ -16138,6 +16307,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         e.stopPropagation();
 
         const _attrs = this._hass?.states[this._entity]?.attributes || {};
+        const _streamKey = this._rbStreamKey(_attrs);
 
         // Strategy 0: the station we ourselves most recently asked this
         // specific entity to play, from this card's own UI (persisted, so it
@@ -16147,7 +16317,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         // cached it under — and for any station that overwrites media_title
         // with the currently playing song once tuned in (very common), which
         // otherwise permanently hides the station's own name from HA's state.
-        const _lastPlayed = this._rbGetLastPlayed(this._entity, _attrs.media_content_id || '');
+        const _lastPlayed = this._rbGetLastPlayed(this._entity, _streamKey);
         if (_lastPlayed) { this._showRbMoreInfo(_lastPlayed); return; }
 
         // Strategy 1: check pinned stations by name — instant, no network
@@ -16164,7 +16334,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             // so this closes the gap for stations played outside this
             // card's own Play button (Siri, HomeKit, etc.) but identified
             // here via the LIVE pill.
-            this._rbSaveLastPlayed(this._entity, _cached, _rawId);
+            this._rbSaveLastPlayed(this._entity, _cached, _streamKey);
             this.updateContent(this._hass.states[this._entity]);
             this._showRbMoreInfo(_cached);
             return;
@@ -16190,7 +16360,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           const _pinned = this._rbGetStarred();
           const _pinnedMatch = _pinned.find(s => s.name?.toLowerCase() === _stationName.toLowerCase());
           if (_pinnedMatch) {
-            this._rbSaveLastPlayed(this._entity, _pinnedMatch, _rawId);
+            this._rbSaveLastPlayed(this._entity, _pinnedMatch, _streamKey);
             this.updateContent(this._hass.states[this._entity]);
             this._showRbMoreInfo(_pinnedMatch);
             return;
@@ -16213,7 +16383,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
                           || stations.find(s => _nl.startsWith(s.name.toLowerCase()))
                           || stations[0];
                 this._rbCacheStation(best); // cache for next time
-                this._rbSaveLastPlayed(this._entity, best, _rawId); // also key by entity — see note above
+                this._rbSaveLastPlayed(this._entity, best, _streamKey); // also key by entity — see note above
                 this.updateContent(this._hass.states[this._entity]);
                 this._showRbMoreInfo(best);
                 return;
@@ -18295,6 +18465,182 @@ Include ALL tracks. Use null for unknown fields.`;
   // wrong thing (exactly what was happening: pinning an album re-used the
   // track's still-attached click handler instead of a fresh one for the
   // album).
+  // Double-tapping the center of the artwork pins whatever's currently
+  // playing — the same generic pin mechanism the AI Info / Media Info
+  // header pin button already uses, just triggered by a gesture instead of a
+  // button tap. Only fires for music, movies and TV shows — deliberately
+  // excludes radio/live streams, since there's no single stable "song" to
+  // pin for those (they already have their own pin flow via the LIVE pill's
+  // station detail panel).
+  _handleArtworkDoubleTapPin(x, y) {
+    const state = this._hass?.states[this._entity];
+    if (!state) { this._showToast('Nothing to pin right now'); return; }
+
+    if (this._isActuallyRadioStream(state)) {
+      // Same station-resolution chain the LIVE pill already uses
+      // successfully, so double-tap and the LIVE pill always agree on
+      // identity — pinning/unpinning via either one is reflected in both.
+      const attrs = state.attributes || {};
+      const _lastPlayedSt = this._rbGetLastPlayed(this._entity, this._rbStreamKey(attrs));
+      let station = _lastPlayedSt || null;
+      if (!station) {
+        const _rawId = attrs.media_content_id || '';
+        const _streamUrl = _rawId.replace(/^builtin:\/\/radio\//i, '');
+        station = _streamUrl ? this._rbCachedStation(_streamUrl) : null;
+      }
+      if (!station) {
+        // Not resolved yet this session — kick off the same background
+        // resolver the pinned indicator uses, so a retry shortly after
+        // should work even if this particular attempt can't.
+        if (state.state === 'playing') this._rbAutoResolveStationArt(this._entity);
+        this._showToast('Nothing to pin right now');
+        return;
+      }
+      const nowPinned = this._rbToggleStar(station);
+      if (nowPinned) { this._spawnPinHearts(x, y); }
+      else { this._spawnPinHearts(x, y, '#8E8E93'); }
+      this._updatePinnedIndicator();
+      return;
+    }
+
+    const mediaType = this._detectMediaType(state);
+    const attrs = state.attributes || {};
+    const art = attrs.entity_picture_local || attrs.entity_picture || '';
+
+    if (mediaType === 'tv' || mediaType === 'movie') {
+      const title = (attrs.media_title || '').trim();
+      if (!title) { this._showToast('Nothing to pin right now'); return; }
+      const mtPinItem = {
+        id: (mediaType === 'tv' ? 'tv_' : 'movie_') + title.toLowerCase(),
+        kind: mediaType === 'tv' ? 'tv' : 'movie',
+        title, subtitle: '', artworkUrl100: art,
+      };
+      const nowPinned = this._mtToggleStar(mtPinItem);
+      if (nowPinned) { this._spawnPinHearts(x, y); }
+      else { this._spawnPinHearts(x, y, '#8E8E93'); }
+      this._updatePinnedIndicator();
+      if (this._maCurrentTab === 'movie_tv') this._loadMATab('movie_tv');
+      if (this._pinnedDetailActive && this._pinnedDetailCategory === 'movies_tv') this._openPinnedCategoryDetail('movies_tv');
+      return;
+    }
+
+    const isMusic = state.state === 'playing' && mediaType === 'music'
+      && !!(attrs.media_artist || attrs.media_title);
+    if (!isMusic) { this._showToast('Nothing to pin right now'); return; }
+
+    const trackTitle = attrs.media_title  || '';
+    const artistName = attrs.media_artist || '';
+    // Same fallback-URI approach the AI Info panel's pin button already
+    // uses — a synthetic title-artist key when there's no real media
+    // content_id, so pinning still works on speakers (often non-MA) that
+    // don't populate one. Playback of a pinned track already goes through a
+    // fuzzy title+artist search regardless of URI, so this loses nothing.
+    const trackUri = attrs.media_content_id
+      || ((trackTitle || artistName) ? ('title-artist://' + trackTitle.toLowerCase().trim() + '|' + artistName.toLowerCase().trim()) : '');
+    if (!trackUri) { this._showToast('Nothing to pin right now'); return; }
+    const pinItem = {
+      uri: trackUri, name: trackTitle, artist: artistName,
+      artists: artistName ? [{ name: artistName }] : [],
+      image: art, media_type: 'track',
+    };
+    const nowPinned = this._maLibToggleStar(pinItem, 'track');
+    if (nowPinned === null) { this._showToast('Nothing to pin right now'); return; }
+    if (nowPinned) { this._spawnPinHearts(x, y); }
+    else { this._spawnPinHearts(x, y, '#8E8E93'); }
+    this._updatePinnedIndicator();
+    this._maLibRefreshPinnedUI('track');
+  }
+
+  // Burst of hearts floating up from the tap point. The artwork wrapper
+  // clips overflow, so hearts fade out while still within its own bounds
+  // rather than actually escaping the card.
+  _spawnPinHearts(x, y, color = '#DC241F') {
+    const r = this.shadowRoot;
+    const artEl = r.getElementById('artClick');
+    if (!artEl) return;
+    const rect = artEl.getBoundingClientRect();
+    const originX = (x != null) ? x : rect.width / 2;
+    const originY = (y != null) ? y : rect.height / 2;
+    const HEART_COUNT = 10;
+    for (let i = 0; i < HEART_COUNT; i++) {
+      const driftX   = (Math.random() - 0.5) * 120;
+      const riseDist = 90 + Math.random() * (rect.height * 0.45);
+      const rotate   = (Math.random() - 0.5) * 50;
+      const size     = 18 + Math.random() * 14;
+      const delay    = Math.random() * 200;
+      const duration = 900 + Math.random() * 500;
+      const heart = document.createElement('div');
+      heart.className = 'pin-heart';
+      heart.style.cssText = `position:absolute;left:${originX}px;top:${originY}px;width:${size}px;height:${size}px;pointer-events:none;z-index:15;--heart-drift-x:${driftX}px;--heart-rise:${riseDist}px;--heart-rotate:${rotate}deg;animation:pin-heart-float ${duration}ms ease-out ${delay}ms forwards;`;
+      heart.innerHTML = `<svg viewBox="0 0 24 24" style="width:100%;height:100%;display:block;"><path fill="${color}" d="M12,21.35L10.55,20.03C5.4,15.36 2,12.28 2,8.5 2,5.42 4.42,3 7.5,3C9.24,3 10.91,3.81 12,5.09C13.09,3.81 14.76,3 16.5,3C19.58,3 22,5.42 22,8.5C22,12.28 18.6,15.36 13.45,20.03L12,21.35Z"/></svg>`;
+      artEl.appendChild(heart);
+      setTimeout(() => heart.remove(), delay + duration + 50);
+    }
+  }
+
+  // Passive bottom-left badge — shows whenever the currently playing
+  // track/movie/show is pinned. Purely a status check (no toggling), reusing
+  // the exact same identity keys _handleArtworkDoubleTapPin builds, so it
+  // always agrees with whatever pinned it (double-tap, the AI Info panel's
+  // own pin button, or anywhere else).
+  _updatePinnedIndicator() {
+    const badge = this.shadowRoot?.getElementById('pinnedIndicatorBadge');
+    if (!badge) return;
+    const state = this._hass?.states[this._entity];
+    if (!state) { badge.style.display = 'none'; return; }
+
+    const mediaType = this._detectMediaType(state);
+    const attrs = state.attributes || {};
+
+    if (mediaType === 'tv' || mediaType === 'movie') {
+      const title = (attrs.media_title || '').trim();
+      if (!title) { badge.style.display = 'none'; return; }
+      const mtPinItem = { id: (mediaType === 'tv' ? 'tv_' : 'movie_') + title.toLowerCase() };
+      badge.style.display = this._mtIsStarred(mtPinItem) ? 'flex' : 'none';
+      return;
+    }
+
+    if (this._isActuallyRadioStream(state)) {
+      // Same station-resolution chain already used for the LIVE pill and the
+      // artwork favicon fallback — entity-keyed cache first (verified
+      // against a robust identity key, falling back to album/title when
+      // media_content_id is empty, so a switched station doesn't return a
+      // stale one), then the URL-keyed cache.
+      const _lastPlayedSt = this._rbGetLastPlayed(this._entity, this._rbStreamKey(attrs));
+      let station = _lastPlayedSt || null;
+      if (!station) {
+        const _rawId = attrs.media_content_id || '';
+        const _streamUrl = _rawId.replace(/^builtin:\/\/radio\//i, '');
+        station = _streamUrl ? this._rbCachedStation(_streamUrl) : null;
+      }
+      if (!station) {
+        // Nothing cached yet — this can happen even for a pinned station if
+        // it's never been resolved this session (e.g. an entity that
+        // already has its own artwork never triggers the artwork-driven
+        // auto-resolver). Kick off the same background resolver used there;
+        // it has its own once-per-stream guard, so calling it defensively
+        // here alongside the artwork path is safe. Once it resolves, the
+        // next updateContent cycle will pick up the cached result.
+        if (state.state === 'playing') this._rbAutoResolveStationArt(this._entity);
+        badge.style.display = 'none';
+        return;
+      }
+      badge.style.display = this._rbIsStarred(station) ? 'flex' : 'none';
+      return;
+    }
+
+    const isMusic = state.state === 'playing' && mediaType === 'music'
+      && !!(attrs.media_artist || attrs.media_title);
+    if (!isMusic) { badge.style.display = 'none'; return; }
+
+    const trackTitle = attrs.media_title  || '';
+    const artistName = attrs.media_artist || '';
+    const trackUri = attrs.media_content_id
+      || ((trackTitle || artistName) ? ('title-artist://' + trackTitle.toLowerCase().trim() + '|' + artistName.toLowerCase().trim()) : '');
+    if (!trackUri) { badge.style.display = 'none'; return; }
+    badge.style.display = this._maLibIsStarred({ uri: trackUri }, 'track') ? 'flex' : 'none';
+  }
+
   _wireInfoPinButton(pinItem, pinTab, labelNoun) {
     const r = this.shadowRoot;
     const _pinBtn = r.getElementById('infoPinBtn');
@@ -18316,6 +18662,7 @@ Include ALL tracks. Use null for unknown fields.`;
       _update();
       this._showToast(nowPinned ? ('\ud83d\udccd ' + labelNoun + ' pinned') : (labelNoun + ' unpinned'));
       this._maLibRefreshPinnedUI(pinTab);
+      this._updatePinnedIndicator();
     };
   }
 
@@ -18833,6 +19180,7 @@ Include ALL tracks. Use null for unknown fields.`;
           _fbUpdatePin();
           this._showToast(nowPinned ? '📍 Song pinned' : 'Song unpinned');
           this._maLibRefreshPinnedUI('track');
+          this._updatePinnedIndicator();
         };
       } else if (_fbPinBtn) {
         _fbPinBtn.classList.add('hidden');
@@ -22822,6 +23170,7 @@ Include ALL tracks. Use null for unknown fields.`;
         const nowPinned = this._mtToggleStar(_mtPinItem);
         _updateMtPinBtn();
         this._showToast(nowPinned ? '\ud83d\udccd Pinned' : 'Unpinned');
+        this._updatePinnedIndicator();
         // Refresh whichever list is underneath this panel — otherwise
         // navigating back shows a stale pinned section that doesn't
         // reflect what was just toggled here.
@@ -23142,6 +23491,7 @@ Include ALL tracks. Use null for unknown fields.`;
           const nowPinned = this._mtToggleStar(_mtPinItem);
           _updateMtPinBtn();
           this._showToast(nowPinned ? '\ud83d\udccd Pinned' : 'Unpinned');
+          this._updatePinnedIndicator();
           if (this._maCurrentTab === 'movie_tv') this._loadMATab('movie_tv');
           if (this._pinnedDetailActive && this._pinnedDetailCategory === 'movies_tv') this._openPinnedCategoryDetail('movies_tv');
         };
@@ -25592,6 +25942,15 @@ Include ALL tracks. Use null for unknown fields.`;
       return;
     }
 
+    // Recently Played: same shape again — reads straight from the existing
+    // listening-history log that already powers Recently Listened To,
+    // just presented as a chronological list instead of weekly stats.
+    if (tab === 'recent_plays') {
+      content.innerHTML = '';
+      this._renderRecentPlaysTab(content);
+      return;
+    }
+
     // Podcast tab: skip MA library entirely — show pinned + top charts only
     if (tab === 'podcast') {
       content.innerHTML = '';
@@ -27589,6 +27948,7 @@ Include ALL tracks. Use null for unknown fields.`;
           if (nowPinned === null) return;
           self._showToast(nowPinned ? '\ud83d\udccd Pinned' : 'Unpinned');
           self._maLibRefreshPinnedUI(pinTab);
+          self._updatePinnedIndicator();
         } else if (mode === 'copy_link') {
           const _clTitle  = item.name || item.title || '';
           const _clArtist = (item.artists && item.artists[0]?.name) || item.artist || '';
@@ -28100,6 +28460,7 @@ Include ALL tracks. Use null for unknown fields.`;
           if (nowPinned === null) return;
           self._showToast(nowPinned ? '📍 Song pinned' : 'Song unpinned');
           self._maLibRefreshPinnedUI('track');
+          self._updatePinnedIndicator();
         } else if (mode === 'more_info') {
           self._showAITrackInfo(trackTitle, artistName, { fromSearch: true, queueUri: trackUri || '' });
         } else if (mode === 'artist_radio') {
@@ -28850,6 +29211,7 @@ Include ALL tracks. Use null for unknown fields.`;
           if (nowPinned === null) return;
           self._showToast(nowPinned ? '📍 Song pinned' : 'Song unpinned');
           self._maLibRefreshPinnedUI('track');
+          self._updatePinnedIndicator();
           return;
         }
 
@@ -29228,7 +29590,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       wiki_persistent_storage: false,
       ma_library_cache_enabled: true,
       ma_radio_mode: false, ambient_glow: false, row_glow: false,
-      show_remote_button: true, ma_ios_library: true,
+      show_remote_button: true,
       artwork_crossfade: false, show_ma_library_button: true,
       resize_btn_spin: true, remote_art_blur: true, volume_hud: true,
       itunes_art: true, controls_theme: 'classic', add_pill_color: '', card_liquid_glass: true, volume_hud_glass: false,
@@ -31133,11 +31495,6 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       iconThemeEl.value = this._config?.icon_theme || 'robot';
       iconThemeEl.onchange = (e) => { this._updateConfig('icon_theme', e.target.value); };
     }
-    const maIosLibEl = root.getElementById('ma_ios_library');
-    if (maIosLibEl) {
-      maIosLibEl.checked = this._config?.ma_ios_library !== false;
-      maIosLibEl.onchange = (e) => this._updateConfig('ma_ios_library', e.target.checked);
-    }
     const artCrossfadeEl = root.getElementById('artwork_crossfade');
     if (artCrossfadeEl) {
       artCrossfadeEl.checked = this._config?.artwork_crossfade === true;
@@ -31839,7 +32196,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       wiki_persistent_storage: false,
       ma_library_cache_enabled: true,
       ma_radio_mode: false, ambient_glow: false, row_glow: false,
-      show_remote_button: true, ma_ios_library: true,
+      show_remote_button: true,
       artwork_crossfade: false, show_ma_library_button: true,
       resize_btn_spin: true, remote_art_blur: true, volume_hud: true,
       itunes_art: true, controls_theme: 'classic', add_pill_color: '',
@@ -31876,7 +32233,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       wiki_persistent_storage: false,
       ma_library_cache_enabled: true,
       ma_radio_mode: false, ambient_glow: false, row_glow: false,
-      show_remote_button: true, ma_ios_library: true,
+      show_remote_button: true,
       artwork_crossfade: false, show_ma_library_button: true,
       resize_btn_spin: true, remote_art_blur: true, volume_hud: true,
       itunes_art: true, controls_theme: 'classic', add_pill_color: '',
