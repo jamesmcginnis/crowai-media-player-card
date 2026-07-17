@@ -27,7 +27,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   }
 
   static getStubConfig() {
-    return { entities: [], auto_switch: true, accent_color: '#007AFF', volume_accent: '#007AFF', title_color: '#ffffff', artist_color: '#ffffff', button_color: '#ffffff', player_bg: '#1c1c1e', player_bg_opacity: 100, show_entity_selector: true, volume_control: 'slider', startup_mode: 'compact', remember_view: false, volume_entity: {}, ma_entities: [], show_vol_pct: true, vol_pct_color: 'rgba(255,255,255,0.45)', scroll_text: false, remember_last_entity: false, entity_startup_volumes: {}, lyrics_bg: '#0a0a0c', lyrics_text_color: '#ffffff', lyrics_scroll_mode: 'highlight', lyrics_persist: false, lyrics_cache_ttl: 7, lyrics_cache_enabled: true, lyrics_persistent_storage: false, pins_persistent_storage: false, show_pins_in_sections: true, ai_info_persistent_storage: false, itunes_persistent_storage: false, wiki_persistent_storage: false, ma_library_cache_enabled: true, ma_library_cache_ttl: 1, ma_radio_mode: false, show_ma_library_button: true, use_ha_theme: false, remote_buttons_position: 'bottom', ambient_glow: false, announce_tts_service: '', row_glow: false, show_remote_button: true, artwork_crossfade: false, icon_theme: 'robot', resize_btn_spin: true, remote_art_blur: true, volume_hud: true, itunes_art: true, controls_theme: 'classic', add_pill_color: '', card_liquid_glass: true, volume_hud_glass: false, ai_conversation_agent: '', share_service: 'youtube_music', song_intro_enabled: false, show_media_type_pill: false };
+    return { entities: [], auto_switch: true, accent_color: '#007AFF', volume_accent: '#007AFF', title_color: '#ffffff', artist_color: '#ffffff', button_color: '#ffffff', player_bg: '#1c1c1e', player_bg_opacity: 100, show_entity_selector: true, volume_control: 'slider', startup_mode: 'compact', remember_view: false, volume_entity: {}, ma_entities: [], show_vol_pct: true, vol_pct_color: 'rgba(255,255,255,0.45)', scroll_text: false, remember_last_entity: false, entity_startup_volumes: {}, lyrics_bg: '#0a0a0c', lyrics_text_color: '#ffffff', lyrics_scroll_mode: 'highlight', lyrics_persist: false, lyrics_cache_ttl: 7, lyrics_cache_enabled: true, lyrics_persistent_storage: false, pins_persistent_storage: false, show_pins_in_sections: true, ai_info_persistent_storage: false, itunes_persistent_storage: false, wiki_persistent_storage: false, ma_library_cache_enabled: true, ma_library_cache_ttl: 1, ma_radio_mode: false, show_ma_library_button: true, use_ha_theme: false, remote_buttons_position: 'bottom', ambient_glow: false, announce_tts_service: '', row_glow: false, show_remote_button: true, artwork_crossfade: false, icon_theme: 'robot', resize_btn_spin: true, remote_art_blur: true, volume_hud: true, itunes_art: true, controls_theme: 'classic', add_pill_color: '', card_liquid_glass: true, volume_hud_glass: false, ai_conversation_agent: '', share_service: 'youtube_music', song_intro_enabled: false, show_media_type_pill: false, show_youtube_button: true, atv_keyboard_panel: true };
   }
 
   setConfig(config) {
@@ -222,7 +222,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           let kind = null, key = null, entryMeta = null;
 
           if (artist) {
-            if (this._recapShouldExclude(artist, title, attrs, st)) return;
+            if (this._recapShouldExclude(artist, title, attrs, st, entId)) return;
             kind = 'music';
             key = 'music|' + artist + '|||' + title + '|||' + (attrs.media_album_name || '');
             entryMeta = {
@@ -1524,6 +1524,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
   _toggleRemote() {
     this._remoteMode = !this._remoteMode;
+    this._checkAppleTVKeyboard(this._isAppleTV);
     const r = this.shadowRoot;
     const overlay     = r.getElementById('remoteOverlay');
     const albumImg    = r.getElementById('albumImg');
@@ -2176,6 +2177,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         .ma-header {
           display: flex; align-items: center; justify-content: space-between;
           padding: 14px 14px 0; flex-shrink: 0;
+          position: relative; z-index: 60;
         }
         .ma-title { font-size: 15px; font-weight: 700; color: var(--crow-panel-text, #fff); letter-spacing: -0.2px; }
         .ma-back-btn {
@@ -2692,7 +2694,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         .queue-reorder-done-btn.hidden { display: none !important; }
         /* ── Queue dropdown menu ── */
         .queue-dropdown-menu {
-          position: absolute; z-index: 55;
+          position: absolute; z-index: 65;
           top: 48px; right: 14px;
           max-height: calc(100% - 64px); overflow-y: auto; overflow-x: hidden;
           background: var(--crow-panel-bg, rgba(36,36,40,0.82));
@@ -3775,7 +3777,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
                currently playing track/movie/show is pinned. Purely informational,
                no click handler, so it can't be confused with the double-tap-to-pin
                gesture living on the same artwork. -->
-          <div id="pinnedIndicatorBadge" style="display:none;position:absolute;bottom:10px;left:10px;z-index:14;width:28px;height:28px;border-radius:50%;background:rgba(0,0,0,0.58);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.18);align-items:center;justify-content:center;pointer-events:none;" title="Pinned">
+          <div id="pinnedIndicatorBadge" style="display:none;position:absolute;bottom:10px;left:10px;z-index:14;width:28px;height:28px;border-radius:50%;background:rgba(0,0,0,0.58);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.18);align-items:center;justify-content:center;cursor:pointer;-webkit-tap-highlight-color:transparent;" title="Tap to unpin">
             <svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:#FFD60A;"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg>
           </div>
 
@@ -3955,6 +3957,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
               <button class="queue-menu-btn hidden" id="infoShareBtn" title="Share">
                 <svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg>
               </button>
+              <button class="queue-menu-btn hidden" id="infoYoutubeBtn" title="Open on YouTube">
+                <svg viewBox="0 0 24 24"><path fill="#FF0000" d="M21.58,7.19C21.35,6.33 20.67,5.65 19.81,5.42C18.25,5 12,5 12,5C12,5 5.75,5 4.19,5.42C3.33,5.65 2.65,6.33 2.42,7.19C2,8.75 2,12 2,12C2,12 2,15.25 2.42,16.81C2.65,17.67 3.33,18.35 4.19,18.58C5.75,19 12,19 12,19C12,19 18.25,19 19.81,18.58C20.67,18.35 21.35,17.67 21.58,16.81C22,15.25 22,12 22,12C22,12 22,8.75 21.58,7.19Z"/><path fill="#fff" d="M10,15.5L15.5,12L10,8.5V15.5Z"/></svg>
+              </button>
               <button class="queue-menu-btn hidden" id="infoPinBtn" title="Pin">
                 <svg id="infoPinSvg" viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg>
               </button>
@@ -4079,6 +4084,25 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     };
     // Long press on art area → open lyrics (music) or HA more-info (other); tap → existing behaviour
     const artEl = r.getElementById('artClick');
+
+    // The pinned badge only ever shows when something IS pinned, so tapping
+    // it is a one-way "unpin" — but confirmed first via an iOS-style alert,
+    // same as every other destructive action in the card (Clear History,
+    // etc.), rather than unpinning immediately on a single tap.
+    // stopPropagation keeps this tap from also reaching artEl's own
+    // single-tap/double-tap handlers underneath.
+    const pinnedBadgeEl = r.getElementById('pinnedIndicatorBadge');
+    if (pinnedBadgeEl) {
+      pinnedBadgeEl.onclick = (e) => {
+        e.stopPropagation();
+        const badgeRect = pinnedBadgeEl.getBoundingClientRect();
+        const artRect = artEl?.getBoundingClientRect();
+        const originX = artRect ? (badgeRect.left + badgeRect.width / 2 - artRect.left) : undefined;
+        const originY = artRect ? (badgeRect.top + badgeRect.height / 2 - artRect.top) : undefined;
+        this._confirmUnpinFromBadge(originX, originY);
+      };
+    }
+
     let _artLongPressTimer = null;
     let _artLongPressed = false;
     const _isVideoMedia = () => {
@@ -4524,14 +4548,14 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         // tied to what's currently playing or which kind of entity this is.
         // The underlying tracking already works off any configured entity
         // (native or MA), so this doesn't need an MA-only gate.
-        items.push({ id: 'qm_ai_recap', label: 'Recently Listened To', icon: SVG.recap, active: false });
+        items.push({ id: 'qm_ai_recap', label: 'Music Recap', icon: SVG.recap, active: false });
 
         // Watch Recap — same reasoning as Listening Recap: a historical
         // stats view, not tied to what's currently playing, so it shouldn't
         // be gated on isPlaying/isVideo the way Trivia/Mood Match are (those
         // need to know the specific title actively playing right now; this
         // one doesn't need any current context at all).
-        items.push({ id: 'qm_watch_recap', label: 'Recently Watched', icon: '<svg viewBox="0 0 24 24"><path d="M21,3H3C1.89,3 1,3.89 1,5V19A2,2 0 0,0 3,21H21A2,2 0 0,0 23,19V5C23,3.89 22.1,3 21,3M21,19H3V5H21V19M18,13.5L15.5,15.15L15.5,11.85L18,13.5M13,15.5L10.5,17.15L10.5,13.85L13,15.5M8,13.5L5.5,15.15L5.5,11.85L8,13.5Z"/></svg>', active: false });
+        items.push({ id: 'qm_watch_recap', label: 'Video Recap', icon: '<svg viewBox="0 0 24 24"><path d="M21,3H3C1.89,3 1,3.89 1,5V19A2,2 0 0,0 3,21H21A2,2 0 0,0 23,19V5C23,3.89 22.1,3 21,3M21,19H3V5H21V19M18,13.5L15.5,15.15L15.5,11.85L18,13.5M13,15.5L10.5,17.15L10.5,13.85L13,15.5M8,13.5L5.5,15.15L5.5,11.85L8,13.5Z"/></svg>', active: false });
 
         // AI Artist Radio — MA only, only when a track is playing
         if ((isMa || hasMA) && isPlaying && !isStream) {
@@ -6245,6 +6269,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     cardOuter.classList.toggle('remote-btn-hidden', this._config?.show_remote_button === false);
     this._isAppleTV = isAppleTV;
     if (!isAppleTV && this._remoteMode) this._toggleRemote();
+    this._checkAppleTVKeyboard(isAppleTV);
 
     // ── Progress bar cursor — only show pointer when seek is supported ──
     const seekSupported = ((attrs.supported_features ?? 0) & 2) !== 0;
@@ -8105,6 +8130,16 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       artDiv.insertBefore(img, artDiv.firstChild);
       const svg = artDiv.querySelector('svg');
       if (svg) svg.style.display = 'none';
+      // Same blurred-image technique the Songs tab's rows use, applied to
+      // the outer .ma-item-wrap once artwork resolves — this is the common
+      // case for Recent Played's rows, since a track not yet in the iTunes
+      // art cache has nothing to show a glow for at creation time. Queue
+      // rows have their own separate glow handling elsewhere, so this only
+      // fires for Recent Played's rows specifically.
+      if (this._config?.row_glow === true) {
+        const wrapEl = artDiv.closest('.ma-item-wrap');
+        if (wrapEl) this._observeRowGlow(url, wrapEl, null);
+      }
     }));
   }
 
@@ -8456,8 +8491,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (!content) return;
     const esc = s => (s || '').toString().replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const _limit = this._recentPlaysExpanded ? 50 : 10;
+    // mediaType is 'music' for everything _logListenEntry writes (the log
+    // itself is meant to be music-only, filtered at write time by
+    // _recapShouldExclude) — checked again explicitly here as a second
+    // layer, since that's the same defense-in-depth approach already used
+    // elsewhere rather than trusting a single filter point.
     const entries = this._getListenLogEntries()
-      .filter(e => e.title && e.artist)
+      .filter(e => e.title && e.artist && (e.mediaType || 'music') === 'music')
       .sort((a, b) => (b.ts || 0) - (a.ts || 0))
       .slice(0, _limit);
 
@@ -8473,7 +8513,15 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
     };
 
-    content.innerHTML = `<div id="recentPlaysList"></div>`;
+    content.innerHTML = entries.length
+      ? `<div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);letter-spacing:0.6px;text-transform:uppercase;margin:2px 4px 10px;">${entries.length} Recent Play${entries.length === 1 ? '' : 's'}</div>
+        <div class="ma-drill-actions" id="recentPlaysActions" style="margin-bottom:14px;">
+          <button class="ma-drill-action-btn" data-action="replace"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div><span class="ma-drill-btn-label">Play All</span></button>
+          <button class="ma-drill-action-btn" data-action="add"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M19 11h-6V5h-2v6H5v2h6v6h2v-6h6z"/></svg></div><span class="ma-drill-btn-label">Add All</span></button>
+          <button class="ma-drill-action-btn" data-action="next"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M16,18H18V6H16M6,18L14.5,12L6,6V18Z"/></svg></div><span class="ma-drill-btn-label">Play Next</span></button>
+        </div>
+        <div id="recentPlaysList"></div>`
+      : `<div id="recentPlaysList"></div>`;
 
     const list = content.querySelector('#recentPlaysList');
     if (!entries.length) {
@@ -8515,6 +8563,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           </div>`;
         if (!cachedArt && itunesKey) this._fetchItunesArt(e.artist, e.album, e.title);
         wrap.appendChild(el);
+        // Same structure and technique the Songs tab's own rows use — glow
+        // applied to the outer .ma-item-wrap, with .ma-item's own
+        // near-opaque background (from the shared CSS class) shielding the
+        // text so it reads as a soft edge tint rather than overpowering it.
+        // Only fires here on a cache hit; _patchQueueArt applies the same
+        // treatment once a fetch resolves for the common case where this
+        // track isn't cached yet.
         if (this._config?.row_glow === true && cachedArt) this._observeRowGlow(cachedArt, wrap, null);
 
         // Fuzzy identity — history entries only ever store title/artist/album,
@@ -8549,6 +8604,74 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         list.appendChild(wrap);
       });
     }
+
+    // Play All / Add All / Play Next — same batching pattern as the AI
+    // Search panel's own action bar, since these entries are the same shape
+    // (title/artist only, no real media URI, resolved via MA's own fuzzy
+    // search on a plain "title artist" string). Deliberately wired against
+    // `entries` — whichever count (10 or 50) is actually on screen right
+    // now — rather than always the full history, so the bar always acts on
+    // exactly what it looks like it will.
+    if (entries.length) {
+      const self = this;
+      const _barTarget = (() => {
+        const _allMA = self._getValidMASpeakers ? self._getValidMASpeakers(true) : [];
+        if (self._lastMAPlayTarget && _allMA.includes(self._lastMAPlayTarget)) return self._lastMAPlayTarget;
+        if (_allMA.length) return _allMA[0];
+        return self._entity;
+      })();
+      const _mediaId = e => `${e.title} ${e.artist || ''}`.trim();
+
+      content.querySelector('#recentPlaysActions')?.querySelectorAll('.ma-drill-action-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const action = btn.dataset.action;
+          self._maBatchLoading = true;
+          clearTimeout(self._maBatchLoadingTimer);
+          self._maBatchLoadingTimer = setTimeout(() => { self._maBatchLoading = false; }, 20000);
+          self._pillPulse(20000);
+          let successCount = 0;
+          if (action === 'replace') {
+            const [first, ...rest] = entries;
+            try {
+              await self._hass.connection.sendMessagePromise({
+                type: 'call_service', domain: 'music_assistant', service: 'play_media',
+                service_data: { entity_id: _barTarget, media_id: _mediaId(first), media_type: 'track', enqueue: 'replace' }
+              });
+              successCount++;
+            } catch (_) {}
+            for (const e of rest) {
+              try {
+                await self._hass.connection.sendMessagePromise({
+                  type: 'call_service', domain: 'music_assistant', service: 'play_media',
+                  service_data: { entity_id: _barTarget, media_id: _mediaId(e), media_type: 'track', enqueue: 'add' }
+                });
+                successCount++;
+              } catch (_) {}
+            }
+            self._closeMABrowser(true);
+          } else {
+            const enqueueMode = action === 'next' ? 'next' : 'add';
+            for (const e of entries) {
+              try {
+                await self._hass.connection.sendMessagePromise({
+                  type: 'call_service', domain: 'music_assistant', service: 'play_media',
+                  service_data: { entity_id: _barTarget, media_id: _mediaId(e), media_type: 'track', enqueue: enqueueMode }
+                });
+                successCount++;
+              } catch (_) {}
+            }
+          }
+          self._maBatchLoading = false;
+          clearTimeout(self._maBatchLoadingTimer);
+          self._pillPulse(0);
+          const _spkName = self._hass?.states[_barTarget]?.attributes?.friendly_name || 'speaker';
+          if (action !== 'replace') {
+            const label = action === 'next' ? 'Playing next' : 'Added to queue';
+            self._showToast(`${label} — ${successCount} track${successCount === 1 ? '' : 's'} on ${_spkName}`, 3000);
+          }
+        });
+      });
+    }
   }
 
   // Small dropdown for the 3-dot button — same visual pattern as the Queue
@@ -8556,8 +8679,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // last 50 plays instead of 10, or collapse back.
   _showRecentPlaysMenu(anchorEl) {
     const r = this.shadowRoot;
-    r.getElementById('rpMenuBackdrop')?.remove();
-    r.getElementById('rpMenu')?.remove();
+    // Toggle-close — same pattern the Queue panel's own "⋮" menu uses:
+    // pressing the button again while the menu's already open closes it,
+    // rather than tearing it down and immediately rebuilding an identical
+    // one in its place.
+    const existing = r.getElementById('rpMenu');
+    if (existing) { existing.remove(); r.getElementById('rpMenuBackdrop')?.remove(); return; }
 
     const backdrop = document.createElement('div');
     backdrop.id = 'rpMenuBackdrop';
@@ -8573,6 +8700,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       `<div class="queue-dropdown-item" id="rpToggleLimit" role="button">
         <svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12.5,7V12.25L17,14.92L16.25,16.15L11,13V7H12.5Z"/></svg>
         <span class="queue-dropdown-label">${_expanded ? 'Show last 10' : 'Show last 50'}</span>
+      </div>
+      <div class="queue-dropdown-item danger" id="rpClearHistory" role="button">
+        <svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/></svg>
+        <span class="queue-dropdown-label">Clear History</span>
       </div>`;
 
     const anchorRect = anchorEl.getBoundingClientRect();
@@ -8591,6 +8722,63 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       this._recentPlaysExpanded = !_expanded;
       const content = this.shadowRoot?.getElementById('maContent');
       this._renderRecentPlaysTab(content);
+    });
+    menu.querySelector('#rpClearHistory')?.addEventListener('click', () => {
+      closeMenu();
+      this._confirmClearRecentPlays();
+    });
+  }
+
+  // Same idea as _showRecentPlaysMenu, for the Movies & TV tab's Recently
+  // Watched section instead of Recent Played's track list.
+  _showMtWatchOptionsMenu(anchorEl) {
+    const r = this.shadowRoot;
+    // Toggle-close — same pattern the Queue panel's own "⋮" menu uses:
+    // pressing the button again while the menu's already open closes it,
+    // rather than tearing it down and immediately rebuilding an identical
+    // one in its place.
+    const existing = r.getElementById('rpMenu');
+    if (existing) { existing.remove(); r.getElementById('rpMenuBackdrop')?.remove(); return; }
+
+    const backdrop = document.createElement('div');
+    backdrop.id = 'rpMenuBackdrop';
+    backdrop.className = 'queue-dropdown-backdrop';
+    const _openedAt = Date.now();
+    backdrop.addEventListener('pointerdown', () => { if (Date.now() - _openedAt > 200) closeMenu(); });
+
+    const menu = document.createElement('div');
+    menu.id = 'rpMenu';
+    menu.className = 'queue-dropdown-menu';
+    const _expanded = !!this._mtWatchExpanded;
+    menu.innerHTML =
+      `<div class="queue-dropdown-item" id="mtWatchToggleLimit" role="button">
+        <svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12.5,7V12.25L17,14.92L16.25,16.15L11,13V7H12.5Z"/></svg>
+        <span class="queue-dropdown-label">${_expanded ? 'Show last 10' : 'Show last 50'}</span>
+      </div>
+      <div class="queue-dropdown-item danger" id="mtWatchClearHistory" role="button">
+        <svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/></svg>
+        <span class="queue-dropdown-label">Clear Watch History</span>
+      </div>`;
+
+    const anchorRect = anchorEl.getBoundingClientRect();
+    const cardRect = r.host.getBoundingClientRect();
+    menu.style.position = 'absolute';
+    menu.style.top = (anchorRect.bottom - cardRect.top + 4) + 'px';
+    menu.style.right = Math.max(4, cardRect.right - anchorRect.right) + 'px';
+
+    const host = r.getElementById('maPopup') || r.host;
+    host.appendChild(backdrop);
+    host.appendChild(menu);
+
+    const closeMenu = () => { menu.remove(); backdrop.remove(); };
+    menu.querySelector('#mtWatchToggleLimit')?.addEventListener('click', () => {
+      closeMenu();
+      this._mtWatchExpanded = !_expanded;
+      this._loadMATab('recently_watched');
+    });
+    menu.querySelector('#mtWatchClearHistory')?.addEventListener('click', () => {
+      closeMenu();
+      this._confirmClearMtWatchHistory();
     });
   }
 
@@ -8615,7 +8803,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
     const CATS = [
       { tab: 'recent_searches', label: 'Recent Searches', color: '#8E8E93', path: 'M9.5,3A6.5,6.5 0 0,1 16,9.5C16,11.11 15.41,12.59 14.44,13.73L14.71,14H15.5L20.5,19L19,20.5L14,15.5V14.71L13.73,14.44C12.59,15.41 11.11,16 9.5,16A6.5,6.5 0 0,1 3,9.5A6.5,6.5 0 0,1 9.5,3M9.5,5C7,5 5,7 5,9.5C5,12 7,14 9.5,14C12,14 14,12 14,9.5C14,7 12,5 9.5,5Z' },
-      { tab: 'recent_plays', label: 'Recently Played', color: '#64D2FF', path: 'M12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12.5,7V12.25L17,14.92L16.25,16.15L11,13V7H12.5Z' },
+      { tab: 'recent_plays', label: 'Music History', color: '#64D2FF', path: 'M12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12.5,7V12.25L17,14.92L16.25,16.15L11,13V7H12.5Z' },
+      { tab: 'recently_watched', label: 'Watch History', color: '#A78BFA', path: 'M21,3H3C1.89,3 1,3.89 1,5V19A2,2 0 0,0 3,21H21A2,2 0 0,0 23,19V5C23,3.89 22.1,3 21,3M21,19H3V5H21V19M18,13.5L15.5,15.15L15.5,11.85L18,13.5M13,15.5L10.5,17.15L10.5,13.85L13,15.5M8,13.5L5.5,15.15L5.5,11.85L8,13.5Z' },
       { tab: 'recently_added', label: 'Recently Added', color: '#00C7BE', path: 'M13,3A9,9 0 0,0 4,12H1L4.89,15.89L4.96,16.03L9,12H6A7,7 0 0,1 13,5A7,7 0 0,1 20,12A7,7 0 0,1 13,19C11.07,19 9.32,18.21 8.06,16.94L6.64,18.36C8.27,19.99 10.52,21 13,21A9,9 0 0,0 22,12A9,9 0 0,0 13,3M14,8H12V13L16.28,15.54L17,14.33L13.5,12.25V8H14Z' },
       { tab: 'pinned',         label: 'Pinned',         color: '#FFD60A', path: 'M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z' },
       { tab: 'favourites',  label: 'Favourites',    color: '#FF9500', path: 'M12,17.27L18.18,21L16.54,13.97L22,9.24L14.81,8.62L12,2L9.19,8.62L2,9.24L7.45,13.97L5.82,21L12,17.27Z' },
@@ -8743,16 +8932,20 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (titleEl)   titleEl.textContent = label || tab;
     if (backBtn)   backBtn.classList.remove('hidden');
 
-    // Recently Played's 3-dot menu lives in the shared header (next to the close
-    // button) rather than inline in the content, so it needs the same
-    // per-tab show/hide treatment as everything else here. onclick (not
-    // addEventListener) is deliberate — this runs on every navigation, and a
-    // plain property assignment overwrites cleanly instead of stacking up
-    // duplicate listeners each time this tab is re-entered.
+    // Recently Played's and Movies & TV's 3-dot menus both live in the
+    // shared header (next to the close button) rather than inline in the
+    // content, so this needs the same per-tab show/hide treatment as
+    // everything else here. onclick (not addEventListener) is deliberate —
+    // this runs on every navigation, and a plain property assignment
+    // overwrites cleanly instead of stacking up duplicate listeners each
+    // time one of these tabs is re-entered.
     const _rpMenuBtn = rr.getElementById('recentPlaysMenuBtn');
     if (_rpMenuBtn) {
-      _rpMenuBtn.classList.toggle('hidden', tab !== 'recent_plays');
-      _rpMenuBtn.onclick = tab === 'recent_plays' ? () => this._showRecentPlaysMenu(_rpMenuBtn) : null;
+      const _showsMenu = tab === 'recent_plays' || tab === 'recently_watched';
+      _rpMenuBtn.classList.toggle('hidden', !_showsMenu);
+      if (tab === 'recent_plays') _rpMenuBtn.onclick = () => this._showRecentPlaysMenu(_rpMenuBtn);
+      else if (tab === 'recently_watched') _rpMenuBtn.onclick = () => this._showMtWatchOptionsMenu(_rpMenuBtn);
+      else _rpMenuBtn.onclick = null;
     }
 
     this._maCurrentTab = tab;
@@ -10276,7 +10469,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   _rbGetLastPlayed(entityId, contentId) {
     if (!entityId) return null;
     const _mem = this._lastPlayedRbMem?.[entityId];
-    if (_mem && (!contentId || !_mem.contentId || _mem.contentId === contentId)) {
+    // Only skip verification when there's no current contentId to check
+    // against — NOT when the stored entry itself has no contentId. A
+    // stored entry with no contentId means "we don't know what was
+    // playing when this was cached", which is not a green light to match
+    // whatever's playing now; it should only match if we truly have
+    // nothing to compare against.
+    if (_mem && (!contentId || _mem.contentId === contentId)) {
       return _mem.st;
     }
     try {
@@ -10284,7 +10483,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       const entry = store[entityId];
       const TTL = 12 * 3600 * 1000; // 12 hours
       if (entry?.st && (Date.now() - (entry.ts || 0)) < TTL
-          && (!contentId || !entry.contentId || entry.contentId === contentId)) {
+          && (!contentId || entry.contentId === contentId)) {
         return entry.st;
       }
     } catch (_) {}
@@ -10545,8 +10744,11 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // Build a movie/TV row (search result or starred)
   _mtMakeRow(item, isStarred) {
     const self = this;
+    const wrap = document.createElement('div');
+    wrap.className = 'ma-item-wrap';
     const row = document.createElement('div');
-    row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer;-webkit-tap-highlight-color:transparent;position:relative;';
+    row.className = 'ma-item';
+    row.style.cssText = 'cursor:pointer;-webkit-tap-highlight-color:transparent;position:relative;';
 
     const art = item.artworkUrl100 || '';
     const artHtml = art
@@ -10554,11 +10756,22 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       : '<svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:rgba(255,255,255,0.3)"><path d="M21,3H3C1.89,3 1,3.89 1,5V19A2,2 0 0,0 3,21H21A2,2 0 0,0 23,19V5C23,3.89 22.1,3 21,3M21,19H3V5H21V19M18,13.5L15.5,15.15L15.5,11.85L18,13.5M13,15.5L10.5,17.15L10.5,13.85L13,15.5M8,13.5L5.5,15.15L5.5,11.85L8,13.5Z"/></svg>';
 
     row.innerHTML =
-      '<div style="width:40px;height:40px;border-radius:8px;background:rgba(255,255,255,0.08);flex-shrink:0;overflow:hidden;display:flex;align-items:center;justify-content:center;">' + artHtml + '</div>' +
+      '<div class="ma-item-art" style="width:40px;height:40px;border-radius:8px;background:rgba(255,255,255,0.08);flex-shrink:0;overflow:hidden;display:flex;align-items:center;justify-content:center;">' + artHtml + '</div>' +
       '<div style="flex:1;min-width:0;">' +
         '<div style="font-size:13px;font-weight:600;color:var(--primary-text-color,#fff);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + item.title + (item.kind === 'tv' ? ' <span style="opacity:0.5;font-weight:400;font-size:10px;">TV</span>' : '') + '</div>' +
         '<div style="font-size:11px;color:rgba(255,255,255,0.45);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + item.subtitle + '</div>' +
       '</div>';
+    wrap.appendChild(row);
+
+    // Same structure and same technique the Songs tab's own rows use —
+    // .ma-item-wrap (outer, where the blurred glow image sits) containing
+    // .ma-item (inner, with its own near-opaque background from the shared
+    // CSS class). That inner background is what makes the glow read as a
+    // soft edge tint instead of overpowering the text — it was rendering
+    // far too strong here previously because these rows were a single flat
+    // element with no such shielding layer between the glow and the text
+    // sitting on top of it.
+    if (this._config?.row_glow === true && art) this._observeRowGlow(art, wrap, null);
 
     let _lpTimer = null, _lpFired = false;
     row.addEventListener('contextmenu', e => e.preventDefault());
@@ -10592,7 +10805,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       self._fetchVideoInfo(item.title, item.kind === 'tv');
     });
 
-    return row;
+    return wrap;
   }
 
   _showMtContextMenu(anchor, item) {
@@ -10627,6 +10840,125 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     menu.querySelector('#mtSoundtrack')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
       this._showAISearchPanel(`Music from ${item.title}`);
     });
+  }
+
+  // Dedicated top-level "Watch History" tab — same relationship to the
+  // Video Recap panel that Music History has to Music Recap: reads the
+  // same underlying watch log, just as a plain chronological list instead
+  // of weekly aggregated stats. Reuses _mtMakeRow entirely for each row, so
+  // artwork fallback, tap-to-info, and long-press (Pin/Find Soundtrack) all
+  // come for free. No inline heading — the shared library header already
+  // shows "Watch History" as the title, same as Music History.
+  _renderRecentlyWatchedTab(content) {
+    if (!content) return;
+    const limit = this._mtWatchExpanded ? 50 : 10;
+    const entries = this._getWatchLogEntries()
+      .sort((a, b) => (b.ts || 0) - (a.ts || 0))
+      .slice(0, limit);
+
+    const _relTime = ts => {
+      const diffSec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+      if (diffSec < 60) return 'Just now';
+      const diffMin = Math.floor(diffSec / 60);
+      if (diffMin < 60) return diffMin + 'm ago';
+      const diffHr = Math.floor(diffMin / 60);
+      if (diffHr < 24) return diffHr + 'h ago';
+      const diffDay = Math.floor(diffHr / 24);
+      if (diffDay < 7) return diffDay + 'd ago';
+      return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    };
+
+    content.innerHTML = '';
+
+    // Stays visible with an empty state rather than disappearing — same
+    // reasoning as Recent Searches / Recent Played, which never vanish
+    // either, so "nothing watched yet" reads differently from "this
+    // feature doesn't exist here".
+    if (!entries.length) {
+      const empty = document.createElement('div');
+      empty.innerHTML = this._psEmpty(
+        'M21,3H3C1.89,3 1,3.89 1,5V19A2,2 0 0,0 3,21H21A2,2 0 0,0 23,19V5C23,3.89 22.1,3 21,3M21,19H3V5H21V19M18,13.5L15.5,15.15L15.5,11.85L18,13.5M13,15.5L10.5,17.15L10.5,13.85L13,15.5M8,13.5L5.5,15.15L5.5,11.85L8,13.5Z',
+        'Nothing watched yet',
+        'Movies and TV shows you watch will show up here.'
+      );
+      content.appendChild(empty);
+      return;
+    }
+
+    const _pendingArt = [];
+    entries.forEach(e => {
+      const title = e.seriesTitle || e.title;
+      if (!title) return;
+      const kind = e.mediaType === 'tv' ? 'tv' : 'movie';
+      const artKey = kind + '|' + title.toLowerCase();
+      const item = {
+        id: kind + '_' + title.toLowerCase(),
+        kind,
+        title,
+        subtitle: _relTime(e.ts),
+        // Watch log entries never store artwork, same situation Recent
+        // Played was in for songs — checks a cache first, and for a miss,
+        // the row renders with _mtMakeRow's own generic fallback icon
+        // immediately, then gets patched in place once the fetch below
+        // resolves (a direct reference to this exact row, rather than the
+        // global data-key patching Recent Played's music lookup uses,
+        // since there's no need here for multiple simultaneous views of
+        // the same title to stay in sync with each other).
+        artworkUrl100: this._mtArtCache?.[artKey] || '',
+      };
+      const row = this._mtMakeRow(item, false);
+      content.appendChild(row);
+      if (!item.artworkUrl100) _pendingArt.push({ title, kind, row });
+    });
+    // Fetched one at a time rather than all firing in parallel — up to 10
+    // (or 50) rows each needing 2 iTunes requests would otherwise burst 20+
+    // near-simultaneous requests, a much bigger spike than any other iTunes
+    // usage in this card and a likely trigger for their IP-based
+    // rate-limiting (documented elsewhere in this file as an ongoing,
+    // known issue on Apple's end) — which would silently blank out
+    // artwork for the whole list at once, not just mismatch a few titles.
+    if (_pendingArt.length) this._fetchMtArtQueue(_pendingArt);
+  }
+
+  // Runs a queued list of artwork lookups sequentially rather than in
+  // parallel — see the comment where this is queued for why that matters.
+  async _fetchMtArtQueue(queue) {
+    for (const { title, kind, row } of queue) {
+      if (!row?.isConnected) continue; // tab navigated away from mid-queue
+      await this._fetchMtArt(title, kind, row);
+    }
+  }
+
+  // Lightweight single-title artwork lookup for movies/TV — delegates to
+  // _fetchVideoArtWithWiki, the same function the Video Recap
+  // panel's own rows already use successfully (via _buildWatchRecapRow).
+  // This turned out to matter a lot: an iTunes-only lookup (what this
+  // function tried first, twice) came back with zero results-with-artwork
+  // for perfectly well-known titles — confirmed by a diagnostic toast
+  // showing valid HTTP responses and valid JSON, just no usable artwork in
+  // them. _fetchVideoArtWithWiki tries Wikipedia first (with multiple
+  // title-variant attempts and disambiguation handling) before falling
+  // back further, which is why the Recap panel can show a real image even
+  // for things iTunes would never have in its movie/TV catalog at all —
+  // a UK map for "ITV1", a match photo for "England v Argentina".
+  async _fetchMtArt(title, kind, row) {
+    if (!this._mtArtCache) this._mtArtCache = {};
+    const artKey = kind + '|' + title.toLowerCase();
+    try {
+      const art = await this._fetchVideoArtWithWiki(title, null, kind) || '';
+      this._mtArtCache[artKey] = art;
+      if (!art || !row?.isConnected) return;
+      // row is the outer .ma-item-wrap now (see _mtMakeRow) — the art div
+      // lives inside its .ma-item child.
+      const artDiv = row.querySelector('.ma-item-art');
+      if (artDiv) {
+        artDiv.innerHTML = '<img src="' + art + '" alt="" style="width:100%;height:100%;object-fit:cover;display:block;" onerror="this.remove()">';
+      }
+      // Same blurred-image technique the Songs tab's rows use — now that
+      // these rows have the same wrap/inner structure, this renders with
+      // the same soft-edge subtlety instead of overpowering the text.
+      if (this._config?.row_glow === true) this._observeRowGlow(art, row, null);
+    } catch (_) { /* best-effort — row already shows the fallback icon */ }
   }
 
   // Render the starred movies/TV section (returns element or null)
@@ -10994,6 +11326,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const _pcShare = r.getElementById('infoShareBtn');
     if (_pcShare) _pcShare.classList.add('hidden');
 
+    const _pcYt = r.getElementById('infoYoutubeBtn');
+    if (_pcYt) _pcYt.classList.add('hidden');
+
     const _pcPin    = r.getElementById('infoPinBtn');
     const _pcPinSvg = r.getElementById('infoPinSvg');
     const _updatePinBtn = () => {
@@ -11225,6 +11560,41 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   _maLibToggleStar(item, tab) {
     const key = item.uri || item.media_content_id || '';
     if (!key) { this._showToast('Cannot pin — item has no URI'); return null; }
+
+    // A lot of "quick pin" actions (quick-menu, queue row, Recent Played)
+    // only ever have a title/artist to build a pin item from — none of
+    // them stored real artwork, so pinning through any of them left the
+    // Pinned Songs list with no image at all. Rather than fixing each of
+    // those ~8 separate construction sites individually, this fills the
+    // gap in one place: if a track's being pinned with no image/thumbnail
+    // and it matches whatever's actually playing right now (by URI, or by
+    // title+artist when there's no real URI to compare), grab the artwork
+    // straight from the entity's own attributes.
+    if (tab === 'track' && !item.image && !item.thumbnail) {
+      const state = this._hass?.states[this._entity];
+      const attrs = state?.attributes || {};
+      const curUri = attrs.media_content_id || '';
+      const curTitleArtist = ((attrs.media_title || '') + '|' + (attrs.media_artist || '')).toLowerCase();
+      const itemTitleArtist = ((item.name || item.title || '') + '|' + (item.artist || '')).toLowerCase();
+      const isCurrentTrack = (curUri && item.uri === curUri) || (itemTitleArtist !== '|' && itemTitleArtist === curTitleArtist);
+      if (isCurrentTrack) {
+        const art = attrs.entity_picture_local || attrs.entity_picture || '';
+        if (art) item.image = art;
+      }
+      // Second fallback — the shared iTunes art cache, keyed the same way
+      // Recent Played's own rows populate it when rendered. Covers pinning
+      // something from Recent Played specifically, which isn't necessarily
+      // still playing (no "currently playing" match above), but whose row
+      // has almost always already fetched and cached its artwork by the
+      // time there's been a chance to long-press it.
+      if (!item.image) {
+        const artistName = item.artist || (item.artists && item.artists[0]?.name) || '';
+        const cacheKey = [artistName, item.album || item.name || item.title || ''].filter(Boolean).join('|').toLowerCase();
+        const cachedArt = cacheKey ? this._itunesArtCache?.[cacheKey] : '';
+        if (cachedArt) item.image = cachedArt;
+      }
+    }
+
     let starred = this._maLibGetStarred(tab);
     const idx = starred.findIndex(s => (s.uri || s.media_content_id || '') === key);
     if (idx >= 0) {
@@ -11403,7 +11773,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const trackCount = recap.topTracks?.length || 0;
     el.innerHTML =
       '<div class="ma-item-art"><svg viewBox="0 0 24 24" style="display:flex;fill:rgba(255,255,255,0.35)"><path d="M22,21H2V3H4V19H6V10H10V19H12V6H16V19H18V14H22V21Z"/></svg></div>' +
-      '<div class="ma-item-info"><div class="ma-item-title">' + (recap.name || 'Pinned Recently Listened To') + '</div>' +
+      '<div class="ma-item-info"><div class="ma-item-title">' + (recap.name || 'Pinned Music Recap') + '</div>' +
         '<div class="ma-item-sub">' + (recap.dateRangeLabel || (trackCount + ' track' + (trackCount === 1 ? '' : 's'))) + '</div>' +
       '</div>' +
       '<div class="ma-item-chevron"><svg viewBox="0 0 24 24"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg></div>';
@@ -11459,7 +11829,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     menu.querySelector('#recapDelete')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
       const list = this._getPinnedRecaps().filter(rc => rc.id !== recap.id);
       this._savePinnedRecapsList(list);
-      this._showToast('Recently Listened To unpinned');
+      this._showToast('Music Recap unpinned');
       const content = this.shadowRoot?.getElementById('maContent');
       if (!content) return;
       if (this._pinnedDetailActive && this._pinnedDetailCategory === 'recaps') this._openPinnedCategoryDetail('recaps');
@@ -11474,7 +11844,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     sheet.style.cssText = 'position:absolute;z-index:99999;display:flex;align-items:flex-end;justify-content:center;background:rgba(0,0,0,0.5);left:0;top:' + window.scrollY + 'px;width:' + document.documentElement.clientWidth + 'px;height:' + window.innerHeight + 'px;';
     sheet.innerHTML = '<div style="width:100%;max-width:480px;background:var(--crow-panel-bg,#13131a);border-radius:20px 20px 0 0;padding:20px 20px 32px;box-shadow:0 -8px 40px rgba(0,0,0,0.6);">'
       + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">'
-      + '<span style="font-size:15px;font-weight:700;color:' + _pt('text') + ';">Rename Recently Listened To</span>'
+      + '<span style="font-size:15px;font-weight:700;color:' + _pt('text') + ';">Rename Music Recap</span>'
       + '<button class="rb-tag-sheet-close" style="width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,0.1);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;"><svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:' + _pt('text') + '"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>'
       + '</div>'
       + '<input id="recapRenameInput" type="text" value="' + (recap.name || '').replace(/"/g, '&quot;') + '" style="width:100%;box-sizing:border-box;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);border-radius:10px;padding:10px 12px;font-size:14px;color:' + _pt('text') + ';font-family:inherit;margin-bottom:14px;" autocomplete="off" autocorrect="off" spellcheck="false">'
@@ -11526,7 +11896,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (tabsEl)    tabsEl.style.display    = 'none';
     if (searchRow) searchRow.style.display = 'none';
     if (backBtn)   backBtn.classList.remove('hidden');
-    if (titleEl)   titleEl.textContent = recap.name || 'Pinned Recently Listened To';
+    if (titleEl)   titleEl.textContent = recap.name || 'Pinned Music Recap';
 
     const esc = s => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const topArtists = recap.topArtists || [];
@@ -11557,7 +11927,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     content.querySelector('#pinnedRecapUnpin')?.addEventListener('click', () => {
       const list = this._getPinnedRecaps().filter(rc => rc.id !== recap.id);
       this._savePinnedRecapsList(list);
-      this._showToast('Recently Listened To unpinned');
+      this._showToast('Music Recap unpinned');
       this._maNavBack();
     });
 
@@ -11619,7 +11989,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const itemCount = (recap.topShows?.length || 0) + (recap.topMovies?.length || 0);
     el.innerHTML =
       '<div class="ma-item-art"><svg viewBox="0 0 24 24" style="display:flex;fill:rgba(255,255,255,0.35)"><path d="M21,3H3C1.89,3 1,3.89 1,5V19A2,2 0 0,0 3,21H21A2,2 0 0,0 23,19V5C23,3.89 22.1,3 21,3M21,19H3V5H21V19M18,13.5L15.5,15.15L15.5,11.85L18,13.5M13,15.5L10.5,17.15L10.5,13.85L13,15.5M8,13.5L5.5,15.15L5.5,11.85L8,13.5Z"/></svg></div>' +
-      '<div class="ma-item-info"><div class="ma-item-title">' + (recap.name || 'Pinned Recently Watched') + '</div>' +
+      '<div class="ma-item-info"><div class="ma-item-title">' + (recap.name || 'Pinned Video Recap') + '</div>' +
         '<div class="ma-item-sub">' + (recap.dateRangeLabel || (itemCount + ' item' + (itemCount === 1 ? '' : 's'))) + '</div>' +
       '</div>' +
       '<div class="ma-item-chevron"><svg viewBox="0 0 24 24"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg></div>';
@@ -11673,7 +12043,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     menu.querySelector('#watchRecapDelete')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
       const list = this._getPinnedWatchRecaps().filter(rc => rc.id !== recap.id);
       this._savePinnedWatchRecapsList(list);
-      this._showToast('Recently Watched unpinned');
+      this._showToast('Video Recap unpinned');
       if (this._pinnedDetailActive && this._pinnedDetailCategory === 'watch_recaps') this._openPinnedCategoryDetail('watch_recaps');
     });
   }
@@ -11686,7 +12056,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     sheet.style.cssText = 'position:absolute;z-index:99999;display:flex;align-items:flex-end;justify-content:center;background:rgba(0,0,0,0.5);left:0;top:' + window.scrollY + 'px;width:' + document.documentElement.clientWidth + 'px;height:' + window.innerHeight + 'px;';
     sheet.innerHTML = '<div style="width:100%;max-width:480px;background:var(--crow-panel-bg,#13131a);border-radius:20px 20px 0 0;padding:20px 20px 32px;box-shadow:0 -8px 40px rgba(0,0,0,0.6);">'
       + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">'
-      + '<span style="font-size:15px;font-weight:700;color:' + _pt('text') + ';">Rename Recently Watched</span>'
+      + '<span style="font-size:15px;font-weight:700;color:' + _pt('text') + ';">Rename Video Recap</span>'
       + '<button class="rb-tag-sheet-close" style="width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,0.1);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;"><svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:' + _pt('text') + '"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>'
       + '</div>'
       + '<input id="watchRecapRenameInput" type="text" value="' + (recap.name || '').replace(/"/g, '&quot;') + '" style="width:100%;box-sizing:border-box;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);border-radius:10px;padding:10px 12px;font-size:14px;color:' + _pt('text') + ';font-family:inherit;margin-bottom:14px;" autocomplete="off" autocorrect="off" spellcheck="false">'
@@ -11738,7 +12108,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (tabsEl)    tabsEl.style.display    = 'none';
     if (searchRow) searchRow.style.display = 'none';
     if (backBtn)   backBtn.classList.remove('hidden');
-    if (titleEl)   titleEl.textContent = recap.name || 'Pinned Recently Watched';
+    if (titleEl)   titleEl.textContent = recap.name || 'Pinned Video Recap';
 
     const esc = s => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const topShows  = recap.topShows  || [];
@@ -11860,8 +12230,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       { key: 'stations',   label: 'Radio',       color: '#FF9F0A', path: 'M19,6.41L4.86,2.28L4.29,4.2L7,5V7H5A2,2 0 0,0 3,9V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V9A2,2 0 0,0 19,7H9V5.75L19,8.55V6.41M7,9A2,2 0 0,1 9,11A2,2 0 0,1 7,13A2,2 0 0,1 5,11A2,2 0 0,1 7,9M17,18H7V16H17V18M19,14H11V10H19V14Z' },
       { key: 'podcasts',   label: 'Podcasts',    color: '#BF5AF2', path: 'M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12,7A5,5 0 0,0 7,12C7,14.76 8.58,17.15 11,18.27V16.06C9.8,15.16 9,13.68 9,12A3,3 0 0,1 12,9A3,3 0 0,1 15,12C15,13.68 14.2,15.16 13,16.06V18.27C15.42,17.15 17,14.76 17,12A5,5 0 0,0 12,7M12,11A1,1 0 0,0 11,12A1,1 0 0,0 12,13A1,1 0 0,0 13,12A1,1 0 0,0 12,11Z' },
       { key: 'audiobooks', label: 'Audiobooks',  color: '#32ADE6', path: 'M18,22A2,2 0 0,0 20,20V4C20,2.89 19.1,2 18,2H12V9L9.5,7.5L7,9V2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18Z' },
-      { key: 'recaps',     label: 'Recently Listened To', color: '#64D2FF', path: 'M22,21H2V3H4V19H6V10H10V19H12V6H16V19H18V14H22V21Z' },
-      { key: 'watch_recaps', label: 'Recently Watched', color: '#FF453A', path: 'M21,3H3C1.89,3 1,3.89 1,5V19A2,2 0 0,0 3,21H21A2,2 0 0,0 23,19V5C23,3.89 22.1,3 21,3M21,19H3V5H21V19M18,13.5L15.5,15.15L15.5,11.85L18,13.5M13,15.5L10.5,17.15L10.5,13.85L13,15.5M8,13.5L5.5,15.15L5.5,11.85L8,13.5Z' },
+      { key: 'recaps',     label: 'Music Recap', color: '#64D2FF', path: 'M22,21H2V3H4V19H6V10H10V19H12V6H16V19H18V14H22V21Z' },
+      { key: 'watch_recaps', label: 'Video Recap', color: '#FF453A', path: 'M21,3H3C1.89,3 1,3.89 1,5V19A2,2 0 0,0 3,21H21A2,2 0 0,0 23,19V5C23,3.89 22.1,3 21,3M21,19H3V5H21V19M18,13.5L15.5,15.15L15.5,11.85L18,13.5M13,15.5L10.5,17.15L10.5,13.85L13,15.5M8,13.5L5.5,15.15L5.5,11.85L8,13.5Z' },
       { key: 'movies_tv',  label: 'Movies & TV', color: '#FF3B30', path: 'M21,3H3C1.89,3 1,3.89 1,5V19A2,2 0 0,0 3,21H21A2,2 0 0,0 23,19V5C23,3.89 22.1,3 21,3M21,19H3V5H21V19M18,13.5L15.5,15.15L15.5,11.85L18,13.5M13,15.5L10.5,17.15L10.5,13.85L13,15.5M8,13.5L5.5,15.15L5.5,11.85L8,13.5Z' },
     ];
   }
@@ -12869,6 +13239,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         this._copyToClipboard(parts.join('\n'));
       };
     }
+    r.getElementById('infoYoutubeBtn')?.classList.add('hidden');
     const _abPin = r.getElementById('infoPinBtn'), _abPinSvg = r.getElementById('infoPinSvg');
     const _updatePinBtn = () => {
       if (!_abPin || !_abPinSvg) return;
@@ -13068,7 +13439,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         if (mode === 'play_now') {
           const playCall = this._rbStationPlayCall(st, entity);
           if (!playCall) { this._showToast('No stream URL'); return; }
-          this._rbSaveLastPlayed(entity, st);
           this._showLoadingToast('Starting playback…');
           this._hass.connection.sendMessagePromise({
             type: 'call_service', domain: playCall.domain, service: playCall.service,
@@ -13079,7 +13449,16 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             const _rbCmInterval = setInterval(() => {
               _rbCmChecks++;
               const _s = this._hass?.states[_rbCmEntity]?.state;
-              if (_s === 'playing') { clearInterval(_rbCmInterval); return; }
+              if (_s === 'playing') {
+                clearInterval(_rbCmInterval);
+                // Save now, with the real contentId reflecting what's
+                // actually playing — saving blind before playback started
+                // (with no contentId to verify against) let this station
+                // permanently masquerade as whatever plays next.
+                const _freshAttrs = this._hass?.states[_rbCmEntity]?.attributes || {};
+                this._rbSaveLastPlayed(_rbCmEntity, st, this._rbStreamKey(_freshAttrs));
+                return;
+              }
               if (_rbCmChecks >= 2 && (_s === 'idle' || _s === 'paused' || _s === 'off')) {
                 clearInterval(_rbCmInterval);
                 this._showToast('\u26a0\ufe0f ' + st.name + ' didn\u0027t start — it may be geo-blocked or unavailable', 4000);
@@ -13176,6 +13555,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         this._copyToClipboard(parts.join('\n'));
       };
     }
+    r.getElementById('infoYoutubeBtn')?.classList.add('hidden');
 
     // Show pin button in header
     const _rbPin = r.getElementById('infoPinBtn');
@@ -13287,8 +13667,25 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     content.querySelector('#rb-info-play-btn')?.addEventListener('click', () => {
       const playCall = this._rbStationPlayCall(st, _rbPlayTarget);
       if (!playCall) { this._showToast('No stream URL for this station'); return; }
-      this._rbSaveLastPlayed(_rbPlayTarget, st);
       this._showLoadingToast('Starting playback…');
+      // Poll briefly for confirmation, then save with the real contentId —
+      // saving blind before playback started (with no contentId to verify
+      // against) let this station permanently masquerade as whatever plays
+      // next on this entity, since a stored entry with no contentId used
+      // to be trusted unconditionally.
+      const _rbInfoPlayEntity = _rbPlayTarget;
+      let _rbInfoPlayChecks = 0;
+      const _rbInfoPlayInterval = setInterval(() => {
+        _rbInfoPlayChecks++;
+        const _s = this._hass?.states[_rbInfoPlayEntity]?.state;
+        if (_s === 'playing') {
+          clearInterval(_rbInfoPlayInterval);
+          const _freshAttrs = this._hass?.states[_rbInfoPlayEntity]?.attributes || {};
+          this._rbSaveLastPlayed(_rbInfoPlayEntity, st, this._rbStreamKey(_freshAttrs));
+          return;
+        }
+        if (_rbInfoPlayChecks >= 8) clearInterval(_rbInfoPlayInterval);
+      }, 500);
       // HA media-source stations always go through the core service — it
       // works on any media_player entity and doesn't need MA at all.
       if (playCall.domain === 'media_player' || _rbHasMA) {
@@ -15272,12 +15669,18 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // lookups the LIVE pill and artwork favicon fallback already use —
   // successfully resolving a station is a far stronger signal than duration
   // being present or absent, since a real track would never resolve there.
-  _isActuallyRadioStream(state) {
-    if (this._isLiveStream(state)) return true;
+  _isActuallyRadioStream(state, entityId = this._entity) {
     const attrs = state?.attributes || {};
+    // Trust MA's explicit radio/flow tag outright — that's a real signal.
+    // Deliberately NOT trusting _isLiveStream()'s duration-based fallback
+    // here: "no duration" also happens for ordinary songs (e.g. right as
+    // playback starts, or sources that never report duration), which would
+    // misclassify a track as a station. Resolving an actual station below
+    // is the stronger signal, per the comment above this function.
+    if (attrs.mass_media_type === 'radio' || attrs.mass_media_type === 'flow') return true;
     const streamKey = this._rbStreamKey(attrs);
     if (!streamKey) return false;
-    if (this._rbGetLastPlayed(this._entity, streamKey)) return true;
+    if (this._rbGetLastPlayed(entityId, streamKey)) return true;
     const rawContentId = attrs.media_content_id || '';
     const streamUrl = rawContentId.replace(/^builtin:\/\/radio\//i, '');
     if (streamUrl && this._rbCachedStation(streamUrl)) return true;
@@ -16037,6 +16440,16 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       case 'youtube_music':
       default:              return `https://music.youtube.com/search?q=${q}`;
     }
+  }
+
+  // Dedicated, always-YouTube search link — deliberately separate from
+  // _buildShareUrl above, which points at whatever service the person has
+  // configured for Share (Spotify, Apple Music, etc.), not necessarily
+  // YouTube at all. This is for the header's "Open on YouTube" / "Trailer"
+  // button specifically, which should always mean YouTube regardless of
+  // that setting.
+  _buildYoutubeUrl(query) {
+    return `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
   }
 
   _copyToClipboard(text) {
@@ -16921,7 +17334,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   }
 
   /**
-   * Recently Listened To — local play-history log + AI narrative
+   * Music Recap — local play-history log + AI narrative
    * ─────────────────────────────────────────────────────────────────────
    * Log entries are appended by the _trackChanged handler in the hass
    * setter (see _lastTrackMeta / _trackStartTs). Aggregation (top artists,
@@ -16940,22 +17353,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // Shared exclusion check used by both the live watcher (set hass) and the
   // history backfill — kept as one function so the two paths can't drift
   // out of sync with different rules.
-  // Classifies a media state for Watch Recap purposes. Deliberately strict
-  // — precision over recall, since the fallback branch of _detectMediaType
-  // treats anything ambiguous (including YouTube) as 'movie', which would
-  // be wrong to trust blindly here.
+  // Classifies a media state for Watch Recap / Watch History purposes.
   //  - TV: trusts _detectMediaType()'s 'tv' classification as-is, since that
   //    already requires a positive signal (series title, season/episode
   //    numbers, or an explicit tvshow/episode content type).
-  //  - Movie: only counts if media_content_type is EXPLICITLY 'movie', not
-  //    the generic 'video' bucket everything unclear (including YouTube)
-  //    falls into.
-  //  - Explicit YouTube backstop regardless of how it classifies.
-  // Returns { kind: 'tv'|'movie'|null, title, seriesTitle }.
+  //  - Movie: whatever's left once TV is ruled out and there's a usable
+  //    title.
   _classifyWatchMedia(attrs, pseudoState) {
-    const uri = (attrs?.media_content_id || '').toLowerCase();
-    if (uri.includes('youtube')) return { kind: null };
-
     // Some sources (DVR/PVR recordings especially) fall back to a bare
     // record/air date in media_title when real title metadata wasn't
     // available — "12 February 2014", "2014-02-12", "12/02/2014", etc.
@@ -17065,7 +17469,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     } catch (_) { return []; }
   }
 
-  _recapShouldExclude(artist, title, attrs, pseudoState) {
+  _recapShouldExclude(artist, title, attrs, pseudoState, entityId = this._entity) {
     // Narrow notification/announcement filter — deliberately NOT a blanket
     // URI-scheme match (that's what silently excluded every real MA track
     // before). Only catches the specific shape a system sound clip actually
@@ -17083,7 +17487,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const contentType = (attrs?.media_content_type || '').toLowerCase();
     const isPodcast   = (!pseudoState && !!this._pcNowPlaying) || contentType === 'podcast';
     const isAudiobook = (!pseudoState && !!this._abNowPlaying) || contentType === 'audiobook';
-    const isRadio      = this._isLiveStream(pseudoState || { attributes: attrs });
+    // Radio check uses the same more-robust resolver the pinned indicator
+    // and double-tap-to-pin rely on, not the plain duration heuristic —
+    // a station whose ICY metadata happens to report a duration for the
+    // currently playing song (some do, some don't) would otherwise slip
+    // past a duration-only check and get logged as if it were a real track.
+    const isRadio      = this._isActuallyRadioStream(pseudoState || { attributes: attrs }, entityId);
     if (isPodcast || isAudiobook || isRadio) return true;
 
     // Video content — TV shows, movies, YouTube, etc. — reuses the same
@@ -17181,7 +17590,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
           let kind = null, key = null, entryMeta = null;
           if (artist) {
-            if (this._recapShouldExclude(artist, title, entry.attrs, { state: entry.state, attributes: entry.attrs })) continue;
+            if (this._recapShouldExclude(artist, title, entry.attrs, { state: entry.state, attributes: entry.attrs }, entId)) continue;
             kind = 'music';
             key = 'music|' + artist + '|||' + title + '|||' + (entry.attrs.media_album_name || '');
             entryMeta = {
@@ -17316,7 +17725,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     this._queuePanelDirection = null;
     this._activeInfoPanelKind = 'recap';
     r.getElementById('queueMenuBtn')?.classList.remove('hidden');
-    if (titleEl) titleEl.textContent = '📊 Recently Listened To';
+    if (titleEl) titleEl.textContent = '📊 Music Recap';
 
     if (!this._aiPanelGeneration) this._aiPanelGeneration = 0;
     const _myGen = ++this._aiPanelGeneration;
@@ -17594,7 +18003,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     this._queuePanelDirection = null;
     this._activeInfoPanelKind = 'watchRecap';
     r.getElementById('queueMenuBtn')?.classList.remove('hidden');
-    if (titleEl) titleEl.textContent = '🎬 Recently Watched';
+    if (titleEl) titleEl.textContent = '🎬 Video Recap';
 
     if (!this._aiPanelGeneration) this._aiPanelGeneration = 0;
     const _myGen = ++this._aiPanelGeneration;
@@ -17708,7 +18117,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     menu.id = 'queueDropdownMenu';
     menu.innerHTML =
       '<div class="queue-dropdown-item" id="watchRecapMenuExpand" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M3,18H21V16H3V18M3,13H21V11H3V13M3,6V8H21V6H3Z"/></svg><span class="queue-dropdown-label">' + (this._watchRecapShowExpanded ? 'Show Top 10' : 'Show Top 50') + '</span></div>' +
-      '<div class="queue-dropdown-item" id="watchRecapMenuPin" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg><span class="queue-dropdown-label">Pin This Recently Watched</span></div>' +
+      '<div class="queue-dropdown-item" id="watchRecapMenuPin" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg><span class="queue-dropdown-label">Pin This Video Recap</span></div>' +
       '<div class="queue-dropdown-item danger" id="watchRecapMenuClear" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/></svg><span class="queue-dropdown-label">Clear Watch History</span></div>';
 
     const anchorRect = anchor.getBoundingClientRect();
@@ -17766,7 +18175,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     sheet.style.cssText = 'position:absolute;z-index:99999;display:flex;align-items:flex-end;justify-content:center;background:rgba(0,0,0,0.5);left:0;top:' + window.scrollY + 'px;width:' + document.documentElement.clientWidth + 'px;height:' + window.innerHeight + 'px;';
     sheet.innerHTML = '<div style="width:100%;max-width:480px;background:var(--crow-panel-bg,#13131a);border-radius:20px 20px 0 0;padding:20px 20px 32px;box-shadow:0 -8px 40px rgba(0,0,0,0.6);">'
       + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">'
-      + '<span style="font-size:15px;font-weight:700;color:' + _pt('text') + ';">Pin Recently Watched</span>'
+      + '<span style="font-size:15px;font-weight:700;color:' + _pt('text') + ';">Pin Video Recap</span>'
       + '<button class="rb-tag-sheet-close" style="width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,0.1);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;"><svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:' + _pt('text') + '"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>'
       + '</div>'
       + '<div style="font-size:12px;color:' + _pt('dim') + ';margin-bottom:10px;">' + (snapshot.dateRangeLabel || '') + '</div>'
@@ -17790,6 +18199,25 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     });
   }
 
+  // Shared clearing logic — same reasoning as _clearListenHistoryData: two
+  // different views (Recap panel, library section) read the same watch log,
+  // so clearing either has to clear both from one place.
+  async _clearWatchHistoryData() {
+    try {
+      localStorage.removeItem('crow_ai_local_watchLog');
+    } catch (_) {}
+    clearTimeout(this._haAISaveTimers?.watchLog);
+    if (this._config?.ai_info_persistent_storage === true && this._hass?.connection) {
+      try {
+        const conn = this._hass.connection;
+        const res = await conn.sendMessagePromise({ type: 'frontend/get_user_data', key: 'crow_ai_local' });
+        const full = (res?.value && typeof res.value === 'object') ? res.value : {};
+        full.watchLog = {};
+        await conn.sendMessagePromise({ type: 'frontend/set_user_data', key: 'crow_ai_local', value: full });
+      } catch (_) { /* best-effort — local clear already happened either way */ }
+    }
+  }
+
   _confirmClearWatchHistory() {
     const content = this.shadowRoot?.getElementById('infoContent');
     if (!content) return;
@@ -17799,7 +18227,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       '<div class="panel-state confirm">' +
         '<div class="panel-state-icon"><svg viewBox="0 0 24 24"><path d="M9,3V4H4V6H5V19A2,2 0 0,0 7,21H17A2,2 0 0,0 19,19V6H20V4H15V3H9M7,6H17V19H7V6M9,8V17H11V8H9M13,8V17H15V8H13Z"/></svg></div>' +
         '<div class="panel-state-title">Reset watch history?</div>' +
-        '<div class="panel-state-body">This permanently deletes your Recently Watched history. This can\u2019t be undone.</div>' +
+        '<div class="panel-state-body">This permanently deletes your Video Recap history. This can\u2019t be undone.</div>' +
         '<div class="panel-state-confirm-btns">' +
           '<button class="panel-state-btn-cancel" id="watchRecapResetCancel">Cancel</button>' +
           '<button class="panel-state-btn-danger" id="watchRecapResetConfirm">Reset</button>' +
@@ -17810,26 +18238,42 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       content.scrollTop = _savedScroll;
     }, { once: true });
     content.querySelector('#watchRecapResetConfirm')?.addEventListener('click', async () => {
-      try {
-        localStorage.removeItem('crow_ai_local_watchLog');
-      } catch (_) {}
-      clearTimeout(this._haAISaveTimers?.watchLog);
-      if (this._config?.ai_info_persistent_storage === true && this._hass?.connection) {
-        try {
-          const conn = this._hass.connection;
-          const res = await conn.sendMessagePromise({ type: 'frontend/get_user_data', key: 'crow_ai_local' });
-          const full = (res?.value && typeof res.value === 'object') ? res.value : {};
-          full.watchLog = {};
-          await conn.sendMessagePromise({ type: 'frontend/set_user_data', key: 'crow_ai_local', value: full });
-        } catch (_) { /* best-effort — local clear already happened either way */ }
-      }
       // Note: unlike Listening Recap's clear, this doesn't reset the shared
       // history-backfill checkpoints — those are entity-wide (covering both
       // music and watch content per entity), and resetting them here would
       // also silently discard any not-yet-backfilled music history for the
       // same entities. Watch content backfilled again after this clear is a
       // much smaller/rarer risk than that trade-off.
+      await this._clearWatchHistoryData();
       this._showWatchRecap();
+    }, { once: true });
+  }
+
+  // Same idea, but for the new Watch History library section — shown in
+  // the library's own content area, re-rendering the Movies & TV tab
+  // afterward instead of the Recap panel. Clearing either clears both.
+  _confirmClearMtWatchHistory() {
+    const content = this.shadowRoot?.getElementById('maContent');
+    if (!content) return;
+    const _savedHtml = content.innerHTML;
+    const _savedScroll = content.scrollTop;
+    content.innerHTML =
+      '<div class="panel-state confirm">' +
+        '<div class="panel-state-icon"><svg viewBox="0 0 24 24"><path d="M9,3V4H4V6H5V19A2,2 0 0,0 7,21H17A2,2 0 0,0 19,19V6H20V4H15V3H9M7,6H17V19H7V6M9,8V17H11V8H9M13,8V17H15V8H13Z"/></svg></div>' +
+        '<div class="panel-state-title">Clear Watch History?</div>' +
+        '<div class="panel-state-body">This permanently deletes your watch history — this also clears Video Recap, since they\u2019re the same history. This can\u2019t be undone.</div>' +
+        '<div class="panel-state-confirm-btns">' +
+          '<button class="panel-state-btn-cancel" id="mtWatchClearCancel">Cancel</button>' +
+          '<button class="panel-state-btn-danger" id="mtWatchClearConfirm">Clear</button>' +
+        '</div>' +
+      '</div>';
+    content.querySelector('#mtWatchClearCancel')?.addEventListener('click', () => {
+      content.innerHTML = _savedHtml;
+      content.scrollTop = _savedScroll;
+    }, { once: true });
+    content.querySelector('#mtWatchClearConfirm')?.addEventListener('click', async () => {
+      await this._clearWatchHistoryData();
+      this._loadMATab('recently_watched');
     }, { once: true });
   }
 
@@ -17854,7 +18298,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       '<div class="queue-dropdown-item" id="recapMenuPlayAll" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg><span class="queue-dropdown-label">Play All</span></div>' +
       '<div class="queue-dropdown-item" id="recapMenuAdd" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M19 11h-6V5h-2v6H5v2h6v6h2v-6h6z"/></svg><span class="queue-dropdown-label">Add</span></div>' +
       '<div class="queue-dropdown-item" id="recapMenuPlayNext" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M16,18H18V6H16M6,18L14.5,12L6,6V18Z"/></svg><span class="queue-dropdown-label">Play Next</span></div>' +
-      '<div class="queue-dropdown-item" id="recapMenuPin" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg><span class="queue-dropdown-label">Pin This Recently Listened To</span></div>' +
+      '<div class="queue-dropdown-item" id="recapMenuPin" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg><span class="queue-dropdown-label">Pin This Music Recap</span></div>' +
       '<div class="queue-dropdown-item danger" id="recapMenuClear" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/></svg><span class="queue-dropdown-label">Clear Listening History</span></div>';
 
     const anchorRect = anchor.getBoundingClientRect();
@@ -17974,7 +18418,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     sheet.style.cssText = 'position:absolute;z-index:99999;display:flex;align-items:flex-end;justify-content:center;background:rgba(0,0,0,0.5);left:0;top:' + window.scrollY + 'px;width:' + document.documentElement.clientWidth + 'px;height:' + window.innerHeight + 'px;';
     sheet.innerHTML = '<div style="width:100%;max-width:480px;background:var(--crow-panel-bg,#13131a);border-radius:20px 20px 0 0;padding:20px 20px 32px;box-shadow:0 -8px 40px rgba(0,0,0,0.6);">'
       + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">'
-      + '<span style="font-size:15px;font-weight:700;color:' + _pt('text') + ';">Pin Recently Listened To</span>'
+      + '<span style="font-size:15px;font-weight:700;color:' + _pt('text') + ';">Pin Music Recap</span>'
       + '<button class="rb-tag-sheet-close" style="width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,0.1);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;"><svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:' + _pt('text') + '"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>'
       + '</div>'
       + '<div style="font-size:12px;color:' + _pt('dim') + ';margin-bottom:10px;">' + (snapshot.dateRangeLabel || '') + '</div>'
@@ -17998,6 +18442,56 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     });
   }
 
+  // Shared by both Music Recap's "Reset" and Music History's
+  // "Clear" — they're two views onto the same underlying log, so clearing
+  // either one has to clear both, and the checkpoint-reset logic (needed so
+  // a subsequent backfill doesn't just re-insert what was just cleared)
+  // only needs to exist in one place.
+  async _clearListenHistoryData() {
+    // Reset (not delete) history checkpoints to "now" for every entity
+    // this card or others might be tracking. Deleting them would make
+    // the backfill treat it as a first-ever run and look back 48h again
+    // — re-fetching and re-inserting exactly what's being cleared here.
+    // Setting them to now marks "already caught up" so nothing before
+    // this point gets backfilled again on the next card load.
+    let _checkpoints = {};
+    try { _checkpoints = JSON.parse(localStorage.getItem('crow_ai_local_historyCheckpoint') || '{}'); } catch (_) {}
+    const _nowTs = Date.now();
+    const _watchEntitiesForClear = [
+      ...(Array.isArray(this._config?.entities) ? this._config.entities : []),
+      ...(Array.isArray(this._config?.ma_entities) ? this._config.ma_entities : []),
+      ...Object.keys(_checkpoints),
+    ].filter((v, i, a) => a.indexOf(v) === i);
+    _watchEntitiesForClear.forEach(eid => { _checkpoints[eid] = _nowTs; });
+    try { localStorage.setItem('crow_ai_local_historyCheckpoint', JSON.stringify(_checkpoints)); } catch (_) {}
+    // Global marker, separate from per-entity checkpoints — covers a
+    // different room's card that has never run backfill at all yet (so
+    // has no checkpoint entry for its own entities), which would
+    // otherwise still look back the full default 48h and re-insert
+    // pre-clear history the first time it loads.
+    try { localStorage.setItem('crow_ai_local_recapClearedAt', JSON.stringify({ ts: _nowTs })); } catch (_) {}
+
+    try {
+      localStorage.removeItem('crow_ai_local_listenLog');
+      localStorage.removeItem('crow_ai_local_maRecapState');
+    } catch (_) {}
+    this._maRecapState = {};
+    clearTimeout(this._haAISaveTimers?.listenLog);
+    clearTimeout(this._haAISaveTimers?.maRecapState);
+    if (this._config?.ai_info_persistent_storage === true && this._hass?.connection) {
+      try {
+        const conn = this._hass.connection;
+        const res = await conn.sendMessagePromise({ type: 'frontend/get_user_data', key: 'crow_ai_local' });
+        const full = (res?.value && typeof res.value === 'object') ? res.value : {};
+        full.listenLog = {};
+        full.maRecapState = {};
+        full.historyCheckpoint = _checkpoints;
+        full.recapClearedAt = { ts: _nowTs };
+        await conn.sendMessagePromise({ type: 'frontend/set_user_data', key: 'crow_ai_local', value: full });
+      } catch (_) { /* best-effort — local clear already happened either way */ }
+    }
+  }
+
   // iOS-style confirmation, then clears Recap history entirely — pulled out
   // of the render function so it can be triggered from the shared "⋮" menu.
   _confirmClearRecapHistory() {
@@ -18009,7 +18503,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       '<div class="panel-state confirm">' +
         '<div class="panel-state-icon"><svg viewBox="0 0 24 24"><path d="M9,3V4H4V6H5V19A2,2 0 0,0 7,21H17A2,2 0 0,0 19,19V6H20V4H15V3H9M7,6H17V19H7V6M9,8V17H11V8H9M13,8V17H15V8H13Z"/></svg></div>' +
         '<div class="panel-state-title">Reset listening data?</div>' +
-        '<div class="panel-state-body">This permanently deletes your Recently Listened To history. This can\u2019t be undone.</div>' +
+        '<div class="panel-state-body">This permanently deletes your Music Recap history. This can\u2019t be undone.</div>' +
         '<div class="panel-state-confirm-btns">' +
           '<button class="panel-state-btn-cancel" id="recapResetCancel">Cancel</button>' +
           '<button class="panel-state-btn-danger" id="recapResetConfirm">Reset</button>' +
@@ -18020,49 +18514,37 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       content.scrollTop = _savedScroll;
     }, { once: true });
     content.querySelector('#recapResetConfirm')?.addEventListener('click', async () => {
-      // Reset (not delete) history checkpoints to "now" for every entity
-      // this card or others might be tracking. Deleting them would make
-      // the backfill treat it as a first-ever run and look back 48h again
-      // — re-fetching and re-inserting exactly what's being cleared here.
-      // Setting them to now marks "already caught up" so nothing before
-      // this point gets backfilled again on the next card load.
-      let _checkpoints = {};
-      try { _checkpoints = JSON.parse(localStorage.getItem('crow_ai_local_historyCheckpoint') || '{}'); } catch (_) {}
-      const _nowTs = Date.now();
-      const _watchEntitiesForClear = [
-        ...(Array.isArray(this._config?.entities) ? this._config.entities : []),
-        ...(Array.isArray(this._config?.ma_entities) ? this._config.ma_entities : []),
-        ...Object.keys(_checkpoints),
-      ].filter((v, i, a) => a.indexOf(v) === i);
-      _watchEntitiesForClear.forEach(eid => { _checkpoints[eid] = _nowTs; });
-      try { localStorage.setItem('crow_ai_local_historyCheckpoint', JSON.stringify(_checkpoints)); } catch (_) {}
-      // Global marker, separate from per-entity checkpoints — covers a
-      // different room's card that has never run backfill at all yet (so
-      // has no checkpoint entry for its own entities), which would
-      // otherwise still look back the full default 48h and re-insert
-      // pre-clear history the first time it loads.
-      try { localStorage.setItem('crow_ai_local_recapClearedAt', JSON.stringify({ ts: _nowTs })); } catch (_) {}
-
-      try {
-        localStorage.removeItem('crow_ai_local_listenLog');
-        localStorage.removeItem('crow_ai_local_maRecapState');
-      } catch (_) {}
-      this._maRecapState = {};
-      clearTimeout(this._haAISaveTimers?.listenLog);
-      clearTimeout(this._haAISaveTimers?.maRecapState);
-      if (this._config?.ai_info_persistent_storage === true && this._hass?.connection) {
-        try {
-          const conn = this._hass.connection;
-          const res = await conn.sendMessagePromise({ type: 'frontend/get_user_data', key: 'crow_ai_local' });
-          const full = (res?.value && typeof res.value === 'object') ? res.value : {};
-          full.listenLog = {};
-          full.maRecapState = {};
-          full.historyCheckpoint = _checkpoints;
-          full.recapClearedAt = { ts: _nowTs };
-          await conn.sendMessagePromise({ type: 'frontend/set_user_data', key: 'crow_ai_local', value: full });
-        } catch (_) { /* best-effort — local clear already happened either way */ }
-      }
+      await this._clearListenHistoryData();
       this._showAIRecap();
+    }, { once: true });
+  }
+
+  // Same idea as _confirmClearRecapHistory above, but for Recent Played —
+  // shown inside the library's own content area rather than the AI Info
+  // popup, and re-renders that view afterward instead of the Recap panel.
+  // Clearing either one clears both, since they read the same log.
+  _confirmClearRecentPlays() {
+    const content = this.shadowRoot?.getElementById('maContent');
+    if (!content) return;
+    const _savedHtml = content.innerHTML;
+    const _savedScroll = content.scrollTop;
+    content.innerHTML =
+      '<div class="panel-state confirm">' +
+        '<div class="panel-state-icon"><svg viewBox="0 0 24 24"><path d="M9,3V4H4V6H5V19A2,2 0 0,0 7,21H17A2,2 0 0,0 19,19V6H20V4H15V3H9M7,6H17V19H7V6M9,8V17H11V8H9M13,8V17H15V8H13Z"/></svg></div>' +
+        '<div class="panel-state-title">Clear Music History?</div>' +
+        '<div class="panel-state-body">This permanently deletes your listening history — this also clears Music Recap, since they\u2019re the same history. This can\u2019t be undone.</div>' +
+        '<div class="panel-state-confirm-btns">' +
+          '<button class="panel-state-btn-cancel" id="recentPlaysClearCancel">Cancel</button>' +
+          '<button class="panel-state-btn-danger" id="recentPlaysClearConfirm">Clear</button>' +
+        '</div>' +
+      '</div>';
+    content.querySelector('#recentPlaysClearCancel')?.addEventListener('click', () => {
+      content.innerHTML = _savedHtml;
+      content.scrollTop = _savedScroll;
+    }, { once: true });
+    content.querySelector('#recentPlaysClearConfirm')?.addEventListener('click', async () => {
+      await this._clearListenHistoryData();
+      this._renderRecentPlaysTab(content);
     }, { once: true });
   }
 
@@ -18472,6 +18954,151 @@ Include ALL tracks. Use null for unknown fields.`;
   // excludes radio/live streams, since there's no single stable "song" to
   // pin for those (they already have their own pin flow via the LIVE pill's
   // station detail panel).
+  // iOS-style confirmation before unpinning via the artwork badge — the
+  // existing Clear History-style confirmations all work by replacing a
+  // panel's content area, which doesn't apply here since the badge lives on
+  // the main player view itself, not inside a panel. Reuses the exact same
+  // panel-state-confirm visual classes those use, just wrapped in its own
+  // small floating card + backdrop instead.
+  // Called every updateContent cycle. Fires off (and caches) the entity
+  // registry lookup the first time an Apple TV entity is seen, and once
+  // that's resolved, shows/hides the keyboard input panel purely by
+  // watching the sibling binary_sensor's actual state — no polling beyond
+  // what updateContent already does on every hass state change.
+  _checkAppleTVKeyboard(isAppleTV) {
+    if (!isAppleTV || this._config?.atv_keyboard_panel === false || !this._remoteMode) { this._hideAppleTVKeyboardPanel(); return; }
+    const entityId = this._entity;
+    const cached = this._atvKeyboardInfoCache?.[entityId];
+    if (cached === undefined) {
+      // Not resolved yet — kick off the lookup; the next updateContent
+      // cycle (which will follow shortly, since hass pushes state updates
+      // frequently) will have the cached answer to act on.
+      this._getAppleTVKeyboardInfo(entityId);
+      return;
+    }
+    if (!cached) { this._hideAppleTVKeyboardPanel(); return; }
+    const focused = this._hass?.states[cached.binarySensorId]?.state === 'on';
+    if (!focused) {
+      // Sensor went off — this "session" ended, so a future "on" should be
+      // treated as new and allowed to show again even if this one was
+      // manually dismissed.
+      this._atvKeyboardManuallyDismissed = false;
+      this._hideAppleTVKeyboardPanel();
+      return;
+    }
+    if (this._atvKeyboardManuallyDismissed) return; // stays dismissed until focused goes false then true again
+    this._showAppleTVKeyboardPanel(cached.configEntryId);
+  }
+
+  _showAppleTVKeyboardPanel(configEntryId) {
+    const r = this.shadowRoot;
+    if (r.getElementById('atvKeyboardPanel')) return; // already showing
+    const cardOuter = r.getElementById('cardOuter');
+    if (!cardOuter) return;
+
+    const panel = document.createElement('div');
+    panel.id = 'atvKeyboardPanel';
+    panel.style.cssText = 'position:absolute;inset:0;z-index:70;background:rgba(0,0,0,0.55);backdrop-filter:blur(20px) saturate(150%);-webkit-backdrop-filter:blur(20px) saturate(150%);display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;';
+    panel.innerHTML =
+      '<div style="background:var(--crow-panel-bg,#1c1c1e);border-radius:16px;padding:18px;width:100%;max-width:320px;box-sizing:border-box;">' +
+        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">' +
+          '<svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:rgba(255,255,255,0.6);flex-shrink:0;"><path d="M19,3H5C3.89,3 3,3.9 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V5C21,3.9 20.1,3 19,3M11,5H13V7H11V5M8,5H10V7H8V5M5,5H7V7H5V5M5,8H7V10H5V8M5,11H7V13H5V11M19,19H5V16H19V19M19,13H17V11H19V13M19,10H17V8H19V10M16,13H14V11H16V13M16,10H14V8H16V10M13,10H11V8H13V10M8,10V8H10V10H8M8,13V11H10V13H8Z"/></svg>' +
+          '<div style="font-size:14px;font-weight:600;color:var(--primary-text-color,#fff);">Apple TV Keyboard</div>' +
+          '<button id="atvKeyboardClose" style="margin-left:auto;background:none;border:none;padding:4px;cursor:pointer;-webkit-tap-highlight-color:transparent;">' +
+            '<svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:rgba(255,255,255,0.4);"><path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/></svg>' +
+          '</button>' +
+        '</div>' +
+        '<div style="font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:10px;line-height:1.4;">The on-screen keyboard is active — type here and send it straight to the TV instead of using the remote\u2019s letter-by-letter entry.</div>' +
+        '<div style="position:relative;display:flex;align-items:center;">' +
+          '<svg viewBox="0 0 24 24" style="position:absolute;left:10px;width:14px;height:14px;fill:' + this._pt('dim') + ';pointer-events:none;"><path d="M19,3H5C3.89,3 3,3.9 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V5C21,3.9 20.1,3 19,3M11,5H13V7H11V5M8,5H10V7H8V5M5,5H7V7H5V5M5,8H7V10H5V8M5,11H7V13H5V11M19,19H5V16H19V19M19,13H17V11H19V13M19,10H17V8H19V10M16,13H14V11H16V13M16,10H14V8H16V10M13,10H11V8H13V10M8,10V8H10V10H8M8,13V11H10V13H8Z"/></svg>' +
+          '<input type="text" id="atvKeyboardInput" placeholder="Type here\u2026" enterkeyhint="send" autocomplete="off" autocorrect="off" spellcheck="false" ' +
+            'style="width:100%;box-sizing:border-box;background:' + this._pt('btnBg') + ';border:1px solid ' + this._pt('border') + ';border-radius:10px;padding:8px 10px 8px 32px;color:' + this._pt('text') + ';font-size:13px;font-family:-apple-system,BlinkMacSystemFont,\'SF Pro Display\',sans-serif;outline:none;">' +
+        '</div>' +
+        '<div style="display:flex;gap:8px;margin-top:12px;">' +
+          '<button id="atvKeyboardClear" style="flex:1;padding:9px 0;border-radius:10px;border:none;background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.7);font-size:14px;font-weight:500;cursor:pointer;font-family:inherit;">Clear</button>' +
+          '<button id="atvKeyboardSend" style="flex:2;padding:9px 0;border-radius:10px;border:none;background:var(--accent,#007AFF);color:#fff;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;">Send</button>' +
+        '</div>' +
+      '</div>';
+    cardOuter.appendChild(panel);
+
+    const input = panel.querySelector('#atvKeyboardInput');
+    input?.focus();
+
+    const sendText = () => {
+      const text = input?.value ?? '';
+      if (!configEntryId) { this._showToast('Could not find this Apple TV\u2019s config entry'); return; }
+      this._hass.callService('apple_tv', 'set_keyboard_text', { config_entry_id: configEntryId, text }).catch(() => {
+        this._showToast('Failed to send text to Apple TV');
+      });
+    };
+    panel.querySelector('#atvKeyboardSend')?.addEventListener('click', sendText);
+    input?.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendText(); });
+    panel.querySelector('#atvKeyboardClear')?.addEventListener('click', () => {
+      if (input) input.value = '';
+      if (configEntryId) this._hass.callService('apple_tv', 'clear_keyboard_text', { config_entry_id: configEntryId }).catch(() => {});
+    });
+    // Manual close only hides this card's panel — the keyboard may still be
+    // focused on the Apple TV itself, so this doesn't try to un-focus it.
+    // It'll reappear on the next update cycle if the sensor is still "on"
+    // and this device is reselected; that's acceptable since the main
+    // point of a manual close is "I'll finish typing on the actual remote
+    // instead", not "make the TV stop asking for text".
+    panel.querySelector('#atvKeyboardClose')?.addEventListener('click', () => {
+      panel.remove();
+      this._atvKeyboardManuallyDismissed = true;
+    });
+  }
+
+  _hideAppleTVKeyboardPanel() {
+    this.shadowRoot?.getElementById('atvKeyboardPanel')?.remove();
+    this._atvKeyboardManuallyDismissed = false;
+  }
+
+  _confirmUnpinFromBadge(x, y) {
+    const r = this.shadowRoot;
+    const artEl = r.getElementById('artClick');
+    if (!artEl) return;
+    r.getElementById('unpinConfirmBackdrop')?.remove();
+
+    const state = this._hass?.states[this._entity];
+    const mediaType = state ? this._detectMediaType(state) : null;
+    let label = 'song';
+    if (mediaType === 'tv') label = 'show';
+    else if (mediaType === 'movie') label = 'movie';
+    else if (state && this._isActuallyRadioStream(state)) label = 'station';
+
+    const backdrop = document.createElement('div');
+    backdrop.id = 'unpinConfirmBackdrop';
+    backdrop.style.cssText = 'position:absolute;inset:0;z-index:60;background:rgba(0,0,0,0.55);backdrop-filter:blur(20px) saturate(150%);-webkit-backdrop-filter:blur(20px) saturate(150%);display:flex;align-items:center;justify-content:center;';
+    backdrop.innerHTML =
+      '<div style="background:rgba(255,255,255,0.10);backdrop-filter:blur(24px) saturate(180%);-webkit-backdrop-filter:blur(24px) saturate(180%);border:1px solid rgba(255,255,255,0.18);box-shadow:inset 0 1px 0 rgba(255,255,255,0.10), 0 4px 20px rgba(0,0,0,0.25);border-radius:14px;max-width:200px;margin:16px;overflow:hidden;">' +
+        '<div class="panel-state confirm" style="padding:16px 14px;">' +
+          '<div class="panel-state-icon" style="width:36px;height:36px;background:rgba(255,214,10,0.18);"><svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:#FFD60A;"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg></div>' +
+          '<div class="panel-state-title" style="font-size:14px;margin-top:8px;">Unpin this ' + label + '?</div>' +
+          '<div class="panel-state-confirm-btns" style="margin-top:10px;">' +
+            '<button class="panel-state-btn-cancel" id="unpinConfirmCancel">Cancel</button>' +
+            '<button class="panel-state-btn-danger" id="unpinConfirmConfirm">Unpin</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    artEl.appendChild(backdrop);
+
+    backdrop.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (e.target === backdrop) backdrop.remove();
+    });
+
+    backdrop.querySelector('#unpinConfirmCancel')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      backdrop.remove();
+    });
+    backdrop.querySelector('#unpinConfirmConfirm')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      backdrop.remove();
+      this._handleArtworkDoubleTapPin(x, y);
+    });
+  }
+
   _handleArtworkDoubleTapPin(x, y) {
     const state = this._hass?.states[this._entity];
     if (!state) { this._showToast('Nothing to pin right now'); return; }
@@ -19409,6 +20036,21 @@ Include ALL tracks. Use null for unknown fields.`;
         const _shareUrl = this._buildShareUrl(trackTitle, artistName);
         _self._copyToClipboard(_shareText + '\n' + _shareUrl);
       };
+    }
+
+    // Wire "Open on YouTube" button
+    const _yt = r.getElementById('infoYoutubeBtn');
+    if (_yt) {
+      if (this._config?.show_youtube_button === false) {
+        _yt.classList.add('hidden');
+        _yt.onclick = null;
+      } else {
+        _yt.title = 'Open on YouTube';
+        _yt.classList.remove('hidden');
+        _yt.onclick = () => {
+          window.open(this._buildYoutubeUrl(`${trackTitle} ${artistName}`), '_blank');
+        };
+      }
     }
 
     // Wire pin button — builds a minimal track item from whatever URI we have:
@@ -22942,6 +23584,8 @@ Include ALL tracks. Use null for unknown fields.`;
     if (_rb2) _rb2.classList.add('hidden');
     const _shareHdr = r.getElementById('infoShareBtn');
     if (_shareHdr) { _shareHdr.classList.add('hidden'); _shareHdr.onclick = null; }
+    const _ytHdr = r.getElementById('infoYoutubeBtn');
+    if (_ytHdr) { _ytHdr.classList.add('hidden'); _ytHdr.onclick = null; }
     const _pinHdr = r.getElementById('infoPinBtn');
     if (_pinHdr) { _pinHdr.classList.add('hidden'); _pinHdr.onclick = null; }
     if (_icReset) {
@@ -23763,6 +24407,29 @@ Include ALL tracks. Use null for unknown fields.`;
         const _vShareUrl = 'https://www.themoviedb.org/search?query=' + encodeURIComponent(data.title || '');
         _vSelf._copyToClipboard(_vShareText + '\n' + _vShareUrl);
       };
+    }
+
+    // Show header "Trailer" button — wired here (not in _fetchVideoInfo's
+    // early wiring) for the same reason the pin button had to move here:
+    // this function is the actual final render step, called directly from
+    // 13 different places (Similar row clicks, the disambiguation picker,
+    // cast/season back-navigation, etc.) that bypass _fetchVideoInfo
+    // entirely. Wiring only in the early path left it stale/wrong after
+    // navigating any of those other 12 ways.
+    const _ytHdr2 = this.shadowRoot?.getElementById('infoYoutubeBtn');
+    if (_ytHdr2) {
+      if (this._config?.show_youtube_button === false) {
+        _ytHdr2.classList.add('hidden');
+        _ytHdr2.onclick = null;
+      } else {
+        _ytHdr2.title = 'Trailer';
+        _ytHdr2.classList.remove('hidden');
+        const _trailerTitle = (data.title || '').trim();
+        const _trailerYear  = data.year ? ' (' + data.year + ')' : '';
+        _ytHdr2.onclick = () => {
+          window.open(this._buildYoutubeUrl(`${_trailerTitle}${_trailerYear} official trailer`), '_blank');
+        };
+      }
     }
 
 
@@ -25943,11 +26610,18 @@ Include ALL tracks. Use null for unknown fields.`;
     }
 
     // Recently Played: same shape again — reads straight from the existing
-    // listening-history log that already powers Recently Listened To,
+    // listening-history log that already powers Music Recap,
     // just presented as a chronological list instead of weekly stats.
     if (tab === 'recent_plays') {
       content.innerHTML = '';
       this._renderRecentPlaysTab(content);
+      return;
+    }
+
+    // Watch History: the movie/TV counterpart — same relationship to the
+    // Recap panel that Music History has to Music Recap.
+    if (tab === 'recently_watched') {
+      this._renderRecentlyWatchedTab(content);
       return;
     }
 
@@ -26330,6 +27004,40 @@ Include ALL tracks. Use null for unknown fields.`;
       if (!_cached || !_cached.length) content.innerHTML = this._psEmpty('M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,17L7,12L8.41,10.58L12,14.17L15.59,10.58L17,12L12,17M12,10L7,5L8.41,3.58L12,7.17L15.59,3.58L17,5L12,10Z', 'Could not load library', 'Check your Music Assistant connection and try again.');
           this._maLastSearch = null; this._maInSearchResults = false; this._maErrorShowing = true;
           this._psAutoCloseStart(this.shadowRoot, null, () => { this._maErrorShowing = false; }, 10000, 'maLibErrBtn', 'maLibErrRing');
+    }
+  }
+
+  // Resolves the keyboard-focused binary_sensor and config_entry_id that
+  // belong to the same Apple TV device as the given media_player entity.
+  // Deliberately doesn't guess at entity_id naming patterns (e.g. stripping
+  // "_remote" or appending "_keyboard_focused") — HA doesn't guarantee any
+  // particular naming convention, especially once a person has renamed
+  // entities themselves. Instead this fetches the entity registry once and
+  // finds the sibling entity that shares the same device_id, which is
+  // reliable regardless of what anything's actually named. Cached per
+  // entity for the session, same pattern _getMAConfigEntryId already uses.
+  async _getAppleTVKeyboardInfo(entityId) {
+    if (!this._atvKeyboardInfoCache) this._atvKeyboardInfoCache = {};
+    if (this._atvKeyboardInfoCache[entityId] !== undefined) return this._atvKeyboardInfoCache[entityId];
+    try {
+      const entities = await this._hass.connection.sendMessagePromise({ type: 'config/entity_registry/list' });
+      const mediaEntry = entities.find(e => e.entity_id === entityId);
+      if (!mediaEntry?.device_id) { this._atvKeyboardInfoCache[entityId] = null; return null; }
+      const binarySensorEntry = entities.find(e =>
+        e.device_id === mediaEntry.device_id &&
+        e.entity_id.startsWith('binary_sensor.') &&
+        e.entity_id.includes('keyboard')
+      );
+      if (!binarySensorEntry) { this._atvKeyboardInfoCache[entityId] = null; return null; }
+      const result = {
+        binarySensorId: binarySensorEntry.entity_id,
+        configEntryId: mediaEntry.config_entry_id || binarySensorEntry.config_entry_id || null,
+      };
+      this._atvKeyboardInfoCache[entityId] = result;
+      return result;
+    } catch (_) {
+      this._atvKeyboardInfoCache[entityId] = null;
+      return null;
     }
   }
 
@@ -30056,6 +30764,13 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                 </div>
                 <div class="toggle-item" style="align-items:flex-start;gap:12px;">
                   <div style="flex:1;">
+                    <div class="toggle-label">Apple TV Keyboard Panel</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Automatically shows a text input when an Apple TV's on-screen keyboard becomes active, so you can type on your phone instead of using the remote's letter-by-letter entry.</div>
+                  </div>
+                  <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="atv_keyboard_panel" checked><span class="toggle-track"></span></label>
+                </div>
+                <div class="toggle-item" style="align-items:flex-start;gap:12px;">
+                  <div style="flex:1;">
                     <div class="toggle-label">Default Radio Mode on Startup</div>
                     <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Starts MA Radio Mode on automatically whenever the card loads.</div>
                   </div>
@@ -30074,6 +30789,13 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                     <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Shows a small badge on the artwork screen identifying radio, podcast, or audiobook content.</div>
                   </div>
                   <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="show_media_type_pill"><span class="toggle-track"></span></label>
+                </div>
+                <div class="toggle-item" style="align-items:flex-start;gap:12px;">
+                  <div style="flex:1;">
+                    <div class="toggle-label">Show YouTube Button</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Adds a button in the AI Info / Media Info panel to open the current song on YouTube, or the trailer for a movie/TV show.</div>
+                  </div>
+                  <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="show_youtube_button" checked><span class="toggle-track"></span></label>
                 </div>
                 <div class="toggle-item" style="align-items:flex-start;gap:12px;">
                   <div style="flex:1;">
@@ -30388,7 +31110,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                 <div class="toggle-item" style="align-items:flex-start;gap:12px;margin-top:12px;">
                   <div style="flex:1;">
                     <div class="toggle-label">Persistent AI Info Storage</div>
-                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Off: AI lookups (track info, recommendations, bios, etc.) and Recently Listened To history cached on this device only. On: also saved permanently.</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Off: AI lookups (track info, recommendations, bios, etc.) and Music Recap history cached on this device only. On: also saved permanently.</div>
                   </div>
                   <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="ai_info_persistent_storage"><span class="toggle-track"></span></label>
                 </div>
@@ -30447,7 +31169,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
             <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid rgba(255,255,255,0.07);">
               <div>
                 <div style="font-size:14px;font-weight:500;">Row Glow</div>
-                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Adds a subtle accent-colour glow to rows throughout the app \u2014 library browser, queue panel, Recently Listened To, and pinned tracks/artists/albums/playlists.</div>
+                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Adds a subtle accent-colour glow to rows throughout the app — library browser, queue panel, Music Recap, and pinned tracks/artists/albums/playlists.</div>
               </div>
               <label class="toggle-switch" style="flex-shrink:0"><input type="checkbox" id="row_glow"><span class="toggle-track"></span></label>
             </div>
@@ -31507,6 +32229,12 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       showRemoteBtnEl.onchange = (e) => this._updateConfig('show_remote_button', e.target.checked);
     }
 
+    const atvKeyboardPanelEl = root.getElementById('atv_keyboard_panel');
+    if (atvKeyboardPanelEl) {
+      atvKeyboardPanelEl.checked = this._config?.atv_keyboard_panel !== false;
+      atvKeyboardPanelEl.onchange = (e) => this._updateConfig('atv_keyboard_panel', e.target.checked);
+    }
+
     const showMALibBtnEl = root.getElementById('show_ma_library_button');
     if (showMALibBtnEl) {
       showMALibBtnEl.checked = this._config?.show_ma_library_button !== false;
@@ -31517,11 +32245,16 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
     if (showMediaTypePillEl) {
       showMediaTypePillEl.checked = this._config?.show_media_type_pill === true;
       showMediaTypePillEl.onchange = (e) => this._updateConfig('show_media_type_pill', e.target.checked);
+    }
+    const showYoutubeBtnEl = root.getElementById('show_youtube_button');
+    if (showYoutubeBtnEl) {
+      showYoutubeBtnEl.checked = this._config?.show_youtube_button !== false;
+      showYoutubeBtnEl.onchange = (e) => this._updateConfig('show_youtube_button', e.target.checked);
+    }
     const songIntroEl = root.getElementById('song_intro_enabled');
     if (songIntroEl) {
       songIntroEl.checked = this._config.song_intro_enabled === true;
       songIntroEl.onchange = (e) => this._updateConfig('song_intro_enabled', e.target.checked);
-    }
     }
 
     const resizeBtnSpinEl = root.getElementById('resize_btn_spin');
@@ -32203,6 +32936,8 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       ai_conversation_agent: '',
       share_service: 'youtube_music',
       show_media_type_pill: false,
+      show_youtube_button: true,
+      atv_keyboard_panel: true,
     };
     // Strip keys that match their default value to keep YAML clean
     const cleanConfig = { ...this._config, [key]: value };
@@ -32240,6 +32975,8 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       ai_conversation_agent: '',
       share_service: 'youtube_music',
       show_media_type_pill: false,
+      show_youtube_button: true,
+      atv_keyboard_panel: true,
     };
     const updatedKeys = Object.keys(updates);
     const cleanConfig = { ...this._config, ...updates };
