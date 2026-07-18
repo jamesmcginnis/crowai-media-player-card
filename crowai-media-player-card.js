@@ -2422,12 +2422,23 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         .enqueue-menu-text { display: block; flex: 1; }
         .enqueue-menu-label { display: block; font-size: 15px; font-weight: 400; color: var(--crow-panel-text, rgba(255,255,255,0.95)); letter-spacing: -0.2px; }
         .enqueue-menu-sub   { display: none; }
-        .enqueue-menu-speakers {
-          display: flex; flex-wrap: wrap; gap: 6px;
-          padding: 12px 14px 10px; border-bottom: 0.5px solid var(--crow-panel-divider,rgba(255,255,255,0.1));
+        .enqueue-menu-speakers-summary {
+          display: flex; align-items: center; gap: 8px; cursor: pointer;
+          padding: 12px 14px; border-bottom: 0.5px solid var(--crow-panel-divider,rgba(255,255,255,0.1));
+          -webkit-tap-highlight-color: transparent;
         }
+        .enqueue-menu-speakers-summary svg.enqueue-menu-speakers-summary-icon { width: 14px; height: 14px; flex-shrink: 0; fill: var(--crow-panel-icon-dim, rgba(255,255,255,0.45)); }
+        .enqueue-menu-speakers-summary-text { flex: 1; min-width: 0; font-size: 13px; color: var(--crow-panel-text-dim, rgba(255,255,255,0.65)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .enqueue-menu-speakers-summary-chevron { width: 12px; height: 12px; flex-shrink: 0; fill: var(--crow-panel-icon-dim, rgba(255,255,255,0.35)); transition: transform 0.15s ease; }
+        .enqueue-menu-speakers-summary.expanded .enqueue-menu-speakers-summary-chevron { transform: rotate(180deg); }
+        .enqueue-menu-speakers {
+          display: flex; flex-wrap: nowrap; gap: 6px; overflow-x: auto; -webkit-overflow-scrolling: touch;
+          padding: 10px 14px 12px; border-bottom: 0.5px solid var(--crow-panel-divider,rgba(255,255,255,0.1));
+          scrollbar-width: none;
+        }
+        .enqueue-menu-speakers::-webkit-scrollbar { display: none; }
         .enqueue-menu-speaker-chip {
-          display: inline-flex; align-items: center; gap: 5px;
+          display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0;
           padding: 4px 10px; border-radius: 20px !important;
           background: var(--crow-panel-btn-bg, rgba(255,255,255,0.07)); border: 1px solid var(--crow-panel-btn-border, rgba(255,255,255,0.12)) !important;
           color: var(--crow-panel-text-dim, rgba(255,255,255,0.55)); font-size: 12px; font-weight: 500;
@@ -2914,6 +2925,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         }
         .queue-search-wrap:focus-within { border-color: var(--accent,#007AFF); }
         .queue-search-icon { width: 15px; height: 15px; fill: var(--crow-panel-icon-dim, rgba(255,255,255,0.35)); flex-shrink: 0; }
+
         .queue-search-input {
           flex: 1; background: none; border: none; outline: none;
           color:var(--crow-panel-text, #ffffff); font-size: 14px; font-family: inherit;
@@ -3181,32 +3193,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         /* Multicast sheet — replaces the old per-speaker pill row for grouped
            playback. One compact summary pill is shown instead; this sheet is
            where the full member list, focus, remove, add, and sync actions live. */
-        .mc-sheet-backdrop {
-          position: absolute; inset: 0; z-index: 30; background: rgba(0,0,0,0.4);
-        }
-        .mc-sheet {
-          position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 31;
-          background: var(--crow-panel-bg, #13131a);
-          border: 1px solid var(--crow-panel-row-border,rgba(255,255,255,0.14));
-          border-radius: 16px;
-          max-height: 78%;
-          display: flex; flex-direction: column;
-          overflow: hidden;
-          box-shadow: 0 10px 40px rgba(0,0,0,0.5);
-        }
-        .mc-sheet-header {
-          display: flex; align-items: center; justify-content: space-between;
-          padding: 14px 8px 10px 16px; flex-shrink: 0;
-        }
-        .mc-sheet-title { font-size: 14px; font-weight: 700; color: var(--crow-panel-text,rgba(255,255,255,0.9)); }
-        .mc-sheet-close {
-          width: 28px; height: 28px; border-radius: 50%;
-          background: var(--crow-panel-btn-bg,rgba(255,255,255,0.1)); border: none;
-          display: flex; align-items: center; justify-content: center;
-          cursor: pointer; -webkit-tap-highlight-color: transparent; flex-shrink: 0;
-        }
-        .mc-sheet-close:active { background: var(--crow-panel-row-bg-active,rgba(255,255,255,0.22)); }
-        .mc-sheet-close svg { width: 12px; height: 12px; fill: var(--crow-panel-text-dim,rgba(255,255,255,0.6)); }
         .mc-sheet-list { overflow-y: auto; flex: 1; padding: 0 8px 4px; }
         .mc-sheet-row {
           display: flex; align-items: center; gap: 10px;
@@ -4760,7 +4746,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             else if (item.id === 'qm_copy_link')  {
               const _clT = state?.attributes?.media_title  || '';
               const _clA = state?.attributes?.media_artist || '';
-              this._copyToClipboard(_clT + ' by ' + _clA + '\n' + this._buildShareUrl(_clT, _clA));
+              this._copyToClipboard(_clT + ' by ' + _clA + '\n' + this._buildShareUrl(_clT, _clA), this._shareServiceLabel());
             }
             else if (item.id === 'qm_pin') {
               if (item._qmPinInfo) {
@@ -16442,6 +16428,22 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     }
   }
 
+  // Friendly display name for whatever _buildShareUrl above is currently
+  // pointed at — used to make the "copied" toast say which service the
+  // link will open in, since that's configurable in the visual editor and
+  // not always obvious from the URL itself.
+  _shareServiceLabel() {
+    const _labels = {
+      apple_music:   'Apple Music',
+      amazon_music:  'Amazon Music',
+      deezer:        'Deezer',
+      spotify:       'Spotify',
+      tidal:         'TIDAL',
+      youtube_music: 'YouTube Music',
+    };
+    return _labels[this._config?.share_service || 'youtube_music'] || 'YouTube Music';
+  }
+
   // Dedicated, always-YouTube search link — deliberately separate from
   // _buildShareUrl above, which points at whatever service the person has
   // configured for Share (Spotify, Apple Music, etc.), not necessarily
@@ -16452,18 +16454,20 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     return `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
   }
 
-  _copyToClipboard(text) {
+  _copyToClipboard(text, serviceLabel) {
+    const _msg = serviceLabel ? ('\u2713 Copied ' + serviceLabel + ' link') : '\u2713 Copied to clipboard';
     // navigator.clipboard requires HTTPS — use execCommand as universal fallback
     if (navigator.clipboard && window.isSecureContext) {
       navigator.clipboard.writeText(text)
-        .then(() => this._showToast('\u2713 Copied to clipboard'))
-        .catch(() => this._execCopy(text));
+        .then(() => this._showToast(_msg))
+        .catch(() => this._execCopy(text, serviceLabel));
     } else {
-      this._execCopy(text);
+      this._execCopy(text, serviceLabel);
     }
   }
 
-  _execCopy(text) {
+  _execCopy(text, serviceLabel) {
+    const _msg = serviceLabel ? ('\u2713 Copied ' + serviceLabel + ' link') : '\u2713 Copied to clipboard';
     const el = document.createElement('textarea');
     el.value = text;
     el.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0;';
@@ -16472,7 +16476,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     el.select();
     try {
       const ok = document.execCommand('copy');
-      this._showToast(ok ? '\u2713 Copied to clipboard' : 'Could not copy');
+      this._showToast(ok ? _msg : 'Could not copy');
     } catch(e) {
       this._showToast('Could not copy');
     }
@@ -18559,7 +18563,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       .replace(/\s*\(\d{4}\)\s*$/, '')                          // always strip trailing year
       .replace(_isSeriesTitle ? /(?!)/ : /\s*[-:]\s*[^-:]+$/, '') // only strip colon if not series title
       .trim() || title;
-    const cacheKey = ('videoinfo4|' + cleanTitle).toLowerCase(); // v4: enforces known movie/TV format, invalidates old unfiltered results
+    const cacheKey = ('videoinfo5|' + cleanTitle).toLowerCase(); // v5: TV lookups can return multiple candidates again, invalidates old forced-single-entry cache
     if (!this._aiVideoInfoCache) this._aiVideoInfoCache = new Map();
     if (this._aiVideoInfoCache.has(cacheKey)) return;
     // Check localStorage before firing an AI call
@@ -18782,6 +18786,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             agent_id: agentId2, language: navigator.language || 'en'
           });
           const detailRaw = detailResp?.response?.speech?.plain?.speech || '';
+          // Fresh single-title lookup — clear any leftover picker state so
+          // "Not this one?" refers to this title, not a stale candidate list.
+          self._videoInfoPickerState = null;
           if (detailRaw) {
             const di1 = detailRaw.indexOf('{'), di2 = detailRaw.lastIndexOf('}');
             const detailData = JSON.parse(di1 !== -1 && di2 !== -1 ? detailRaw.slice(di1, di2 + 1) : detailRaw);
@@ -18998,25 +19005,33 @@ Include ALL tracks. Use null for unknown fields.`;
 
     const panel = document.createElement('div');
     panel.id = 'atvKeyboardPanel';
-    panel.style.cssText = 'position:absolute;inset:0;z-index:70;background:rgba(0,0,0,0.55);backdrop-filter:blur(20px) saturate(150%);-webkit-backdrop-filter:blur(20px) saturate(150%);display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;';
+    // Reuse the exact same full-panel look as the Media Info popup (same
+    // classes, same size/position within the card) rather than a small
+    // centered floating card — this was getting lost in the middle of the
+    // screen instead of anchoring at the top like every other panel.
+    panel.className = 'info-popup visible';
+    panel.style.zIndex = '70';
     panel.innerHTML =
-      '<div style="background:var(--crow-panel-bg,#1c1c1e);border-radius:16px;padding:18px;width:100%;max-width:320px;box-sizing:border-box;">' +
-        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">' +
-          '<svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:rgba(255,255,255,0.6);flex-shrink:0;"><path d="M19,3H5C3.89,3 3,3.9 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V5C21,3.9 20.1,3 19,3M11,5H13V7H11V5M8,5H10V7H8V5M5,5H7V7H5V5M5,8H7V10H5V8M5,11H7V13H5V11M19,19H5V16H19V19M19,13H17V11H19V13M19,10H17V8H19V10M16,13H14V11H16V13M16,10H14V8H16V10M13,10H11V8H13V10M8,10V8H10V10H8M8,13V11H10V13H8Z"/></svg>' +
-          '<div style="font-size:14px;font-weight:600;color:var(--primary-text-color,#fff);">Apple TV Keyboard</div>' +
-          '<button id="atvKeyboardClose" style="margin-left:auto;background:none;border:none;padding:4px;cursor:pointer;-webkit-tap-highlight-color:transparent;">' +
-            '<svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:rgba(255,255,255,0.4);"><path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/></svg>' +
+      '<div class="info-popup-header">' +
+        '<div style="display:flex;align-items:center;gap:8px;min-width:0;">' +
+          '<svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:' + this._pt('dim') + ';flex-shrink:0;"><path d="M19,3H5C3.89,3 3,3.9 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V5C21,3.9 20.1,3 19,3M11,5H13V7H11V5M8,5H10V7H8V5M5,5H7V7H5V5M5,8H7V10H5V8M5,11H7V13H5V11M19,19H5V16H19V19M19,13H17V11H19V13M19,10H17V8H19V10M16,13H14V11H16V13M16,10H14V8H16V10M13,10H11V8H13V10M8,10V8H10V10H8M8,13V11H10V13H8Z"/></svg>' +
+          '<span class="info-popup-title">Apple TV Keyboard</span>' +
+        '</div>' +
+        '<div class="info-popup-header-actions">' +
+          '<button class="info-popup-close" id="atvKeyboardClose">' +
+            '<svg viewBox="0 0 24 24"><path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/></svg>' +
           '</button>' +
         '</div>' +
-        '<div style="font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:10px;line-height:1.4;">The on-screen keyboard is active — type here and send it straight to the TV instead of using the remote\u2019s letter-by-letter entry.</div>' +
-        '<div style="position:relative;display:flex;align-items:center;">' +
-          '<svg viewBox="0 0 24 24" style="position:absolute;left:10px;width:14px;height:14px;fill:' + this._pt('dim') + ';pointer-events:none;"><path d="M19,3H5C3.89,3 3,3.9 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V5C21,3.9 20.1,3 19,3M11,5H13V7H11V5M8,5H10V7H8V5M5,5H7V7H5V5M5,8H7V10H5V8M5,11H7V13H5V11M19,19H5V16H19V19M19,13H17V11H19V13M19,10H17V8H19V10M16,13H14V11H16V13M16,10H14V8H16V10M13,10H11V8H13V10M8,10V8H10V10H8M8,13V11H10V13H8Z"/></svg>' +
-          '<input type="text" id="atvKeyboardInput" placeholder="Type here\u2026" enterkeyhint="send" autocomplete="off" autocorrect="off" spellcheck="false" ' +
-            'style="width:100%;box-sizing:border-box;background:' + this._pt('btnBg') + ';border:1px solid ' + this._pt('border') + ';border-radius:10px;padding:8px 10px 8px 32px;color:' + this._pt('text') + ';font-size:13px;font-family:-apple-system,BlinkMacSystemFont,\'SF Pro Display\',sans-serif;outline:none;">' +
-        '</div>' +
-        '<div style="display:flex;gap:8px;margin-top:12px;">' +
-          '<button id="atvKeyboardClear" style="flex:1;padding:9px 0;border-radius:10px;border:none;background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.7);font-size:14px;font-weight:500;cursor:pointer;font-family:inherit;">Clear</button>' +
-          '<button id="atvKeyboardSend" style="flex:2;padding:9px 0;border-radius:10px;border:none;background:var(--accent,#007AFF);color:#fff;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;">Send</button>' +
+      '</div>' +
+      '<div class="info-popup-content">' +
+        '<div style="font-size:13px;color:' + this._pt('dim') + ';line-height:1.4;margin-bottom:14px;">The on-screen keyboard is active — type here and send it straight to the TV instead of using the remote\u2019s letter-by-letter entry.</div>' +
+        '<div style="display:flex;gap:8px;">' +
+          '<div style="position:relative;flex:1;min-width:0;">' +
+            '<input type="text" id="atvKeyboardInput" placeholder="Type here\u2026" enterkeyhint="send" autocomplete="off" autocorrect="off" spellcheck="false" ' +
+              'style="width:100%;box-sizing:border-box;background:' + this._pt('bg') + ';border:1px solid ' + this._pt('border') + ';border-radius:10px;padding:10px 30px 10px 12px;font-size:14px;color:' + this._pt('text') + ';font-family:inherit;-webkit-appearance:none;">' +
+            '<div id="atvKeyboardClear" style="display:none;position:absolute;right:8px;top:50%;transform:translateY(-50%);cursor:pointer;padding:2px;-webkit-tap-highlight-color:transparent;"><svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:' + this._pt('dim') + ';display:block;"><path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/></svg></div>' +
+          '</div>' +
+          '<button id="atvKeyboardSend" style="padding:0 16px;background:#0A84FF;border:none;border-radius:10px;color:#fff;font-size:14px;font-weight:600;font-family:inherit;cursor:pointer;flex-shrink:0;">Send</button>' +
         '</div>' +
       '</div>';
     cardOuter.appendChild(panel);
@@ -19033,8 +19048,21 @@ Include ALL tracks. Use null for unknown fields.`;
     };
     panel.querySelector('#atvKeyboardSend')?.addEventListener('click', sendText);
     input?.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendText(); });
-    panel.querySelector('#atvKeyboardClear')?.addEventListener('click', () => {
+
+    // Inline "x" clear button — mirrors the search-clear pattern used in the
+    // Announce/Send Message panels: hidden until there's text, clears the
+    // local field, and (since this field mirrors the actual on-screen
+    // keyboard on the Apple TV) also tells the TV to clear what's been
+    // typed there so far, same as the old standalone "Clear" button did.
+    const clearBtn = panel.querySelector('#atvKeyboardClear');
+    input?.addEventListener('input', () => {
+      if (clearBtn) clearBtn.style.display = input.value ? 'block' : 'none';
+    });
+    clearBtn?.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
       if (input) input.value = '';
+      clearBtn.style.display = 'none';
+      input?.focus();
       if (configEntryId) this._hass.callService('apple_tv', 'clear_keyboard_text', { config_entry_id: configEntryId }).catch(() => {});
     });
     // Manual close only hides this card's panel — the keyboard may still be
@@ -19067,15 +19095,28 @@ Include ALL tracks. Use null for unknown fields.`;
     else if (mediaType === 'movie') label = 'movie';
     else if (state && this._isActuallyRadioStream(state)) label = 'station';
 
+    // Name the actual item rather than a generic "this song?" — much
+    // friendlier and removes any doubt about what's about to be unpinned.
+    let title = '';
+    if (state && this._isActuallyRadioStream(state)) title = state.attributes?.media_station || state.attributes?.friendly_name || '';
+    else if (mediaType === 'tv') title = state?.attributes?.media_series_title || state?.attributes?.media_title || '';
+    else title = state?.attributes?.media_title || '';
+    const _escTitle = (title || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const message = title
+      ? 'Remove "' + _escTitle + '" from your pinned ' + label + 's?'
+      : 'Remove this ' + label + ' from your pins?';
+
     const backdrop = document.createElement('div');
     backdrop.id = 'unpinConfirmBackdrop';
     backdrop.style.cssText = 'position:absolute;inset:0;z-index:60;background:rgba(0,0,0,0.55);backdrop-filter:blur(20px) saturate(150%);-webkit-backdrop-filter:blur(20px) saturate(150%);display:flex;align-items:center;justify-content:center;';
     backdrop.innerHTML =
-      '<div style="background:rgba(255,255,255,0.10);backdrop-filter:blur(24px) saturate(180%);-webkit-backdrop-filter:blur(24px) saturate(180%);border:1px solid rgba(255,255,255,0.18);box-shadow:inset 0 1px 0 rgba(255,255,255,0.10), 0 4px 20px rgba(0,0,0,0.25);border-radius:14px;max-width:200px;margin:16px;overflow:hidden;">' +
-        '<div class="panel-state confirm" style="padding:16px 14px;">' +
-          '<div class="panel-state-icon" style="width:36px;height:36px;background:rgba(255,214,10,0.18);"><svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:#FFD60A;"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg></div>' +
-          '<div class="panel-state-title" style="font-size:14px;margin-top:8px;">Unpin this ' + label + '?</div>' +
-          '<div class="panel-state-confirm-btns" style="margin-top:10px;">' +
+      '<div style="background:rgba(255,255,255,0.10);backdrop-filter:blur(24px) saturate(180%);-webkit-backdrop-filter:blur(24px) saturate(180%);border:1px solid rgba(255,255,255,0.18);box-shadow:inset 0 1px 0 rgba(255,255,255,0.10), 0 4px 20px rgba(0,0,0,0.25);border-radius:14px;max-width:260px;margin:16px;overflow:hidden;">' +
+        '<div class="panel-state confirm" style="padding:16px;min-height:0;">' +
+          '<div style="display:flex;align-items:center;gap:10px;">' +
+            '<div class="panel-state-icon" style="width:30px;height:30px;flex-shrink:0;background:rgba(255,214,10,0.18);"><svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:#FFD60A;"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg></div>' +
+            '<div class="panel-state-title" style="font-size:14px;text-align:left;">' + message + '</div>' +
+          '</div>' +
+          '<div class="panel-state-confirm-btns" style="margin-top:12px;">' +
             '<button class="panel-state-btn-cancel" id="unpinConfirmCancel">Cancel</button>' +
             '<button class="panel-state-btn-danger" id="unpinConfirmConfirm">Unpin</button>' +
           '</div>' +
@@ -20034,7 +20075,7 @@ Include ALL tracks. Use null for unknown fields.`;
         const _alb = (data.album && data.album.toLowerCase() !== trackTitle.toLowerCase()) ? ' - ' + data.album : '';
         const _shareText = trackTitle + ' by ' + artistName + _alb;
         const _shareUrl = this._buildShareUrl(trackTitle, artistName);
-        _self._copyToClipboard(_shareText + '\n' + _shareUrl);
+        _self._copyToClipboard(_shareText + '\n' + _shareUrl, this._shareServiceLabel());
       };
     }
 
@@ -23833,7 +23874,7 @@ Include ALL tracks. Use null for unknown fields.`;
     const hasAI = await this._aiCheckAvailable();
     if (!hasAI) { this._aiShowNoAgentBanner(popup); return; }
 
-    const cacheKey = ('videoinfo4|' + cleanTitle).toLowerCase(); // v4: enforces known movie/TV format, invalidates old unfiltered results
+    const cacheKey = ('videoinfo5|' + cleanTitle).toLowerCase(); // v5: TV lookups can return multiple candidates again, invalidates old forced-single-entry cache
     if (!this._aiVideoInfoCache) this._aiVideoInfoCache = new Map();
     if (!this._aiVideoInfoCache.has(cacheKey)) {
       const _lsPersisted = this._aiLocalGet('videoInfo', cacheKey);
@@ -23864,23 +23905,33 @@ Include ALL tracks. Use null for unknown fields.`;
 
       // If we have a series title, add specificity to avoid returning sibling shows
       const _isTVContext = _isSeriesTitle;
-      // When we know for certain which format this was (Watch Recap rows,
-      // Movies & TV search — anywhere isKnownSeriesTitle is passed
-      // explicitly rather than guessed), don't just hint the format and
-      // hope the AI honors it — exclude the other format outright. A
-      // same-titled work in the wrong format (an older, more-famous TV
-      // series vs a newer movie with the identical title, or vice versa)
-      // was still getting returned uncontested even with a soft hint.
-      const _knownFormat = isKnownSeriesTitle !== undefined;
+      // Previously, when the caller already knew the format for certain
+      // (Watch Recap rows, Movies & TV search — anywhere isKnownSeriesTitle
+      // is passed explicitly), the prompt hard-excluded the other format
+      // and results were then hard-filtered to match. That made the AI's
+      // own candidate list collapse to a single (occasionally wrong) entry
+      // far more often than the artwork-tap flow, where no such exclusion
+      // is applied — meaning the exact same title could get a helpful
+      // "Which one did you mean?" picker from one entry point and a silent,
+      // uncorrectable wrong answer from another. The prompt is now
+      // identical everywhere so every entry point gets the same candidate
+      // set (and therefore the same picker experience) for the same title.
       const _exactInstruction = _isTVContext
-        ? 'IMPORTANT: Return ONLY the exact show "' + cleanTitle + '" — do NOT include other shows in the same franchise, spin-offs, or related series' + (_knownFormat ? ', and do NOT return a movie of the same name even if one exists' : '') + '. Return exactly 1 entry.'
+        // Same-titled shows do get reused (an old series revived decades
+        // later under an unrelated production, a title remade for a
+        // different network/country, etc). If multiple distinct works
+        // share this exact title — including a same-named movie — include
+        // all of them rather than confidently guessing the most famous
+        // one; that's what lets a mix-up get caught and corrected via the
+        // picker instead of silently showing the wrong thing.
+        ? 'IMPORTANT: Return the exact show "' + cleanTitle + '" — do NOT include other shows in the same franchise, spin-offs, or related series. If multiple distinct TV series share this exact title (different years, different networks, unrelated reboots or remakes), or a movie shares this exact title, include ALL of them, not just the most famous one. Return up to 5 entries.'
         // Titles get reused across decades and formats (e.g. an older,
         // famous TV series vs a newer movie with the identical title).
         // Guessing the more famous one is worse than asking — when there's
         // genuine ambiguity, return every distinct version you know of so
         // the actual one can be picked, rather than confidently returning
         // only the best-known one.
-        : 'IMPORTANT: This was watched as a movie' + (_knownFormat ? ' — only return entries with "type":"movie"; do NOT return a TV series of the same name even if one is more famous' : '') + '. If multiple distinct movies share this exact title (different years, different films entirely), include ALL of them, not just the most famous one — a newer or less well-known release can still be the right one. Return up to 5 entries.';
+        : 'IMPORTANT: This was watched as a movie. If multiple distinct movies share this exact title (different years, different films entirely), or a TV series shares this exact title, include ALL of them, not just the most famous one — a newer or less well-known release can still be the right one. Return up to 5 entries.';
       const prompt = 'You are a movie and TV encyclopedia. Use the full breadth of your training knowledge, including recent releases — do not assume you only know about older titles. I need information about "' + cleanTitle + '". CRITICAL: You MUST use your training knowledge to answer this. Do NOT say you cannot access the internet. ' + _exactInstruction + ' Return as a raw JSON array. Start with [ end with ]. Include up to 15 cast members, a "fun_fact" string with one genuinely interesting or surprising fact, and a "similar" array of 10 similar titles. Movie: [{"type":"movie","title":"Heat","year":"1995","genres":["Crime"],"rating":"8.3","overview":"...","cast":["Al Pacino"],"director":"Michael Mann","status":"Released","vibe":"Intense","fun_fact":"Al Pacino and Robert De Niro share only one scene together.","similar":[{"title":"Michael Mann\'s Collateral","year":"2004","type":"movie"},{"title":"Heat 2","year":"2022","type":"movie"}]}] TV: [{"type":"tv","title":"Doctor Who","year":"2005","genres":["Sci-Fi"],"rating":"8.6","overview":"...","cast":["David Tennant"],"seasons":14,"status":"Continuing","vibe":"Epic","fun_fact":"The show originally ran from 1963 to 1989 before being revived in 2005.","similar":[{"title":"Torchwood","year":"2006","type":"tv"},{"title":"The Sarah Jane Adventures","year":"2007","type":"tv"}]}] If truly unknown return [].' ;
 
       try {
@@ -23896,19 +23947,21 @@ Include ALL tracks. Use null for unknown fields.`;
         if (start === -1 || end === -1 || end <= start) throw new Error('No JSON array in response');
         results = JSON.parse(stripped.slice(start, end + 1));
         if (!Array.isArray(results) || !results.length) throw new Error('Empty results');
-        // Enforce the known format ourselves rather than trusting the AI
-        // followed the prompt instruction — a same-titled work in the
-        // wrong format was still slipping through even when explicitly
-        // told not to. Only apply when we actually know the format
-        // (isKnownSeriesTitle passed explicitly); if filtering would wipe
-        // out every result, keep the originals rather than showing nothing
-        // — better a possibly-wrong answer than none, and it still lets
-        // the person adjust with Ask/Other Matches.
-        if (isKnownSeriesTitle !== undefined) {
-          const _expectedType = _isSeriesTitle ? 'tv' : 'movie';
-          const _filtered = results.filter(r => (r?.type || 'movie') === _expectedType);
-          if (_filtered.length) results = _filtered;
-        }
+        // No longer hard-filtered by expected type here — that filtering
+        // used to silently collapse a genuinely mixed-format candidate
+        // list (e.g. a TV entry and a same-titled movie) down to whichever
+        // single entry matched the caller's known format, which is exactly
+        // what was suppressing the picker for Watch History / Video Recap
+        // taps. Leaving every candidate the AI returned intact means the
+        // picker (or the sort below) can do the disambiguation instead.
+        // Softly prefer the expected type's entries first when there's a
+        // mix, purely as a display-order nicety — doesn't drop anything.
+        const _expectedType = _isSeriesTitle ? 'tv' : 'movie';
+        results = [...results].sort((a, b) => {
+          const aMatch = (a?.type || 'movie') === _expectedType ? 0 : 1;
+          const bMatch = (b?.type || 'movie') === _expectedType ? 0 : 1;
+          return aMatch - bMatch;
+        });
         this._aiVideoInfoCache.set(cacheKey, results);
         this._aiSessionSet('videoInfo', cacheKey, results);
         this._aiLocalSet('videoInfo', cacheKey, results);
@@ -24094,6 +24147,78 @@ Include ALL tracks. Use null for unknown fields.`;
     });
   }
 
+  // Manual disambiguation fallback for when the AI only ever returned a
+  // single candidate (so there's no multi-result picker to fall back to)
+  // and that single candidate turned out to be wrong — e.g. a franchise
+  // mix-up like "Star Trek: Deep Space Nine" resolving to a Star Trek
+  // movie's synopsis while the artwork (fetched separately via iTunes)
+  // correctly shows the DS9 poster. Reuses the same iTunes search and row
+  // rendering as the Movies & TV tab, so picking a result here opens the
+  // exact same info panel via the exact same path (_mtMakeRow's own click
+  // handler calls _fetchVideoInfo with a confirmed title + kind).
+  //
+  // Renders inline inside the existing info panel `content` container —
+  // same as the AI candidate picker — rather than as a separate overlay,
+  // so it stays within the panel's own bounds and matches its look.
+  // `restoreFn` re-renders whatever was on screen before this was opened,
+  // wired to the back button.
+  _renderVideoInfoSearchInline(content, initialTitle, restoreFn) {
+    const _pt = (k) => this._pt(k);
+    content.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
+    this.shadowRoot?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
+
+    content.innerHTML = `
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+        <button id="video-search-inline-back" style="width:28px;height:28px;border-radius:50%;background:${_pt("btnBg")};border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;-webkit-tap-highlight-color:transparent;">
+          <svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:${_pt("text")}"><path d="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z"/></svg>
+        </button>
+        <div style="font-size:15px;font-weight:700;color:${_pt("text")};">Search for the right match</div>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:14px;">
+        <input id="videoSearchInlineInput" type="text" value="${(initialTitle || '').replace(/"/g, '&quot;')}" placeholder="Search movies & TV shows" style="flex:1;min-width:0;box-sizing:border-box;background:${_pt("bg")};border:1px solid ${_pt("border")};border-radius:10px;padding:10px 12px;font-size:14px;color:${_pt("text")};font-family:inherit;" autocomplete="off" autocorrect="off" spellcheck="false">
+        <button id="videoSearchInlineBtn" style="padding:0 16px;background:#0A84FF;border:none;border-radius:10px;color:#fff;font-size:14px;font-weight:600;font-family:inherit;cursor:pointer;flex-shrink:0;">Search</button>
+      </div>
+      <div id="videoSearchInlineResults" style="display:flex;flex-direction:column;"></div>`;
+
+    content.querySelector('#video-search-inline-back')?.addEventListener('click', () => {
+      if (typeof restoreFn === 'function') restoreFn();
+    });
+
+    const _input    = content.querySelector('#videoSearchInlineInput');
+    const _resultsEl = content.querySelector('#videoSearchInlineResults');
+
+    const _runSearch = async () => {
+      const q = (_input?.value || '').trim();
+      if (!q || !_resultsEl) return;
+      _resultsEl.innerHTML = `<div style="padding:16px 0;text-align:center;font-size:12px;color:${_pt("dim")};">Searching…</div>`;
+      let results;
+      try {
+        results = await this._mtSearch(q);
+      } catch (e) {
+        if (!_resultsEl.isConnected) return;
+        _resultsEl.innerHTML = `<div style="padding:16px 0;text-align:center;font-size:12px;color:${_pt("dim")};">Search unavailable right now — try again shortly.</div>`;
+        return;
+      }
+      if (!_resultsEl.isConnected) return; // panel navigated away while awaiting
+      _resultsEl.innerHTML = '';
+      if (!results.length) {
+        _resultsEl.innerHTML = `<div style="padding:16px 0;text-align:center;font-size:12px;color:${_pt("dim")};">Nothing matched "${q.replace(/</g, '&lt;')}"</div>`;
+        return;
+      }
+      // _mtMakeRow's own click handler already opens the info panel with
+      // a confirmed title/kind/artwork, replacing this view naturally.
+      results.forEach(item => _resultsEl.appendChild(this._mtMakeRow(item, false)));
+    };
+
+    _input?.focus();
+    content.querySelector('#videoSearchInlineBtn')?.addEventListener('click', _runSearch);
+    _input?.addEventListener('keydown', e => { if (e.key === 'Enter') _runSearch(); });
+
+    // Auto-run once with whatever title we already have, so the view
+    // isn't empty on open.
+    if (initialTitle) _runSearch();
+  }
+
   _renderVideoInfoDetail(content, data, artUrl) {
     content.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
     if (!data) return;
@@ -24179,9 +24304,17 @@ Include ALL tracks. Use null for unknown fields.`;
 
     this.shadowRoot?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
     const _pickerState = this._videoInfoPickerState;
-    const _showOtherMatches = _pickerState && Array.isArray(_pickerState.results) && _pickerState.results.length > 1;
+    const _hasMultiCandidates = !!(_pickerState && Array.isArray(_pickerState.results) && _pickerState.results.length > 1);
+    // This used to only appear when the AI happened to return multiple
+    // candidates to disambiguate between. But when the AI is confident
+    // (wrongly) and returns just one result — e.g. mixing up a franchise
+    // entry like "Star Trek: Deep Space Nine" with an unrelated Star Trek
+    // movie — there was no way at all to fix it. Now always shown; it
+    // either reopens the AI's own candidate picker (if there was one) or
+    // falls back to a manual iTunes search so the person can pick the
+    // right title themselves.
     content.innerHTML = `
-      ${_showOtherMatches ? `<div id="video-other-matches-btn" style="display:inline-flex;align-items:center;gap:5px;background:rgba(99,179,237,0.1);border:1px solid rgba(99,179,237,0.25);border-radius:20px;padding:4px 10px;cursor:pointer;-webkit-tap-highlight-color:transparent;margin-bottom:10px;"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:#63b3ed;flex-shrink:0"><path d="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z"/></svg><span style="font-size:11px;color:#63b3ed;font-weight:600;">Other Matches</span></div>` : ''}
+      <div id="video-other-matches-btn" style="display:inline-flex;align-items:center;gap:5px;background:rgba(99,179,237,0.1);border:1px solid rgba(99,179,237,0.25);border-radius:20px;padding:4px 10px;cursor:pointer;-webkit-tap-highlight-color:transparent;margin-bottom:10px;"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:#63b3ed;flex-shrink:0"><path d="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z"/></svg><span style="font-size:11px;color:#63b3ed;font-weight:600;">${_hasMultiCandidates ? 'Other Matches' : 'Not this one?'}</span></div>
       <div class="info-hero">
         <div class="info-hero-art" style="background:${this._pt("bg")};">${heroArtHtml}</div>
         <div class="info-hero-meta">
@@ -24247,8 +24380,11 @@ Include ALL tracks. Use null for unknown fields.`;
     // "Other Matches" — back to the disambiguation picker, if this detail
     // view came from one.
     content.querySelector('#video-other-matches-btn')?.addEventListener('click', () => {
-      if (!_pickerState) return;
-      this._renderVideoInfoPicker(content, _pickerState.results, _pickerState.artUrl, _pickerState.cacheKey, _pickerState.artUrls || null);
+      if (_hasMultiCandidates) {
+        this._renderVideoInfoPicker(content, _pickerState.results, _pickerState.artUrl, _pickerState.cacheKey, _pickerState.artUrls || null);
+      } else {
+        this._renderVideoInfoSearchInline(content, data.title || '', () => this._renderVideoInfoDetail(content, data, artUrl));
+      }
     });
 
     // Prefer already-provided artwork (from the disambiguation picker, a
@@ -24325,6 +24461,11 @@ Include ALL tracks. Use null for unknown fields.`;
               agent_id: agentId3, language: navigator.language || 'en'
             });
             const simRaw = simResp?.response?.speech?.plain?.speech || '';
+            // Fresh single-title lookup (not a multi-candidate array) —
+            // clear any leftover picker state from the previous panel so
+            // "Not this one?" falls back to a manual search for THIS
+            // title rather than reopening an unrelated candidate list.
+            _self._videoInfoPickerState = null;
             if (simRaw) {
               const si1 = simRaw.indexOf('{'), si2 = simRaw.lastIndexOf('}');
               if (si1 !== -1 && si2 !== -1) {
@@ -25488,28 +25629,7 @@ Include ALL tracks. Use null for unknown fields.`;
   async _showCastBio(content, name, showTitle, artUrl, onBack) {
     const savedHtml = content.innerHTML;
     const savedScroll = content.scrollTop;
-
-    // Loading state
     this.shadowRoot?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
-    content.innerHTML = `
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
-        <button id="cast-bio-back" style="width:28px;height:28px;border-radius:50%;background:${this._pt("btnBg")};border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;-webkit-tap-highlight-color:transparent;">
-          <svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:${this._pt("text")}"><path d="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z"/></svg>
-        </button>
-        <div style="font-size:15px;font-weight:700;color:${this._pt("text")}">${name}</div>
-      </div>
-      <div style="display:flex;flex-direction:column;align-items:center;gap:10px;padding:24px;">
-        <div style="width:24px;height:24px;border:2.5px solid rgba(99,179,237,0.25);border-top-color:#63b3ed;border-radius:50%;animation:ma-spin 0.8s linear infinite;"></div>
-        <div style="font-size:12px;color:${this._pt("dim")};">Looking up ${name}…</div>
-      </div>`;
-
-    content.querySelector('#cast-bio-back').addEventListener('click', () => {
-      this.shadowRoot?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
-      content.innerHTML = savedHtml;
-      content.scrollTop = savedScroll;
-      // Re-wire cast clicks
-      this._rewireCastClicks(content, showTitle, artUrl);
-    });
 
     // Show bio immediately with placeholder photo, then load async
     const renderBio = (imgUrl, isLoading) => {
@@ -25519,7 +25639,16 @@ Include ALL tracks. Use null for unknown fields.`;
 
       const metaLine = [bio?.born ? 'b. ' + bio.born : null, bio?.nationality].filter(Boolean).join(' · ');
 
-      // Loading state: centred spinner only — no blank photo circle
+      // Loading state — header, photo placeholder, and the Ask/Trivia action
+      // row all render and get wired immediately here, exactly like the
+      // final render below. Only the bio text/fun-fact/Known-For section —
+      // the part that actually depends on the AI + Wikipedia round-trip —
+      // shows a spinner. Previously the entire panel (including these
+      // buttons) was replaced with nothing but a spinner until both
+      // requests finished, which meant Ask/Trivia (and anything else on
+      // this panel) were simply absent from the DOM and couldn't be tapped
+      // until loading completed. Mirrors the fix already applied to
+      // _showAITrackInfo for the same reason.
       if (isLoading) {
         this.shadowRoot?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
         content.innerHTML = `
@@ -25529,13 +25658,35 @@ Include ALL tracks. Use null for unknown fields.`;
             </button>
             <div style="font-size:15px;font-weight:700;color:${this._pt("text")}">${name}</div>
           </div>
-          <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:60px 0;">
-            <div style="width:28px;height:28px;border:2.5px solid rgba(99,179,237,0.2);border-top-color:#63b3ed;border-radius:50%;animation:ma-spin 0.8s linear infinite;"></div>
-            <div style="font-size:13px;color:${this._pt("dim")};">Loading…</div>
-          </div>`;
+          <div style="display:flex;gap:14px;align-items:flex-start;margin-bottom:16px;">
+            <div id="cast-bio-photo" style="width:80px;height:80px;border-radius:50%;background:${this._pt("bg")};border:2px solid rgba(255,255,255,0.1);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+              <div style="width:20px;height:20px;border:2.5px solid rgba(99,179,237,0.2);border-top-color:#63b3ed;border-radius:50%;animation:ma-spin 0.8s linear infinite;"></div>
+            </div>
+            <div style="flex:1;min-width:0;display:flex;align-items:center;gap:7px;padding-top:8px;">
+              <div style="width:12px;height:12px;border:1.5px solid rgba(99,179,237,0.25);border-top-color:#63b3ed;border-radius:50%;animation:ma-spin 0.8s linear infinite;flex-shrink:0;"></div>
+              <span style="font-size:12px;color:${this._pt("dim")};">Looking up ${name}…</span>
+            </div>
+          </div>
+          <div id="bio-action-row" style="display:flex;gap:8px;margin:14px 0 8px;">
+            <button id="bio-ask-btn" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:9px 12px;border-radius:12px;background:${this._pt('btnBg')};border:1px solid ${this._pt('border')};color:${this._pt('text')};font-size:12px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;-webkit-tap-highlight-color:transparent;">
+              <svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:rgba(99,179,237,0.8);flex-shrink:0"><path d="M20,2H4A2,2 0 0,0 2,4V22L6,18H20A2,2 0 0,0 22,16V4A2,2 0 0,0 20,2M6,9H18V11H6V9M14,14H6V12H14V14M18,8H6V6H18V8Z"/></svg>
+              Ask
+            </button>
+            <button id="bio-trivia-btn" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:9px 12px;border-radius:12px;background:${this._pt('btnBg')};border:1px solid ${this._pt('border')};color:${this._pt('text')};font-size:12px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;-webkit-tap-highlight-color:transparent;">
+              <svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:rgba(99,179,237,0.8);flex-shrink:0"><path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"/></svg>
+              Trivia
+            </button>
+          </div>
+          <div id="bio-ask-panel" style="display:none;margin-bottom:12px;"></div>
+          <div id="bio-trivia-panel" style="display:none;margin-bottom:12px;"></div>`;
         content.querySelector('#cast-bio-back')?.addEventListener('click', () => {
-          if (typeof onBack === 'function') onBack(); else this._closeInfoPopup();
+          this.shadowRoot?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
+          if (typeof onBack === 'function') { onBack(); return; }
+          content.innerHTML = savedHtml;
+          content.scrollTop = savedScroll;
+          this._rewireCastClicks(content, showTitle, artUrl);
         });
+        this._wireBioActionRow(content, name, showTitle);
         return;
       }
 
@@ -25772,6 +25923,9 @@ Include ALL tracks. Use null for unknown fields.`;
                 agent_id: _agentId, language: navigator.language || 'en'
               });
               const _kRaw = _kResp?.response?.speech?.plain?.speech || '';
+              // Fresh single-title lookup — clear any leftover picker
+              // state so "Not this one?" refers to this title.
+              _self._videoInfoPickerState = null;
               if (_kRaw) {
                 const _ki1 = _kRaw.indexOf('{'), _ki2 = _kRaw.lastIndexOf('}');
                 if (_ki1 !== -1 && _ki2 !== -1) {
@@ -28023,31 +28177,32 @@ Include ALL tracks. Use null for unknown fields.`;
     const cardOuter = r?.getElementById('cardOuter');
     if (!cardOuter) return;
 
-    const backdrop = document.createElement('div');
-    backdrop.className = 'mc-sheet-backdrop';
-    const sheet = document.createElement('div');
-    sheet.className = 'mc-sheet';
-    sheet.innerHTML =
-      `<div class="mc-sheet-header">` +
-        `<span class="mc-sheet-title">Playing on ${this._multicastEntities.length} speakers</span>` +
-        `<button class="mc-sheet-close" id="mcSheetClose"><svg viewBox="0 0 24 24"><path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/></svg></button>` +
-      `</div>` +
-      `<div class="mc-sheet-list" id="mcSheetList"></div>` +
-      `<div class="mc-sheet-footer" id="mcSheetFooter"></div>`;
+    const panel = document.createElement('div');
+    panel.id = 'mcSheetPanel';
+    panel.className = 'info-popup visible';
+    panel.style.zIndex = '70';
+    panel.innerHTML =
+      '<div class="info-popup-header">' +
+        '<div style="display:flex;align-items:center;gap:8px;min-width:0;">' +
+          '<svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:' + this._pt('dim') + ';flex-shrink:0;"><path d="M17,2H7A2,2 0 0,0 5,4V20A2,2 0 0,0 7,22H17A2,2 0 0,0 19,20V4A2,2 0 0,0 17,2M12,19A2,2 0 0,1 10,17A2,2 0 0,1 12,15A2,2 0 0,1 14,17A2,2 0 0,1 12,19M15,9H9V4H15V9Z"/></svg>' +
+          `<span class="info-popup-title">Playing on ${this._multicastEntities.length} speakers</span>` +
+        '</div>' +
+        '<div class="info-popup-header-actions">' +
+          '<button class="info-popup-close" id="mcSheetClose"><svg viewBox="0 0 24 24"><path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/></svg></button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="info-popup-content" style="padding-top:0;">' +
+        '<div id="mcSheetList" class="mc-sheet-list" style="overflow-y:visible;padding:0;"></div>' +
+        '<div id="mcSheetFooter" class="mc-sheet-footer" style="padding:14px 0 0;margin-top:4px;"></div>' +
+      '</div>';
 
-    const _openedAt = Date.now();
-    backdrop.addEventListener('pointerdown', () => {
-      if (Date.now() - _openedAt > 200) this._closeMulticastSheet();
-    });
-    sheet.querySelector('#mcSheetClose')?.addEventListener('click', (e) => {
+    panel.querySelector('#mcSheetClose')?.addEventListener('click', (e) => {
       e.stopPropagation();
       this._closeMulticastSheet();
     });
 
-    cardOuter.appendChild(backdrop);
-    cardOuter.appendChild(sheet);
-    this._multicastSheetEl = sheet;
-    this._multicastSheetBackdropEl = backdrop;
+    cardOuter.appendChild(panel);
+    this._multicastSheetEl = panel;
     this._multicastSheetOpen = true;
 
     this._renderMulticastSheetList();
@@ -28055,9 +28210,7 @@ Include ALL tracks. Use null for unknown fields.`;
 
   _closeMulticastSheet() {
     this._multicastSheetEl?.remove();
-    this._multicastSheetBackdropEl?.remove();
     this._multicastSheetEl = null;
-    this._multicastSheetBackdropEl = null;
     this._multicastSheetOpen = false;
   }
 
@@ -28078,7 +28231,7 @@ Include ALL tracks. Use null for unknown fields.`;
     // than showing an empty/degenerate sheet.
     if (entities.length <= 1) { this._closeMulticastSheet(); return; }
 
-    sheet.querySelector('.mc-sheet-title').textContent = `Playing on ${entities.length} speakers`;
+    sheet.querySelector('.info-popup-title').textContent = `Playing on ${entities.length} speakers`;
 
     const esc = s => (s || '').toString().replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const speakerSvg = `<svg viewBox="0 0 24 24"><path d="M17,2H7A2,2 0 0,0 5,4V20A2,2 0 0,0 7,22H17A2,2 0 0,0 19,20V4A2,2 0 0,0 17,2M12,19A2,2 0 0,1 10,17A2,2 0 0,1 12,15A2,2 0 0,1 14,17A2,2 0 0,1 12,19M15,9H9V4H15V9Z"/></svg>`;
@@ -28263,7 +28416,7 @@ Include ALL tracks. Use null for unknown fields.`;
         this._closeMulticastSheet();
       } else {
         this._multicastSheetEl?.querySelector('.mc-sheet-row[data-eid="' + eid + '"]')?.remove();
-        const title = this._multicastSheetEl?.querySelector('.mc-sheet-title');
+        const title = this._multicastSheetEl?.querySelector('.info-popup-title');
         if (title) title.textContent = `Playing on ${this._multicastEntities.length} speakers`;
       }
     }
@@ -28292,6 +28445,14 @@ Include ALL tracks. Use null for unknown fields.`;
     const r    = this.shadowRoot;
     const self = this;
     if (!allMAEntities?.length) return;
+    // Mount on the card outer element and reuse the same full-panel
+    // .info-popup layout as Media Info / the Apple TV keyboard panel —
+    // header with title + close button, content below — rather than a
+    // small centered card floating over its own backdrop.
+    const cardOuter = r.getElementById('cardOuter');
+    if (!cardOuter) return;
+
+    r.getElementById('maPlayTargetPanel')?.remove();
 
     const friendlyName = eid => this._hass?.states[eid]?.attributes?.friendly_name || eid;
 
@@ -28323,20 +28484,18 @@ Include ALL tracks. Use null for unknown fields.`;
     // Start with a single-selection Set; user can toggle others on
     const selected = new Set(defaultSingle ? [defaultSingle] : []);
 
-    const backdrop = document.createElement('div');
-    backdrop.id = 'maPlayTargetBackdrop';
-    backdrop.style.cssText = 'position:absolute;inset:0;z-index:200;background:rgba(0,0,0,0.55);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;border-radius:inherit;';
-
-    const sheet = document.createElement('div');
-    sheet.style.cssText = 'background:var(--crow-panel-bg, #1c1c1e);border-radius:16px;padding:20px 20px 16px;width:calc(100% - 48px);max-width:320px;box-shadow:0 8px 40px rgba(0,0,0,0.7);';
+    const panel = document.createElement('div');
+    panel.id = 'maPlayTargetPanel';
+    panel.className = 'info-popup visible';
+    panel.style.zIndex = '70';
 
     const renderChips = () => {
-      sheet.querySelectorAll('.enqueue-menu-speaker-chip').forEach(chip => {
+      panel.querySelectorAll('.enqueue-menu-speaker-chip').forEach(chip => {
         if (!chip.classList.contains('mc-chip-busy')) {
           chip.classList.toggle('active', selected.has(chip.dataset.eid));
         }
       });
-      const playBtn = sheet.querySelector('#maPlayTargetPlay');
+      const playBtn = panel.querySelector('#maPlayTargetPlay');
       if (playBtn) {
         playBtn.disabled = selected.size === 0;
         playBtn.textContent = selected.size > 1
@@ -28345,26 +28504,39 @@ Include ALL tracks. Use null for unknown fields.`;
       }
     };
 
-    sheet.innerHTML =
-      '<div style="font-size:15px;font-weight:600;color:${this._pt("text")};margin-bottom:3px;">Choose speakers</div><div style="font-size:12px;color:${this._pt("dim")};margin-bottom:16px;">Tap multiple to multicast</div><div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px;">' +
-        allMAEntities.map(eid => {
-          const busy = _isBusy(eid);
-          return '<button class="enqueue-menu-speaker-chip' +
-            (selected.has(eid) ? ' active' : '') +
-            (busy ? ' mc-chip-busy' : '') +
-            '" data-eid="' + eid + '" style="padding:6px 12px 6px 9px;flex-direction:column;align-items:flex-start;"><span style="display:flex;align-items:center;gap:6px;"><svg viewBox="0 0 24 24"><path d="M17,2H7A2,2 0 0,0 5,4V20A2,2 0 0,0 7,22H17A2,2 0 0,0 19,20V4A2,2 0 0,0 17,2M12,19A2,2 0 0,1 10,17A2,2 0 0,1 12,15A2,2 0 0,1 14,17A2,2 0 0,1 12,19M15,9H9V4H15V9Z"/></svg>' +
-            friendlyName(eid) +
-            '</span>' +
-            (busy ? '<span class="mc-chip-busy-label">In another group</span>' : '') +
-            '</button>';
-        }).join('') +
-      '</div><div style="display:flex;gap:10px;justify-content:flex-end;"><button id="maPlayTargetCancel" style="padding:9px 16px;border-radius:10px;border:1px solid ${this._pt("border")};background:transparent;color:${this._pt("dim")};font-size:13px;cursor:pointer;">Cancel</button><button id="maPlayTargetPlay" style="padding:9px 18px;border-radius:10px;border:none;background:var(--accent,#007AFF);color:${this._pt("text")};font-size:13px;font-weight:600;cursor:pointer;">Play</button></div>';
-
-    backdrop.appendChild(sheet);
-    r.appendChild(backdrop);
+    panel.innerHTML =
+      '<div class="info-popup-header">' +
+        '<div style="display:flex;align-items:center;gap:8px;min-width:0;">' +
+          '<svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:' + this._pt('dim') + ';flex-shrink:0;"><path d="M17,2H7A2,2 0 0,0 5,4V20A2,2 0 0,0 7,22H17A2,2 0 0,0 19,20V4A2,2 0 0,0 17,2M12,19A2,2 0 0,1 10,17A2,2 0 0,1 12,15A2,2 0 0,1 14,17A2,2 0 0,1 12,19M15,9H9V4H15V9Z"/></svg>' +
+          '<span class="info-popup-title">Choose Speakers</span>' +
+        '</div>' +
+        '<div class="info-popup-header-actions">' +
+          '<button class="info-popup-close" id="maPlayTargetClose">' +
+            '<svg viewBox="0 0 24 24"><path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/></svg>' +
+          '</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="info-popup-content">' +
+        '<div style="font-size:12px;color:' + this._pt('dim') + ';margin-bottom:14px;">Tap multiple to multicast</div>' +
+        '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;">' +
+          allMAEntities.map(eid => {
+            const busy = _isBusy(eid);
+            return '<button class="enqueue-menu-speaker-chip' +
+              (selected.has(eid) ? ' active' : '') +
+              (busy ? ' mc-chip-busy' : '') +
+              '" data-eid="' + eid + '" style="padding:6px 12px 6px 9px;flex-direction:column;align-items:flex-start;"><span style="display:flex;align-items:center;gap:6px;"><svg viewBox="0 0 24 24"><path d="M17,2H7A2,2 0 0,0 5,4V20A2,2 0 0,0 7,22H17A2,2 0 0,0 19,20V4A2,2 0 0,0 17,2M12,19A2,2 0 0,1 10,17A2,2 0 0,1 12,15A2,2 0 0,1 14,17A2,2 0 0,1 12,19M15,9H9V4H15V9Z"/></svg>' +
+              friendlyName(eid) +
+              '</span>' +
+              (busy ? '<span class="mc-chip-busy-label">In another group</span>' : '') +
+              '</button>';
+          }).join('') +
+        '</div>' +
+        '<button id="maPlayTargetPlay" style="width:100%;padding:10px 0;border-radius:10px;border:none;background:var(--accent,#007AFF);color:#fff;font-size:14px;font-weight:600;font-family:inherit;cursor:pointer;">Play</button>' +
+      '</div>';
+    cardOuter.appendChild(panel);
 
     // Wire chip toggle — busy chips are non-interactive
-    sheet.querySelectorAll('.enqueue-menu-speaker-chip').forEach(function(chip) {
+    panel.querySelectorAll('.enqueue-menu-speaker-chip').forEach(function(chip) {
       chip.addEventListener('click', function(e) {
         e.stopPropagation();
         if (chip.classList.contains('mc-chip-busy')) return;
@@ -28378,12 +28550,12 @@ Include ALL tracks. Use null for unknown fields.`;
       });
     });
 
-    sheet.querySelector('#maPlayTargetCancel').addEventListener('click', function() {
-      backdrop.remove();
+    panel.querySelector('#maPlayTargetClose').addEventListener('click', function() {
+      panel.remove();
     });
 
-    sheet.querySelector('#maPlayTargetPlay').addEventListener('click', function() {
-      backdrop.remove();
+    panel.querySelector('#maPlayTargetPlay').addEventListener('click', function() {
+      panel.remove();
       if (selected.size === 0) return;
       const targets = [...selected];
       if (targets.length === 1) {
@@ -28394,9 +28566,7 @@ Include ALL tracks. Use null for unknown fields.`;
       }
     });
 
-    backdrop.addEventListener('pointerdown', function(e) {
-      if (e.target === backdrop) backdrop.remove();
-    });
+    renderChips();
   }
 
   // Shows a picker sheet for adding a speaker to the active multicast group.
@@ -28424,9 +28594,15 @@ Include ALL tracks. Use null for unknown fields.`;
     if (!addable?.length) return;
     const r    = this.shadowRoot;
     const self = this;
+    // Mount on the card outer element and reuse the same full-panel
+    // .info-popup layout as Media Info / the Apple TV keyboard panel —
+    // header with title + close button, content list below — rather than
+    // a small centered card floating over its own backdrop.
+    const cardOuter = r.getElementById('cardOuter');
+    if (!cardOuter) return;
 
     // Remove any existing picker
-    r.getElementById('mcAddSpeakerBackdrop')?.remove();
+    r.getElementById('mcAddSpeakerPanel')?.remove();
 
     const friendlyName = eid => this._hass?.states[eid]?.attributes?.friendly_name || eid;
 
@@ -28444,15 +28620,23 @@ Include ALL tracks. Use null for unknown fields.`;
       return false;
     };
 
-    const backdrop = document.createElement('div');
-    backdrop.id = 'mcAddSpeakerBackdrop';
-    backdrop.style.cssText = 'position:absolute;inset:0;z-index:200;background:rgba(0,0,0,0.55);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);display:flex;align-items:flex-end;justify-content:center;border-radius:inherit;padding-bottom:12px;';
-
-    const sheet = document.createElement('div');
-    sheet.style.cssText = 'background:var(--crow-panel-bg, #1c1c1e);border-radius:16px;padding:16px 16px 12px;width:calc(100% - 24px);max-width:320px;box-shadow:0 8px 40px rgba(0,0,0,0.7);';
-
-    sheet.innerHTML =
-      '<div style="font-size:14px;font-weight:600;color:${this._pt("text")};margin-bottom:12px;">Add a speaker</div><div style="display:flex;flex-direction:column;gap:6px;">' +
+    const panel = document.createElement('div');
+    panel.id = 'mcAddSpeakerPanel';
+    panel.className = 'info-popup visible';
+    panel.style.zIndex = '70';
+    panel.innerHTML =
+      '<div class="info-popup-header">' +
+        '<div style="display:flex;align-items:center;gap:8px;min-width:0;">' +
+          '<svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:' + this._pt('dim') + ';flex-shrink:0;"><path d="M17,2H7A2,2 0 0,0 5,4V20A2,2 0 0,0 7,22H17A2,2 0 0,0 19,20V4A2,2 0 0,0 17,2M12,19A2,2 0 0,1 10,17A2,2 0 0,1 12,15A2,2 0 0,1 14,17A2,2 0 0,1 12,19M15,9H9V4H15V9Z"/></svg>' +
+          '<span class="info-popup-title">Add a Speaker</span>' +
+        '</div>' +
+        '<div class="info-popup-header-actions">' +
+          '<button class="info-popup-close" id="mcAddSpeakerClose">' +
+            '<svg viewBox="0 0 24 24"><path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/></svg>' +
+          '</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="info-popup-content" style="display:flex;flex-direction:column;gap:6px;">' +
         addable.map(eid => {
           const busy = _isBusy(eid);
           return `<button class="mc-add-row${busy ? ' mc-chip-busy' : ''}" data-eid="${eid}" style="` +
@@ -28463,23 +28647,20 @@ Include ALL tracks. Use null for unknown fields.`;
             (!busy ? '<svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:var(--accent,#007AFF);flex-shrink:0;"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>' : '') +
             '</button>';
         }).join('') +
-      '</div><button id="mcAddCancel" style="width:100%;margin-top:10px;padding:10px;border-radius:10px;border:1px solid ${this._pt("border")};background:transparent;color:${this._pt("dim")};font-size:13px;font-family:inherit;cursor:pointer;">Cancel</button>';
-
-    backdrop.appendChild(sheet);
-    r.appendChild(backdrop);
+      '</div>';
+    cardOuter.appendChild(panel);
 
     // Tap row to add that speaker
-    sheet.querySelectorAll('.mc-add-row').forEach(btn => {
+    panel.querySelectorAll('.mc-add-row').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         if (btn.classList.contains('mc-chip-busy')) return;
-        backdrop.remove();
+        panel.remove();
         self._addSpeakerToGroup(btn.dataset.eid);
       });
     });
 
-    sheet.querySelector('#mcAddCancel').addEventListener('click', () => backdrop.remove());
-    backdrop.addEventListener('pointerdown', (e) => { if (e.target === backdrop) backdrop.remove(); });
+    panel.querySelector('#mcAddSpeakerClose')?.addEventListener('click', () => panel.remove());
   }
 
   _addSpeakerToGroup(eid) {
@@ -28579,14 +28760,27 @@ Include ALL tracks. Use null for unknown fields.`;
     // Start with a single-speaker selection; user can toggle extras on
     const _selectedSpeakers = new Set(_defaultEntity ? [_defaultEntity] : []);
 
+    const _summaryText = () => {
+      if (_selectedSpeakers.size === 0) return 'Choose a speaker';
+      if (_selectedSpeakers.size === 1) return 'Playing on ' + _friendlyName([..._selectedSpeakers][0]);
+      return 'Playing on ' + _selectedSpeakers.size + ' speakers';
+    };
+
     const _renderChips = () => {
       menu.querySelectorAll('.enqueue-menu-speaker-chip').forEach(c => {
         c.classList.toggle('active', _selectedSpeakers.has(c.dataset.eid));
       });
+      const summaryTextEl = menu.querySelector('.enqueue-menu-speakers-summary-text');
+      if (summaryTextEl) summaryTextEl.textContent = _summaryText();
     };
 
     const speakerHtml = _allMA.length > 1
-      ? '<div class="enqueue-menu-speakers" id="enqueueMenuSpeakers">' +
+      ? '<div class="enqueue-menu-speakers-summary" id="enqueueMenuSpeakersSummary">' +
+          '<svg class="enqueue-menu-speakers-summary-icon" viewBox="0 0 24 24"><path d="M17,2H7A2,2 0 0,0 5,4V20A2,2 0 0,0 7,22H17A2,2 0 0,0 19,20V4A2,2 0 0,0 17,2M12,19A2,2 0 0,1 10,17A2,2 0 0,1 12,15A2,2 0 0,1 14,17A2,2 0 0,1 12,19M15,9H9V4H15V9Z"/></svg>' +
+          '<span class="enqueue-menu-speakers-summary-text">' + _summaryText() + '</span>' +
+          '<svg class="enqueue-menu-speakers-summary-chevron" viewBox="0 0 24 24"><path d="M7.41,8.59L12,13.17L16.59,8.59L18,10L12,16L6,10L7.41,8.59Z"/></svg>' +
+        '</div>' +
+        '<div class="enqueue-menu-speakers" id="enqueueMenuSpeakers" style="display:none;">' +
           _allMA.map(eid =>
             '<button class="enqueue-menu-speaker-chip' + (_selectedSpeakers.has(eid) ? ' active' : '') + '" data-eid="' + eid + '"><svg viewBox="0 0 24 24"><path d="M17,2H7A2,2 0 0,0 5,4V20A2,2 0 0,0 7,22H17A2,2 0 0,0 19,20V4A2,2 0 0,0 17,2M12,19A2,2 0 0,1 10,17A2,2 0 0,1 12,15A2,2 0 0,1 14,17A2,2 0 0,1 12,19M15,9H9V4H15V9Z"/></svg>' +
             _friendlyName(eid) +
@@ -28630,6 +28824,17 @@ Include ALL tracks. Use null for unknown fields.`;
     menu.style.top   = Math.min(relTop, cardRect.height - 200 - _extraH) + 'px';
     menu.style.right = Math.max(4, relRight) + 'px';
 
+    // Wire summary row expand/collapse
+    menu.querySelector('#enqueueMenuSpeakersSummary')?.addEventListener('click', function(e) {
+      e.stopPropagation();
+      const summary = this;
+      const list = menu.querySelector('#enqueueMenuSpeakers');
+      if (!list) return;
+      const expanded = list.style.display !== 'none';
+      list.style.display = expanded ? 'none' : 'flex';
+      summary.classList.toggle('expanded', !expanded);
+    });
+
     // Wire multi-select speaker chips
     menu.querySelectorAll('.enqueue-menu-speaker-chip').forEach(function(chip) {
       chip.addEventListener('click', function(e) {
@@ -28660,7 +28865,7 @@ Include ALL tracks. Use null for unknown fields.`;
         } else if (mode === 'copy_link') {
           const _clTitle  = item.name || item.title || '';
           const _clArtist = (item.artists && item.artists[0]?.name) || item.artist || '';
-          self._copyToClipboard(_clTitle + ' by ' + _clArtist + '\n' + self._buildShareUrl(_clTitle, _clArtist));
+          self._copyToClipboard(_clTitle + ' by ' + _clArtist + '\n' + self._buildShareUrl(_clTitle, _clArtist), self._shareServiceLabel());
         } else if (mode === 'more_info') {
           const _aiTitle  = item.name || item.title || '';
           const _aiArtist = (item.artists && item.artists[0]?.name) || item.artist || '';
@@ -28932,8 +29137,15 @@ Include ALL tracks. Use null for unknown fields.`;
     menu.className = 'enqueue-menu';
     menu.id = 'enqueueMenu';
 
+    const _summaryText = () => 'Playing on ' + _friendlyName(_selectedEntity);
+
     const speakerHtml = _allMA.length > 1
-      ? '<div class="enqueue-menu-speakers" id="enqueueMenuSpeakers">' +
+      ? '<div class="enqueue-menu-speakers-summary" id="enqueueMenuSpeakersSummary">' +
+          '<svg class="enqueue-menu-speakers-summary-icon" viewBox="0 0 24 24"><path d="M17,2H7A2,2 0 0,0 5,4V20A2,2 0 0,0 7,22H17A2,2 0 0,0 19,20V4A2,2 0 0,0 17,2M12,19A2,2 0 0,1 10,17A2,2 0 0,1 12,15A2,2 0 0,1 14,17A2,2 0 0,1 12,19M15,9H9V4H15V9Z"/></svg>' +
+          '<span class="enqueue-menu-speakers-summary-text">' + _summaryText() + '</span>' +
+          '<svg class="enqueue-menu-speakers-summary-chevron" viewBox="0 0 24 24"><path d="M7.41,8.59L12,13.17L16.59,8.59L18,10L12,16L6,10L7.41,8.59Z"/></svg>' +
+        '</div>' +
+        '<div class="enqueue-menu-speakers" id="enqueueMenuSpeakers" style="display:none;">' +
           _allMA.map(eid =>
             '<button class="enqueue-menu-speaker-chip' + (eid === _selectedEntity ? ' active' : '') + '" data-eid="' + eid + '"><svg viewBox="0 0 24 24"><path d="M17,2H7A2,2 0 0,0 5,4V20A2,2 0 0,0 7,22H17A2,2 0 0,0 19,20V4A2,2 0 0,0 17,2M12,19A2,2 0 0,1 10,17A2,2 0 0,1 12,15A2,2 0 0,1 14,17A2,2 0 0,1 12,19M15,9H9V4H15V9Z"/></svg>' +
             _friendlyName(eid) +
@@ -28963,15 +29175,27 @@ Include ALL tracks. Use null for unknown fields.`;
     const anchorRect = anchorEl.getBoundingClientRect();
     const cardRect   = r.host.getBoundingClientRect();
     const relTop   = anchorRect.bottom - cardRect.top + 4;
-    const _extraH  = (_allMA.length > 1 ? 60 : 0) + 60;
+    const _extraH  = (_allMA.length > 1 ? 40 : 0) + 60;
     menu.style.top   = Math.min(relTop, cardRect.height - 200 - _extraH) + 'px';
     menu.style.right = '4px';
+
+    menu.querySelector('#enqueueMenuSpeakersSummary')?.addEventListener('click', function(e) {
+      e.stopPropagation();
+      const summary = this;
+      const list = menu.querySelector('#enqueueMenuSpeakers');
+      if (!list) return;
+      const expanded = list.style.display !== 'none';
+      list.style.display = expanded ? 'none' : 'flex';
+      summary.classList.toggle('expanded', !expanded);
+    });
 
     menu.querySelectorAll('.enqueue-menu-speaker-chip').forEach(function(chip) {
       chip.addEventListener('click', function(e) {
         e.stopPropagation();
         _selectedEntity = chip.dataset.eid;
         menu.querySelectorAll('.enqueue-menu-speaker-chip').forEach(c => c.classList.toggle('active', c === chip));
+        const summaryTextEl = menu.querySelector('.enqueue-menu-speakers-summary-text');
+        if (summaryTextEl) summaryTextEl.textContent = _summaryText();
       });
     });
 
@@ -28982,7 +29206,7 @@ Include ALL tracks. Use null for unknown fields.`;
         const mode = el.dataset.mode;
         self._closeEnqueueMenu();
         if (mode === 'copy_link') {
-          self._copyToClipboard(albumTitle + ' by ' + artistName + '\n' + self._buildShareUrl(albumTitle, artistName));
+          self._copyToClipboard(albumTitle + ' by ' + artistName + '\n' + self._buildShareUrl(albumTitle, artistName), self._shareServiceLabel());
         } else if (mode === 'more_info') {
           self._showAITrackInfo(albumTitle, artistName, { fromSearch: true });
         } else {
@@ -29107,8 +29331,15 @@ Include ALL tracks. Use null for unknown fields.`;
     menu.className = 'enqueue-menu';
     menu.id = 'enqueueMenu';
 
+    const _summaryText = () => 'Playing on ' + _friendlyName(_selectedEntity);
+
     const speakerHtml = _allMA.length > 1
-      ? '<div class="enqueue-menu-speakers" id="enqueueMenuSpeakers">' +
+      ? '<div class="enqueue-menu-speakers-summary" id="enqueueMenuSpeakersSummary">' +
+          '<svg class="enqueue-menu-speakers-summary-icon" viewBox="0 0 24 24"><path d="M17,2H7A2,2 0 0,0 5,4V20A2,2 0 0,0 7,22H17A2,2 0 0,0 19,20V4A2,2 0 0,0 17,2M12,19A2,2 0 0,1 10,17A2,2 0 0,1 12,15A2,2 0 0,1 14,17A2,2 0 0,1 12,19M15,9H9V4H15V9Z"/></svg>' +
+          '<span class="enqueue-menu-speakers-summary-text">' + _summaryText() + '</span>' +
+          '<svg class="enqueue-menu-speakers-summary-chevron" viewBox="0 0 24 24"><path d="M7.41,8.59L12,13.17L16.59,8.59L18,10L12,16L6,10L7.41,8.59Z"/></svg>' +
+        '</div>' +
+        '<div class="enqueue-menu-speakers" id="enqueueMenuSpeakers" style="display:none;">' +
           _allMA.map(eid =>
             '<button class="enqueue-menu-speaker-chip' + (eid === _selectedEntity ? ' active' : '') + '" data-eid="' + eid + '"><svg viewBox="0 0 24 24"><path d="M17,2H7A2,2 0 0,0 5,4V20A2,2 0 0,0 7,22H17A2,2 0 0,0 19,20V4A2,2 0 0,0 17,2M12,19A2,2 0 0,1 10,17A2,2 0 0,1 12,15A2,2 0 0,1 14,17A2,2 0 0,1 12,19M15,9H9V4H15V9Z"/></svg>' +
             _friendlyName(eid) +
@@ -29140,9 +29371,19 @@ Include ALL tracks. Use null for unknown fields.`;
     const anchorRect = anchorEl.getBoundingClientRect();
     const cardRect   = r.host.getBoundingClientRect();
     const relTop   = anchorRect.bottom - cardRect.top + 4;
-    const _extraH  = (_allMA.length > 1 ? 60 : 0) + 60; // always include AI Info item
+    const _extraH  = (_allMA.length > 1 ? 40 : 0) + 60; // always include AI Info item
     menu.style.top   = Math.min(relTop, cardRect.height - 200 - _extraH) + 'px';
     menu.style.right = '4px';
+
+    menu.querySelector('#enqueueMenuSpeakersSummary')?.addEventListener('click', function(e) {
+      e.stopPropagation();
+      const summary = this;
+      const list = menu.querySelector('#enqueueMenuSpeakers');
+      if (!list) return;
+      const expanded = list.style.display !== 'none';
+      list.style.display = expanded ? 'none' : 'flex';
+      summary.classList.toggle('expanded', !expanded);
+    });
 
     // Wire speaker chip selection
     menu.querySelectorAll('.enqueue-menu-speaker-chip').forEach(function(chip) {
@@ -29150,6 +29391,8 @@ Include ALL tracks. Use null for unknown fields.`;
         e.stopPropagation();
         _selectedEntity = chip.dataset.eid;
         menu.querySelectorAll('.enqueue-menu-speaker-chip').forEach(c => c.classList.toggle('active', c === chip));
+        const summaryTextEl = menu.querySelector('.enqueue-menu-speakers-summary-text');
+        if (summaryTextEl) summaryTextEl.textContent = _summaryText();
       });
     });
 
@@ -29160,7 +29403,7 @@ Include ALL tracks. Use null for unknown fields.`;
         const mode = el.dataset.mode;
         self._closeEnqueueMenu();
         if (mode === 'copy_link') {
-          self._copyToClipboard(trackTitle + ' by ' + artistName + '\n' + self._buildShareUrl(trackTitle, artistName));
+          self._copyToClipboard(trackTitle + ' by ' + artistName + '\n' + self._buildShareUrl(trackTitle, artistName), self._shareServiceLabel());
         } else if (mode === 'pin') {
           if (!trackUri) return;
           const _tPinItem = { uri: trackUri, name: trackTitle, artist: artistName, media_type: 'track' };
@@ -29909,7 +30152,7 @@ Include ALL tracks. Use null for unknown fields.`;
         }
 
         if (mode === 'copy_link') {
-          self._copyToClipboard(title + ' by ' + artist + '\n' + self._buildShareUrl(title, artist));
+          self._copyToClipboard(title + ' by ' + artist + '\n' + self._buildShareUrl(title, artist), self._shareServiceLabel());
           return;
         }
 
