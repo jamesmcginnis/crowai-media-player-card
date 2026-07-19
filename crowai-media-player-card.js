@@ -2432,7 +2432,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         .enqueue-menu-speakers-summary-chevron { width: 12px; height: 12px; flex-shrink: 0; fill: var(--crow-panel-icon-dim, rgba(255,255,255,0.35)); transition: transform 0.15s ease; }
         .enqueue-menu-speakers-summary.expanded .enqueue-menu-speakers-summary-chevron { transform: rotate(180deg); }
         .enqueue-menu-speakers {
-          display: flex; flex-wrap: nowrap; gap: 6px; overflow-x: auto; -webkit-overflow-scrolling: touch;
+          display: flex; flex-direction: column; gap: 6px; overflow-x: visible; -webkit-overflow-scrolling: touch;
           padding: 10px 14px 12px; border-bottom: 0.5px solid var(--crow-panel-divider,rgba(255,255,255,0.1));
           scrollbar-width: none;
         }
@@ -2450,6 +2450,20 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           border-color: var(--accent,#007AFF) !important; color:var(--crow-panel-text, #ffffff);
         }
         .enqueue-menu-speaker-chip.active svg { fill: var(--accent,#007AFF); }
+        .enqueue-menu-speaker-chip.chip-list-row {
+          display: flex !important; width: 100%; border-radius: 10px !important; box-sizing: border-box;
+        }
+        .enqueue-menu-speaker-chip.speaker-focus-row {
+          display: flex !important; width: 100%; box-sizing: border-box;
+          border-radius: 999px !important; padding: 16px 20px !important;
+          background: rgba(255,255,255,0.06) !important; border: 1px solid rgba(255,255,255,0.1) !important;
+          font-size: 14px !important; white-space: normal !important;
+        }
+        .enqueue-menu-speaker-chip.speaker-focus-row svg { width: 18px; height: 18px; }
+        .enqueue-menu-speaker-chip.speaker-focus-row.active {
+          background: rgba(var(--accent-rgb,0,122,255),0.22) !important;
+          border-color: var(--accent,#007AFF) !important;
+        }
           width: 16px; height: 16px; flex-shrink: 0; opacity: 0.45;
           background: none !important; border: none !important;
           outline: none !important; box-shadow: none !important;
@@ -2674,6 +2688,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           opacity: 1; pointer-events: all;
           transform: scale(1) translateZ(0);
           -webkit-transform: scale(1) translateZ(0);
+          /* Opening only transitions transform — opacity jumps straight to 1
+             so the background is instantly opaque and whatever's underneath
+             (e.g. the main player's prev/next arrows) can't be seen bleeding
+             through during the fade, the way it would with an opacity tween.
+             Closing still uses the base rule's opacity+transform transition
+             above for a smooth fade-out. */
+          transition: transform 0.18s ease;
         }
 
         .info-popup-header {
@@ -3193,43 +3214,45 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         /* Multicast sheet — replaces the old per-speaker pill row for grouped
            playback. One compact summary pill is shown instead; this sheet is
            where the full member list, focus, remove, add, and sync actions live. */
-        .mc-sheet-list { overflow-y: auto; flex: 1; padding: 0 8px 4px; }
+        .mc-sheet-list { overflow-y: auto; flex: 1; padding: 0 2px 4px; display: flex; flex-direction: column; gap: 12px; }
         .mc-sheet-row {
-          display: flex; align-items: center; gap: 10px;
-          padding: 9px 8px; border-radius: 10px;
+          display: flex; align-items: center; gap: 12px;
+          padding: 16px 20px; border-radius: 999px; box-sizing: border-box;
+          background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
           cursor: pointer; -webkit-tap-highlight-color: transparent;
         }
-        .mc-sheet-row:active { background: var(--crow-panel-row-bg-active,rgba(255,255,255,0.06)); }
-        .mc-sheet-row.mc-sheet-row-active { background: rgba(0,122,255,0.12); }
+        .mc-sheet-row:active { background: rgba(255,255,255,0.1); }
+        .mc-sheet-row.mc-sheet-row-active { background: rgba(var(--accent-rgb,0,122,255),0.22); border-color: var(--accent,#007AFF); }
         .mc-sheet-row-icon {
-          width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0;
+          width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0;
           background: var(--crow-panel-btn-bg,rgba(255,255,255,0.08));
           display: flex; align-items: center; justify-content: center;
         }
-        .mc-sheet-row-icon svg { width: 14px; height: 14px; fill: var(--crow-panel-text-dim,rgba(255,255,255,0.6)); }
+        .mc-sheet-row-icon svg { width: 16px; height: 16px; fill: var(--crow-panel-text-dim,rgba(255,255,255,0.6)); }
         .mc-sheet-row.mc-sheet-row-active .mc-sheet-row-icon svg { fill: var(--accent,#007AFF); }
-        .mc-sheet-row-name { flex: 1; min-width: 0; font-size: 13px; color: var(--crow-panel-text,rgba(255,255,255,0.9)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .mc-sheet-row-name { flex: 1; min-width: 0; font-size: 14px; color: var(--crow-panel-text,rgba(255,255,255,0.9)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .mc-sheet-row-remove {
-          width: 26px; height: 26px; border-radius: 50%; border: none; background: transparent;
+          width: 28px; height: 28px; border-radius: 50%; border: none; background: transparent;
           display: flex; align-items: center; justify-content: center; cursor: pointer;
           -webkit-tap-highlight-color: transparent; flex-shrink: 0;
         }
         .mc-sheet-row-remove:active { background: var(--crow-panel-row-bg-active,rgba(255,255,255,0.1)); }
-        .mc-sheet-row-remove svg { width: 12px; height: 12px; fill: rgba(255,255,255,0.35); pointer-events: none; }
+        .mc-sheet-row-remove svg { width: 13px; height: 13px; fill: rgba(255,255,255,0.35); pointer-events: none; }
         .mc-sheet-row-remove:active svg { fill: rgba(255,100,100,0.9); }
         .mc-sheet-footer {
-          display: flex; gap: 8px; padding: 10px 12px 14px; flex-shrink: 0;
+          display: flex; flex-direction: column; gap: 12px; padding: 14px 2px 4px; flex-shrink: 0;
           border-top: 1px solid var(--crow-panel-row-border,rgba(255,255,255,0.08));
         }
         .mc-sheet-footer-btn {
-          flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;
-          padding: 9px 10px; border-radius: 10px; border: 1px solid var(--crow-panel-row-border,rgba(255,255,255,0.15));
-          background: var(--crow-panel-btn-bg,rgba(255,255,255,0.06)); color: var(--crow-panel-text,rgba(255,255,255,0.9));
-          font-size: 12px; font-weight: 600; font-family: inherit; cursor: pointer;
+          display: flex; align-items: center; justify-content: center; gap: 8px;
+          width: 100%; box-sizing: border-box;
+          padding: 16px 20px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.1);
+          background: rgba(255,255,255,0.06); color: var(--crow-panel-text,rgba(255,255,255,0.9));
+          font-size: 14px; font-weight: 600; font-family: inherit; cursor: pointer;
           -webkit-tap-highlight-color: transparent;
         }
-        .mc-sheet-footer-btn:active { background: var(--crow-panel-row-bg-active,rgba(255,255,255,0.12)); }
-        .mc-sheet-footer-btn svg { width: 13px; height: 13px; fill: currentColor; pointer-events: none; }
+        .mc-sheet-footer-btn:active { background: rgba(255,255,255,0.1); }
+        .mc-sheet-footer-btn svg { width: 15px; height: 15px; fill: currentColor; pointer-events: none; }
 
         /* Add speaker pill — accent coloured, appears when speakers are available to add */
         .mc-add-pill {
@@ -4238,6 +4261,20 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         // rows bleed through to the artwork underneath and trigger this handler
         if (r.getElementById('maPopup')?.classList.contains('visible')) return;
         const state = this._hass?.states[this._entity];
+        // Radio/podcast/audiobook streams get misclassified as isMusic below
+        // (playing + mediaType 'music' + a title pulled from the station/show/
+        // book) — route to the same rich detail panel their top-left pill
+        // already opens, rather than falling into the generic AI Info track
+        // lookup, which has no station/show/book data to work with and only
+        // shows library fallback. Whichever pill is currently visible
+        // reflects the card's own up-to-date classification, so just defer
+        // to it rather than re-deriving it here.
+        const _liveBadgeEl = r.getElementById('liveStationBadge');
+        const _pcBadgeEl   = r.getElementById('podcastBadge');
+        const _abBadgeEl   = r.getElementById('audiobookBadge');
+        if (_liveBadgeEl && _liveBadgeEl.style.display !== 'none') { this._resolveAndShowLiveStation(); return; }
+        if (_pcBadgeEl && _pcBadgeEl.style.display !== 'none') { this._resolveAndShowPodcast(); return; }
+        if (_abBadgeEl && _abBadgeEl.style.display !== 'none') { this._resolveAndShowAudiobook(); return; }
         const mediaType = this._detectMediaType(state);
         const isMusic = state?.state === 'playing' && mediaType === 'music'
           && !!(state?.attributes?.media_artist || state?.attributes?.media_title);
@@ -13351,26 +13388,33 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     }
     if (!badge._abClickWired) {
       badge._abClickWired = true;
-      badge.addEventListener('click', async (e) => {
+      badge.addEventListener('click', (e) => {
         e.stopPropagation();
-        const _cached = this._abCachedBook(this._abNowPlaying?.url);
-        if (_cached) { this._showAbMoreInfo(_cached); return; }
-        const _attrs = this._hass?.states[this._entity]?.attributes || {};
-        const bookName = _attrs.media_album_name || _attrs.media_title || '';
-        if (!bookName) { this._showToast('Search for this audiobook in the Audiobooks tab'); return; }
-        const pinned = this._abGetStarred();
-        const pinnedMatch = pinned.find(b => (b.title||'').toLowerCase() === bookName.toLowerCase());
-        if (pinnedMatch) { this._showAbMoreInfo(pinnedMatch); return; }
-        this._showLoadingToast('Looking up audiobook\u2026');
-        try {
-          const results = await this._abSearch(bookName);
-          this._hideLoadingToast();
-          const match = results.find(b => (b.title||'').toLowerCase() === bookName.toLowerCase()) || results[0];
-          if (match) { this._showAbMoreInfo(match); return; }
-        } catch(_) { this._hideLoadingToast(); }
-        this._showToast('Audiobook not found \u2014 search for it in the Audiobooks tab');
+        this._resolveAndShowAudiobook();
       });
     }
+  }
+
+  // Resolves the currently-playing audiobook and opens its detail panel —
+  // shared by the AUDIOBOOK pill's own click and by an artwork tap while the
+  // AUDIOBOOK pill is showing (see artClick.onclick), so both entry points agree.
+  async _resolveAndShowAudiobook() {
+    const _cached = this._abCachedBook(this._abNowPlaying?.url);
+    if (_cached) { this._showAbMoreInfo(_cached); return; }
+    const _attrs = this._hass?.states[this._entity]?.attributes || {};
+    const bookName = _attrs.media_album_name || _attrs.media_title || '';
+    if (!bookName) { this._showToast('Search for this audiobook in the Audiobooks tab'); return; }
+    const pinned = this._abGetStarred();
+    const pinnedMatch = pinned.find(b => (b.title||'').toLowerCase() === bookName.toLowerCase());
+    if (pinnedMatch) { this._showAbMoreInfo(pinnedMatch); return; }
+    this._showLoadingToast('Looking up audiobook\u2026');
+    try {
+      const results = await this._abSearch(bookName);
+      this._hideLoadingToast();
+      const match = results.find(b => (b.title||'').toLowerCase() === bookName.toLowerCase()) || results[0];
+      if (match) { this._showAbMoreInfo(match); return; }
+    } catch(_) { this._hideLoadingToast(); }
+    this._showToast('Audiobook not found \u2014 search for it in the Audiobooks tab');
   }
 
   _showRbContextMenu(anchor, st, entity) {
@@ -16720,98 +16764,104 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // Wire click — only attach once; reads fresh state on every tap
     if (!badge._liveClickWired) {
       badge._liveClickWired = true;
-      badge.addEventListener('click', async (e) => {
+      badge.addEventListener('click', (e) => {
         e.stopPropagation();
-
-        const _attrs = this._hass?.states[this._entity]?.attributes || {};
-        const _streamKey = this._rbStreamKey(_attrs);
-
-        // Strategy 0: the station we ourselves most recently asked this
-        // specific entity to play, from this card's own UI (persisted, so it
-        // survives an app reload). This is what makes the pill work reliably
-        // for HA Radio Browser stations — MA can end up reporting a
-        // media_content_id for the entity that doesn't match anything we
-        // cached it under — and for any station that overwrites media_title
-        // with the currently playing song once tuned in (very common), which
-        // otherwise permanently hides the station's own name from HA's state.
-        const _lastPlayed = this._rbGetLastPlayed(this._entity, _streamKey);
-        if (_lastPlayed) { this._showRbMoreInfo(_lastPlayed); return; }
-
-        // Strategy 1: check pinned stations by name — instant, no network
-        // and check the session station cache by stream URL — populated when
-        // user plays or long-presses a station from the radio search results.
-        const _rawId = _attrs.media_content_id || '';
-        const _streamUrl = _rawId.replace(/^builtin:\/\/radio\//i, '');
-        if (_streamUrl) {
-          const _cached = this._rbCachedStation(_streamUrl);
-          if (_cached) {
-            // Also save under the entity-keyed cache — the artwork fallback
-            // checks that one first, and it isn't tied to matching MA's
-            // exact media_content_id format the way the URL-keyed cache is,
-            // so this closes the gap for stations played outside this
-            // card's own Play button (Siri, HomeKit, etc.) but identified
-            // here via the LIVE pill.
-            this._rbSaveLastPlayed(this._entity, _cached, _streamKey);
-            this.updateContent(this._hass.states[this._entity]);
-            this._showRbMoreInfo(_cached);
-            return;
-          }
-        }
-
-        // Strategy 2: check pinned stations by name
-        let _stationName = '';
-        try {
-          const qRes = await this._hass.connection.sendMessagePromise({
-            type: 'call_service', domain: 'music_assistant', service: 'get_queue',
-            service_data: { entity_id: this._entity }, return_response: true
-          });
-          const qData = qRes?.response?.[this._entity] || qRes?.response || null;
-          _stationName = qData?.current_item?.name || qData?.current_item?.media_item?.name || '';
-        } catch (_) {}
-
-        if (!_stationName) {
-          _stationName = _attrs.media_album_name || _attrs.media_title || '';
-        }
-
-        if (_stationName) {
-          const _pinned = this._rbGetStarred();
-          const _pinnedMatch = _pinned.find(s => s.name?.toLowerCase() === _stationName.toLowerCase());
-          if (_pinnedMatch) {
-            this._rbSaveLastPlayed(this._entity, _pinnedMatch, _streamKey);
-            this.updateContent(this._hass.states[this._entity]);
-            this._showRbMoreInfo(_pinnedMatch);
-            return;
-          }
-        }
-
-        // Strategy 3: radio-browser name search — same as the search results long-press
-        if (_stationName) {
-          try {
-            const res = await fetch(
-              'https://de1.api.radio-browser.info/json/stations/search?name='
-              + encodeURIComponent(_stationName) + '&limit=30&hidebroken=true&order=votes&reverse=true'
-            );
-            if (res.ok) {
-              const stations = await res.json();
-              if (stations && stations.length) {
-                const _nl = _stationName.toLowerCase();
-                const best = stations.find(s => s.name.toLowerCase() === _nl)
-                          || stations.find(s => s.name.toLowerCase().startsWith(_nl))
-                          || stations.find(s => _nl.startsWith(s.name.toLowerCase()))
-                          || stations[0];
-                this._rbCacheStation(best); // cache for next time
-                this._rbSaveLastPlayed(this._entity, best, _streamKey); // also key by entity — see note above
-                this.updateContent(this._hass.states[this._entity]);
-                this._showRbMoreInfo(best);
-                return;
-              }
-            }
-          } catch (_) {}
-        }
-
-        this._showToast('Station not found — search for it in the Radio tab first');
+        this._resolveAndShowLiveStation();
       });
     }
+  }
+
+  // Resolves the currently-playing live station and opens its detail panel —
+  // shared by the LIVE pill's own click and by an artwork tap while the LIVE
+  // pill is showing (see artClick.onclick), so both entry points agree.
+  async _resolveAndShowLiveStation() {
+    const _attrs = this._hass?.states[this._entity]?.attributes || {};
+    const _streamKey = this._rbStreamKey(_attrs);
+
+    // Strategy 0: the station we ourselves most recently asked this
+    // specific entity to play, from this card's own UI (persisted, so it
+    // survives an app reload). This is what makes the pill work reliably
+    // for HA Radio Browser stations — MA can end up reporting a
+    // media_content_id for the entity that doesn't match anything we
+    // cached it under — and for any station that overwrites media_title
+    // with the currently playing song once tuned in (very common), which
+    // otherwise permanently hides the station's own name from HA's state.
+    const _lastPlayed = this._rbGetLastPlayed(this._entity, _streamKey);
+    if (_lastPlayed) { this._showRbMoreInfo(_lastPlayed); return; }
+
+    // Strategy 1: check pinned stations by name — instant, no network
+    // and check the session station cache by stream URL — populated when
+    // user plays or long-presses a station from the radio search results.
+    const _rawId = _attrs.media_content_id || '';
+    const _streamUrl = _rawId.replace(/^builtin:\/\/radio\//i, '');
+    if (_streamUrl) {
+      const _cached = this._rbCachedStation(_streamUrl);
+      if (_cached) {
+        // Also save under the entity-keyed cache — the artwork fallback
+        // checks that one first, and it isn't tied to matching MA's
+        // exact media_content_id format the way the URL-keyed cache is,
+        // so this closes the gap for stations played outside this
+        // card's own Play button (Siri, HomeKit, etc.) but identified
+        // here via the LIVE pill.
+        this._rbSaveLastPlayed(this._entity, _cached, _streamKey);
+        this.updateContent(this._hass.states[this._entity]);
+        this._showRbMoreInfo(_cached);
+        return;
+      }
+    }
+
+    // Strategy 2: check pinned stations by name
+    let _stationName = '';
+    try {
+      const qRes = await this._hass.connection.sendMessagePromise({
+        type: 'call_service', domain: 'music_assistant', service: 'get_queue',
+        service_data: { entity_id: this._entity }, return_response: true
+      });
+      const qData = qRes?.response?.[this._entity] || qRes?.response || null;
+      _stationName = qData?.current_item?.name || qData?.current_item?.media_item?.name || '';
+    } catch (_) {}
+
+    if (!_stationName) {
+      _stationName = _attrs.media_album_name || _attrs.media_title || '';
+    }
+
+    if (_stationName) {
+      const _pinned = this._rbGetStarred();
+      const _pinnedMatch = _pinned.find(s => s.name?.toLowerCase() === _stationName.toLowerCase());
+      if (_pinnedMatch) {
+        this._rbSaveLastPlayed(this._entity, _pinnedMatch, _streamKey);
+        this.updateContent(this._hass.states[this._entity]);
+        this._showRbMoreInfo(_pinnedMatch);
+        return;
+      }
+    }
+
+    // Strategy 3: radio-browser name search — same as the search results long-press
+    if (_stationName) {
+      try {
+        const res = await fetch(
+          'https://de1.api.radio-browser.info/json/stations/search?name='
+          + encodeURIComponent(_stationName) + '&limit=30&hidebroken=true&order=votes&reverse=true'
+        );
+        if (res.ok) {
+          const stations = await res.json();
+          if (stations && stations.length) {
+            const _nl = _stationName.toLowerCase();
+            const best = stations.find(s => s.name.toLowerCase() === _nl)
+                      || stations.find(s => s.name.toLowerCase().startsWith(_nl))
+                      || stations.find(s => _nl.startsWith(s.name.toLowerCase()))
+                      || stations[0];
+            this._rbCacheStation(best); // cache for next time
+            this._rbSaveLastPlayed(this._entity, best, _streamKey); // also key by entity — see note above
+            this.updateContent(this._hass.states[this._entity]);
+            this._showRbMoreInfo(best);
+            return;
+          }
+        }
+      } catch (_) {}
+    }
+
+    this._showToast('Station not found — search for it in the Radio tab first');
   }
 
   _updatePodcastBadge() {
@@ -16850,34 +16900,41 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
     if (!badge._pcClickWired) {
       badge._pcClickWired = true;
-      badge.addEventListener('click', async (e) => {
+      badge.addEventListener('click', (e) => {
         e.stopPropagation();
-        // Strategy 1: use cached pod from episode play — instant, exact match
-        const _nowUrl = this._pcNowPlaying?.url;
-        const _cached = this._pcCachedPod(_nowUrl);
-        if (_cached) { this._showPcMoreInfo(_cached); return; }
-
-        // Strategy 2: check pinned podcasts by name
-        const _attrs = this._hass?.states[this._entity]?.attributes || {};
-        let podName = _attrs.media_album_name || _attrs.media_artist || _attrs.media_title || '';
-        if (podName) {
-          const pinned = this._pcGetStarred();
-          const pinnedMatch = pinned.find(p => (p.collectionName || '').toLowerCase() === podName.toLowerCase());
-          if (pinnedMatch) { this._showPcMoreInfo(pinnedMatch); return; }
-        }
-
-        // Strategy 3: search iTunes by name
-        if (!podName) { this._showToast('Search for this podcast in the Podcasts tab'); return; }
-        this._showLoadingToast('Looking up podcast…');
-        try {
-          const results = await this._pcSearch(podName);
-          this._hideLoadingToast();
-          const match = results.find(p => (p.collectionName || '').toLowerCase() === podName.toLowerCase()) || results[0];
-          if (match) { this._showPcMoreInfo(match); return; }
-        } catch(_) { this._hideLoadingToast(); }
-        this._showToast('Podcast not found — search for it in the Podcasts tab');
+        this._resolveAndShowPodcast();
       });
     }
+  }
+
+  // Resolves the currently-playing podcast and opens its detail panel —
+  // shared by the PODCAST pill's own click and by an artwork tap while the
+  // PODCAST pill is showing (see artClick.onclick), so both entry points agree.
+  async _resolveAndShowPodcast() {
+    // Strategy 1: use cached pod from episode play — instant, exact match
+    const _nowUrl = this._pcNowPlaying?.url;
+    const _cached = this._pcCachedPod(_nowUrl);
+    if (_cached) { this._showPcMoreInfo(_cached); return; }
+
+    // Strategy 2: check pinned podcasts by name
+    const _attrs = this._hass?.states[this._entity]?.attributes || {};
+    let podName = _attrs.media_album_name || _attrs.media_artist || _attrs.media_title || '';
+    if (podName) {
+      const pinned = this._pcGetStarred();
+      const pinnedMatch = pinned.find(p => (p.collectionName || '').toLowerCase() === podName.toLowerCase());
+      if (pinnedMatch) { this._showPcMoreInfo(pinnedMatch); return; }
+    }
+
+    // Strategy 3: search iTunes by name
+    if (!podName) { this._showToast('Search for this podcast in the Podcasts tab'); return; }
+    this._showLoadingToast('Looking up podcast…');
+    try {
+      const results = await this._pcSearch(podName);
+      this._hideLoadingToast();
+      const match = results.find(p => (p.collectionName || '').toLowerCase() === podName.toLowerCase()) || results[0];
+      if (match) { this._showPcMoreInfo(match); return; }
+    } catch(_) { this._hideLoadingToast(); }
+    this._showToast('Podcast not found — search for it in the Podcasts tab');
   }
 
   _showAnnounceConfirmation(text, speakerEids) {
@@ -19367,7 +19424,7 @@ Include ALL tracks. Use null for unknown fields.`;
     // Hide queue search bar while AI Info is showing
     const _qsr = r.getElementById('queueSearchRow');
     if (_qsr) _qsr.classList.add('hidden');
-    if (titleEl) titleEl.textContent = '✨ AI Info';
+    if (titleEl) titleEl.textContent = '✨ Info';
 
     // Staleness guard — if another panel opens while we're awaiting async work,
     // our continuations must not overwrite content with stale track info.
@@ -19678,12 +19735,21 @@ Include ALL tracks. Use null for unknown fields.`;
       }
       if (_stale()) return;
 
+      // Some non-MA players report media_album_name identical to the track
+      // title itself — not a real album, just a placeholder. Trusting that
+      // as an album name sends the Discogs search below looking for an
+      // "album" that's really just the song title, which can confidently
+      // match the wrong single/promo release instead of the actual album.
+      const _rawAlbumAttr = _fbAttrs.media_album_name || '';
+      const _albumLooksLikeTitle = !!(_rawAlbumAttr && trackTitle &&
+        _rawAlbumAttr.toLowerCase().replace(/[^a-z0-9]/g,'') === trackTitle.toLowerCase().replace(/[^a-z0-9]/g,''));
+
       // Merge: MA queue (if matched) > function params > HA state attrs
       const _fb = {
         title:    trackTitle                                                           || _fbAttrs.media_title       || '',
         artist:   artistName                                                           || _fbAttrs.media_artist      || '',
         // Only use HA state album when showing the currently-playing track (not from search)
-        album:    _qItem?.album?.name          || (_fromSearch ? '' : _fbAttrs.media_album_name) || '',
+        album:    _qItem?.album?.name          || context.overrideAlbum || (_fromSearch || _albumLooksLikeTitle ? '' : _rawAlbumAttr) || '',
         year:     _qItem?.year                 || null,
         trackNo:  _qItem?.track_number         || null,
         discNo:   _qItem?.disc_number          || null,
@@ -19702,6 +19768,36 @@ Include ALL tracks. Use null for unknown fields.`;
         return h > 0 ? h + ':' + String(m % 60).padStart(2,'0') + ':' + String(s % 60).padStart(2,'0')
                      : m + ':' + String(s % 60).padStart(2,'0');
       };
+
+      // Try Discogs before dropping to the plain library-data panel. A match
+      // here gets rendered through the exact same template used below for a
+      // genuine AI result (data.album/year/label/genre, same hero/meta-grid/
+      // action bar), just with a Discogs-sourced tracklist + rating + link
+      // appended — so the only time the bare library-data panel appears at
+      // all is when Discogs also has nothing.
+      let _discogsData = null;
+      let _discogsRateLimited = false;
+      // Only relevant when this call reflects what's actually playing right
+      // now (not a tap into a different track from search/tracklist/similar
+      // tracks, where the live entity's content has nothing to do with the
+      // track being looked up). Guards against Discogs ever showing up for
+      // video — if the entity is actually playing a movie/TV show, don't
+      // treat it as a music lookup no matter how it got routed here.
+      const _liveMediaType = _fromSearch ? null : this._detectMediaType(this._hass?.states[this._entity]);
+      const _isActuallyMusic = !_liveMediaType || _liveMediaType === 'music';
+      if (_isActuallyMusic) {
+        const _discogsResult = await this._lookupDiscogsForAIData(artistName, _fb.album, trackTitle);
+        if (_stale()) return;
+        if (_discogsResult === 'rate_limited') {
+          _discogsRateLimited = true;
+        } else if (_discogsResult) {
+          _discogsData = this._discogsResultToAIData(_discogsResult, _fb.album, _fmtDur(_fb.duration), trackTitle, artistName);
+        }
+      }
+
+      if (_discogsData) {
+        data = _discogsData;
+      } else {
 
       const _providerLabel = { spotify:'Spotify',tidal:'Tidal',youtube_music:'YT Music',
         apple_music:'Apple Music',deezer:'Deezer',qobuz:'Qobuz',amazon_music:'Amazon Music',
@@ -19756,6 +19852,16 @@ Include ALL tracks. Use null for unknown fields.`;
           <span style="font-size:10px;color:${this._pt('dim')};line-height:1.4;">AI info unavailable — showing library data</span>
         </div>`;
 
+      // Shown instead of/alongside the note above specifically when Discogs
+      // itself was rate-limited (as opposed to genuinely having no match) —
+      // same "slow down" framing used elsewhere in the card for Discogs
+      // rate limits, so this doesn't look like a different kind of error.
+      const _discogsRateLimitNote = _discogsRateLimited ? `
+        <div style="display:flex;align-items:center;gap:6px;padding:8px 10px;background:rgba(255,165,0,0.08);border:1px solid rgba(255,165,0,0.2);border-radius:8px;margin-bottom:12px;">
+          <svg viewBox="0 0 24 24" style="width:12px;height:12px;fill:rgba(255,165,0,0.85);flex-shrink:0"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67V7z"/></svg>
+          <span style="font-size:10px;color:${this._pt('dim')};line-height:1.4;">Slow down a little! Discogs lookups are rate-limited — try again shortly.</span>
+        </div>` : '';
+
       const _fbActionBar = `
         <div id="ai-info-action-bar" class="ma-drill-actions" style="margin-bottom:14px;">
           <button class="ma-drill-action-btn ai-info-action-btn" data-action="replace">
@@ -19785,6 +19891,7 @@ Include ALL tracks. Use null for unknown fields.`;
           </div>
         </div>
         ${_noAINote}
+        ${_discogsRateLimitNote}
         ${_metaGridHtml}
         ${_genreHtml}
         ${_providerPills}
@@ -19855,7 +19962,12 @@ Include ALL tracks. Use null for unknown fields.`;
         _fbPinBtn.onclick = null;
       }
       return;
+      }
     }
+
+    // Reflect the actual data source in the header — Discogs-sourced data
+    // (AI found nothing) gets its own label rather than claiming to be AI.
+    if (titleEl) titleEl.textContent = data._fromDiscogs ? '💿 Discogs Info' : '✨ AI Info';
 
     const metaRows = [
       data.album    && ['Album',   data.album],
@@ -19893,9 +20005,66 @@ Include ALL tracks. Use null for unknown fields.`;
         </div>
       </div>` : '';
 
+    // Only populated when `data` came from the Discogs fallback lookup above —
+    // AI-sourced data never has these fields, so this renders nothing for a
+    // genuine AI result. Rows use the exact same card layout as the AI panel's
+    // own "Similar Tracks" list (.ai-sim-wrap/.ai-sim-row) — art thumbnail,
+    // bold title, dim subtitle, row glow — just reusing the album's own
+    // artwork for every row since every track here is from the same release.
+    // Compare against the track this panel is actually showing info for
+    // (the trackTitle parameter) rather than re-reading live entity state —
+    // playback may have already moved on by the time this renders, or the
+    // entity's media_title could be formatted slightly differently than
+    // Discogs' own tracklist title, either of which would silently break
+    // the "which row is currently playing" match below.
+    const currentTrackTitle = trackTitle || this._hass?.states[this._entity]?.attributes?.media_title || '';
+    const discogsTracklistHtml = (data._discogsTracklist || []).length ? `
+      <div style="margin-top:14px;">
+        <div style="font-size:10px;font-weight:700;color:${this._pt("dim")};letter-spacing:0.5px;text-transform:uppercase;margin-bottom:6px;">Tracklist <span style="font-size:9px;color:rgba(99,179,237,0.8);font-weight:400;letter-spacing:0.3px;">• Discogs</span></div>
+        ${data._discogsRating ? `<div style="display:flex;align-items:center;gap:4px;margin-bottom:8px;flex-wrap:wrap;">
+          ${Array.from({ length: 5 }, (_, i) => {
+            const fill = Math.min(1, Math.max(0, data._discogsRating.average - i));
+            const pct  = Math.round(fill * 100);
+            const id   = `discogs-rt-${i}-${Math.random().toString(36).slice(2,6)}`;
+            return `<svg viewBox="0 0 24 24" width="12" height="12" style="flex-shrink:0;">
+              <defs><linearGradient id="${id}" x1="0" x2="1" y1="0" y2="0">
+                <stop offset="${pct}%" stop-color="#FFD60A"/>
+                <stop offset="${pct}%" stop-color="rgba(255,255,255,0.18)"/>
+              </linearGradient></defs>
+              <path fill="url(#${id})" d="M12,17.27L18.18,21L16.54,13.97L22,9.24L14.81,8.62L12,2L9.19,8.62L2,9.24L7.45,13.97L5.82,21L12,17.27Z"/>
+            </svg>`;
+          }).join('')}
+          <span style="font-size:11px;color:${this._pt('text')};font-weight:600;">${data._discogsRating.average.toFixed(2)}</span>
+          ${data._discogsRating.count ? `<span style="font-size:10px;color:${this._pt('dim')};">(${data._discogsRating.count.toLocaleString()})</span>` : ''}
+        </div>` : ''}
+        <div id="discogs-track-list">
+          ${data._discogsTracklist.map((t, i) => {
+            const normStr = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+            const isPlaying = currentTrackTitle && t.title &&
+              (normStr(t.title) === normStr(currentTrackTitle) || normStr(currentTrackTitle).includes(normStr(t.title)) || normStr(t.title).includes(normStr(currentTrackTitle)));
+            const artInner = artUrl
+              ? `<img src="${artUrl}" alt="" style="width:100%;height:100%;object-fit:cover;display:block;" onerror="this.style.display='none'">`
+              : `<svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:#63b3ed;opacity:0.7"><path d="M12,3V13.55C11.41,13.21 10.73,13 10,13C7.79,13 6,14.79 6,17C6,19.21 7.79,21 10,21C12.21,21 14,19.21 14,17V7H18V3H12Z"/></svg>`;
+            return `<div class="discogs-track-wrap" style="position:relative;overflow:hidden;border-radius:10px;margin-bottom:4px;">
+              <div class="discogs-track-row" data-idx="${i}" data-track-title="${(t.title || '').replace(/"/g, '&quot;')}" data-track-artist="${(artistName || '').replace(/"/g, '&quot;')}" data-is-playing="${isPlaying ? '1' : ''}"
+                style="display:flex;align-items:center;gap:10px;padding:9px 10px;background:${this._pt("bg")};cursor:pointer;will-change:transform;">
+                <div class="discogs-track-art" style="width:36px;height:36px;border-radius:6px;background:rgba(99,179,237,0.1);border:1px solid rgba(99,179,237,0.18);display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden;">${artInner}</div>
+                <div style="flex:1;min-width:0;">
+                  <div style="font-size:13px;font-weight:600;color:${this._pt("text")};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t.title || ''}</div>
+                  <div style="font-size:11px;color:${this._pt("dim")};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${[t.position ? `Track ${t.position}` : '', t.duration].filter(Boolean).join(' · ')}</div>
+                </div>
+              </div>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>` : '';
+
     // Make album name clickable to view tracks — but not if we already know
-    // (from a previous prefetch) that this album has no tracklist data
-    const _albumKnownEmpty = data.album && this._aiAlbumTracksCache?.get((data.album + '|' + artistName).toLowerCase())?.empty === true;
+    // (from a previous prefetch) that this album has no tracklist data.
+    // Discogs-sourced results are exempt: they already carry a confirmed
+    // tracklist from Discogs itself, so a stale AI-side "empty" cache entry
+    // (from some earlier, unrelated track by this artist) shouldn't hide it.
+    const _albumKnownEmpty = !data._fromDiscogs && data.album && this._aiAlbumTracksCache?.get((data.album + '|' + artistName).toLowerCase())?.empty === true;
     const _showAlbumPill = !!data.album && !_albumKnownEmpty;
     const _pillStyle = 'display:inline-flex;align-items:center;gap:5px;background:rgba(99,179,237,0.1);border:1px solid rgba(99,179,237,0.25);border-radius:20px;padding:4px 10px;flex-shrink:0;max-width:160px;overflow:hidden;box-sizing:border-box;line-height:1;height:26px;';
     const albumClickHtml = _showAlbumPill
@@ -19980,10 +20149,46 @@ Include ALL tracks. Use null for unknown fields.`;
         </div>
       </div>` : ''}
       ${similarHtml}
+      ${discogsTracklistHtml}
 `;
 
     // Wire genre tag clicks
     this._wireGenreTagClicks(content);
+
+    // Wire Discogs-sourced tracklist rows (only present when data._fromDiscogs) —
+    // same card layout, row glow, and interactions as the AI panel's own
+    // "Similar Tracks" list: tap opens AI Info for that specific track,
+    // long-press opens the enqueue menu.
+    if (this._config?.row_glow === true && artUrl) {
+      content.querySelectorAll('.discogs-track-wrap').forEach(wrap => {
+        this._applyRowGlow(artUrl, wrap, null);
+      });
+    }
+    content.querySelectorAll('.discogs-track-row').forEach(row => {
+      row.addEventListener('contextmenu', (e) => e.preventDefault(), { passive: false });
+      let lpTimer = null, lpFired = false;
+      const cancelLP = () => { if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; } };
+      row.addEventListener('pointerdown', () => {
+        lpFired = false;
+        lpTimer = setTimeout(() => {
+          cancelLP(); lpFired = true;
+          const t = row.dataset.trackTitle, a = row.dataset.trackArtist;
+          if (t) this._showTrackEnqueueMenu(row, t, a || artistName, '');
+        }, 480);
+      }, { passive: true });
+      row.addEventListener('pointermove',   () => cancelLP(), { passive: true });
+      row.addEventListener('pointerup',     () => cancelLP(), { passive: true });
+      row.addEventListener('pointercancel', () => { cancelLP(); lpFired = false; }, { passive: true });
+      row.addEventListener('click', () => {
+        if (lpFired) { lpFired = false; return; }
+        if (row.dataset.isPlaying) {
+          this._showToast('This is the currently selected song', 2000);
+          return;
+        }
+        const t = row.dataset.trackTitle, a = row.dataset.trackArtist;
+        if (t) this._showAITrackInfo(t, a || artistName, { fromSearch: true, overrideArt: artUrl || '', overrideAlbum: data.album || '' });
+      });
+    });
 
     // Wire art thumbnail tap → lightbox (square for music)
     const _artImg = content.querySelector('.info-hero-art-img');
@@ -20123,18 +20328,25 @@ Include ALL tracks. Use null for unknown fields.`;
       const bar = content.querySelector('#ai-info-action-bar');
     });
 
-    // Album name click → open AI info for the album
+    // Album name click → open AI info for the album. For Discogs-sourced
+    // results, the tracklist is already shown inline below and AI wouldn't
+    // recognize this album any better than it recognized the track, so just
+    // play the album directly instead of opening a second dead-end AI view.
     const albumLink = content.querySelector('#ai-track-album-btn');
     if (albumLink) {
       albumLink.addEventListener('click', () => {
         const albumName   = albumLink.dataset.album;
         const albumArtist = albumLink.dataset.artist;
+        if (data._fromDiscogs) {
+          this._playAlbum(albumName, albumArtist);
+          return;
+        }
         // Record that user explicitly tapped this album pill so future prefetches are allowed
         if (!this._albumPillTapped) this._albumPillTapped = new Set();
         this._albumPillTapped.add((albumName + '|' + albumArtist).toLowerCase());
         // Save current content so the back button can restore it
         const _savedContent = content.innerHTML;
-        const _savedTitle   = titleEl?.textContent || '✨ AI Info';
+        const _savedTitle   = titleEl?.textContent || '✨ Info';
         if (titleEl) titleEl.textContent = '💿 Album';
         this._showAIAlbumTracks(content, albumName, albumArtist, artUrl, () => {
           // Back callback — restore AI Info panel
@@ -20148,8 +20360,13 @@ Include ALL tracks. Use null for unknown fields.`;
     }
 
     // Prefetch album tracks in background as soon as the panel renders — if it
-    // comes back empty, remove the pill/button so a dead-end tap isn't left showing
-    if (_showAlbumPill && artistName) {
+    // comes back empty, remove the pill/button so a dead-end tap isn't left showing.
+    // Skipped for Discogs-sourced data: we already have a confirmed tracklist
+    // straight from Discogs, and re-verifying via AI would almost always
+    // "fail" here — the whole reason Discogs was consulted is that AI didn't
+    // recognize this artist/track in the first place, so it won't recognize
+    // the album either, and would silently rip out a perfectly valid button.
+    if (_showAlbumPill && artistName && !data._fromDiscogs) {
       const _albumForPrefetch = data.album;
       setTimeout(() => {
         this._prefetchAIAlbumTracks(_albumForPrefetch, artistName).then(hasData => {
@@ -20329,6 +20546,314 @@ Include ALL tracks. Use null for unknown fields.`;
     this._wireMusicActionRow(content, trackTitle, artistName, data);
     this._loadDayInMusicContext(content, trackTitle, artistName, data.year || null);
   }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // DISCOGS FALLBACK — optional, opt-in lookup used only when AI has nothing
+  // (see _showAITrackInfo's _notFound branch). A match is converted into the
+  // same shape as a genuine AI result and rendered through that exact same
+  // template, so there's only ever one "AI Info" look — never a second,
+  // differently-styled panel stacked underneath.
+  // ════════════════════════════════════════════════════════════════════════════
+
+  // Read a Discogs result from localStorage. Returns the cached entry or null.
+  _discogsFbLocalGet(cacheKey) {
+    try {
+      const raw = localStorage.getItem('crowai_discogs_fb_store_v3');
+      if (!raw) return null;
+      const store = JSON.parse(raw);
+      const entry = store[cacheKey];
+      if (!entry) return null;
+      const ttlMs = 30 * 24 * 60 * 60 * 1000; // 30 days
+      if (Date.now() - (entry.ts || 0) > ttlMs) {
+        delete store[cacheKey];
+        try { localStorage.setItem('crowai_discogs_fb_store_v3', JSON.stringify(store)); } catch (_) {}
+        return null;
+      }
+      return entry.result;
+    } catch (_) { return null; }
+  }
+
+  // Write a Discogs result to localStorage, keeping at most 50 entries (LRU eviction).
+  _discogsFbLocalSet(cacheKey, result) {
+    try {
+      let store = {};
+      try {
+        const raw = localStorage.getItem('crowai_discogs_fb_store_v3');
+        if (raw) store = JSON.parse(raw);
+      } catch (_) {}
+      const keys = Object.keys(store);
+      if (keys.length >= 50) {
+        keys.sort((a, b) => (store[a].ts || 0) - (store[b].ts || 0));
+        keys.slice(0, keys.length - 49).forEach(k => delete store[k]);
+      }
+      store[cacheKey] = { result, ts: Date.now() };
+      localStorage.setItem('crowai_discogs_fb_store_v3', JSON.stringify(store));
+    } catch (_) {}
+  }
+
+  // Looks up the given track's release on Discogs, returning the best-matching
+  // release (with tracklist/community/images filled in) or null if nothing
+  // scored above zero. Unlike a "confident match only" search, this picks the
+  // top-scoring result even when ambiguous — there's no picker UI here, since
+  // this only ever backs a fallback panel styled to look identical to AI Info,
+  // and a good-enough answer beats another empty state.
+  async _lookupDiscogsForAIData(artist, album, trackTitle) {
+    if (!artist && !album && !trackTitle) return null;
+
+    const clean = (s) => (s || '')
+      .replace(/\s*[\(\[]\s*(\d{4}\s*)?(remaster(ed)?|re-?master(ed)?|live|deluxe|edition|version|anniversary|bonus|extended|explicit|radio edit|single)[^\)\]]*[\)\]]/gi, '')
+      .replace(/\s*-\s*(\d{4}\s*)?(remaster(ed)?|live( version)?|single( version)?)$/gi, '')
+      .trim();
+    const cleanArtist = clean(artist);
+    const cleanAlbum  = clean(album);
+    const cleanTrack  = clean(trackTitle);
+    if (!cleanArtist && !cleanAlbum && !cleanTrack) return null;
+
+    const norm = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const isCoverRelease = (r) => /\b(cover|covers|tribute|tributes|karaoke|as made famous|in the style of)\b/.test((r.title || '').toLowerCase());
+    // Discogs disambiguates same-named artists with a trailing "(3)" style
+    // suffix on some releases but not others — stripping it before comparing
+    // means an exact-artist match doesn't accidentally score lower on
+    // whichever candidate happens to carry that suffix.
+    const stripDisambig = (s) => (s || '').replace(/\s*\(\d+\)\s*$/, '');
+    const resultArtists = (r) => {
+      const fromTitle = stripDisambig((r.title || '').split(' - ')[0]);
+      const fromArr = Array.isArray(r.artist) ? r.artist.map(a => stripDisambig(typeof a === 'string' ? a : a?.name || '')).filter(Boolean) : [];
+      return [fromTitle, ...fromArr];
+    };
+    const scoreResult = (r) => {
+      if (isCoverRelease(r)) return -5;
+      const a = norm(cleanArtist);
+      if (!a) return 1;
+      const normed = resultArtists(r).map(norm);
+      if (Array.isArray(r.artist) && r.artist.length) {
+        const arrNormed = r.artist.map(x => norm(stripDisambig(typeof x === 'string' ? x : x?.name || '')));
+        if (arrNormed.includes(a)) return 4;
+        if (arrNormed.some(ra => ra.includes(a) || a.includes(ra))) return 3;
+      }
+      if (normed[0] === a) return 3;
+      if (normed.some(ra => ra.includes(a) || a.includes(ra))) return 2;
+      return 0;
+    };
+    const popularityBonus = (r) => {
+      const have = r.community?.have ?? 0;
+      return have > 5000 ? 0.9 : have > 1000 ? 0.6 : have > 200 ? 0.3 : 0;
+    };
+    // When there's no album to search by, artist+track alone often surfaces
+    // a same-named single/EP ahead of the fuller album that also contains
+    // this track — Discogs' own relevance ranking favors an exact title
+    // match on the release itself. Nudge scoring back toward the album,
+    // using the format descriptors search stubs already include (no extra
+    // API call needed) as a cheap signal for release type.
+    const formatBonus = (r) => {
+      const fmts = (r.format || []).map(f => (f || '').toLowerCase());
+      if (fmts.some(f => f.includes('album'))) return 0.75;
+      if (fmts.some(f => f.includes('single') || f.includes('ep'))) return -0.75;
+      return 0;
+    };
+    // Format descriptors are often useless for modern digital-only releases
+    // (Discogs just says "File, MP3" for a single and an album alike), so
+    // formatBonus alone doesn't reliably distinguish them. A release whose
+    // own title (after the "Artist - " prefix) is literally the track name
+    // we're searching for is very likely a single/promo named after that one
+    // song — penalize that case regardless of format, which works whether
+    // it's vinyl, CD, or digital.
+    const selfTitledPenalty = (r) => {
+      if (!cleanTrack) return 0;
+      const relTitle = (r.title || '').split(' - ').slice(1).join(' - ') || r.title || '';
+      return norm(relTitle) === norm(cleanTrack) ? -1.25 : 0;
+    };
+
+    // Without a known album, every track by this artist would otherwise share
+    // one cache key — meaning whichever track got looked up first "wins" and
+    // its (often wrong, single-release) match gets silently reused for every
+    // other track by the same artist that also lacks album context. Fold the
+    // track title in for that case so each gets its own cache entry.
+    const cacheKey = (cleanAlbum ? `${cleanArtist}|${cleanAlbum}` : `${cleanArtist}|t:${cleanTrack}`).toLowerCase();
+    if (!this._discogsFbCache) this._discogsFbCache = new Map();
+    if (this._discogsFbCache.has(cacheKey)) return this._discogsFbCache.get(cacheKey);
+
+    const persisted = this._discogsFbLocalGet(cacheKey);
+    if (persisted) { this._discogsFbCache.set(cacheKey, persisted); return persisted; }
+
+    // Per-instance throttle — Discogs allows ~60 req/min. If we asked too
+    // recently, skip the network call entirely and report it as rate-limited
+    // so the caller can tell the user, rather than silently looking like
+    // Discogs simply had nothing.
+    if (!this._discogsFbLastReq) this._discogsFbLastReq = 0;
+    if (Date.now() - this._discogsFbLastReq < 1100) return 'rate_limited';
+
+    const headers = { 'User-Agent': 'CrowAIMediaPlayerCard/1.0' };
+    let _hitRateLimit = false;
+    const discogsGet = async (url) => {
+      this._discogsFbLastReq = Date.now();
+      try {
+        const resp = await fetch(url, { headers });
+        if (resp.status === 429) { _hitRateLimit = true; return null; }
+        return resp.ok ? resp : null;
+      } catch (_) {
+        // Discogs' 429 responses often omit CORS headers, so the browser
+        // blocks the response entirely and fetch() throws instead of
+        // returning a response object — treat that the same as a 429.
+        _hitRateLimit = true;
+        return null;
+      }
+    };
+
+    const seen = new Set();
+    const pool = [];
+    const addToPool = (results) => {
+      for (const r of (results || [])) {
+        if (seen.has(r.id)) continue;
+        seen.add(r.id);
+        const s = scoreResult(r) + popularityBonus(r) + formatBonus(r) + selfTitledPenalty(r);
+        if (s > 0) pool.push({ r, s });
+      }
+    };
+
+    try {
+      if (cleanArtist && cleanAlbum) {
+        const resp = await discogsGet(`https://api.discogs.com/database/search?artist=${encodeURIComponent(cleanArtist)}&release_title=${encodeURIComponent(cleanAlbum)}&type=release&per_page=15`);
+        if (resp) addToPool((await resp.json()).results);
+      }
+      if (!pool.length && cleanArtist && cleanTrack && norm(cleanTrack) !== norm(cleanAlbum)) {
+        const resp = await discogsGet(`https://api.discogs.com/database/search?artist=${encodeURIComponent(cleanArtist)}&track=${encodeURIComponent(cleanTrack)}&type=release&per_page=15`);
+        if (resp) addToPool((await resp.json()).results);
+      }
+      if (!pool.length && cleanArtist) {
+        const resp = await discogsGet(`https://api.discogs.com/database/search?artist=${encodeURIComponent(cleanArtist)}&type=release&per_page=15`);
+        if (resp) addToPool((await resp.json()).results);
+      }
+      if (!pool.length) {
+        const q = [cleanArtist, cleanAlbum || cleanTrack].filter(Boolean).join(' ');
+        if (q) {
+          const resp = await discogsGet(`https://api.discogs.com/database/search?q=${encodeURIComponent(q)}&type=release&per_page=10`);
+          if (resp) {
+            const data = await resp.json();
+            addToPool((data.results || []).filter(r => !isCoverRelease(r)));
+          }
+        }
+      }
+      if (!pool.length) {
+        if (_hitRateLimit) return 'rate_limited';
+        this._discogsFbCache.set(cacheKey, null);
+        return null;
+      }
+
+      pool.sort((a, b) => b.s - a.s);
+      let result = pool[0].r;
+
+      // Fetch full release detail if the search stub is missing tracklist,
+      // community rating, or cover art — all three matter for the panel.
+      const needsDetail = !result.tracklist?.length || !result.community || !(result.images?.length || result.cover_image || result.thumb);
+      if (result.id && needsDetail) {
+        const cachedRelease = this._discogsFbReleaseLocalGet(String(result.id));
+        if (cachedRelease) {
+          result = { ...result, ...cachedRelease };
+        } else {
+          try {
+            const resourceUrl = result.resource_url || `https://api.discogs.com/releases/${result.id}`;
+            const resp = await fetch(resourceUrl, { headers });
+            if (resp.ok) {
+              const full = await resp.json();
+              const tracks = (full.tracklist || []).filter(t => !t.type_ || t.type_ === 'track' || t.type_ === 'index');
+              const merged = { ...result };
+              if (tracks.length) merged.tracklist = tracks;
+              if (full.community) merged.community = full.community;
+              if (full.images?.length) merged.images = full.images;
+              result = merged;
+              this._discogsFbReleaseLocalSet(String(result.id), { tracklist: merged.tracklist, community: merged.community, images: merged.images });
+            }
+          } catch (_) { /* keep the stub we already have */ }
+        }
+      }
+
+      this._discogsFbCache.set(cacheKey, result);
+      this._discogsFbLocalSet(cacheKey, result);
+      return result;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // Persisted full release detail (tracklist + community rating + images), keyed by release ID.
+  _discogsFbReleaseLocalGet(releaseId) {
+    try {
+      const raw = localStorage.getItem('crowai_discogs_fb_release_store_v3');
+      if (!raw) return null;
+      const store = JSON.parse(raw);
+      const entry = store[releaseId];
+      if (!entry) return null;
+      if (Date.now() - (entry.ts || 0) > 30 * 86400000) {
+        delete store[releaseId];
+        try { localStorage.setItem('crowai_discogs_fb_release_store_v3', JSON.stringify(store)); } catch (_) {}
+        return null;
+      }
+      return entry.result;
+    } catch (_) { return null; }
+  }
+
+  _discogsFbReleaseLocalSet(releaseId, result) {
+    try {
+      let store = {};
+      try {
+        const raw = localStorage.getItem('crowai_discogs_fb_release_store_v3');
+        if (raw) store = JSON.parse(raw);
+      } catch (_) {}
+      const keys = Object.keys(store);
+      if (keys.length >= 100) {
+        keys.sort((a, b) => (store[a].ts || 0) - (store[b].ts || 0));
+        keys.slice(0, keys.length - 99).forEach(k => delete store[k]);
+      }
+      store[releaseId] = { result, ts: Date.now() };
+      localStorage.setItem('crowai_discogs_fb_release_store_v3', JSON.stringify(store));
+    } catch (_) {}
+  }
+
+  // Converts a Discogs release into the same shape _showAITrackInfo's success
+  // path already renders (album/year/label/genre), plus a few extra fields
+  // (prefixed _discogs*) that the shared template appends a tracklist/rating/
+  // link section for — everything else (hero, meta grid, action bar, genre
+  // pills, Ask/Meaning/Trivia) is identical to a genuine AI result.
+  _discogsResultToAIData(result, albumGuess, fallbackDuration, trackTitle, artistName) {
+    const releaseAlbum = (result.title || '').split(' - ').slice(1).join(' - ') || result.title || albumGuess || null;
+    const discogsUrl = result.uri ? (result.uri.startsWith('http') ? result.uri : `https://www.discogs.com${result.uri}`) : '';
+    // Prefer this specific track's own duration from the Discogs tracklist —
+    // more accurate than the album as a whole — falling back to whatever
+    // duration we already knew from HA/MA before Discogs was ever consulted.
+    const normStr = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const _trackMatch = trackTitle
+      ? (result.tracklist || []).find(t => {
+          const nt = normStr(t.title);
+          const np = normStr(trackTitle);
+          return nt && np && (nt === np || nt.includes(np) || np.includes(nt));
+        })
+      : null;
+    const duration = _trackMatch?.duration || fallbackDuration || null;
+    // Same "Artist"/"Band Members" photo row as a genuine AI result — driven
+    // purely by this array of names (Wikipedia photo lookup is generic and
+    // doesn't care about data source). Prefer Discogs' own artist credit(s)
+    // for this release; fall back to the artist name we already knew.
+    const _resultArtists = Array.isArray(result.artist) && result.artist.length
+      ? result.artist.map(a => (typeof a === 'string' ? a : a?.name || '')).map(n => n.replace(/\s*\(\d+\)\s*$/, '')).filter(Boolean)
+      : [];
+    const members = _resultArtists.length ? _resultArtists : (artistName ? [artistName] : null);
+    return {
+      album: releaseAlbum,
+      year: result.year || null,
+      label: (result.label && result.label[0]) || null,
+      duration,
+      genre: [...(result.genre || []), ...(result.style || [])].slice(0, 5),
+      fact: null,
+      members,
+      similar: null,
+      _fromDiscogs: true,
+      _discogsTracklist: (result.tracklist || []).filter(t => t.title).map(t => ({ title: t.title, duration: t.duration, position: t.position })),
+      _discogsRating: result.community?.rating?.average ? { average: parseFloat(result.community.rating.average), count: result.community.rating.count } : null,
+      _discogsUrl: discogsUrl,
+    };
+  }
+
 
   /**
    * AI Music Recommendations — opens info popup with swipeable/long-pressable recs
@@ -22866,7 +23391,7 @@ Include ALL tracks. Use null for unknown fields.`;
             </div>
           </div>`).join('')}
       </div>
-      <div style="margin-top:10px;font-size:10px;color:${this._pt("dim")};text-align:center;">Tap to start a radio queue · Long-press for AI Info</div>
+      <div style="margin-top:10px;font-size:10px;color:${this._pt("dim")};text-align:center;">Tap to start a radio queue · Long-press for Info</div>
     <div style="margin-top:6px;font-size:10px;color:${this._pt("dim")};text-align:center;opacity:0.7;">🎧 Binaural beats require headphones</div>`;
 
     // Glass glow
@@ -26198,7 +26723,7 @@ Include ALL tracks. Use null for unknown fields.`;
         if (!self._albumPillTapped) self._albumPillTapped = new Set();
         self._albumPillTapped.add((albumName + '|' + albumArtist).toLowerCase());
         const _savedContent2 = content.innerHTML;
-        const _savedTitle2   = titleEl2?.textContent || '✨ AI Info';
+        const _savedTitle2   = titleEl2?.textContent || '✨ Info';
         if (titleEl2) titleEl2.textContent = '💿 Album';
         self._showAIAlbumTracks(content, albumName, albumArtist, artUrl, () => {
           r2?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
@@ -28192,8 +28717,8 @@ Include ALL tracks. Use null for unknown fields.`;
         '</div>' +
       '</div>' +
       '<div class="info-popup-content" style="padding-top:0;">' +
-        '<div id="mcSheetList" class="mc-sheet-list" style="overflow-y:visible;padding:0;"></div>' +
-        '<div id="mcSheetFooter" class="mc-sheet-footer" style="padding:14px 0 0;margin-top:4px;"></div>' +
+        '<div id="mcSheetList" class="mc-sheet-list"></div>' +
+        '<div id="mcSheetFooter" class="mc-sheet-footer"></div>' +
       '</div>';
 
     panel.querySelector('#mcSheetClose')?.addEventListener('click', (e) => {
@@ -28516,22 +29041,23 @@ Include ALL tracks. Use null for unknown fields.`;
           '</button>' +
         '</div>' +
       '</div>' +
-      '<div class="info-popup-content">' +
-        '<div style="font-size:12px;color:' + this._pt('dim') + ';margin-bottom:14px;">Tap multiple to multicast</div>' +
-        '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;">' +
+      '<div class="info-popup-content" style="display:flex;flex-direction:column;overflow:hidden;padding:14px 14px 14px;">' +
+        '<div style="font-size:12px;color:' + this._pt('dim') + ';margin-bottom:14px;flex-shrink:0;">Tap multiple to multicast</div>' +
+        '<div style="flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:12px;padding:2px 2px 4px;">' +
           allMAEntities.map(eid => {
             const busy = _isBusy(eid);
-            return '<button class="enqueue-menu-speaker-chip' +
+            return '<button class="enqueue-menu-speaker-chip speaker-focus-row' +
               (selected.has(eid) ? ' active' : '') +
               (busy ? ' mc-chip-busy' : '') +
-              '" data-eid="' + eid + '" style="padding:6px 12px 6px 9px;flex-direction:column;align-items:flex-start;"><span style="display:flex;align-items:center;gap:6px;"><svg viewBox="0 0 24 24"><path d="M17,2H7A2,2 0 0,0 5,4V20A2,2 0 0,0 7,22H17A2,2 0 0,0 19,20V4A2,2 0 0,0 17,2M12,19A2,2 0 0,1 10,17A2,2 0 0,1 12,15A2,2 0 0,1 14,17A2,2 0 0,1 12,19M15,9H9V4H15V9Z"/></svg>' +
+              '" data-eid="' + eid + '" style="width:100%;flex-direction:column;align-items:flex-start;box-sizing:border-box;flex-shrink:0;"><span style="display:flex;align-items:center;gap:10px;">' +
+              '<svg viewBox="0 0 24 24"><path d="M17,2H7A2,2 0 0,0 5,4V20A2,2 0 0,0 7,22H17A2,2 0 0,0 19,20V4A2,2 0 0,0 17,2M12,19A2,2 0 0,1 10,17A2,2 0 0,1 12,15A2,2 0 0,1 14,17A2,2 0 0,1 12,19M15,9H9V4H15V9Z"/></svg>' +
               friendlyName(eid) +
               '</span>' +
               (busy ? '<span class="mc-chip-busy-label">In another group</span>' : '') +
               '</button>';
           }).join('') +
         '</div>' +
-        '<button id="maPlayTargetPlay" style="width:100%;padding:10px 0;border-radius:10px;border:none;background:var(--accent,#007AFF);color:#fff;font-size:14px;font-weight:600;font-family:inherit;cursor:pointer;">Play</button>' +
+        '<button id="maPlayTargetPlay" style="width:100%;padding:14px 0;border-radius:999px;border:none;background:var(--accent,#007AFF);color:#fff;font-size:15px;font-weight:600;font-family:inherit;cursor:pointer;flex-shrink:0;margin-top:14px;">Play</button>' +
       '</div>';
     cardOuter.appendChild(panel);
 
@@ -28636,15 +29162,15 @@ Include ALL tracks. Use null for unknown fields.`;
           '</button>' +
         '</div>' +
       '</div>' +
-      '<div class="info-popup-content" style="display:flex;flex-direction:column;gap:6px;">' +
+      '<div class="info-popup-content" style="display:flex;flex-direction:column;gap:12px;">' +
         addable.map(eid => {
           const busy = _isBusy(eid);
           return `<button class="mc-add-row${busy ? ' mc-chip-busy' : ''}" data-eid="${eid}" style="` +
-            'display:flex;align-items:center;gap:10px;width:100%;padding:10px 12px;background:${this._pt("btnBg")};border:1px solid ${this._pt("border")};border-radius:12px;color:${this._pt("text")};font-size:13px;font-family:inherit;cursor:pointer;text-align:left;transition:background 0.12s ease;' +
-            (busy ? 'opacity:0.4;cursor:not-allowed;' : '') + '"><svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:${this._pt("dim")};flex-shrink:0;"><path d="M17,2H7A2,2 0 0,0 5,4V20A2,2 0 0,0 7,22H17A2,2 0 0,0 19,20V4A2,2 0 0,0 17,2M12,19A2,2 0 0,1 10,17A2,2 0 0,1 12,15A2,2 0 0,1 14,17A2,2 0 0,1 12,19M15,9H9V4H15V9Z"/></svg><div style="flex:1;min-width:0;"><div style="font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + friendlyName(eid) + '</div>' +
-            (busy ? '<div style="font-size:10px;color:${this._pt("dim")};margin-top:1px;">In another group</div>' : '') +
+            `display:flex;align-items:center;gap:12px;width:100%;box-sizing:border-box;padding:16px 20px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:999px;color:${this._pt("text")};font-size:14px;font-family:inherit;cursor:pointer;text-align:left;transition:background 0.12s ease;` +
+            (busy ? 'opacity:0.4;cursor:not-allowed;' : '') + `"><svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:${this._pt("dim")};flex-shrink:0;"><path d="M17,2H7A2,2 0 0,0 5,4V20A2,2 0 0,0 7,22H17A2,2 0 0,0 19,20V4A2,2 0 0,0 17,2M12,19A2,2 0 0,1 10,17A2,2 0 0,1 12,15A2,2 0 0,1 14,17A2,2 0 0,1 12,19M15,9H9V4H15V9Z"/></svg><div style="flex:1;min-width:0;"><div style="font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">` + friendlyName(eid) + `</div>` +
+            (busy ? `<div style="font-size:10px;color:${this._pt("dim")};margin-top:1px;">In another group</div>` : '') +
             '</div>' +
-            (!busy ? '<svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:var(--accent,#007AFF);flex-shrink:0;"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>' : '') +
+            (!busy ? '<svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:var(--accent,#007AFF);flex-shrink:0;"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>' : '') +
             '</button>';
         }).join('') +
       '</div>';
@@ -28774,20 +29300,10 @@ Include ALL tracks. Use null for unknown fields.`;
       if (summaryTextEl) summaryTextEl.textContent = _summaryText();
     };
 
-    const speakerHtml = _allMA.length > 1
-      ? '<div class="enqueue-menu-speakers-summary" id="enqueueMenuSpeakersSummary">' +
-          '<svg class="enqueue-menu-speakers-summary-icon" viewBox="0 0 24 24"><path d="M17,2H7A2,2 0 0,0 5,4V20A2,2 0 0,0 7,22H17A2,2 0 0,0 19,20V4A2,2 0 0,0 17,2M12,19A2,2 0 0,1 10,17A2,2 0 0,1 12,15A2,2 0 0,1 14,17A2,2 0 0,1 12,19M15,9H9V4H15V9Z"/></svg>' +
-          '<span class="enqueue-menu-speakers-summary-text">' + _summaryText() + '</span>' +
-          '<svg class="enqueue-menu-speakers-summary-chevron" viewBox="0 0 24 24"><path d="M7.41,8.59L12,13.17L16.59,8.59L18,10L12,16L6,10L7.41,8.59Z"/></svg>' +
-        '</div>' +
-        '<div class="enqueue-menu-speakers" id="enqueueMenuSpeakers" style="display:none;">' +
-          _allMA.map(eid =>
-            '<button class="enqueue-menu-speaker-chip' + (_selectedSpeakers.has(eid) ? ' active' : '') + '" data-eid="' + eid + '"><svg viewBox="0 0 24 24"><path d="M17,2H7A2,2 0 0,0 5,4V20A2,2 0 0,0 7,22H17A2,2 0 0,0 19,20V4A2,2 0 0,0 17,2M12,19A2,2 0 0,1 10,17A2,2 0 0,1 12,15A2,2 0 0,1 14,17A2,2 0 0,1 12,19M15,9H9V4H15V9Z"/></svg>' +
-            _friendlyName(eid) +
-            '</button>'
-          ).join('') +
-        '</div>'
-      : '';
+    // No in-menu speaker picker here — always targets the current/default
+    // speaker (_defaultEntity below). Extra speakers are added separately via
+    // the "+" button rather than picked from this menu.
+    const speakerHtml = '';
 
     const _itemArtist = (item.artists && item.artists[0]?.name) || item.artist || '';
     // For pinning, always use the tab parameter — item.media_type is unreliable
@@ -28802,7 +29318,6 @@ Include ALL tracks. Use null for unknown fields.`;
       ...(_isPinnable ? [{ mode: 'pin', label: _isPinned ? 'Unpin' : 'Pin', icon: '<path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/>' }] : []),
       ...(_itemArtist ? [{ mode: 'artist_radio', label: 'AI Artist Radio', icon: '<path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6zm4 0v2h-2V3h2z"/>' }] : []),
       ...(!_isCollection ? [{ mode: 'copy_link', label: 'Share', icon: '<path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z"/>' }] : []),
-      { mode: 'more_info', label: 'More Info', icon: '<path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/>' },
       ...(opts.savedQueueRemove ? [{ mode: 'remove_from_saved_queue', label: 'Remove', icon: '<path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/>', danger: true }] : []),
     ];
 
@@ -28866,10 +29381,6 @@ Include ALL tracks. Use null for unknown fields.`;
           const _clTitle  = item.name || item.title || '';
           const _clArtist = (item.artists && item.artists[0]?.name) || item.artist || '';
           self._copyToClipboard(_clTitle + ' by ' + _clArtist + '\n' + self._buildShareUrl(_clTitle, _clArtist), self._shareServiceLabel());
-        } else if (mode === 'more_info') {
-          const _aiTitle  = item.name || item.title || '';
-          const _aiArtist = (item.artists && item.artists[0]?.name) || item.artist || '';
-          self._showAITrackInfo(_aiTitle, _aiArtist, { queueUri: item.uri || item.media_content_id || '' });
         } else if (mode === 'artist_radio') {
           const _radioArtist = _itemArtist.split(/\s*[&,]\s*/)[0].trim() || _itemArtist;
           self._playArtistRadio(_radioArtist);
@@ -29139,20 +29650,9 @@ Include ALL tracks. Use null for unknown fields.`;
 
     const _summaryText = () => 'Playing on ' + _friendlyName(_selectedEntity);
 
-    const speakerHtml = _allMA.length > 1
-      ? '<div class="enqueue-menu-speakers-summary" id="enqueueMenuSpeakersSummary">' +
-          '<svg class="enqueue-menu-speakers-summary-icon" viewBox="0 0 24 24"><path d="M17,2H7A2,2 0 0,0 5,4V20A2,2 0 0,0 7,22H17A2,2 0 0,0 19,20V4A2,2 0 0,0 17,2M12,19A2,2 0 0,1 10,17A2,2 0 0,1 12,15A2,2 0 0,1 14,17A2,2 0 0,1 12,19M15,9H9V4H15V9Z"/></svg>' +
-          '<span class="enqueue-menu-speakers-summary-text">' + _summaryText() + '</span>' +
-          '<svg class="enqueue-menu-speakers-summary-chevron" viewBox="0 0 24 24"><path d="M7.41,8.59L12,13.17L16.59,8.59L18,10L12,16L6,10L7.41,8.59Z"/></svg>' +
-        '</div>' +
-        '<div class="enqueue-menu-speakers" id="enqueueMenuSpeakers" style="display:none;">' +
-          _allMA.map(eid =>
-            '<button class="enqueue-menu-speaker-chip' + (eid === _selectedEntity ? ' active' : '') + '" data-eid="' + eid + '"><svg viewBox="0 0 24 24"><path d="M17,2H7A2,2 0 0,0 5,4V20A2,2 0 0,0 7,22H17A2,2 0 0,0 19,20V4A2,2 0 0,0 17,2M12,19A2,2 0 0,1 10,17A2,2 0 0,1 12,15A2,2 0 0,1 14,17A2,2 0 0,1 12,19M15,9H9V4H15V9Z"/></svg>' +
-            _friendlyName(eid) +
-            '</button>'
-          ).join('') +
-        '</div>'
-      : '';
+    // No in-menu speaker picker — always targets the current/default speaker.
+    // Extra speakers are added separately via the "+" button.
+    const speakerHtml = '';
 
     const strategies = [
       { mode: 'replace',   label: 'Play Now',      icon: '<path d="M8 5v14l11-7z"/>' },
@@ -29333,20 +29833,9 @@ Include ALL tracks. Use null for unknown fields.`;
 
     const _summaryText = () => 'Playing on ' + _friendlyName(_selectedEntity);
 
-    const speakerHtml = _allMA.length > 1
-      ? '<div class="enqueue-menu-speakers-summary" id="enqueueMenuSpeakersSummary">' +
-          '<svg class="enqueue-menu-speakers-summary-icon" viewBox="0 0 24 24"><path d="M17,2H7A2,2 0 0,0 5,4V20A2,2 0 0,0 7,22H17A2,2 0 0,0 19,20V4A2,2 0 0,0 17,2M12,19A2,2 0 0,1 10,17A2,2 0 0,1 12,15A2,2 0 0,1 14,17A2,2 0 0,1 12,19M15,9H9V4H15V9Z"/></svg>' +
-          '<span class="enqueue-menu-speakers-summary-text">' + _summaryText() + '</span>' +
-          '<svg class="enqueue-menu-speakers-summary-chevron" viewBox="0 0 24 24"><path d="M7.41,8.59L12,13.17L16.59,8.59L18,10L12,16L6,10L7.41,8.59Z"/></svg>' +
-        '</div>' +
-        '<div class="enqueue-menu-speakers" id="enqueueMenuSpeakers" style="display:none;">' +
-          _allMA.map(eid =>
-            '<button class="enqueue-menu-speaker-chip' + (eid === _selectedEntity ? ' active' : '') + '" data-eid="' + eid + '"><svg viewBox="0 0 24 24"><path d="M17,2H7A2,2 0 0,0 5,4V20A2,2 0 0,0 7,22H17A2,2 0 0,0 19,20V4A2,2 0 0,0 17,2M12,19A2,2 0 0,1 10,17A2,2 0 0,1 12,15A2,2 0 0,1 14,17A2,2 0 0,1 12,19M15,9H9V4H15V9Z"/></svg>' +
-            _friendlyName(eid) +
-            '</button>'
-          ).join('') +
-        '</div>'
-      : '';
+    // No in-menu speaker picker — always targets the current/default speaker.
+    // Extra speakers are added separately via the "+" button.
+    const speakerHtml = '';
 
     const strategies = [
       { mode: 'replace',      label: 'Play Now',      icon: '<path d="M8 5v14l11-7z"/>' },
@@ -31036,7 +31525,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                 <div class="toggle-item" style="align-items:flex-start;gap:12px;">
                   <div style="flex:1;">
                     <div class="toggle-label">Show YouTube Button</div>
-                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Adds a button in the AI Info / Media Info panel to open the current song on YouTube, or the trailer for a movie/TV show.</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Adds a button in the Info / Media Info panel to open the current song on YouTube, or the trailer for a movie/TV show.</div>
                   </div>
                   <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="show_youtube_button" checked><span class="toggle-track"></span></label>
                 </div>
@@ -31352,7 +31841,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
 
                 <div class="toggle-item" style="align-items:flex-start;gap:12px;margin-top:12px;">
                   <div style="flex:1;">
-                    <div class="toggle-label">Persistent AI Info Storage</div>
+                    <div class="toggle-label">Persistent Info Storage</div>
                     <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Off: AI lookups (track info, recommendations, bios, etc.) and Music Recap history cached on this device only. On: also saved permanently.</div>
                   </div>
                   <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="ai_info_persistent_storage"><span class="toggle-track"></span></label>
@@ -31442,7 +31931,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
           <div class="card-block" style="padding:12px;">
             <div style="margin-bottom:12px;">
               <div style="font-size:13px;font-weight:500;margin-bottom:6px;color:var(--primary-text-color, #111);">AI Agent <span class="editor-tooltip"><span class="tooltip-icon" tabindex="0">i</span><span class="tooltip-text">The AI agent used for all AI features. Google Gemini 2.0 Flash is recommended — set it up in Settings → Voice Assistants first.</span></span></div>
-              <div style="font-size:11px;color:#888;margin-bottom:8px;line-height:1.4;">Used for all AI features — Recommendations, Mood, Search, AI Info panels and Announce AI.</div>
+              <div style="font-size:11px;color:#888;margin-bottom:8px;line-height:1.4;">Used for all AI features — Recommendations, Mood, Search, Info panels and Announce AI.</div>
               <select id="ai_conversation_agent" style="width:100%;background:var(--card-background-color,rgba(255,255,255,0.07));border:1px solid var(--divider-color,rgba(128,128,128,0.2));border-radius:10px;color:var(--primary-text-color,#fff);font-size:13px;font-family:inherit;padding:10px 12px;outline:none;-webkit-appearance:none;cursor:pointer;">
                 <option value="">Default (Home Assistant)</option>
               </select>
