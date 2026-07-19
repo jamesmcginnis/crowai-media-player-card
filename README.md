@@ -163,6 +163,7 @@ Repository: [github.com/droans/mass_queue](https://github.com/droans/mass_queue)
 ### AI Features
 
 - ✨ **AI Info Panel** — tap the artwork while music plays: year, label, length, fun fact, genre tags, band members / artist section, similar tracks; all AI-generated and cached per track
+- 💿 **Discogs Fallback** — when AI can't identify a track, the card automatically looks it up on Discogs instead: year, label, length, tappable genre tags, artist section and a full tracklist with community rating, in the same panel layout. The header switches to "Discogs Info" so it's clear where the data came from; tapping a tracklist row opens that track's own AI Info, same as everywhere else in the card. This is a permanent, always-on feature
 - 💬 **Song Intro** — a short, intriguing one-line fact about the playing track appears below the artist name a few seconds after it starts, then fades away; off by default, toggle in AI Settings
 - 🎭 **Vibe Queue Builder** — 100+ vibes across Energy, Calm, Focus, Mood, Social, Decades, Genre, Time, Seasons and Binaural & Noise; builds a themed MA queue instantly
 - 🔍 **AI Search** — natural language search, up to 18 results per query; available as a standalone panel, a box at the top of the library, and a dedicated AI search button next to the Songs, Artists and Albums tab search bars (each returns matching tracks, artists or albums respectively, on top of the tab's normal exact-match search)
@@ -231,10 +232,12 @@ Decade moods search your MA library for chart compilations first, then fall back
 ### Multi-Room Multicast
 
 - Play the same audio on multiple MA speakers simultaneously
+- **Choose Speakers picker** — tap the broadcast icon to start a session: speakers are shown as a scrollable vertical list of pill rows (tap multiple to select for multicast); Play stays pinned at the bottom of the panel so a long speaker list never pushes it out of reach
 - **Summary pill** — a single compact pill showing the focused speaker's name and a "+N" count of others playing along with it, instead of a separate pill per speaker
-- **Tap to manage** — opens a sheet listing every speaker in the group; tap any to focus it for volume control, or tap the × to remove it
+- **Tap to manage** — opens a sheet listing every speaker in the group as the same style of pill row; tap any to focus it for volume control, or tap the × to remove it
 - **Sync volumes** — a button in the sheet matches all grouped speakers to the focused speaker's volume
 - **Add a speaker** — a "+" button sits next to the summary pill (and solo speakers too, when other MA speakers are available to group with) once something is actually playing
+- Long-press menus for individual tracks/albums/etc. always target your current/default speaker directly rather than offering an in-menu speaker picker — use the "+" button to bring extra speakers into a multicast group instead
 - Pre-configured Music Assistant player groups (e.g. a permanently-synced stereo pair) can be played on individually, but can't be folded into a separate multi-room session alongside other speakers — this is a Music Assistant limitation, not a card one
 
 ### Pinning (Library)
@@ -307,6 +310,7 @@ Share is available from the quick menu, the AI Info / Media Info panels, and the
 - Similar Tracks — tap to drill in, long-press for enqueue menu
 - Mini album art — tap to view a larger version
 - Action bar: Play Now, Add, Play Next, Add Album
+- **Discogs Fallback** — if AI has no info for a track, the same panel automatically falls back to Discogs instead, with a full tracklist and community rating added; the header reads "Discogs Info" rather than "AI Info" so it's clear where the data came from. Tapping a track in the Discogs tracklist opens that track's own AI Info
 
 **TV Shows:**
 - Poster (tap to zoom), genre tags, overview, cast
