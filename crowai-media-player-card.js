@@ -27,7 +27,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   }
 
   static getStubConfig() {
-    return { entities: [], auto_switch: true, accent_color: '#007AFF', volume_accent: '#007AFF', title_color: '#ffffff', artist_color: '#ffffff', button_color: '#ffffff', player_bg: '#1c1c1e', player_bg_opacity: 100, show_entity_selector: true, volume_control: 'slider', startup_mode: 'compact', remember_view: false, volume_entity: {}, ma_entities: [], show_vol_pct: true, vol_pct_color: 'rgba(255,255,255,0.45)', scroll_text: false, remember_last_entity: false, entity_startup_volumes: {}, lyrics_bg: '#0a0a0c', lyrics_text_color: '#ffffff', lyrics_scroll_mode: 'highlight', lyrics_persist: false, lyrics_cache_ttl: 7, lyrics_cache_enabled: true, lyrics_persistent_storage: false, pins_persistent_storage: false, show_pins_in_sections: true, ai_info_persistent_storage: false, itunes_persistent_storage: false, wiki_persistent_storage: false, ma_library_cache_enabled: true, ma_library_cache_ttl: 1, ma_radio_mode: false, show_ma_library_button: true, use_ha_theme: false, remote_buttons_position: 'bottom', ambient_glow: false, announce_tts_service: '', row_glow: false, show_remote_button: true, artwork_crossfade: false, icon_theme: 'robot', resize_btn_spin: true, remote_art_blur: true, volume_hud: true, itunes_art: true, controls_theme: 'classic', add_pill_color: '', card_liquid_glass: true, volume_hud_glass: false, ai_conversation_agent: '', share_service: 'youtube_music', song_intro_enabled: false, show_media_type_pill: false, show_youtube_button: true, atv_keyboard_panel: true };
+    return { entities: [], auto_switch: true, accent_color: '#007AFF', volume_accent: '#007AFF', title_color: '#ffffff', artist_color: '#ffffff', button_color: '#ffffff', player_bg: '#1c1c1e', player_bg_opacity: 100, show_entity_selector: true, volume_control: 'slider', startup_mode: 'compact', remember_view: false, volume_entity: {}, ma_entities: [], show_vol_pct: true, vol_pct_color: 'rgba(255,255,255,0.45)', scroll_text: false, remember_last_entity: false, entity_startup_volumes: {}, lyrics_bg: '#0a0a0c', lyrics_text_color: '#ffffff', lyrics_scroll_mode: 'highlight', lyrics_persist: false, lyrics_cache_ttl: 7, lyrics_cache_enabled: true, lyrics_persistent_storage: false, pins_persistent_storage: false, show_pins_in_sections: true, ai_info_persistent_storage: false, itunes_persistent_storage: false, wiki_persistent_storage: false, ma_library_cache_enabled: true, ma_library_cache_ttl: 1, ma_radio_mode: false, show_ma_library_button: true, use_ha_theme: false, remote_buttons_position: 'bottom', ambient_glow: false, announce_tts_service: '', row_glow: false, show_remote_button: true, artwork_crossfade: false, icon_theme: 'robot', resize_btn_spin: true, remote_art_blur: true, volume_hud: true, itunes_art: true, controls_theme: 'classic', add_pill_color: '', card_liquid_glass: true, volume_hud_glass: false, ai_conversation_agent: '', share_service: 'youtube_music', song_intro_enabled: false, show_media_type_pill: false, show_youtube_button: true, atv_keyboard_panel: true, ghost_skip_heal: true };
   }
 
   setConfig(config) {
@@ -581,6 +581,41 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         // Artist or album changed — clear Discogs caches
       }
       const _trackChanged = hasRealMeta && this._lastTrackKey !== newTrackKey;
+      // ── Ghost-skip healer: watch + detect ────────────────────────────────
+      // MA occasionally resolves a queue item's metadata (title/artwork appear
+      // on the card) but fails to fetch the actual stream — typically a stale
+      // Apple Music catalogue ID baked into a playlist, or a transient DRM/
+      // stream error — and silently advances to the next track. Detect a track
+      // that lived < 5s without ever progressing past ~2s, re-resolve it via a
+      // fresh server-side MA search (which returns a *current* catalogue ID),
+      // and enqueue the match to play next. Guards:
+      //  - user-initiated skips (prev/next buttons, artwork swipe) exempted
+      //    via _userNavTs (stamped in call() and _showLoadingToast())
+      //  - one heal attempt per track per session, 10 heals max per session
+      //  - MA entities only; live streams excluded
+      // Config: ghost_skip_heal (default on; set false to disable).
+      if (this._ghostWatch && this._ghostWatch.entity === this._entity
+          && this._ghostWatch.artist === newArtist && this._ghostWatch.title === newTitle) {
+        const _gp = stateObj.attributes?.media_position;
+        if (typeof _gp === 'number' && _gp > (this._ghostWatch.maxPos || 0)) this._ghostWatch.maxPos = _gp;
+      }
+      if (this._config?.ghost_skip_heal !== false && _trackChanged && this._maEntityIds?.has(this._entity)) {
+        const _gwPrev = this._ghostWatch;
+        const _gwNow = Date.now();
+        const _gwUserNav = _gwNow - (this._userNavTs || 0) < 6000;
+        if (_gwPrev && _gwPrev.entity === this._entity && !_gwUserNav
+            && (_gwNow - _gwPrev.ts) < 5000 && (_gwPrev.maxPos || 0) < 2
+            && _gwPrev.artist && _gwPrev.title && !_gwPrev.live
+            && newState === 'playing') {
+          // Previous track appeared and vanished almost instantly with no
+          // progress while playback continued — classic MA silent skip.
+          this._healGhostSkip(_gwPrev);
+        }
+        this._ghostWatch = {
+          entity: this._entity, artist: newArtist, title: newTitle,
+          ts: _gwNow, maxPos: 0, live: this._isLiveStream(stateObj),
+        };
+      }
       if (_trackChanged) {
         // Listening Recap logging now happens independently at the top of
         // this setter, watching config.ma_entities directly rather than
@@ -987,7 +1022,11 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         // media_player/play_media failures (e.g. "Failed to stream audio") are always
         // caught and shown as a friendly toast by _playMediaDirect() — suppress HA's
         // own raw technical banner so the user doesn't see both.
-        (msg.includes('play_media') && (msg.includes('failed') || msg.includes('stream')))
+        (msg.includes('play_media') && (msg.includes('failed') || msg.includes('stream'))) ||
+        // remove_queue_item "not found in queue" means an earlier removal
+        // already succeeded — the enqueue-menu handler tidies the row itself,
+        // so HA's raw technical banner is pure noise.
+        (msg.includes('remove_queue_item') && msg.includes('not found'))
       ) {
         e.stopImmediatePropagation();
       }
@@ -6012,6 +6051,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   }
 
   call(svc, data = {}) {
+    // Ghost-skip healer: a manual prev/next means the vanishing track was the
+    // user's doing, not an MA stream failure — exempt it from healing.
+    if (svc === 'media_next_track' || svc === 'media_previous_track') this._userNavTs = Date.now();
     this._hass.connection.sendMessagePromise({
       type: 'call_service', domain: 'media_player', service: svc,
       service_data: { entity_id: this._entity, ...data }
@@ -6023,6 +6065,65 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         this._showToast('Action not supported by this speaker');
       }
     });
+  }
+
+  // ── Ghost-skip healer: re-resolve + enqueue ────────────────────────────────
+  // Called from the hass setter when a track appeared and vanished in < 5s with
+  // no playback progress (an MA silent skip — see detection block for guards).
+  // Runs a fresh server-side MA search for artist + title so the provider
+  // resolves a *current* catalogue ID (fixing the stale-playlist-ID case, the
+  // most common Apple Music cause), then enqueues the best match to play after
+  // the current track. Best-effort: one attempt per track per session, capped
+  // at 10 heals per session, and all failures are silent except a no-match
+  // toast so the user knows the track is genuinely unavailable.
+  async _healGhostSkip(prev) {
+    try {
+      const key = (prev.artist + '|' + prev.title).toLowerCase();
+      this._ghostHealTried = this._ghostHealTried || new Set();
+      this._ghostHealCount = this._ghostHealCount || 0;
+      if (this._ghostHealTried.has(key) || this._ghostHealCount >= 10) return;
+      this._ghostHealTried.add(key);
+      this._ghostHealCount++;
+
+      const configEntryId = await this._getMAConfigEntryId();
+      if (!configEntryId) return;
+      const res = await this._hass.connection.sendMessagePromise({
+        type: 'call_service', domain: 'music_assistant', service: 'search',
+        service_data: {
+          config_entry_id: configEntryId,
+          name: prev.artist + ' ' + prev.title,
+          limit: 8,
+        },
+        return_response: true
+      });
+      const tracks = res?.response?.tracks || [];
+      // Same normalisation rules as the MA browser search matcher
+      const _norm = (s) => (s || '').toLowerCase()
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .replace(/[\u2018\u2019\u02bc\u0060]/g, "'")
+        .replace(/[^a-z0-9' ]/g, ' ')
+        .replace(/\s+/g, ' ').trim();
+      const wantT = _norm(prev.title);
+      const wantA = _norm(prev.artist);
+      const _trkArtist = (t) => _norm(Array.isArray(t.artists)
+        ? t.artists.map(a => (a && a.name) || '').join(' ')
+        : (t.artist || ''));
+      // Prefer exact title + artist overlap; fall back to exact title alone
+      const match =
+        tracks.find(t => _norm(t.name || t.media_title || t.title) === wantT
+          && (_trkArtist(t).includes(wantA) || wantA.includes(_trkArtist(t))))
+        || tracks.find(t => _norm(t.name || t.media_title || t.title) === wantT);
+      const uri = match?.uri || match?.media_content_id || null;
+      if (!uri) {
+        this._showToast('\u201C' + prev.title + '\u201D failed to stream and no fresh match was found', 4000);
+        return;
+      }
+      await this._hass.connection.sendMessagePromise({
+        type: 'call_service', domain: 'music_assistant', service: 'play_media',
+        service_data: { entity_id: prev.entity, media_id: uri, media_type: 'track', enqueue: 'next' }
+      });
+      this._showToast('\u201C' + prev.title + '\u201D failed to stream \u2014 re-queued to play next', 4000);
+    } catch (_) { /* healing is strictly best-effort — never surface errors */ }
   }
 
   doSeek(e) {
@@ -15152,6 +15253,14 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         return;
       }
       queueItems = filtered;
+      // Drop items the user removed this session — a fresh fetch can race the
+      // server-side removal and still include them; the enqueue-menu remove
+      // handler stamps ids into _removedQueueItemIds (ids rotate in MA, so
+      // stale entries age out naturally; the set is capped at 50).
+      if (this._removedQueueItemIds?.size) {
+        queueItems = queueItems.filter(i =>
+          !(i.queueItemId != null && this._removedQueueItemIds.has(String(i.queueItemId))));
+      }
 
       // Save to in-memory cache for instant re-open and skip-if-unchanged
       this._queueDataCache = { key: _cacheKey, items: queueItems, ts: Date.now() };
@@ -15232,8 +15341,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           '" data-title="' + escAttr(item.title) +
           '" data-artist="' + escAttr(item.artist || '') +
           '" data-queue-item-id="' + escAttr(item.queueItemId || '') +
-          '" data-queue-index="' + (item.queueIndex ?? '') + '"' +
-          '" data-current="' + isCurrent + '"' +
+          '" data-queue-index="' + (item.queueIndex ?? '') +
+          '" data-current="' + isCurrent +
           '" data-is-history="false">' +
           '<div class="queue-drag-handle" title="Drag to reorder">' +
           '<svg viewBox="0 0 24 24"><path d="M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V19Z"/></svg>' +
@@ -27902,6 +28011,9 @@ Include ALL tracks. Use null for unknown fields.`;
           if (_ov) _ov.style.display = 'none';
           if (this._queuePanelDirection != null) {
             const popup = this.shadowRoot?.getElementById('infoPopup');
+            // Bust the cache — with a 4s minimum delay this refresh can land
+            // inside the 8s cache TTL and be skipped, hiding the added tracks.
+            this._queueDataCache = null;
             if (popup?.classList.contains('visible')) this._showQueuePanel(this._queuePanelDirection);
           }
         }, delay);
@@ -28362,6 +28474,10 @@ Include ALL tracks. Use null for unknown fields.`;
   }
 
   _showLoadingToast(message) {
+    // Ghost-skip healer: every card-initiated playback shows this toast first.
+    // Stamping here means a user starting new media over a just-started track
+    // (enqueue: replace) isn't misread as an MA silent skip of that track.
+    this._userNavTs = Date.now();
     const toast  = this.shadowRoot?.getElementById('crowToast');
     const textEl = this.shadowRoot?.getElementById('crowToastText');
     if (!toast || !textEl) return;
@@ -30250,6 +30366,9 @@ Include ALL tracks. Use null for unknown fields.`;
       }
 
       await new Promise(res => setTimeout(res, 300));
+      // Bust the queue cache so the fresh order actually renders (the < 8s
+      // cache-skip in _showQueuePanel would otherwise drop this refresh).
+      this._queueDataCache = null;
       await this._showQueuePanel(this._queuePanelDirection);
     } catch (err) {
       console.error('[Queue reorder]', err);
@@ -30627,6 +30746,11 @@ Include ALL tracks. Use null for unknown fields.`;
             // already used for the drag-to-reorder flow, which calls this
             // exact same service.
             await new Promise(res => setTimeout(res, 300));
+            // Bust the queue cache first — _showQueuePanel skips re-rendering
+            // entirely when the cache is < 8s old and the panel is scrolled,
+            // which made successful moves look like they did nothing (the
+            // clear-queue flow already does this; same reasoning here).
+            self._queueDataCache = null;
             await self._showQueuePanel(self._queuePanelDirection);
             self._showToast('Moved to top of queue');
           } catch (err) {
@@ -30677,29 +30801,61 @@ Include ALL tracks. Use null for unknown fields.`;
         }
 
         if (mode === 'remove') {
-          // Remove this track from the queue
+          // Remove this track from the queue.
+          // Drops the row + purges every place it could resurrect from:
+          //  - live DOM lookup by queue-item id (anchorEl may be DETACHED if the
+          //    panel auto-refreshed between the long-press and the menu tap —
+          //    animating a detached node was why rows sometimes "didn't remove")
+          //  - _queueDataCache (8s TTL) so a cache-hit re-render excludes it
+          //  - _removedQueueItemIds so a fresh fetch that raced the server-side
+          //    removal drops it at render time
+          const _dropQueueRow = () => {
+            (self._removedQueueItemIds = self._removedQueueItemIds || new Set()).add(String(queueItemId));
+            if (self._removedQueueItemIds.size > 50) {
+              self._removedQueueItemIds.delete(self._removedQueueItemIds.values().next().value);
+            }
+            if (self._queueDataCache?.items?.length) {
+              self._queueDataCache.items = self._queueDataCache.items.filter(
+                i => String(i.queueItemId ?? '') !== String(queueItemId));
+            }
+            let _rowWrap = null;
+            try {
+              const _esc = (window.CSS && CSS.escape) ? CSS.escape(String(queueItemId)) : String(queueItemId).replace(/"/g, '\\"');
+              const _liveRow = scrollContainer?.querySelector?.('.queue-row[data-queue-item-id="' + _esc + '"]');
+              _rowWrap = _liveRow?.closest('.queue-row-wrap') || null;
+            } catch (_) {}
+            if (!_rowWrap || !_rowWrap.isConnected) {
+              const _fb = anchorEl?.closest('.queue-row-wrap') || anchorEl?.parentElement;
+              if (_fb?.isConnected) _rowWrap = _fb;
+            }
+            if (_rowWrap) {
+              _rowWrap.style.transition = 'max-height 0.25s ease, opacity 0.2s ease';
+              _rowWrap.style.opacity = '0';
+              _rowWrap.style.maxHeight = '0';
+              _rowWrap.style.overflow = 'hidden';
+              setTimeout(() => _rowWrap.remove(), 260);
+            }
+          };
           try {
             if (isMa && queueItemId && hasMassRem) {
               await self._hass.callService('mass_queue', 'remove_queue_item', {
                 entity: self._entity, queue_item_id: queueItemId
               });
-              // Optimistically remove the row from the DOM immediately —
-              // the auto-refresh will sync later but this gives instant feedback
-              const _rowWrap = anchorEl?.closest('.queue-row-wrap') || anchorEl?.parentElement;
-              if (_rowWrap) {
-                _rowWrap.style.transition = 'max-height 0.25s ease, opacity 0.2s ease';
-                _rowWrap.style.opacity = '0';
-                _rowWrap.style.maxHeight = '0';
-                _rowWrap.style.overflow = 'hidden';
-                setTimeout(() => _rowWrap.remove(), 260);
-              }
+              _dropQueueRow();
             } else if (isMa && !hasMassRem) {
               self._showToast('Install mass_queue integration to remove tracks');
             } else {
               self._showToast('Remove not supported for this player');
             }
           } catch(err) {
-            self._showToast('Could not remove from queue');
+            const _remMsg = (err?.message || err?.error?.message || String(err)).toLowerCase();
+            if (_remMsg.includes('not found in queue')) {
+              // A previous removal already succeeded server-side but the row
+              // lingered (stale render) — just tidy the UI, no error needed.
+              _dropQueueRow();
+            } else {
+              self._showToast('Could not remove from queue');
+            }
           }
           return;
         }
@@ -31965,6 +32121,13 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
               </div>
               <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="song_intro_enabled"><span class="toggle-track"></span></label>
             </div>
+            <div class="toggle-item" style="align-items:flex-start;gap:12px;margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.07);">
+              <div style="flex:1;">
+                <div class="toggle-label">Ghost-Skip Healer</div>
+                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">When Music Assistant silently skips a track that failed to stream (e.g. a stale Apple Music playlist reference), automatically re-look it up and queue the fresh match to play next.</div>
+              </div>
+              <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="ghost_skip_heal"><span class="toggle-track"></span></label>
+            </div>
           </div>
         </div>
 
@@ -32987,6 +33150,11 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
     if (songIntroEl) {
       songIntroEl.checked = this._config.song_intro_enabled === true;
       songIntroEl.onchange = (e) => this._updateConfig('song_intro_enabled', e.target.checked);
+    }
+    const ghostSkipHealEl = root.getElementById('ghost_skip_heal');
+    if (ghostSkipHealEl) {
+      ghostSkipHealEl.checked = this._config?.ghost_skip_heal !== false; // default on
+      ghostSkipHealEl.onchange = (e) => this._updateConfig('ghost_skip_heal', e.target.checked);
     }
 
     const resizeBtnSpinEl = root.getElementById('resize_btn_spin');
