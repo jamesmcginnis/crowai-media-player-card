@@ -27,7 +27,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   }
 
   static getStubConfig() {
-    return { entities: [], auto_switch: true, accent_color: '#007AFF', volume_accent: '#007AFF', title_color: '#ffffff', artist_color: '#ffffff', button_color: '#ffffff', player_bg: '#1c1c1e', player_bg_opacity: 100, show_entity_selector: true, volume_control: 'slider', startup_mode: 'compact', remember_view: false, volume_entity: {}, ma_entities: [], show_vol_pct: true, vol_pct_color: 'rgba(255,255,255,0.45)', scroll_text: false, remember_last_entity: false, entity_startup_volumes: {}, lyrics_bg: '#0a0a0c', lyrics_text_color: '#ffffff', lyrics_scroll_mode: 'highlight', lyrics_persist: false, lyrics_cache_ttl: 7, lyrics_cache_enabled: true, lyrics_persistent_storage: false, pins_persistent_storage: false, show_pins_in_sections: true, ai_info_persistent_storage: false, itunes_persistent_storage: false, wiki_persistent_storage: false, ma_library_cache_enabled: true, ma_library_cache_ttl: 1, ma_radio_mode: false, show_ma_library_button: true, use_ha_theme: false, remote_buttons_position: 'bottom', ambient_glow: false, announce_tts_service: '', row_glow: false, show_remote_button: true, artwork_crossfade: false, icon_theme: 'robot', resize_btn_spin: true, remote_art_blur: true, volume_hud: true, itunes_art: true, controls_theme: 'classic', add_pill_color: '', card_liquid_glass: true, volume_hud_glass: false, ai_conversation_agent: '', share_service: 'youtube_music', song_intro_enabled: false, show_media_type_pill: false, show_youtube_button: true, atv_keyboard_panel: true, ghost_skip_heal: true };
+    return { entities: [], auto_switch: true, accent_color: '#007AFF', volume_accent: '#007AFF', title_color: '#ffffff', artist_color: '#ffffff', button_color: '#ffffff', player_bg: '#1c1c1e', player_bg_opacity: 100, show_entity_selector: true, volume_control: 'slider', startup_mode: 'compact', remember_view: false, volume_entity: {}, entity_names: {}, ma_entities: [], show_vol_pct: true, vol_pct_color: 'rgba(255,255,255,0.45)', scroll_text: false, remember_last_entity: false, entity_startup_volumes: {}, lyrics_bg: '#0a0a0c', lyrics_text_color: '#ffffff', lyrics_scroll_mode: 'highlight', lyrics_persist: false, lyrics_cache_ttl: 7, lyrics_cache_enabled: true, lyrics_persistent_storage: false, pins_persistent_storage: false, show_pins_in_sections: true, ai_info_persistent_storage: false, itunes_persistent_storage: false, wiki_persistent_storage: false, ma_library_cache_enabled: true, ma_library_cache_ttl: 1, ma_radio_mode: false, show_ma_library_button: true, use_ha_theme: false, remote_buttons_position: 'bottom', ambient_glow: false, announce_tts_service: '', row_glow: false, show_remote_button: true, artwork_crossfade: false, icon_theme: 'robot', resize_btn_spin: true, pin_hearts: true, remote_art_blur: true, volume_hud: true, itunes_art: true, controls_theme: 'classic', add_pill_color: '', card_liquid_glass: true, volume_hud_glass: false, ai_features_enabled: false, ai_conversation_agent: '', share_service: 'youtube_music', song_intro_enabled: false, show_media_type_pill: false, show_youtube_button: true, atv_keyboard_panel: true, ghost_skip_heal: true };
   }
 
   setConfig(config) {
@@ -90,7 +90,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       ma_entities: [],
       show_entity_selector: true,
      
-      ai_conversation_agent: '',
+      ai_features_enabled: false, ai_conversation_agent: '',
       ...config
     };
     if (!this._entity) {
@@ -685,7 +685,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
                 this._prefetchAIRecs(_pfTitle, _pfArtist, _cur?.media_album_name || '');
               }
               // Song Intro — only if enabled in settings (off by default)
-              if (this._config?.song_intro_enabled === true) this._showSongIntro(_pfTitle, _pfArtist);
+              if (this._aiEnabled() && this._config?.song_intro_enabled === true) this._showSongIntro(_pfTitle, _pfArtist);
             }
           }, 5000); // 5s debounce — user is probably settled on this track
         }
@@ -3209,8 +3209,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           flex-shrink: 0; overflow: hidden;
         }
         .mc-pill-label {
-          display: inline-flex; align-items: center; gap: 5px;
-          padding: 5px 6px 5px 8px; pointer-events: none;
+          display: inline-flex; align-items: center; gap: 6px;
+          /* Balanced spacing: 9px leading (the SVG glyph carries a little
+             built-in whitespace, so 9 reads as 10), 6px icon-to-text gap,
+             10px trailing after the text — the old 8/5/6 gave the icon
+             more room from the pill edge than from its own label text,
+             which read as the text crowding the icon. */
+          padding: 5px 10px 5px 9px; pointer-events: none;
         }
         .mc-pill-label svg { width: 10px; height: 10px; fill: rgba(255,255,255,0.7); flex-shrink: 0; }
         .mc-pill-label span { max-width: 80px; overflow: hidden; text-overflow: ellipsis; }
@@ -4257,7 +4262,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
                               _integ.includes('alexa') ||
                               _plat === 'alexa_media'  || _plat === 'amazon_echo';
         if (!supportsSeek || !hasDuration || isAlexaDevice) {
-          const name = state?.attributes?.friendly_name || 'This speaker';
+          const name = this._entityDisplayName(this._entity);
           this._showToast(name + '\u2019 doesn\u2019t support seeking', 2000);
           return;
         }
@@ -4311,7 +4316,31 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         const _liveBadgeEl = r.getElementById('liveStationBadge');
         const _pcBadgeEl   = r.getElementById('podcastBadge');
         const _abBadgeEl   = r.getElementById('audiobookBadge');
-        if (_liveBadgeEl && _liveBadgeEl.style.display !== 'none') { this._resolveAndShowLiveStation(); return; }
+        if (_liveBadgeEl && _liveBadgeEl.style.display !== 'none') {
+          // If the station is broadcasting real track metadata (ICY tags
+          // with a genuine artist — e.g. Showaddywaddy / 'You Got What It
+          // Takes'), a tap on the artwork opens that track's own AI Info
+          // panel — _openInfoPopup already handles exactly this case (live
+          // stream + track metadata → _showAITrackInfo with a station
+          // badge), it just never got the chance because this branch always
+          // intercepted into station resolution first. The station panel
+          // stays one tap away on the LIVE pill itself. Requires a real
+          // artist that isn't just the station name echoed back — a title
+          // alone isn't enough, since stations that overwrite media_title
+          // with the show name would otherwise send talk-radio taps into a
+          // nonsense track lookup.
+          const _lsAttrs   = state?.attributes || {};
+          const _lsArtist  = (_lsAttrs.media_artist || '').trim();
+          const _lsTitle   = (_lsAttrs.media_title || '').trim();
+          const _lsStation = (_lsAttrs.media_album_name || '').trim().toLowerCase();
+          const _lsArtistLower = _lsArtist.toLowerCase();
+          const _lsHasTrackMeta = !!(_lsArtist && _lsTitle)
+            && _lsArtistLower !== '[unknown]' && _lsArtistLower !== 'unknown'
+            && _lsArtistLower !== _lsStation;
+          if (_lsHasTrackMeta) { this._openInfoPopup(); return; }
+          this._resolveAndShowLiveStation();
+          return;
+        }
         if (_pcBadgeEl && _pcBadgeEl.style.display !== 'none') { this._resolveAndShowPodcast(); return; }
         if (_abBadgeEl && _abBadgeEl.style.display !== 'none') { this._resolveAndShowAudiobook(); return; }
         const mediaType = this._detectMediaType(state);
@@ -4453,7 +4482,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
                                 // Alexa Media Player integration uses this platform string
                                 _plat === 'alexa_media' || _plat === 'amazon_echo';
           if (!supportsSeek || !hasDuration || isAlexaDevice) {
-            const name = state?.attributes?.friendly_name || 'This speaker';
+            const name = this._entityDisplayName(this._entity);
             this._showToast(name + ' doesn\u2019t support seeking', 2000);
             return;
           }
@@ -4575,7 +4604,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         if (isMa) items.push({ id: 'qm_queue', label: 'Queue', icon: SVG.queue, active: false });
 
         // AI Search — MA only
-        if (isMa || hasMA) items.push({ id: 'qm_ai_search', label: 'AI Search', icon: '<svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>', active: false });
+        if (this._aiEnabled() && (isMa || hasMA)) items.push({ id: 'qm_ai_search', label: 'AI Search', icon: '<svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>', active: false });
 
         // Library — always available. Several of its tabs (Movies & TV,
         // Radio, Podcasts, Audiobooks) never needed MA in the first place,
@@ -4584,22 +4613,22 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         const _qmMediaType = this._detectMediaType(state);
         const _qmIsVideo = _qmMediaType === 'tv' || _qmMediaType === 'movie';
         items.push({ id: 'qm_library', label: 'Library', icon: SVG.library, active: false });
-        if (isMa || hasMA) items.push({ id: 'qm_mood', label: 'Vibe', icon: '<svg viewBox="0 0 24 24"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>', active: false });
+        if (this._aiEnabled() && (isMa || hasMA)) items.push({ id: 'qm_mood', label: 'Vibe', icon: '<svg viewBox="0 0 24 24"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>', active: false });
 
         // AI Mood — MA only
 
 
         // Add Similar Songs — MA only
-        if (isMa) items.push({ id: 'qm_add_similar', label: 'Add Similar Songs', icon: '<svg viewBox="0 0 24 24"><path d="M19 11h-6V5h-2v6H5v2h6v6h2v-6h6z"/></svg>', active: false });
+        if (this._aiEnabled() && isMa) items.push({ id: 'qm_add_similar', label: 'Add Similar Songs', icon: '<svg viewBox="0 0 24 24"><path d="M19 11h-6V5h-2v6H5v2h6v6h2v-6h6z"/></svg>', active: false });
 
         // Play Album — MA only, only when a track with album info is playing
         const _qmAlbum = state?.attributes?.media_album_name || '';
         const _qmType  = state?.attributes?.media_content_type || '';
         if ((isMa || hasMA) && isPlaying && !isStream && _qmAlbum && (_qmType === 'music' || _qmType === 'track' || _qmType === '')) {
           if (isMa) items.push({ id: 'qm_play_album', label: 'Add Album', icon: '<svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/></svg>', active: false });
-        if (isPlaying && ((isMa || hasMA) || _qmIsVideo)) items.push({ id: 'qm_ai_recs', label: 'Recommendations', icon: '<svg viewBox="0 0 24 24"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>', active: false });
-        if (isPlaying && _qmIsVideo) items.push({ id: 'qm_mood_video', label: 'Mood Match', icon: '<svg viewBox="0 0 24 24"><path d="M12 2A10 10 0 1 0 22 12 10 10 0 0 0 12 2M12 20A8 8 0 1 1 20 12 8 8 0 0 1 12 20M17 11.5A1.5 1.5 0 1 1 15.5 10 1.5 1.5 0 0 1 17 11.5M8.5 10A1.5 1.5 0 1 1 7 11.5 1.5 1.5 0 0 1 8.5 10M12 17.5C9.67 17.5 7.69 16.04 6.89 14H17.11C16.31 16.04 14.33 17.5 12 17.5Z"/></svg>', active: false, _qmVideoTitle: attrs?.media_series_title || attrs?.media_title || '' });
-        if (isPlaying && _qmIsVideo) items.push({ id: 'qm_trivia', label: 'Trivia', icon: '<svg viewBox="0 0 24 24"><path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"/></svg>', active: false, _qmVideoTitle: attrs?.media_series_title || attrs?.media_title || '' });
+        if (this._aiEnabled() && isPlaying && ((isMa || hasMA) || _qmIsVideo)) items.push({ id: 'qm_ai_recs', label: 'Recommendations', icon: '<svg viewBox="0 0 24 24"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>', active: false });
+        if (this._aiEnabled() && isPlaying && _qmIsVideo) items.push({ id: 'qm_mood_video', label: 'Mood Match', icon: '<svg viewBox="0 0 24 24"><path d="M12 2A10 10 0 1 0 22 12 10 10 0 0 0 12 2M12 20A8 8 0 1 1 20 12 8 8 0 0 1 12 20M17 11.5A1.5 1.5 0 1 1 15.5 10 1.5 1.5 0 0 1 17 11.5M8.5 10A1.5 1.5 0 1 1 7 11.5 1.5 1.5 0 0 1 8.5 10M12 17.5C9.67 17.5 7.69 16.04 6.89 14H17.11C16.31 16.04 14.33 17.5 12 17.5Z"/></svg>', active: false, _qmVideoTitle: attrs?.media_series_title || attrs?.media_title || '' });
+        if (this._aiEnabled() && isPlaying && _qmIsVideo) items.push({ id: 'qm_trivia', label: 'Trivia', icon: '<svg viewBox="0 0 24 24"><path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"/></svg>', active: false, _qmVideoTitle: attrs?.media_series_title || attrs?.media_title || '' });
         }
 
         // Listening Recap — MA only, manual trigger, works off local play-history log.
@@ -4622,7 +4651,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         // AI Artist Radio — MA only, only when a track is playing
         if ((isMa || hasMA) && isPlaying && !isStream) {
           const _curArtist = (state?.attributes?.media_artist || '').split(/\s*[&,]\s*/)[0].trim();
-          if (_curArtist) items.push({ id: 'qm_artist_radio', label: 'AI Artist Radio', icon: '<path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6zm4 0v2h-2V3h2z"/>', active: false, _curArtist });
+          if (this._aiEnabled() && _curArtist) items.push({ id: 'qm_artist_radio', label: 'AI Artist Radio', icon: '<path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6zm4 0v2h-2V3h2z"/>', active: false, _curArtist });
         }
 
         // Radio Mode — MA speaker only
@@ -4986,8 +5015,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       }
 
       entities.forEach(eid => {
-        const s      = this._hass?.states[eid];
-        const name   = s?.attributes?.friendly_name || eid;
+        const name   = this._entityDisplayName(eid);
         const isActive = eid === this._entity && !(_groupMembers?.length > 1);
         const btn = document.createElement('button');
         btn.style.cssText = 'display:flex;align-items:center;gap:12px;width:100%;padding:14px 18px;border-radius:10px;' +
@@ -5845,7 +5873,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           const targets = otherSpeakers;
 
           const speakerOpts = targets.map(e => {
-            const name = this._hass?.states[e]?.attributes?.friendly_name || e;
+            const name = this._entityDisplayName(e);
             return `<button class="queue-transfer-speaker-btn panel-state-btn" data-entity="${e}">${name}</button>`;
           }).join('');
 
@@ -5867,7 +5895,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           infoContent.querySelectorAll('.queue-transfer-speaker-btn').forEach(btn => {
             btn.addEventListener('click', async () => {
               const targetEntity = btn.dataset.entity;
-              const targetName = this._hass?.states[targetEntity]?.attributes?.friendly_name || targetEntity;
+              const targetName = this._entityDisplayName(targetEntity);
 
               // Show loading state
               infoContent.innerHTML =
@@ -6891,14 +6919,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       const mcToken = _groupMembers?.length > 1
         ? '__mc__' + _groupMembers.join(',') : '';
       const newOptionKeys = entities.map(ent => {
-        const s = this._hass.states[ent];
-        return ent + ':' + (s?.attributes?.friendly_name || ent);
+        return ent + ':' + this._entityDisplayName(ent);
       }).join('|') + mcToken;
       if (sel.dataset.optionKeys !== newOptionKeys) {
         sel.dataset.optionKeys = newOptionKeys;
         let opts = entities.map(ent => {
-          const s = this._hass.states[ent];
-          return `<option value="${ent}">${s?.attributes?.friendly_name || ent}</option>`;
+          return `<option value="${ent}">${this._entityDisplayName(ent)}</option>`;
         }).join('');
         if (_groupMembers?.length > 1) {
           opts = `<option value="__multicast__">Multicast (${_groupMembers.length} speakers)</option>` + opts;
@@ -8290,10 +8316,28 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       return;
     }
 
+    // Respect the shared post-rate-limit cooldown (see
+    // _lookupDiscogsForAIData) — clear the in-flight marker set above so a
+    // later render retries once the window has passed, rather than the
+    // null marker permanently reading as "no art for this release".
+    if (Date.now() < (this._discogsCooldownUntil || 0)) {
+      this._discogsArtCache.delete(releaseId);
+      return;
+    }
+
     // Fetch from Discogs API
     const headers = { 'User-Agent': 'CrowAIMediaPlayerCard/1.0 +https://github.com/jamesmcginnis' };
     fetch('https://api.discogs.com/releases/' + releaseId, { headers })
-      .then(r => r.ok ? r.json() : null)
+      .then(r => {
+        if (r.status === 429) {
+          // Contribute to the shared cooldown so the info-panel lookups
+          // back off too — the limit is per-client, not per-endpoint.
+          this._discogsCooldownUntil = Date.now() + 10000;
+          this._discogsArtCache.delete(releaseId);
+          return null;
+        }
+        return r.ok ? r.json() : null;
+      })
       .then(data => {
         if (!data) return;
         const imgUrl = (data.images?.[0]?.uri || data.images?.[0]?.resource_url || '')
@@ -8303,7 +8347,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         this._discogsArtLocalSet(String(releaseId), imgUrl);
         this._patchMAItemArtDiscogs(releaseId, imgUrl);
       })
-      .catch(() => {});
+      .catch(() => {
+        // Likely a CORS-stripped 429 (same failure mode as the search
+        // path) — back off and let a later render retry.
+        this._discogsCooldownUntil = Date.now() + 10000;
+        this._discogsArtCache.delete(releaseId);
+      });
   }
 
   // Force-patches .ma-item-art[data-discogs-id] elements with Discogs cover art.
@@ -8788,7 +8837,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           self._maBatchLoading = false;
           clearTimeout(self._maBatchLoadingTimer);
           self._pillPulse(0);
-          const _spkName = self._hass?.states[_barTarget]?.attributes?.friendly_name || 'speaker';
+          const _spkName = self._entityDisplayName(_barTarget);
           if (action !== 'replace') {
             const label = action === 'next' ? 'Playing next' : 'Added to queue';
             self._showToast(`${label} — ${successCount} track${successCount === 1 ? '' : 's'} on ${_spkName}`, 3000);
@@ -8957,7 +9006,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // doesn't require leaving the library to get to it. MA-only, same gating
     // as the context menu entry.
     const _hasMA = this._maEntityIds?.size > 0;
-    const aiSearchHtml = _hasMA ? `
+    const aiSearchHtml = (this._aiEnabled() && _hasMA) ? `
       <div style="padding:8px 10px 6px;flex-shrink:0;">
         <div style="position:relative;display:flex;align-items:center;">
           <svg viewBox="0 0 24 24" style="position:absolute;left:10px;width:14px;height:14px;fill:${this._pt("dim")};pointer-events:none;"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
@@ -14639,7 +14688,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         self._maBatchLoading = false;
         clearTimeout(self._maBatchLoadingTimer);
         self._pillPulse(0);
-        const _spkName = self._hass?.states[_barTarget]?.attributes?.friendly_name || 'speaker';
+        const _spkName = self._entityDisplayName(_barTarget);
         if (action !== 'replace') {
           const label = action === 'next' ? 'Playing next' : 'Added to queue';
           self._showToast(`${label} — ${successCount} ${_label} on ${_spkName}`, 3000);
@@ -14762,12 +14811,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     }
 
     if (effectiveSpeakers.length === 1) {
-      const name = this._hass?.states[effectiveSpeakers[0]]?.attributes?.friendly_name || effectiveSpeakers[0];
+      const name = this._entityDisplayName(effectiveSpeakers[0]);
       speakerEl.innerHTML = `<span class="track-confirm-speaker-name">${name}</span>`;
     } else {
       // Multiple MA speakers available — let the user pick (current entity shown first)
       const opts = effectiveSpeakers.map(e => {
-        const name = this._hass?.states[e]?.attributes?.friendly_name || e;
+        const name = this._entityDisplayName(e);
         return `<option value="${e}">${name}</option>`;
       }).join('');
       speakerEl.innerHTML = `<select class="track-confirm-speaker-select" id="trackConfirmSpeakerSelect">${opts}</select>`;
@@ -15164,7 +15213,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           }
 
           // Nothing worked — show a friendly message; no auto-close, no close button
-          const deviceName = attrs.friendly_name || this._entity;
+          const deviceName = this._entityDisplayName(this._entity);
           r?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
           content.innerHTML = this._psEmpty('M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z', escHtml(deviceName) + " doesn't support queue browsing", "Queue browsing isn't available for this device. Use the ⋮ menu above to access Announce and other options, or switch to a Music Assistant speaker for full queue support.");
           return;
@@ -15695,6 +15744,17 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     }
   }
 
+  // Display name for an entity anywhere the card SHOWS a speaker name —
+  // the editor's per-speaker "Display Name" override when set, otherwise
+  // the HA friendly name, otherwise the raw entity id. Deliberately NOT
+  // used by matching heuristics (Apple TV detection, MA name matching,
+  // etc.), which must keep reading the real friendly_name.
+  _entityDisplayName(eid) {
+    const alias = (this._config?.entity_names || {})[eid];
+    if (alias && String(alias).trim()) return String(alias).trim();
+    return this._hass?.states[eid]?.attributes?.friendly_name || eid;
+  }
+
   _switchEntity(selectedVal) {
     // Auto-disable radio mode when switching to a non-MA entity
     if (selectedVal && this._config?.ma_radio_mode) {
@@ -15853,7 +15913,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             eid.includes('playstation') || eid.includes('xbox') || eid.includes('roku')) return false;
         return true;
       })
-      .sort((a, b) => (a[1].attributes.friendly_name || '').localeCompare(b[1].attributes.friendly_name || ''));
+      .sort((a, b) => this._entityDisplayName(a[0]).localeCompare(this._entityDisplayName(b[0])));
 
     // Resolve TTS from config (set in visual editor) or auto-detect from HA services
     const _resolveTTS = () => {
@@ -15932,9 +15992,15 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
     const _getSpeakers = () => allPlayers.filter(([eid, s]) => {
       if (!_speakerFilter) return true;
+      // Match against the display name (what the row actually shows), the
+      // real HA friendly name, and the area — a user may reasonably type
+      // any of the three, e.g. an alias like "Bathroom" or the underlying
+      // "Downstairs Bathroom HomePod".
+      const f = _speakerFilter.toLowerCase();
       const n = (s.attributes.friendly_name || eid).toLowerCase();
+      const d = this._entityDisplayName(eid).toLowerCase();
       const a = (_areaMap[eid] || '').toLowerCase();
-      return n.includes(_speakerFilter.toLowerCase()) || a.includes(_speakerFilter.toLowerCase());
+      return n.includes(f) || d.includes(f) || a.includes(f);
     });
 
     const _groupByArea = (players) => {
@@ -16073,7 +16139,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
         const _renderSpeakerRow = (eid, s) => {
       const sel    = selectedSpeakers.has(eid);
-      const name   = s.attributes.friendly_name || eid;
+      const name   = this._entityDisplayName(eid);
       const annVol = announceVolumes[eid] != null ? announceVolumes[eid] : (_getCurrentVol(eid) != null ? _getCurrentVol(eid) : 50);
       const circBg = sel ? 'rgba(0,122,255,0.2)' : this._pt('btnBg');
       const circFl = sel ? '#007AFF' : this._pt('iconDim');
@@ -16660,7 +16726,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     header.textContent = 'Switch to MA Speaker';
     popup.appendChild(header);
     allMA.forEach(eid => {
-      const name = this._hass?.states[eid]?.attributes?.friendly_name || eid;
+      const name = this._entityDisplayName(eid);
       const btn = document.createElement('button');
       btn.style.cssText = `display:flex;align-items:center;gap:10px;width:100%;background:none;border:none;border-radius:10px;padding:10px 12px;cursor:pointer;font-family:inherit;font-size:13px;color:${this._pt("text")};text-align:left;-webkit-tap-highlight-color:transparent;`;
       btn.innerHTML = `<svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:${this._pt("dim")};flex-shrink:0"><path d="M12,3V13.55C11.41,13.21 10.73,13 10,13A4,4 0 0,0 6,17A4,4 0 0,0 10,21A4,4 0 0,0 14,17V7H18V3H12Z"/></svg>` + name;
@@ -16921,6 +16987,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
     // Strategy 2: check pinned stations by name
     let _stationName = '';
+    let _maStationUri = '';
+    let _maStationImg = '';
     try {
       const qRes = await this._hass.connection.sendMessagePromise({
         type: 'call_service', domain: 'music_assistant', service: 'get_queue',
@@ -16928,10 +16996,24 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       });
       const qData = qRes?.response?.[this._entity] || qRes?.response || null;
       _stationName = qData?.current_item?.name || qData?.current_item?.media_item?.name || '';
+      // Also keep the MA library uri + artwork of the current queue item —
+      // if every lookup below misses (station played straight from the MA
+      // library and unknown to radio-browser.info), these are enough to
+      // build a fully functional station object of our own (Strategy 4).
+      _maStationUri = qData?.current_item?.media_item?.uri || '';
+      _maStationImg = qData?.current_item?.image
+                   || qData?.current_item?.media_item?.metadata?.images?.[0]?.path
+                   || '';
     } catch (_) {}
 
     if (!_stationName) {
-      _stationName = _attrs.media_album_name || _attrs.media_title || '';
+      // media_title is only a trustworthy station-name fallback when the
+      // stream is NOT broadcasting track metadata — with a real artist
+      // present, the title is the currently playing song ('YOU GOT WHAT IT
+      // TAKES'), and searching radio-browser for a song name can
+      // confidently match a completely unrelated station.
+      const _artistPresent = !!(_attrs.media_artist || '').trim();
+      _stationName = _attrs.media_album_name || (_artistPresent ? '' : _attrs.media_title) || '';
     }
 
     if (_stationName) {
@@ -16968,6 +17050,33 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           }
         }
       } catch (_) {}
+    }
+
+    // Strategy 4: MA-library station that radio-browser.info doesn't know —
+    // build the station object ourselves from what MA already told us
+    // (queue item name + library uri + artwork), in the same shape
+    // _haBrowseItemToStation produces. _rbStationPlayCall already plays
+    // _maUri stations via music_assistant.play_media, and pin matching in
+    // _rbToggleStar keys on _maUri too, so this panel is fully functional
+    // (playable, pinnable), not an info-only stub. Cached + saved as
+    // lastPlayed so the next tap resolves instantly via Strategy 0 without
+    // re-fetching the queue. The _maUri requirement is deliberate: a
+    // name-only object couldn't play, and would pin as an unmatchable
+    // duplicate-prone entry.
+    if (_stationName && _maStationUri) {
+      const _synth = {
+        name: _stationName,
+        favicon: _maStationImg || _attrs.entity_picture || '',
+        tags: 'Music Assistant Library',
+        countrycode: '', country: '', language: '', codec: '',
+        bitrate: 0, votes: 0, homepage: '',
+        _maUri: _maStationUri,
+      };
+      this._rbCacheStation(_synth);
+      this._rbSaveLastPlayed(this._entity, _synth, _streamKey);
+      this.updateContent(this._hass.states[this._entity]);
+      this._showRbMoreInfo(_synth);
+      return;
     }
 
     this._showToast('Station not found — search for it in the Radio tab first');
@@ -17060,7 +17169,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (!cardOuter) return;
 
     const speakerNames = speakerEids
-      .map(eid => this._hass?.states[eid]?.attributes?.friendly_name || eid)
+      .map(eid => this._entityDisplayName(eid))
       .join(', ');
 
     const DURATION_MS = 8000;
@@ -17258,7 +17367,23 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   }
 
   /** Detect whether any conversation agent is available in HA */
+  // ── AI Features master switch ──────────────────────────────────────────
+  // Single source of truth for the editor's "Enable AI Features" toggle.
+  // Deliberately opt-in (=== true): new installs and existing configs
+  // without the key both get AI off until the user enables it.
+  _aiEnabled() {
+    return this._config?.ai_features_enabled === true;
+  }
+
   async _aiCheckAvailable() {
+    // Master switch first — with AI features disabled, every caller that
+    // gates AI content on this check (Recap summary paragraph, genre
+    // descriptions, radio/podcast AI sections, Song Intro, similar-songs,
+    // artist radio, and so on) degrades to its existing no-AI behaviour
+    // without needing its own check. This is the defense-in-depth layer;
+    // primary gating removes the entry points (quick-menu items, library
+    // AI search box) so users never see features they can't use.
+    if (!this._aiEnabled()) return false;
     if (!this._hass) return false;
     // Session rate-limit backoff — if AI was rate-limited recently, don't retry
     // until the backoff window clears (60 seconds after the last 429).
@@ -17639,7 +17764,25 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     } catch (_) { return []; }
   }
 
+  // Known announcement/system "artists" that HA automations produce when
+  // playing TTS clips or sound files through pyatv — these show up in the
+  // media_artist attribute looking like real artists ('pyatv' itself, plus
+  // whatever caps-lock name a clip file reports, e.g. 'BENNIE AND THE
+  // JETS') and would otherwise pollute Recap stats. Checked both at write
+  // time (_recapShouldExclude) and at read time (_getListenLogEntries) so
+  // entries logged before an artist was added to this list get purged too.
+  _isAnnouncementArtist(artist) {
+    const a = (artist || '').trim().toLowerCase();
+    if (!a) return false;
+    const EXCLUDED = ['pyatv', 'bennie and the jets'];
+    return EXCLUDED.includes(a);
+  }
+
   _recapShouldExclude(artist, title, attrs, pseudoState, entityId = this._entity) {
+    // HA announcement automations (pyatv TTS/sound clips) — never real
+    // listening, regardless of what else the entry looks like.
+    if (this._isAnnouncementArtist(artist)) return true;
+
     // Narrow notification/announcement filter — deliberately NOT a blanket
     // URI-scheme match (that's what silently excluded every real MA track
     // before). Only catches the specific shape a system sound clip actually
@@ -17868,8 +18011,30 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   _getListenLogEntries() {
     try {
       const store = JSON.parse(localStorage.getItem('crow_ai_local_listenLog') || '{}');
+
+      // Self-healing purge of announcement entries (see
+      // _isAnnouncementArtist) that were logged before the write-time
+      // filter knew about them. Deletes them from the stored log and
+      // pushes the cleaned copy to HA storage, rather than just hiding
+      // them at read time — otherwise dead entries count against the
+      // 2000-entry cap forever, and a stale HA copy could resurrect them
+      // on another device. Runs on every read but only writes when it
+      // actually removed something, so after the first cleanup this is
+      // just the same cheap filter pass as before. If a stale HA-storage
+      // merge ever does resurrect purged entries, the next read simply
+      // purges them again — eventually consistent by design.
+      let purged = false;
+      Object.keys(store).forEach(k => {
+        const d = store[k]?.data;
+        if (d && this._isAnnouncementArtist(d.artist)) { delete store[k]; purged = true; }
+      });
+      if (purged) {
+        try { localStorage.setItem('crow_ai_local_listenLog', JSON.stringify(store)); } catch (_) {}
+        this._haStorageSaveAIImmediate('listenLog');
+      }
+
       return Object.values(store)
-        .filter(entry => entry && entry.data)
+        .filter(entry => entry && entry.data && !this._isAnnouncementArtist(entry.data.artist))
         .map(entry => ({ ...entry.data, ts: entry.ts }));
     } catch (_) { return []; }
   }
@@ -19389,6 +19554,11 @@ Include ALL tracks. Use null for unknown fields.`;
   // clips overflow, so hearts fade out while still within its own bounds
   // rather than actually escaping the card.
   _spawnPinHearts(x, y, color = '#DC241F') {
+    // Optional via the Pin Hearts toggle in the editor's visual-effects
+    // section — gated here at the single spawn point rather than at each
+    // pin/unpin call site, so the pin itself (and the pinned-indicator
+    // update) always still happens; only the animation is suppressed.
+    if (this._config?.pin_hearts === false) return;
     const r = this.shadowRoot;
     const artEl = r.getElementById('artClick');
     if (!artEl) return;
@@ -19722,24 +19892,35 @@ Include ALL tracks. Use null for unknown fields.`;
     const isMa = this._maEntityIds?.has(this._entity);
     const agentId = this._config?.ai_conversation_agent || 'conversation.home_assistant';
 
-    const hasAI = await this._aiCheckAvailable();
-    if (_stale()) return;
-    if (!hasAI) {
-      r?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
-      const _noAiEl = content.querySelector('#ai-track-details-loading');
-      const _noAiHtml = `<div style="padding:12px 4px;text-align:center;">
-        <div style="font-size:14px;font-weight:600;color:${this._pt("text")};margin-bottom:8px;">No AI Found</div>
-        <div style="font-size:12px;color:${this._pt("dim")};line-height:1.5;">Add a conversation agent via <strong style="color:#63b3ed">Settings → Voice Assistants</strong>.</div>
-      </div>`;
-      if (_noAiEl) _noAiEl.outerHTML = _noAiHtml; else content.innerHTML = _noAiHtml;
-      return;
+    // ── AI master switch ── with AI features disabled, don't probe for an
+    // agent or show the "No AI Found" education screen — fall straight into
+    // the same _notFound branch a failed AI lookup uses further down, which
+    // is the existing Discogs → library-data fallback chain. That makes
+    // Discogs the default info panel when AI is off. Cached AI results from
+    // before the switch was turned off are deliberately ignored too, so the
+    // panel behaves consistently rather than showing AI data for some
+    // tracks and Discogs for others.
+    const _aiOff = !this._aiEnabled();
+    if (!_aiOff) {
+      const hasAI = await this._aiCheckAvailable();
+      if (_stale()) return;
+      if (!hasAI) {
+        r?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
+        const _noAiEl = content.querySelector('#ai-track-details-loading');
+        const _noAiHtml = `<div style="padding:12px 4px;text-align:center;">
+          <div style="font-size:14px;font-weight:600;color:${this._pt("text")};margin-bottom:8px;">No AI Found</div>
+          <div style="font-size:12px;color:${this._pt("dim")};line-height:1.5;">Add a conversation agent via <strong style="color:#63b3ed">Settings → Voice Assistants</strong>.</div>
+        </div>`;
+        if (_noAiEl) _noAiEl.outerHTML = _noAiHtml; else content.innerHTML = _noAiHtml;
+        return;
+      }
     }
 
     const cacheKey = ('trackinfo3|' + artistName + '|' + trackTitle).toLowerCase();
     if (!this._aiTrackInfoCache) this._aiTrackInfoCache = new Map();
 
     // Check localStorage/sessionStorage before network
-    if (!this._aiTrackInfoCache.has(cacheKey)) {
+    if (!_aiOff && !this._aiTrackInfoCache.has(cacheKey)) {
       const persisted = this._aiLocalGet('trackInfo', cacheKey)
         || this._aiSessionGet('trackInfo', cacheKey);
       // Only warm the in-session cache for complete, confident results.
@@ -19747,9 +19928,13 @@ Include ALL tracks. Use null for unknown fields.`;
       if (persisted && !persisted._incomplete) this._aiTrackInfoCache.set(cacheKey, persisted);
     }
     // Clear incomplete cached entry so we retry AI
-    let data = this._aiTrackInfoCache.get(cacheKey);
+    let data = _aiOff ? undefined : this._aiTrackInfoCache.get(cacheKey);
     if (data?._incomplete) { this._aiTrackInfoCache.delete(cacheKey); data = undefined; }
-    if (!data) {
+    if (_aiOff) {
+      // Same shape a failed AI lookup produces — routes into the _notFound
+      // handling below (MA queue metadata → Discogs → plain library data).
+      data = { album: null, year: null, label: null, duration: null, vibe: null, fact: null, similar: [], _notFound: true };
+    } else if (!data) {
       // If artist contains multiple artists (e.g. "Aerosmith & YUNGBLUD"), try the
       // primary artist first — concatenated names often cause hallucinated results.
       const primaryArtist = artistName.split(/\s*[&,]\s*/)[0].trim() || artistName;
@@ -20785,6 +20970,15 @@ Include ALL tracks. Use null for unknown fields.`;
     const persisted = this._discogsFbLocalGet(cacheKey);
     if (persisted) { this._discogsFbCache.set(cacheKey, persisted); return persisted; }
 
+    // Post-rate-limit cooldown — ported from the v0.0.1 card's safeguard,
+    // where a real 429 cached the rate-limit state for 10 seconds so rapid
+    // retries made zero network calls. The 1100ms spacing below only
+    // spreads requests out; without this, a user re-opening the panel
+    // after each spacing window keeps firing full multi-strategy searches
+    // at an API that has already told us to stop. Shared across every
+    // Discogs call path (searches, release detail, library artwork).
+    if (Date.now() < (this._discogsCooldownUntil || 0)) return 'rate_limited';
+
     // Per-instance throttle — Discogs allows ~60 req/min. If we asked too
     // recently, skip the network call entirely and report it as rate-limited
     // so the caller can tell the user, rather than silently looking like
@@ -20798,13 +20992,18 @@ Include ALL tracks. Use null for unknown fields.`;
       this._discogsFbLastReq = Date.now();
       try {
         const resp = await fetch(url, { headers });
-        if (resp.status === 429) { _hitRateLimit = true; return null; }
+        if (resp.status === 429) {
+          _hitRateLimit = true;
+          this._discogsCooldownUntil = Date.now() + 10000;
+          return null;
+        }
         return resp.ok ? resp : null;
       } catch (_) {
         // Discogs' 429 responses often omit CORS headers, so the browser
         // blocks the response entirely and fetch() throws instead of
         // returning a response object — treat that the same as a 429.
         _hitRateLimit = true;
+        this._discogsCooldownUntil = Date.now() + 10000;
         return null;
       }
     };
@@ -20862,8 +21061,13 @@ Include ALL tracks. Use null for unknown fields.`;
         } else {
           try {
             const resourceUrl = result.resource_url || `https://api.discogs.com/releases/${result.id}`;
-            const resp = await fetch(resourceUrl, { headers });
-            if (resp.ok) {
+            // Through discogsGet, not a raw fetch — this call previously
+            // bypassed the throttle timestamp and 429 detection entirely,
+            // making every lookup one unthrottled request heavier than it
+            // appeared. A rate-limited detail fetch just keeps the search
+            // stub we already have, so the panel still renders.
+            const resp = await discogsGet(resourceUrl);
+            if (resp) {
               const full = await resp.json();
               const tracks = (full.tracklist || []).filter(t => !t.type_ || t.type_ === 'track' || t.type_ === 'index');
               const merged = { ...result };
@@ -21860,6 +22064,11 @@ Include ALL tracks. Use null for unknown fields.`;
    * target count.
    */
   async _addSimilarSongsToQueue() {
+    // AI-driven feature — its quick-menu entry is hidden when AI features
+    // are off, but other entry points (queue panel shortcut) route here
+    // too, so guard with a clearer message than the generic "no agent"
+    // toast, which would misleadingly send the user to HA settings.
+    if (!this._aiEnabled()) { this._showToast('AI features are turned off in the card editor'); return; }
     this._pillPulse(10000);
     this._maBatchLoading = true;
     clearTimeout(this._maBatchLoadingTimer);
@@ -22210,7 +22419,7 @@ Include ALL tracks. Use null for unknown fields.`;
       self._showToast('No MA speakers configured — add one in the visual editor');
       return;
     }
-    const friendlyName = eid => (self._hass?.states[eid]?.attributes?.friendly_name) || eid;
+    const friendlyName = eid => self._entityDisplayName(eid);
 
     // SVG icon paths keyed by mood index
     const moodSvg = [
@@ -23294,6 +23503,10 @@ Include ALL tracks. Use null for unknown fields.`;
   // ── Artist Radio — direct play, no panel ───────────────────────────────────
   async _playArtistRadio(artistName) {
     if (!artistName) return;
+    // AI-driven feature — reached from several long-press entry points
+    // (artist name, library rows, info panel) beyond its hidden quick-menu
+    // item, so guard here at the function itself with a clear message.
+    if (!this._aiEnabled()) { this._showToast('AI features are turned off in the card editor'); return; }
     const target = this._resolveMATargetEntity() || this._getValidMASpeakers(true)[0] || this._entity;
 
     // Suppress artwork tap for 3s to prevent library opening during MA's idle transition
@@ -23881,7 +24094,7 @@ Include ALL tracks. Use null for unknown fields.`;
           self._maBatchLoading = false;
           clearTimeout(self._maBatchLoadingTimer);
           self._pillPulse(0);
-          const _spkName = self._hass?.states[_srchBarTarget]?.attributes?.friendly_name || 'speaker';
+          const _spkName = self._entityDisplayName(_srchBarTarget);
           if (action !== 'replace') {
             const label = action === 'next' ? 'Playing next' : 'Added to queue';
             self._showToast(`${label} — ${successCount} track${successCount !== 1 ? 's' : ''} on ${_spkName}`, 3000);
@@ -28755,8 +28968,12 @@ Include ALL tracks. Use null for unknown fields.`;
       // the queue panel). If other MA speakers are available to group with,
       // a small separate "+" button sits beside it — this is the one case
       // where a full sheet would be overkill for a single action.
-      const name = this._hass?.states[this._entity]?.attributes?.friendly_name || this._entity;
-      const key = 'solo-' + this._entity + (canAdd ? '-a' : '');
+      // Display name (editor per-speaker override) rather than raw
+      // friendly_name — and part of the rebuild key, so renaming a speaker
+      // in the editor refreshes the pill immediately instead of only after
+      // the next entity switch.
+      const name = this._entityDisplayName(this._entity);
+      const key = 'solo-' + this._entity + '|' + name + (canAdd ? '-a' : '');
       if (row.dataset.pillKey !== key) {
         row.dataset.pillKey = key;
         row.innerHTML =
@@ -28783,9 +29000,9 @@ Include ALL tracks. Use null for unknown fields.`;
       // "+" stays visible alongside it (same as solo mode) for quick access
       // to adding another speaker without needing to open the sheet first —
       // the sheet's own footer Add button is still there as an alternative.
-      const focusedName = this._hass?.states[this._entity]?.attributes?.friendly_name || this._entity;
+      const focusedName = this._entityDisplayName(this._entity);
       const otherCount  = entities.length - 1;
-      const key = 'group-' + entities.slice().sort().join(',') + '-' + this._entity + (canAdd ? '-a' : '');
+      const key = 'group-' + entities.slice().sort().join(',') + '-' + this._entity + '|' + focusedName + (canAdd ? '-a' : '');
       if (row.dataset.pillKey !== key) {
         row.dataset.pillKey = key;
         row.innerHTML =
@@ -28882,7 +29099,7 @@ Include ALL tracks. Use null for unknown fields.`;
 
     const list = sheet.querySelector('#mcSheetList');
     list.innerHTML = entities.map(eid => {
-      const name    = this._hass?.states[eid]?.attributes?.friendly_name || eid;
+      const name    = this._entityDisplayName(eid);
       const focused = eid === this._entity;
       return `<div class="mc-sheet-row${focused ? ' mc-sheet-row-active' : ''}" data-eid="${eid}">` +
         `<div class="mc-sheet-row-icon">${speakerSvg}</div>` +
@@ -29095,7 +29312,7 @@ Include ALL tracks. Use null for unknown fields.`;
 
     r.getElementById('maPlayTargetPanel')?.remove();
 
-    const friendlyName = eid => this._hass?.states[eid]?.attributes?.friendly_name || eid;
+    const friendlyName = eid => this._entityDisplayName(eid);
 
     // Busy detection: an entity is "busy" if it's currently in an
     // active MA join group that we didn't create — joining it would break that group.
@@ -29246,7 +29463,7 @@ Include ALL tracks. Use null for unknown fields.`;
     // Remove any existing picker
     r.getElementById('mcAddSpeakerPanel')?.remove();
 
-    const friendlyName = eid => this._hass?.states[eid]?.attributes?.friendly_name || eid;
+    const friendlyName = eid => this._entityDisplayName(eid);
 
     // Check busy state (in a different group outside our current group)
     const ourGroupResolved = new Set((currentMembers || []).map(m => this._resolveMAEntity(m)));
@@ -29312,7 +29529,7 @@ Include ALL tracks. Use null for unknown fields.`;
     // When in an existing group, group_members[0] is the MA master entity.
     const masterEid   = groupMembers ? groupMembers[0] : this._entity;
     const resolvedNew = this._resolveMAEntity(eid);
-    const name = this._hass?.states[eid]?.attributes?.friendly_name || eid;
+    const name = this._entityDisplayName(eid);
 
     const existingOthers = (groupMembers || []).filter(m => m !== masterEid);
     const allMembers = [...new Set([...existingOthers, resolvedNew])];
@@ -29394,7 +29611,7 @@ Include ALL tracks. Use null for unknown fields.`;
     // Speaker picker — only shown when there are multiple valid MA speakers.
     // Multi-select: "Play All" plays on every checked speaker; add/next use the first.
     const _allMA = this._getValidMASpeakers(true);
-    const _friendlyName = eid => this._hass?.states[eid]?.attributes?.friendly_name || eid;
+    const _friendlyName = eid => this._entityDisplayName(eid);
     const _defaultEntity = (_allMA.includes(this._lastMAPlayTarget) ? this._lastMAPlayTarget : null)
       || this._resolveMATargetEntity()
       || _allMA[0] || null;
@@ -29581,7 +29798,7 @@ Include ALL tracks. Use null for unknown fields.`;
       ? lastUsed
       : (autoResolved && allMA.includes(autoResolved) ? autoResolved : allMA[0] || null);
 
-    const friendlyName = eid => this._hass?.states[eid]?.attributes?.friendly_name || eid;
+    const friendlyName = eid => this._entityDisplayName(eid);
 
     // ── Populate static fields ─────────────────────────────────────────────
     r.getElementById('trackConfirmTitle').textContent  = trackTitle;
@@ -29745,7 +29962,7 @@ Include ALL tracks. Use null for unknown fields.`;
     if (!_allMA.length) {
       _allMA = [...(this._maEntityIds || [])].filter(eid => this._hass?.states[eid]);
     }
-    const _friendlyName = eid => this._hass?.states[eid]?.attributes?.friendly_name || eid;
+    const _friendlyName = eid => this._entityDisplayName(eid);
     let _selectedEntity = (_allMA.includes(this._lastMAPlayTarget) ? this._lastMAPlayTarget : null)
       || this._resolveMATargetEntity()
       || _allMA[0] || this._entity || null;
@@ -29884,7 +30101,7 @@ Include ALL tracks. Use null for unknown fields.`;
         type: 'call_service', domain: 'music_assistant', service: 'play_media',
         service_data: { entity_id: targetEntityId, media_id: uri, media_type: 'album', enqueue: enqueueMode, ...(enqueueMode === 'replace' && this._config?.ma_radio_mode ? { radio_mode: true } : {}) }
       });
-      const _spkName1 = this._hass?.states[targetEntityId]?.attributes?.friendly_name || targetEntityId;
+      const _spkName1 = this._entityDisplayName(targetEntityId);
       const labels = { add: `Added to queue on ${_spkName1}`, next: `Playing next on ${_spkName1}` };
       this._maBatchLoading = false; clearTimeout(this._maBatchLoadingTimer);
       if (labels[enqueueMode]) this._showToast(labels[enqueueMode]);
@@ -29923,7 +30140,7 @@ Include ALL tracks. Use null for unknown fields.`;
     const self = this;
 
     const _allMA = this._getValidMASpeakers(true);
-    const _friendlyName = eid => this._hass?.states[eid]?.attributes?.friendly_name || eid;
+    const _friendlyName = eid => this._entityDisplayName(eid);
     let _selectedEntity = (_allMA.includes(this._lastMAPlayTarget) ? this._lastMAPlayTarget : null)
       || this._resolveMATargetEntity()
       || _allMA[0] || null;
@@ -30121,7 +30338,7 @@ Include ALL tracks. Use null for unknown fields.`;
         type: 'call_service', domain: 'music_assistant', service: 'play_media',
         service_data: { entity_id: resolvedEntity, media_id: _tMediaId3, media_type: 'track', enqueue: enqueueMode, ...(enqueueMode === 'replace' && this._config?.ma_radio_mode ? { radio_mode: true } : {}) }
       });
-      const _spkName2 = this._hass?.states[resolvedEntity]?.attributes?.friendly_name || resolvedEntity;
+      const _spkName2 = this._entityDisplayName(resolvedEntity);
       const labels = { add: `Added to queue on ${_spkName2}`, next: `Playing next on ${_spkName2}` };
       if (labels[enqueueMode]) this._showToast(labels[enqueueMode]);
       return true;
@@ -31188,8 +31405,9 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       ma_radio_mode: false, ambient_glow: false, row_glow: false,
       show_remote_button: true,
       artwork_crossfade: false, show_ma_library_button: true,
-      resize_btn_spin: true, remote_art_blur: true, volume_hud: true,
+      resize_btn_spin: true, pin_hearts: true, remote_art_blur: true, volume_hud: true,
       itunes_art: true, controls_theme: 'classic', add_pill_color: '', card_liquid_glass: true, volume_hud_glass: false,
+      ai_features_enabled: false,
       ...config
     };
     // Once the editor is rendered, never re-render from setConfig.
@@ -31537,7 +31755,8 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                 const hasVol  = (this._config.entity_startup_volumes || {})[ent] != null;
                 const volVal  = hasVol ? (this._config.entity_startup_volumes || {})[ent] : '';
                 const isMaEnt = Array.isArray(this._config.ma_entities) && this._config.ma_entities.includes(ent);
-                const name    = this._hass.states[ent]?.attributes?.friendly_name || ent;
+                const _alias  = ((this._config.entity_names || {})[ent] || '').trim();
+                const name    = _alias || this._hass.states[ent]?.attributes?.friendly_name || ent;
                 return `
                   <div class="check-item" data-id="${ent}" draggable="${isSelected}">
                     <div class="drag-handle"><svg viewBox="0 0 24 24" style="width:20px;height:20px;fill:#888;display:block;"><path d="M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V21V19Z"/></svg></div>
@@ -31573,7 +31792,14 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
           </div>
 
           <div class="card-block" style="padding:14px;display:flex;flex-direction:column;gap:16px;">
-            <div style="display:flex;align-items:center;justify-content:space-between;">
+            <div>
+              <div style="font-size:13px;font-weight:500;margin-bottom:2px;">Display Name</div>
+              <div style="font-size:11px;color:#888;margin-bottom:8px;line-height:1.4;">A friendly name shown for this speaker in the card's speaker menu, instead of its Home Assistant name. Leave blank to use the Home Assistant name.</div>
+              <input type="text" id="entitySettingsDisplayName" placeholder="" autocomplete="off" autocorrect="off"
+                style="width:100%;box-sizing:border-box;padding:8px 10px;border-radius:8px;border:1px solid var(--divider-color,rgba(128,128,128,0.2));background:var(--card-background-color);color:var(--primary-text-color,#111);font-size:13px;font-family:inherit;outline:none;">
+            </div>
+
+            <div style="display:flex;align-items:center;justify-content:space-between;border-top:1px solid var(--divider-color,rgba(128,128,128,0.2));padding-top:16px;">
               <div>
                 <div style="font-size:13px;font-weight:500;margin-bottom:2px;">Startup Volume</div>
                 <div style="font-size:11px;color:#888;">Set volume when this speaker is selected</div>
@@ -32072,6 +32298,14 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
 
             <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid rgba(255,255,255,0.07);">
               <div>
+                <div style="font-size:14px;font-weight:500;">Pin Hearts</div>
+                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">A burst of hearts when double-tapping the centre of the artwork to pin or unpin. The pin itself still works with this off.</div>
+              </div>
+              <label class="toggle-switch" style="flex-shrink:0"><input type="checkbox" id="pin_hearts" checked><span class="toggle-track"></span></label>
+            </div>
+
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid rgba(255,255,255,0.07);">
+              <div>
                 <div style="font-size:14px;font-weight:500;">Resize Button Spin</div>
                 <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Spins the compact/maximise icon when toggling between views.</div>
               </div>
@@ -32085,14 +32319,21 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
         <div>
           <div class="section-title">✨ AI Settings</div>
           <div class="card-block" style="padding:12px;">
-            <div style="margin-bottom:12px;">
+            <div class="toggle-item" style="align-items:flex-start;gap:12px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid rgba(255,255,255,0.07);">
+              <div style="flex:1;">
+                <div class="toggle-label">Enable AI Features</div>
+                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Master switch for all AI features — AI Search, Vibe, Recommendations, AI Artist Radio, Add Similar Songs, Song Intro, Trivia, Mood Match, and AI-generated summaries. Off: the info panel uses Discogs data instead, and everything else in the card works as normal. Requires a conversation agent (e.g. Google Gemini) when on.</div>
+              </div>
+              <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="ai_features_enabled"><span class="toggle-track"></span></label>
+            </div>
+            <div class="ai-dep" style="margin-bottom:12px;">
               <div style="font-size:13px;font-weight:500;margin-bottom:6px;color:var(--primary-text-color, #111);">AI Agent <span class="editor-tooltip"><span class="tooltip-icon" tabindex="0">i</span><span class="tooltip-text">The AI agent used for all AI features. Google Gemini 2.0 Flash is recommended — set it up in Settings → Voice Assistants first.</span></span></div>
               <div style="font-size:11px;color:#888;margin-bottom:8px;line-height:1.4;">Used for all AI features — Recommendations, Mood, Search, Info panels and Announce AI.</div>
               <select id="ai_conversation_agent" style="width:100%;background:var(--card-background-color,rgba(255,255,255,0.07));border:1px solid var(--divider-color,rgba(128,128,128,0.2));border-radius:10px;color:var(--primary-text-color,#fff);font-size:13px;font-family:inherit;padding:10px 12px;outline:none;-webkit-appearance:none;cursor:pointer;">
                 <option value="">Default (Home Assistant)</option>
               </select>
             </div>
-            <div style="margin-top:10px;padding:8px 10px;background:rgba(99,179,237,0.06);border:1px solid rgba(99,179,237,0.12);border-radius:8px;">
+            <div class="ai-dep" style="margin-top:10px;padding:8px 10px;background:rgba(99,179,237,0.06);border:1px solid rgba(99,179,237,0.12);border-radius:8px;">
               <div style="font-size:10px;color:var(--secondary-text-color, rgba(0,0,0,0.5));line-height:1.5;">Add agents via <strong style="color:rgba(99,179,237,0.6)">Settings → Voice Assistants</strong>. Google Gemini recommended — other AI Agents may work.</div>
             </div>
             <div style="margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.07);">
@@ -32114,7 +32355,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                 <option value="">Auto-detect</option>
               </select>
             </div>
-            <div class="toggle-item" style="align-items:flex-start;gap:12px;margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.07);">
+            <div class="toggle-item ai-dep" style="align-items:flex-start;gap:12px;margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.07);">
               <div style="flex:1;">
                 <div class="toggle-label">Song Intro</div>
                 <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Shows a short AI-generated fact about the playing track below the artist name a few seconds after it starts, then fades away.</div>
@@ -32132,7 +32373,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
         </div>
 
         <!-- AI Vibe Artist Seeds -->
-        <div>
+        <div class="ai-dep">
           <div class="section-title">AI Vibe Artist Seeds</div>
           <div class="card-block" style="padding:12px;">
 
@@ -32464,6 +32705,15 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
     const titleEl = root.getElementById('entitySettingsTitle');
     if (titleEl) titleEl.textContent = name;
 
+    // Display Name override — the page title deliberately keeps showing the
+    // real HA friendly name above, so while typing an alias the user can
+    // always still see exactly which speaker they're renaming.
+    const dnInput = root.getElementById('entitySettingsDisplayName');
+    if (dnInput) {
+      dnInput.value = ((this._config.entity_names || {})[ent] || '');
+      dnInput.placeholder = name;
+    }
+
     const hasVol = (this._config.entity_startup_volumes || {})[ent] != null;
     const volVal = hasVol ? (this._config.entity_startup_volumes || {})[ent] : 35;
     const volToggle = root.getElementById('entitySettingsVolToggle');
@@ -32484,7 +32734,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
         .filter(eid => eid.startsWith('media_player.') && eid !== ent)
         .sort()
         .forEach(eid => {
-          const friendly = this._hass.states[eid]?.attributes?.friendly_name || eid;
+          const friendly = ((this._config.entity_names || {})[eid] || '').trim() || this._hass.states[eid]?.attributes?.friendly_name || eid;
           opts.push(`<option value="${eid}"${currentVe === eid ? ' selected' : ''}>${friendly}</option>`);
         });
       veSelect.innerHTML = opts.join('');
@@ -32550,6 +32800,24 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
     root.getElementById('entitySettingsBack')?.addEventListener('click', () => {
       const page = root.getElementById('entitySettingsPage');
       if (page) page.style.display = 'none';
+    });
+    // Display Name — same add/delete map pattern as entity_startup_volumes:
+    // an empty (or whitespace-only) value removes the key entirely so YAML
+    // stays clean and the HA friendly name takes over again. Saved on
+    // change (blur/Enter) rather than per-keystroke, so the config isn't
+    // dispatched mid-typing. Also live-updates the entity list row behind
+    // the settings page, so the new name is already visible on Back.
+    root.getElementById('entitySettingsDisplayName')?.addEventListener('change', (e) => {
+      const page = root.getElementById('entitySettingsPage');
+      const ent = page?.dataset.ent;
+      if (!ent) return;
+      const val = e.target.value.trim();
+      const names = { ...(this._config.entity_names || {}) };
+      if (val) names[ent] = val;
+      else delete names[ent];
+      this._updateConfig('entity_names', names);
+      const row = root.querySelector(`.check-item[data-id="${ent}"] .entity-name`);
+      if (row) row.textContent = val || this._hass.states[ent]?.attributes?.friendly_name || ent;
     });
     root.getElementById('entitySettingsVolToggle')?.addEventListener('change', (e) => {
       const page = root.getElementById('entitySettingsPage');
@@ -33118,6 +33386,12 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       artCrossfadeEl.onchange = (e) => this._updateConfig('artwork_crossfade', e.target.checked);
     }
 
+    const pinHeartsEl = root.getElementById('pin_hearts');
+    if (pinHeartsEl) {
+      pinHeartsEl.checked = this._config?.pin_hearts !== false;
+      pinHeartsEl.onchange = (e) => this._updateConfig('pin_hearts', e.target.checked);
+    }
+
     const showRemoteBtnEl = root.getElementById('show_remote_button');
     if (showRemoteBtnEl) {
       showRemoteBtnEl.checked = this._config?.show_remote_button !== false;
@@ -33145,6 +33419,26 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
     if (showYoutubeBtnEl) {
       showYoutubeBtnEl.checked = this._config?.show_youtube_button !== false;
       showYoutubeBtnEl.onchange = (e) => this._updateConfig('show_youtube_button', e.target.checked);
+    }
+    // Master AI Features switch — also dims every AI-dependent control in
+    // the editor (.ai-dep: agent picker, agent note, Song Intro, AI Vibe
+    // Artist Seeds) while off, so it's immediately clear those settings
+    // have no effect until AI is enabled. Dimmed rather than hidden so
+    // users can still see what enabling AI would unlock.
+    const _applyAiDepState = (on) => {
+      root.querySelectorAll('.ai-dep').forEach(el => {
+        el.style.opacity = on ? '' : '0.35';
+        el.style.pointerEvents = on ? '' : 'none';
+      });
+    };
+    const aiFeaturesEl = root.getElementById('ai_features_enabled');
+    if (aiFeaturesEl) {
+      aiFeaturesEl.checked = this._config?.ai_features_enabled === true;
+      _applyAiDepState(aiFeaturesEl.checked);
+      aiFeaturesEl.onchange = (e) => {
+        this._updateConfig('ai_features_enabled', e.target.checked);
+        _applyAiDepState(e.target.checked);
+      };
     }
     const songIntroEl = root.getElementById('song_intro_enabled');
     if (songIntroEl) {
@@ -33831,9 +34125,9 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       ma_radio_mode: false, ambient_glow: false, row_glow: false,
       show_remote_button: true,
       artwork_crossfade: false, show_ma_library_button: true,
-      resize_btn_spin: true, remote_art_blur: true, volume_hud: true,
+      resize_btn_spin: true, pin_hearts: true, remote_art_blur: true, volume_hud: true,
       itunes_art: true, controls_theme: 'classic', add_pill_color: '',
-      ai_conversation_agent: '',
+      ai_features_enabled: false, ai_conversation_agent: '',
       share_service: 'youtube_music',
       show_media_type_pill: false,
       show_youtube_button: true,
@@ -33870,9 +34164,9 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       ma_radio_mode: false, ambient_glow: false, row_glow: false,
       show_remote_button: true,
       artwork_crossfade: false, show_ma_library_button: true,
-      resize_btn_spin: true, remote_art_blur: true, volume_hud: true,
+      resize_btn_spin: true, pin_hearts: true, remote_art_blur: true, volume_hud: true,
       itunes_art: true, controls_theme: 'classic', add_pill_color: '',
-      ai_conversation_agent: '',
+      ai_features_enabled: false, ai_conversation_agent: '',
       share_service: 'youtube_music',
       show_media_type_pill: false,
       show_youtube_button: true,

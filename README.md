@@ -10,7 +10,7 @@ CrowAI is about **discovery** as much as playback — AI-powered info panels, re
 
 > ⚠️ **Music Assistant Queue Actions is required** for the Recommended tab, full queue browsing and library drill-in. See [Music Assistant Queue Actions](https://github.com/droans/mass_queue) below.
 
-> ⚠️ **Google Gemini is required** for all AI features — AI Info Panel, Vibe Queue Builder, AI Search, Recommendations, AI Artist Radio, Announce AI Improve and Send Message AI. See [AI Features Setup](#-ai-features-setup-google-gemini--required) below.
+> ✨ **AI features are optional and off by default.** Turn on **Enable AI Features** in the editor's AI Settings to unlock them — they need a conversation agent such as Google Gemini (see [AI Features Setup](#-ai-features-setup-optional) below). With AI off, the info panel shows **Discogs** data instead and everything else in the card works as normal.
 
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2026+-blue)
 ![HACS](https://img.shields.io/badge/HACS-Custom-orange)
@@ -43,9 +43,9 @@ CrowAI is about **discovery** as much as playback — AI-powered info panels, re
 
 ---
 
-## 🤖 AI Features Setup (Google Gemini) — Required
+## 🤖 AI Features Setup (Optional)
 
-All AI features are powered by **Google Gemini** via Home Assistant's conversation integration. **This setup is required for the card's core AI features to function.**
+AI features are **off by default** — the card works fully without them, using Discogs for the info panel. To unlock the AI features (AI Info Panel, Vibe Queue Builder, AI Search, Recommendations, AI Artist Radio, Song Intro, Music/Video Recap summaries, Announce AI Improve and Send Message AI), turn on **Enable AI Features** at the top of the editor's **AI Settings** section, then set up a conversation agent. **Google Gemini** is the recommended and best-tested agent:
 
 ### Step 1 — Enable the Generative Language API
 
@@ -71,7 +71,7 @@ All AI features are powered by **Google Gemini** via Home Assistant's conversati
 
 ### Step 4 — Configure the Card
 
-In the card's visual editor, find the **AI Settings** section and select **Google AI Conversation** from the AI Agent dropdown.
+In the card's visual editor, open the **AI Settings** section, turn on **Enable AI Features**, and select **Google AI Conversation** from the AI Agent dropdown.
 
 > 💡 Other conversation agents (Claude, OpenAI, Home Assistant's built-in AI, Ollama, etc., added via **Settings → Voice Assistants**) may also work for general-knowledge features like Media Info, but Google Gemini is the recommended and best-tested option.
 
@@ -139,12 +139,13 @@ Repository: [github.com/droans/mass_queue](https://github.com/droans/mass_queue)
 - 🔄 **Automatic device switching** — card follows whichever device starts playing
 - 🎵 **Full media controls** — play/pause, skip, shuffle, repeat, seek via progress bar
 - ⏩ **Double-tap to seek** — double-tap left or right of artwork to seek −15s or +15s
-- 💗 **Double-tap to pin** — double-tap the *center* of the artwork to pin whatever's currently playing — a song, movie, TV show, or radio station — with a burst of red hearts floating up from the tap point (grey for unpinning). For radio, this uses the same station identification as the LIVE pill, so it only works once the station's been resolved (usually near-instant, but a station that's never been looked up this session may need a moment, or a tap of the LIVE pill first)
+- 💗 **Double-tap to pin** — double-tap the *center* of the artwork to pin whatever's currently playing — a song, movie, TV show, or radio station — with a burst of red hearts floating up from the tap point (grey for unpinning; the heart burst can be turned off with the **Pin Hearts** toggle in Visual Effects, the pin itself always works). For radio, this uses the same station identification as the LIVE pill, so it only works once the station's been resolved (usually near-instant, but a station that's never been looked up this session may need a moment, or a tap of the LIVE pill first)
 - 📍 **Pinned indicator** — a small pin badge appears in the bottom-left corner of the artwork whenever the currently playing track/movie/show/radio station is pinned, and updates live regardless of which of the card's several pin buttons was used. Tap it to unpin — shows an iOS-style confirmation first, then the same grey heart-burst as unpinning via double-tap
-- 🖼️ **Artwork tap actions** — single-tap opens AI Info (music) or Media Info (TV/movies); double-tap the left or right edge to seek −15s/+15s, double-tap the center to pin; long-press opens lyrics
+- 🖼️ **Artwork tap actions** — single-tap opens the info panel (music: AI Info or Discogs; TV/movies: Media Info; live radio with track metadata: that track's info); double-tap the left or right edge to seek −15s/+15s, double-tap the center to pin; long-press opens lyrics
 - 🖼️ **Artwork zoom** — tap the mini album art in the AI Info panel or album view to see a larger version
 - ✨ **Tactile button feedback** — glow and blur effects when buttons are pressed
 - 🔊 **Volume control** — slider or +/− buttons with optional per-speaker routing to a separate volume entity (e.g. an amp or receiver), configured on that speaker's own settings page in the editor
+- 🏷️ **Speaker Display Names** — give any speaker a short friendly name on its settings page in the editor; it's used everywhere the card shows a speaker (speaker menu, summary pill, group sheets, Announce, toasts) while Home Assistant keeps the real name
 - 📊 **Volume HUD** — sleek overlay showing current level; fades after 1.5 seconds
 - 🔇 **Mute toggle** — tap the volume badge or speaker icon to instantly mute/unmute
 - 🖼️ **Album artwork** — automatic iTunes artwork lookup when no artwork is provided
@@ -152,7 +153,7 @@ Repository: [github.com/droans/mass_queue](https://github.com/droans/mass_queue)
 - 🎛️ **Player Icon Themes** — eight icon sets: Standard, Modern, Robot, Chunky, Retro, Sharp, Pixel and LCD
 - 🌈 **Ambient glow** — extracts dominant colour from artwork and applies a subtle glow
 - 📻 **Radio mode indicator** — tap the radio icon to turn radio mode off immediately
-- 🔴 **Live station identification** — a LIVE pill appears on the artwork while a radio stream plays, on any speaker type (MA or native); tap it to see the station's format, country, votes, website and description, and the artwork automatically resolves to the station's own logo when available
+- 🔴 **Live station identification** — a LIVE pill appears on the artwork while a radio stream plays, on any speaker type (MA or native); tap it to see the station's format, country, votes, website and description, and the artwork automatically resolves to the station's own logo when available. Stations played straight from the Music Assistant library are identified from MA itself, so their panel opens (fully playable and pinnable) even when radio-browser.info doesn't know them. When a station broadcasts real track metadata (artist + title), tapping the *artwork* opens that track's own info panel with the station shown as a badge — the LIVE pill itself always opens the station panel
 - 📻 **HA Radio Browser integration** — browse Home Assistant's own Radio Browser categories (Popular, By Country, By Genre, etc.) directly from the Radio tab, alongside direct radio-browser.info search
 - 🏷️ **Live/Podcast/Audiobook pill** — optional badge on the artwork screen identifying what's currently playing (off by default)
 - 📋 **Multi-device support** — manage Apple TV, HomePod and Music Assistant speakers from one card
@@ -163,7 +164,7 @@ Repository: [github.com/droans/mass_queue](https://github.com/droans/mass_queue)
 ### AI Features
 
 - ✨ **AI Info Panel** — tap the artwork while music plays: year, label, length, fun fact, genre tags, band members / artist section, similar tracks; all AI-generated and cached per track
-- 💿 **Discogs Fallback** — when AI can't identify a track, the card automatically looks it up on Discogs instead: year, label, length, tappable genre tags, artist section and a full tracklist with community rating, in the same panel layout. The header switches to "Discogs Info" so it's clear where the data came from; tapping a tracklist row opens that track's own AI Info, same as everywhere else in the card.
+- 💿 **Discogs Panel** — the default info panel when AI features are off, and the automatic fallback when AI can't identify a track: year, label, length, tappable genre tags, artist section and a full tracklist with community rating, in the same panel layout. The header reads "Discogs Info" so it's clear where the data came from; tapping a tracklist row opens that track's own info, same as everywhere else in the card. Built-in rate-limit protection backs off automatically for 10 seconds whenever Discogs asks the card to slow down.
 - 💬 **Song Intro** — a short, intriguing one-line fact about the playing track appears below the artist name a few seconds after it starts, then fades away; off by default, toggle in AI Settings
 - 🎭 **Vibe Queue Builder** — 100+ vibes across Energy, Calm, Focus, Mood, Social, Decades, Genre, Time, Seasons and Binaural & Noise; builds a themed MA queue instantly
 - 🔍 **AI Search** — natural language search, up to 18 results per query; available as a standalone panel, a box at the top of the library, and a dedicated AI search button next to the Songs, Artists and Albums tab search bars (each returns matching tracks, artists or albums respectively, on top of the tab's normal exact-match search)
@@ -172,9 +173,9 @@ Repository: [github.com/droans/mass_queue](https://github.com/droans/mass_queue)
 - 📻 **AI Artist Radio** — builds a continuous radio queue around any artist
 - 🎵 **Similar Tracks / Similar Movies & Shows** — up to 10 shown in the AI Info / Media Info panels; tap to drill in, long-press for the enqueue menu
 - 👥 **Band Members / Artist** — tap any member for their bio with photo, fun fact and Known For songs; tap the bio photo to zoom
-- 💬 **Announce AI Improve** — rewrites your announcement naturally (requires Gemini)
-- 📨 **Send Message AI** — improves your notification text (requires Gemini)
-- 📚 **Audiobook search** — find free, public-domain audiobooks via LibriVox/Archive.org, with AI-assisted query refinement (requires Gemini)
+- 💬 **Announce AI Improve** — rewrites your announcement naturally
+- 📨 **Send Message AI** — improves your notification text
+- 📚 **Audiobook search** — find free, public-domain audiobooks via LibriVox/Archive.org, with AI-assisted query refinement when AI features are enabled (plain search works without)
 - 🎙️ **Podcast search** — search iTunes for podcasts and pin your favourites
 - 🎬 **Find Soundtrack** — available from the media player's quick menu while watching on Apple TV, and from the long-press menu on any Pinned Movie/TV Show — opens an AI-powered search for "Music from [title]"
 - ▶️ **Open on YouTube / Trailer** — a button in the AI Info / Media Info panel header, next to Share: opens a YouTube search for the current song, or the trailer for a movie/TV show. Always searches YouTube specifically regardless of your configured Share service. Toggle in **Appearance & Behaviour**
@@ -229,6 +230,8 @@ Decade moods search your MA library for chart compilations first, then fall back
 | Share | Copies track info + a link to your chosen music service (see [Sharing](#sharing)) |
 | More Info | Opens AI/Media Info panel |
 
+> The AI entries (AI Search, Vibe, Add Similar Songs, Recommendations, AI Artist Radio) only appear when **Enable AI Features** is on.
+
 ### Multi-Room Multicast
 
 - Play the same audio on multiple MA speakers simultaneously
@@ -261,7 +264,7 @@ Save the current queue as a named snapshot from the queue's 3-dot menu — **Pin
 Open from the quick menu for a personal snapshot of your recent listening.
 
 - **Top Artists & Top Tracks** — up to 10 each, ranked by play count over a rolling last-7-days window
-- **AI summary** — a short, warm write-up of your week's listening, regenerated fresh every time the panel opens (not cached, so it always matches the numbers below it)
+- **AI summary** — a short, warm write-up of your week's listening, regenerated fresh every time the panel opens (not cached, so it always matches the numbers below it). Requires AI features to be enabled — the stats themselves work without AI
 - **Tap a track** to open its AI Info panel; **tap an artist** to open their bio — the same panels used throughout the card
 - **What counts as a play** — a track has to play past 30 seconds or half its duration (whichever is smaller) to be logged, so quick skips don't pollute your stats
 - **What's excluded** — radio streams, podcasts, audiobooks, and system/notification sounds (e.g. announcements) never count toward your Recap
@@ -276,7 +279,7 @@ Open from the quick menu for a personal snapshot of your recent listening.
 The same idea as Music Recap, but for movies and TV shows, reachable the same way — a personal snapshot of what's been watched on Apple TV or any other tracked video entity.
 
 - **Top Shows & Top Movies** — ranked by play count over a rolling last-7-days window
-- **AI summary** — a fresh, warm write-up of the week's viewing, regenerated every time the panel opens
+- **AI summary** — a fresh, warm write-up of the week's viewing, regenerated every time the panel opens; requires AI features to be enabled — the stats themselves work without AI
 - **Tap a title** to open its Media Info panel — poster, synopsis, cast, Similar Movies/Shows, all the same navigation used elsewhere in the card
 - **What's excluded** — entries that turn out to just be a bare date (some sources report a recording's date instead of a real title when no title metadata is available) are filtered out automatically, both going forward and retroactively from anything already logged
 - **Clear History** — same iOS-style confirmation pattern as Music Recap; enable **AI Info Persistent Storage** in **Caches & Data** so this history survives app restarts. Same history [Watch History](#music-assistant-library-browser) reads from, so clearing either one clears both
@@ -310,7 +313,7 @@ Share is available from the quick menu, the AI Info / Media Info panels, and the
 - Similar Tracks — tap to drill in, long-press for enqueue menu
 - Mini album art — tap to view a larger version
 - Action bar: Play Now, Add, Play Next, Add Album
-- **Discogs Fallback** — if AI has no info for a track, the same panel automatically falls back to Discogs instead, with a full tracklist and community rating added; the header reads "Discogs Info" rather than "AI Info" so it's clear where the data came from. Tapping a track in the Discogs tracklist opens that track's own AI Info
+- **Discogs Panel** — the default panel when AI features are off, and the automatic fallback if AI has no info for a track: same layout with a full tracklist and community rating added; the header reads "Discogs Info" rather than "AI Info" so it's clear where the data came from. Tapping a track in the Discogs tracklist opens that track's own info
 
 **TV Shows:**
 - Poster (tap to zoom), genre tags, overview, cast
@@ -368,11 +371,11 @@ The editor includes a filter box at the top (search any setting by name) and a *
 
 | Section | Settings |
 |---------|---------|
-| Manage & Reorder Media Players | Drag-and-drop reorder; enable/disable; tap a speaker's name to open its own dedicated settings page (Startup Volume, Volume Entity, MA Speaker toggle) |
+| Manage & Reorder Media Players | Drag-and-drop reorder; enable/disable; tap a speaker's name to open its own dedicated settings page (Display Name, Startup Volume, Volume Entity, MA Speaker toggle) |
 | Appearance & Behaviour *(collapsible)* | Follow HA Theme, Auto Switch, Remember Last Speaker, Media Player Selector, Music Library Layout (iOS-style category list vs. classic tab bar), Always Show Library Button, Show Remote Button, Apple TV Keyboard Panel, Default Radio Mode on Startup, iTunes Artwork Fallback, Show Volume HUD, Live/Podcast/Audiobook Pill, Show YouTube Button, Volume Buttons, Volume Percentage, Scroll Long Text, Lyrics persistence and caching, and a **Startup & Navigation** sub-section (Startup View, Retain Current View, Remote Button Row Position) |
 | Caches & Data *(collapsible)* | AI caches (bios, trivia, where-to-watch, content warnings, year-in-music, vibe history, AI response cache), artwork caches (iTunes, Wikipedia) with Persistent Storage toggles, library & radio caches (MA library, radio stations, HA registry), lyrics cache & scroll style with its own Persistent Storage toggle, and management of all pinned items including a **Show Pins in Sections** toggle, a Persistent Pin Storage toggle and a Clear Persistent Storage button |
-| Visual Effects | Card Liquid Glass, Remote Liquid Glass, Volume HUD Liquid Glass, Ambient Glow, Library & Queue Row Glow, Artwork Crossfade, Resize Button Spin |
-| ✨ AI Settings | AI Agent selector, Share Track service (YouTube Music, Apple Music, Spotify, Tidal, Amazon Music, Deezer), Announce TTS Service, Song Intro toggle |
+| Visual Effects | Card Liquid Glass, Remote Liquid Glass, Volume HUD Liquid Glass, Ambient Glow, Library & Queue Row Glow, Artwork Crossfade, Pin Hearts, Resize Button Spin |
+| ✨ AI Settings | **Enable AI Features** master switch (off by default), AI Agent selector, Share Track service (YouTube Music, Apple Music, Spotify, Tidal, Amazon Music, Deezer), Announce TTS Service, Song Intro toggle |
 | AI Vibe Artist Seeds | Playlist search terms and radio fallback artist per vibe; fully customisable |
 | Colours & Themes *(collapsible)* | Controls Theme (12 presets), Player Icon Theme (8 sets), accent, volume accent, title, artist, button, +Add pill, volume %, custom background and lyrics colours, with live preview |
 
@@ -388,6 +391,7 @@ entities:
   - media_player.mass_living_room
 ma_entities:
   - media_player.mass_living_room
+ai_features_enabled: true
 ai_conversation_agent: conversation.google_generative_ai
 accent_color: '#007AFF'
 controls_theme: classic
@@ -411,7 +415,7 @@ ma_ios_library: true
 show_pins_in_sections: true
 ```
 
-> **Note:** `ma_entities` should list your MA speaker entities (e.g. `media_player.mass_kitchen_homepod`). These do **not** need to also appear in `entities`.
+> **Note:** `ma_entities` should list your MA speaker entities (e.g. `media_player.mass_kitchen_homepod`). These do **not** need to also appear in `entities`. AI features are **off by default** — the example above enables them; leave `ai_features_enabled` out (or set it `false`) for a Discogs-powered card with no AI.
 
 ---
 
@@ -420,7 +424,8 @@ show_pins_in_sections: true
 **AI features show "Could not build queue" or "AI rate limit reached"**
 - Your Gemini daily quota (1,500 requests for `gemini-2.0-flash`) is exhausted. It resets daily.
 
-**AI features show "No AI agent found" or don't work**
+**AI features are missing from the quick menu, or don't work**
+- Check **Enable AI Features** is turned on in the editor's **AI Settings** — AI is off by default, and its quick-menu entries are hidden until it's enabled.
 - Ensure the **Generative Language API** is enabled in Google Cloud Console — this is the most common setup mistake.
 - Confirm **Google AI Conversation** is selected as the AI Agent in the visual editor.
 
