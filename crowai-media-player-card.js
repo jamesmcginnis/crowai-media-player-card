@@ -1182,7 +1182,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           const _restoreLabels = {
             track: 'Songs', artist: 'Artists', album: 'Albums', playlist: 'Playlists',
             recently_added: 'Recently Added', radio: 'Radio', podcast: 'Podcasts',
-            audiobook: 'Audiobooks', movie_tv: 'Movies & TV', pinned: 'Pinned',
+            audiobook: 'Audiobooks', movie_tv: 'Movies & TV', pinned: 'Pins',
             favourites: 'Favourites', recommended: 'Made for You',
             recent_searches: 'Recent Searches',
           };
@@ -4605,7 +4605,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         if (isMa) items.push({ id: 'qm_queue', label: 'Queue', icon: SVG.queue, active: false });
 
         // AI Search — MA only
-        if (this._aiEnabled() && (isMa || hasMA)) items.push({ id: 'qm_ai_search', label: 'AI Search', icon: '<svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>', active: false });
+        if (this._aiEnabled() && (isMa || hasMA)) items.push({ id: 'qm_ai_search', label: 'Search', icon: '<svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>', active: false });
 
         // Library — always available. Several of its tabs (Movies & TV,
         // Radio, Podcasts, Audiobooks) never needed MA in the first place,
@@ -5569,7 +5569,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             id: 'qmAISearch',
             _needsMA: !isMa && hasMA,
             icon: '<svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>',
-            label: 'AI Search',
+            label: 'Search',
             extraClass: ''
           });
         }
@@ -9052,7 +9052,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       { tab: 'recent_plays', label: 'Music History', color: '#64D2FF', path: 'M12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12.5,7V12.25L17,14.92L16.25,16.15L11,13V7H12.5Z' },
       { tab: 'recently_watched', label: 'Watch History', color: '#A78BFA', path: 'M21,3H3C1.89,3 1,3.89 1,5V19A2,2 0 0,0 3,21H21A2,2 0 0,0 23,19V5C23,3.89 22.1,3 21,3M21,19H3V5H21V19M18,13.5L15.5,15.15L15.5,11.85L18,13.5M13,15.5L10.5,17.15L10.5,13.85L13,15.5M8,13.5L5.5,15.15L5.5,11.85L8,13.5Z' },
       { tab: 'recently_added', label: 'Recently Added', color: '#00C7BE', path: 'M13,3A9,9 0 0,0 4,12H1L4.89,15.89L4.96,16.03L9,12H6A7,7 0 0,1 13,5A7,7 0 0,1 20,12A7,7 0 0,1 13,19C11.07,19 9.32,18.21 8.06,16.94L6.64,18.36C8.27,19.99 10.52,21 13,21A9,9 0 0,0 22,12A9,9 0 0,0 13,3M14,8H12V13L16.28,15.54L17,14.33L13.5,12.25V8H14Z' },
-      { tab: 'pinned',         label: 'Pinned',         color: '#FFD60A', path: 'M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z' },
+      { tab: 'pinned',         label: 'Pins',           color: '#FFD60A', path: 'M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z' },
       { tab: 'favourites',  label: 'Favourites',    color: '#FF9500', path: 'M12,17.27L18.18,21L16.54,13.97L22,9.24L14.81,8.62L12,2L9.19,8.62L2,9.24L7.45,13.97L5.82,21L12,17.27Z' },
       { tab: 'recommended', label: 'Made for You',  color: '#FF3B30', path: 'M12,21.35L10.55,20.03C5.4,15.36 2,12.27 2,8.5C2,5.41 4.42,3 7.5,3C9.24,3 10.91,3.81 12,5.08C13.09,3.81 14.76,3 16.5,3C19.58,3 22,5.41 22,8.5C22,12.27 18.6,15.36 13.45,20.03L12,21.35Z' },
       { tab: 'playlist',    label: 'Playlists',     color: '#FF9F0A', path: 'M15,6H3V8H15V6M15,10H3V12H15V10M3,16H11V14H3V16M17,6V14.18C16.69,14.07 16.35,14 16,14A4,4 0 0,0 12,18A4,4 0 0,0 16,22A4,4 0 0,0 20,18V8H23V6H17Z' },
@@ -9225,6 +9225,20 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   _maNavigateToLibrarySearch(query) {
     const rr = this.shadowRoot;
     const el = rr.getElementById('maIosView');
+
+    // Ensure the MA library browser popup is actually visible — this
+    // function only used to update the browser's internal DOM state and
+    // assumed _openMABrowser() had already been called to reveal it. That's
+    // true when reached from the Library's own root search box (browser
+    // already open), but not when reached from elsewhere, like the AI
+    // Search panel opened via the queue overflow menu or quick-actions menu
+    // (the browser popup was never opened there) — in that case everything
+    // below was silently updating hidden DOM and nothing appeared on screen.
+    const maPopup = rr.getElementById('maPopup');
+    if (maPopup && !maPopup.classList.contains('visible')) {
+      this._maBrowserOpenedAt = Date.now(); // matches _openMABrowser's backdrop-guard bookkeeping
+      maPopup.classList.add('visible');
+    }
 
     if (!this._maBrowserNavStack) this._maBrowserNavStack = [];
     this._maBrowserNavStack.push({ tab: '__ios_root__', label: 'Library' });
@@ -12643,7 +12657,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     this._pinnedDetailActive = false;
     this._pinnedDetailCategory = null;
     const titleEl = this.shadowRoot?.getElementById('maTitle');
-    if (titleEl) titleEl.textContent = 'Pinned';
+    if (titleEl) titleEl.textContent = 'Pins';
 
     const rows = this._pinnedCategoryDefs()
       .map(cat => ({ cat, count: this._getPinnedCategoryItems(cat.key).length }));
@@ -24728,14 +24742,12 @@ Include ALL tracks. Use null for unknown fields.`;
       };
       _doSearchFn = _doSearch; // update hoisted ref so initialQuery block can call it
 
-      // The blue "Search" button specifically runs a plain Music Assistant
-      // library search instead of the AI round-trip above — same
-      // cross-category flow as the Library root screen's search button.
-      // Pressing Enter in the input still goes through the AI-powered
-      // _doSearch (kept for the other entry points into this panel, like
-      // "Music from {album}" soundtrack search, which need AI's descriptive
-      // matching to work at all — a literal MA search for that text
-      // wouldn't return anything meaningful).
+      // Enter in the input runs the AI-powered round-trip (_doSearch) —
+      // matches the placeholder's "Describe what you want to hear…" framing.
+      // The blue "Search" button instead runs a plain Music Assistant
+      // library search (_doLibrarySearch) — same cross-category search used
+      // by the Library root screen's own search box — so there's a quick
+      // literal-match option alongside the AI-curated one.
       const _doLibrarySearch = () => {
         const _activeInp = content.querySelector('#ai-search-input');
         const q = (_activeInp?.value || inp?.value || '').trim();
@@ -24750,13 +24762,13 @@ Include ALL tracks. Use null for unknown fields.`;
         const inp2 = content.querySelector('#ai-search-input');
         const btn2 = content.querySelector('#ai-search-btn');
         const clr2 = content.querySelector('#ai-search-clear');
-        if (inp2) inp2.addEventListener('keydown', e => { if (e.key === 'Enter') _doLibrarySearch(); });
+        if (inp2) inp2.addEventListener('keydown', e => { if (e.key === 'Enter') _doSearch(); });
         if (btn2) btn2.addEventListener('click', _doLibrarySearch);
         if (clr2) clr2.addEventListener('click', () => { _renderSearch(); _wireInputOnly(); });
         if (inp2) setTimeout(() => inp2.focus(), 50);
       };
 
-      if (inp) inp.addEventListener('keydown', e => { if (e.key === 'Enter') _doLibrarySearch(); });
+      if (inp) inp.addEventListener('keydown', e => { if (e.key === 'Enter') _doSearch(); });
       if (btn) btn.addEventListener('click', _doLibrarySearch);
       if (clr) clr.addEventListener('click', () => { _renderSearch(); _wireInputOnly(); });
       if (inp) inp.addEventListener('input', () => {
@@ -24931,7 +24943,7 @@ Include ALL tracks. Use null for unknown fields.`;
       const _inp0 = content.querySelector('#ai-search-input');
       const _btn0 = content.querySelector('#ai-search-btn');
       const _clr0 = content.querySelector('#ai-search-clear');
-      if (_inp0) _inp0.addEventListener('keydown', e => { if (e.key === 'Enter') _doLibrarySearchFn?.(); });
+      if (_inp0) _inp0.addEventListener('keydown', e => { if (e.key === 'Enter') _doSearchFn?.(); });
       if (_btn0) _btn0.addEventListener('click', () => _doLibrarySearchFn?.());
       if (_clr0) _clr0.addEventListener('click', () => { _renderSearch(); _wireInputOnly?.(); });
       if (_inp0) _inp0.value = initialQuery;
