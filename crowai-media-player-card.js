@@ -4625,6 +4625,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         // Add Songs from Same Year — MA only
         if (this._aiEnabled() && isMa) items.push({ id: 'qm_add_same_year', label: 'Add Songs from Same Year', icon: '<svg viewBox="0 0 24 24"><path d="M9 11H7v2h2v-2zm4 0h-2v2h2v-2zm4 0h-2v2h2v-2zm2-7h-1V2h-2v2H8V2H6v2H5c-1.11 0-1.99.9-1.99 2L3 20a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm0 16H5V9h14v11z"/></svg>', active: false });
 
+        // Add Songs from Same Genre & Year — MA only
+        if (this._aiEnabled() && isMa) items.push({ id: 'qm_add_same_genre_year', label: 'Add Songs from Same Genre & Year', icon: '<svg viewBox="0 0 24 24"><path d="M12 3l1.9 4.5L18 9l-4.1 1.5L12 15l-1.9-4.5L6 9l4.1-1.5L12 3zm6.5 10l.9 2.1L21.5 16l-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9.9-2.1zM5 12l1 2.5L8.5 15 6 16l-1 2.5L4 16l-2.5-1L4 14.5 5 12z"/></svg>', active: false });
+
+        // Add Songs from Same Genre — MA only
+        if (this._aiEnabled() && isMa) items.push({ id: 'qm_add_same_genre', label: 'Add Songs from Same Genre', icon: '<svg viewBox="0 0 24 24"><path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9-4.03-9-9-9zm0 16c-3.86 0-7-3.14-7-7s3.14-7 7-7 7 3.14 7 7-3.14 7-7 7zm.5-11H11v6l5.25 3.15.75-1.23-4.5-2.67V8z"/></svg>', active: false });
+
         // Play Album — MA only, only when a track with album info is playing
         const _qmAlbum = state?.attributes?.media_album_name || '';
         const _qmType  = state?.attributes?.media_content_type || '';
@@ -4808,6 +4814,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             else if (item.id === 'qm_soundtrack')   { expand().then(() => _runMA(() => this._showAISearchPanel(`Music from ${item._atMedia}`))); }
             else if (item.id === 'qm_add_similar')  { expand().then(() => { this._queuePanelDirection = null; item._needsMA ? this._switchToMAAndRun(() => this._addSimilarSongsToQueue()) : this._addSimilarSongsToQueue(); }); }
             else if (item.id === 'qm_add_same_year') { expand().then(() => { this._queuePanelDirection = null; item._needsMA ? this._switchToMAAndRun(() => this._addSameYearSongsToQueue()) : this._addSameYearSongsToQueue(); }); }
+            else if (item.id === 'qm_add_same_genre_year') { expand().then(() => { this._queuePanelDirection = null; item._needsMA ? this._switchToMAAndRun(() => this._addSameGenreYearSongsToQueue()) : this._addSameGenreYearSongsToQueue(); }); }
+            else if (item.id === 'qm_add_same_genre') { expand().then(() => { this._queuePanelDirection = null; item._needsMA ? this._switchToMAAndRun(() => this._addSameGenreSongsToQueue()) : this._addSameGenreSongsToQueue(); }); }
             else if (item.id === 'qm_play_album')   { expand().then(() => { this._queuePanelDirection = null; item._needsMA ? this._switchToMAAndRun(() => this._playAlbum()) : this._playAlbum(); }); }
             else if (item.id === 'qm_artist_radio') { expand().then(() => { this._queuePanelDirection = null; this._playArtistRadio(item._curArtist); }); }
             else if (item.id === 'qm_announce')     { expand().then(() => this._showAnnouncePanel()); }
@@ -5599,6 +5607,28 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           });
         }
 
+        // Add Songs from Same Genre & Year — MA only
+        if (isMa || hasMA) {
+          items.push({
+            id: 'qmAddSameGenreYear',
+            _needsMA: !isMa && hasMA,
+            icon: '<svg viewBox="0 0 24 24"><path d="M12 3l1.9 4.5L18 9l-4.1 1.5L12 15l-1.9-4.5L6 9l4.1-1.5L12 3zm6.5 10l.9 2.1L21.5 16l-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9.9-2.1zM5 12l1 2.5L8.5 15 6 16l-1 2.5L4 16l-2.5-1L4 14.5 5 12z"/></svg>',
+            label: 'Add Songs from Same Genre & Year',
+            extraClass: ''
+          });
+        }
+
+        // Add Songs from Same Genre — MA only
+        if (isMa || hasMA) {
+          items.push({
+            id: 'qmAddSameGenre',
+            _needsMA: !isMa && hasMA,
+            icon: '<svg viewBox="0 0 24 24"><path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9-4.03-9-9-9zm0 16c-3.86 0-7-3.14-7-7s3.14-7 7-7 7 3.14 7 7-3.14 7-7 7zm.5-11H11v6l5.25 3.15.75-1.23-4.5-2.67V8z"/></svg>',
+            label: 'Add Songs from Same Genre',
+            extraClass: ''
+          });
+        }
+
         // Play Album — MA only, only when a track with album info is playing
         const _qdAlbum  = this._hass?.states[this._entity]?.attributes?.media_album_name || '';
         const _qdState  = this._hass?.states[this._entity]?.state;
@@ -5780,6 +5810,24 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           this._queuePanelDirection = null;
           const _qSameYear = () => this._addSameYearSongsToQueue();
           items.find(i => i.id === 'qmAddSameYear')?._needsMA ? this._switchToMAAndRun(_qSameYear) : _qSameYear();
+        });
+
+        // ── Add Songs from Same Genre & Year ──
+        menu.querySelector('#qmAddSameGenreYear')?.addEventListener('pointerup', (ev) => { ev.preventDefault(); ev.stopPropagation(); if (!_menuReady()) return;
+          closeMenu();
+          this._closeInfoPopup();
+          this._queuePanelDirection = null;
+          const _qSameGenreYear = () => this._addSameGenreYearSongsToQueue();
+          items.find(i => i.id === 'qmAddSameGenreYear')?._needsMA ? this._switchToMAAndRun(_qSameGenreYear) : _qSameGenreYear();
+        });
+
+        // ── Add Songs from Same Genre ──
+        menu.querySelector('#qmAddSameGenre')?.addEventListener('pointerup', (ev) => { ev.preventDefault(); ev.stopPropagation(); if (!_menuReady()) return;
+          closeMenu();
+          this._closeInfoPopup();
+          this._queuePanelDirection = null;
+          const _qSameGenre = () => this._addSameGenreSongsToQueue();
+          items.find(i => i.id === 'qmAddSameGenre')?._needsMA ? this._switchToMAAndRun(_qSameGenre) : _qSameGenre();
         });
 
         // ── Play Album ──
@@ -8759,7 +8807,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           <div class="ma-item-info"><div class="ma-item-title">${esc(e.title)}</div>
             <div class="ma-item-sub">${esc(e.artist)} · ${_relTime(e.ts)}</div>
           </div>`;
-        if (!cachedArt && itunesKey) this._fetchItunesArt(e.artist, e.album, e.title);
+        if (!cachedArt && itunesKey) this._fetchItunesArt(e.artist, e.album, e.title, { skipStaleGuard: true });
         wrap.appendChild(el);
         // Same structure and technique the Songs tab's own rows use — glow
         // applied to the outer .ma-item-wrap, with .ma-item's own
@@ -9029,19 +9077,28 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // AI Search box — same feature already reachable via the media player's
     // long-press context menu (qm_ai_search), just surfaced here too so it
     // doesn't require leaving the library to get to it. MA-only, same gating
-    // as the context menu entry.
+    // as the context menu entry. The plain library-search icon button next
+    // to it reuses the same input for a non-AI music_assistant.search call
+    // (mixed across artists/albums/tracks/playlists) — mirrors the existing
+    // reverse pattern (plain search bar + small AI-search button) used once
+    // you're inside a category tab, just flipped, so there's no second
+    // search box on screen.
     const _hasMA = this._maEntityIds?.size > 0;
-    const aiSearchHtml = (this._aiEnabled() && _hasMA) ? `
-      <div style="padding:8px 10px 6px;flex-shrink:0;">
-        <div style="position:relative;display:flex;align-items:center;">
+    const _aiOn = this._aiEnabled() && _hasMA;
+    const aiSearchHtml = _hasMA ? `
+      <div style="padding:8px 10px 6px;flex-shrink:0;display:flex;align-items:center;gap:6px;">
+        <div style="position:relative;display:flex;align-items:center;flex:1;min-width:0;">
           <svg viewBox="0 0 24 24" style="position:absolute;left:10px;width:14px;height:14px;fill:${this._pt("dim")};pointer-events:none;"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
-          <input id="maIosAiSearchInput" type="text" placeholder="AI Search…"
+          <input id="maIosAiSearchInput" type="text" placeholder="Search…"
             style="width:100%;background:${this._pt("btnBg")};border:1px solid ${this._pt("border")};border-radius:10px;padding:8px 32px 8px 32px;color:${this._pt("text")};font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',sans-serif;outline:none;box-sizing:border-box;"
             autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
           <button id="maIosAiSearchClear" style="display:none;position:absolute;right:8px;top:50%;transform:translateY(-50%);width:18px;height:18px;border-radius:50%;background:rgba(255,255,255,0.2);border:none;cursor:pointer;align-items:center;justify-content:center;padding:0;">
             <svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:${this._pt("text")};display:block;"><path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/></svg>
           </button>
         </div>
+        ${_aiOn ? `<button id="maIosLibSearchBtn" title="Search Library" style="flex-shrink:0;width:34px;height:34px;border-radius:10px;background:${this._pt("btnBg")};border:1px solid ${this._pt("border")};display:flex;align-items:center;justify-content:center;cursor:pointer;-webkit-tap-highlight-color:transparent;padding:0;">
+          <svg viewBox="0 0 24 24" style="width:15px;height:15px;fill:${this._pt("dim")};"><path d="M9.5,3A6.5,6.5 0 0,1 16,9.5C16,11.11 15.41,12.59 14.44,13.73L14.71,14H15.5L20.5,19L19,20.5L14,15.5V14.71L13.73,14.44C12.59,15.41 11.11,16 9.5,16A6.5,6.5 0 0,1 3,9.5A6.5,6.5 0 0,1 9.5,3M9.5,5C7,5 5,7 5,9.5C5,12 7,14 9.5,14C12,14 14,12 14,9.5C14,7 12,5 9.5,5Z"/></svg>
+        </button>` : ''}
       </div>` : '';
 
     el.innerHTML = `
@@ -9051,10 +9108,17 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (_hasMA) {
       const _aiInput = el.querySelector('#maIosAiSearchInput');
       const _aiClear = el.querySelector('#maIosAiSearchClear');
+      const _libBtn  = el.querySelector('#maIosLibSearchBtn');
+      const _runLibSearch = () => {
+        const q = (_aiInput?.value || '').trim();
+        if (!q) { _aiInput?.focus(); return; }
+        this._maNavigateToLibrarySearch(q);
+      };
       const _runAiSearch = () => {
         const q = (_aiInput?.value || '').trim();
         if (!q) { _aiInput?.focus(); return; }
-        this._showAISearchPanel(q);
+        if (_aiOn) this._showAISearchPanel(q);
+        else _runLibSearch();
       };
       _aiInput?.addEventListener('keydown', e => { if (e.key === 'Enter') _runAiSearch(); });
       _aiInput?.addEventListener('input', () => {
@@ -9065,6 +9129,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         _aiClear.style.display = 'none';
         _aiInput.focus();
       });
+      _libBtn?.addEventListener('click', _runLibSearch);
     }
 
     // Apply glow to rows
@@ -9150,6 +9215,42 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     rr.querySelectorAll('.ma-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
     this._loadMATab(tab);
   }
+
+  // Cross-category library search from the root Library screen — same DOM
+  // transition as _maNavigateToTab (leave the root list, reveal the content
+  // area, push a back-to-root sentinel) but skips _loadMATab and leaves no
+  // tab marked active, so _searchMA's media_type filter stays unset and
+  // results come back grouped across artists/albums/tracks/playlists in one
+  // call instead of being scoped to a single category.
+  _maNavigateToLibrarySearch(query) {
+    const rr = this.shadowRoot;
+    const el = rr.getElementById('maIosView');
+
+    if (!this._maBrowserNavStack) this._maBrowserNavStack = [];
+    this._maBrowserNavStack.push({ tab: '__ios_root__', label: 'Library' });
+
+    el?.classList.add('hidden');
+    rr.getElementById('maTabs')?.setAttribute('style', 'display:none');
+    rr.querySelector('.ma-search-row')?.setAttribute('style', 'display:none');
+    // No per-tab search bar here — the root screen's own search box already
+    // captured the query, and a cross-category result set has no single
+    // "search within this" scope to hand it off to.
+    rr.getElementById('maIosSearchBar')?.classList.add('hidden');
+
+    const maContent = rr.getElementById('maContent');
+    const backBtn   = rr.getElementById('maBackBtn');
+    const titleEl   = rr.getElementById('maTitle');
+    if (maContent) { maContent.innerHTML = ''; maContent.style.display = ''; }
+    if (titleEl)   titleEl.textContent = 'Search';
+    if (backBtn)   backBtn.classList.remove('hidden');
+    rr.getElementById('recentPlaysMenuBtn')?.classList.add('hidden');
+
+    this._maCurrentTab = null;
+    rr.querySelectorAll('.ma-tab').forEach(t => t.classList.remove('active'));
+
+    this._searchMA(query);
+  }
+
   _maNavReset() {
     this._maBrowserNavStack = [];
     this._maCurrentTab = 'recently_played';
@@ -12234,7 +12335,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         wrap.appendChild(el);
         this._attachMAItemSwipe(wrap, item, 'track');
         trackListEl.appendChild(wrap);
-        if (!cachedArt && itunesKey) this._fetchItunesArt(t.artist, t.album, t.title);
+        if (!cachedArt && itunesKey) this._fetchItunesArt(t.artist, t.album, t.title, { skipStaleGuard: true });
       });
     }
   }
@@ -12958,7 +13059,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         this._attachMAItemSwipe(wrap, item, 'track', { savedQueueRemove: { sqId: sq.id, trackIndex: _tIdx } });
         list.appendChild(wrap);
 
-        if (!artSrc && itunesKey) this._fetchItunesArt(t.artist, t.album, t.title);
+        if (!artSrc && itunesKey) this._fetchItunesArt(t.artist, t.album, t.title, { skipStaleGuard: true });
       });
     }
 
@@ -18306,7 +18407,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         if (this._config?.row_glow === true && cachedArt) this._observeRowGlow(cachedArt, wrap, null);
         trackListEl.appendChild(wrap);
 
-        if (!cachedArt && itunesKey) this._fetchItunesArt(t.artist, t.album, t.title);
+        if (!cachedArt && itunesKey) this._fetchItunesArt(t.artist, t.album, t.title, { skipStaleGuard: true });
       });
     }
   }
@@ -22546,6 +22647,366 @@ Include ALL tracks. Use null for unknown fields.`;
     }
   }
 
+  /**
+   * Adds AI-suggested popular songs matching both the genre AND release year
+   * of the currently playing track. Same shape as _addSameYearSongsToQueue —
+   * see that function's doc comment for the shared dedup/backfill approach.
+   * The "already added" cache is keyed by normalized-genre + year together.
+   */
+  async _addSameGenreYearSongsToQueue() {
+    if (!this._aiEnabled()) { this._showToast('AI features are turned off in the card editor'); return; }
+    this._pillPulse(10000);
+    this._maBatchLoading = true;
+    clearTimeout(this._maBatchLoadingTimer);
+    this._maBatchLoadingTimer = setTimeout(() => { this._maBatchLoading = false; }, 15000);
+    const state = this._hass?.states[this._entity];
+    if (!state || state.state !== 'playing') { this._maBatchLoading = false; this._showToast('Nothing playing right now'); return; }
+    const attrs  = state.attributes;
+    const artist = attrs.media_artist || '';
+    const track  = attrs.media_title  || '';
+    if (!artist && !track) { this._maBatchLoading = false; this._showToast('No track info available'); return; }
+    if (!this._maEntityIds?.has(this._entity)) { this._maBatchLoading = false; this._showToast('Music Assistant required'); return; }
+
+    const hasAI = await this._aiCheckAvailable();
+    if (!hasAI) { this._maBatchLoading = false; this._showToast('No AI agent found — check Settings → Voice Assistants'); return; }
+
+    const TARGET_COUNT = 18;
+    const _normKey   = (title, artistName) => (String(title || '').toLowerCase().trim() + '|' + String(artistName || '').toLowerCase().trim()).replace(/[^a-z0-9|]/g, '');
+    // Genre labels can vary in phrasing between AI calls ("Punk" vs "Punk
+    // Rock") — normalize before using as a cache key so repeat presses for
+    // the same genre don't quietly split into separate dedup buckets.
+    const _normGenre = g => String(g || '').toLowerCase().trim().replace(/\s+/g, ' ');
+    const agentId = this._config?.ai_conversation_agent || 'conversation.home_assistant';
+
+    // ── Resolve genre + year — reuse AI Info's cache if this exact track's
+    // panel has already been opened this session, avoiding a redundant AI
+    // round-trip just for the metadata.
+    let genre = null, year = null;
+    const _trackInfoKey = ('trackinfo3|' + artist + '|' + track).toLowerCase();
+    const _cachedInfo = this._aiTrackInfoCache?.get(_trackInfoKey);
+    if (Array.isArray(_cachedInfo?.genre) && _cachedInfo.genre[0]) genre = _cachedInfo.genre[0];
+    if (_cachedInfo?.year && /^\d{4}$/.test(String(_cachedInfo.year))) year = String(_cachedInfo.year);
+
+    this._showToast((genre && year) ? `✨ Finding ${genre} songs from ${year}…` : '✨ Finding genre & year…', 4000);
+
+    const _askAI = async (excludeKeys, knownGenre, knownYear) => {
+      const excludeNote = excludeKeys?.size
+        ? `\nDon't suggest any of these again: ${[...excludeKeys].slice(0, 20).join(', ')}`
+        : '';
+      const prompt = (knownGenre && knownYear)
+        ? `Suggest ${TARGET_COUNT} popular, well-known ${knownGenre} songs released in ${knownYear}.${excludeNote} Respond ONLY with a JSON object (no markdown): {"genre":"${knownGenre}","year":${knownYear},"songs":[{"title":"Track Title","artist":"Artist Name"}]}`
+        : `What genre is "${track}" by "${artist}", and what year was it released? Then suggest ${TARGET_COUNT} other popular, well-known songs matching that same genre AND released in that same year.${excludeNote} If you can't confidently determine both the genre and year, respond with {"genre":null,"year":null,"songs":[]}. Respond ONLY with a JSON object (no markdown): {"genre":"Genre Name","year":YYYY,"songs":[{"title":"Track Title","artist":"Artist Name"}]}`;
+      const resp = await this._hass.connection.sendMessagePromise({
+        type: 'conversation/process', text: prompt,
+        agent_id: agentId, language: navigator.language || 'en'
+      });
+      const raw = resp?.response?.speech?.plain?.speech || '';
+      const stripped = raw.replace(/```json?\s*/gi, '').replace(/```/g, '');
+      const objStart = stripped.indexOf('{'), objEnd = stripped.lastIndexOf('}');
+      if (objStart === -1 || objEnd <= objStart) throw new Error('No JSON in response');
+      return JSON.parse(stripped.slice(objStart, objEnd + 1));
+    };
+
+    let baseSongs = [];
+    try {
+      const result = await _askAI(null, genre, year);
+      if (!genre) genre = result?.genre || null;
+      if (!year)  year  = result?.year ? String(result.year) : null;
+      baseSongs = Array.isArray(result?.songs) ? result.songs : [];
+    } catch (e) {
+      this._maBatchLoading = false;
+      this._showToast("AI couldn't fetch songs — try again"); return;
+    }
+
+    if (!genre || !year) {
+      this._maBatchLoading = false;
+      this._showToast("Couldn't determine this track's genre and year");
+      return;
+    }
+
+    // ── Dedup source 1: what's already sitting in the live queue ──
+    let _queueKeys = new Set();
+    try {
+      const hasMassQueue = !!(this._hass?.services?.mass_queue?.get_queue_items);
+      if (hasMassQueue) {
+        const mqRes = await this._hass.connection.sendMessagePromise({
+          type: 'call_service', domain: 'mass_queue', service: 'get_queue_items',
+          service_data: { entity: this._entity, limit_before: 0, limit_after: 9999 },
+          return_response: true
+        });
+        const raw = mqRes?.response?.[this._entity] || mqRes?.response || [];
+        if (Array.isArray(raw)) raw.forEach(item => {
+          const key = _normKey(item.media_title || item.name, item.media_artist || item.artist);
+          if (key) _queueKeys.add(key);
+        });
+      } else {
+        const qRes = await this._hass.connection.sendMessagePromise({
+          type: 'call_service', domain: 'music_assistant', service: 'get_queue',
+          service_data: { entity_id: this._entity }, return_response: true
+        });
+        const qData = qRes?.response?.[this._entity] || qRes?.response || null;
+        [qData?.current_item, qData?.next_item].forEach(item => {
+          const key = _normKey(item?.name || item?.media_item?.name, item?.media_item?.artists?.[0]?.name);
+          if (key) _queueKeys.add(key);
+        });
+      }
+    } catch (_) {
+      // Non-fatal — if we can't read the queue this time, just skip queue dedup.
+    }
+
+    // ── Dedup source 2: what we've already added for this genre+year combo
+    // in a previous press ──
+    const cacheKey = ('addgenreyear|' + _normGenre(genre) + '|' + year).toLowerCase();
+    if (!this._aiSameGenreYearAdded) this._aiSameGenreYearAdded = new Map();
+    let _alreadyAdded = this._aiSameGenreYearAdded.get(cacheKey);
+    if (!_alreadyAdded) {
+      try {
+        const store = JSON.parse(localStorage.getItem('crow_ai_same_genre_year_added') || '{}');
+        _alreadyAdded = new Set(store[cacheKey] || []);
+      } catch (_) { _alreadyAdded = new Set(); }
+      this._aiSameGenreYearAdded.set(cacheKey, _alreadyAdded);
+    }
+
+    // ── Filter out anything already queued, already added before, or
+    // duplicated within the AI's own response ──
+    const _seen = new Set();
+    let candidates = baseSongs.filter(t => {
+      const key = _normKey(t.title, t.artist);
+      if (!key || _queueKeys.has(key) || _alreadyAdded.has(key) || _seen.has(key)) return false;
+      _seen.add(key);
+      return true;
+    });
+
+    // ── Backfill: if dedup left us short of the target, ask once more with
+    // everything already seen excluded, to top back up ──
+    if (candidates.length < TARGET_COUNT) {
+      const excludeForRetry = new Set([..._queueKeys, ..._alreadyAdded, ..._seen]);
+      try {
+        const more = await _askAI(excludeForRetry, genre, year);
+        (more?.songs || []).forEach(t => {
+          const key = _normKey(t.title, t.artist);
+          if (!key || _queueKeys.has(key) || _alreadyAdded.has(key) || _seen.has(key)) return;
+          _seen.add(key);
+          candidates.push(t);
+        });
+      } catch (_) {
+        // Backfill failing is non-fatal — proceed with whatever we already have.
+      }
+    }
+
+    if (!candidates.length) {
+      this._maBatchLoading = false;
+      this._showToast(`No new ${genre} songs from ${year} to add right now`);
+      return;
+    }
+
+    let added = 0;
+    for (const t of candidates.slice(0, TARGET_COUNT)) {
+      try {
+        await this._hass.connection.sendMessagePromise({
+          type: 'call_service', domain: 'music_assistant', service: 'play_media',
+          service_data: { entity_id: this._entity, media_id: `${t.title} ${t.artist}`, media_type: 'track', enqueue: 'add' }
+        });
+        added++;
+        _alreadyAdded.add(_normKey(t.title, t.artist));
+      } catch(_) {}
+    }
+
+    // Persist the updated "already added for this genre+year" set.
+    try {
+      const store = JSON.parse(localStorage.getItem('crow_ai_same_genre_year_added') || '{}');
+      store[cacheKey] = [..._alreadyAdded];
+      localStorage.setItem('crow_ai_same_genre_year_added', JSON.stringify(store));
+    } catch (_) {}
+
+    this._maBatchLoading = false;
+    clearTimeout(this._maBatchLoadingTimer);
+    this._pillPulse(0);
+    if (added > 0) {
+      this._showToast(`✓ Added ${added} ${genre} songs from ${year}`, 3500);
+    } else {
+      this._showToast('Could not add songs — check Music Assistant');
+    }
+  }
+
+  /**
+   * Adds AI-suggested popular songs matching the genre of the currently
+   * playing track (any year). Same shape as _addSameGenreYearSongsToQueue
+   * minus the year constraint — see that function's doc comment for the
+   * shared dedup/backfill approach. The "already added" cache is keyed by
+   * normalized genre alone.
+   */
+  async _addSameGenreSongsToQueue() {
+    if (!this._aiEnabled()) { this._showToast('AI features are turned off in the card editor'); return; }
+    this._pillPulse(10000);
+    this._maBatchLoading = true;
+    clearTimeout(this._maBatchLoadingTimer);
+    this._maBatchLoadingTimer = setTimeout(() => { this._maBatchLoading = false; }, 15000);
+    const state = this._hass?.states[this._entity];
+    if (!state || state.state !== 'playing') { this._maBatchLoading = false; this._showToast('Nothing playing right now'); return; }
+    const attrs  = state.attributes;
+    const artist = attrs.media_artist || '';
+    const track  = attrs.media_title  || '';
+    if (!artist && !track) { this._maBatchLoading = false; this._showToast('No track info available'); return; }
+    if (!this._maEntityIds?.has(this._entity)) { this._maBatchLoading = false; this._showToast('Music Assistant required'); return; }
+
+    const hasAI = await this._aiCheckAvailable();
+    if (!hasAI) { this._maBatchLoading = false; this._showToast('No AI agent found — check Settings → Voice Assistants'); return; }
+
+    const TARGET_COUNT = 18;
+    const _normKey   = (title, artistName) => (String(title || '').toLowerCase().trim() + '|' + String(artistName || '').toLowerCase().trim()).replace(/[^a-z0-9|]/g, '');
+    const _normGenre = g => String(g || '').toLowerCase().trim().replace(/\s+/g, ' ');
+    const agentId = this._config?.ai_conversation_agent || 'conversation.home_assistant';
+
+    // ── Resolve genre — reuse AI Info's cache if this exact track's panel
+    // has already been opened this session, avoiding a redundant AI
+    // round-trip just for the genre.
+    let genre = null;
+    const _trackInfoKey = ('trackinfo3|' + artist + '|' + track).toLowerCase();
+    const _cachedInfo = this._aiTrackInfoCache?.get(_trackInfoKey);
+    if (Array.isArray(_cachedInfo?.genre) && _cachedInfo.genre[0]) genre = _cachedInfo.genre[0];
+
+    this._showToast(genre ? `✨ Finding ${genre} songs…` : '✨ Finding genre…', 4000);
+
+    const _askAI = async (excludeKeys, knownGenre) => {
+      const excludeNote = excludeKeys?.size
+        ? `\nDon't suggest any of these again: ${[...excludeKeys].slice(0, 20).join(', ')}`
+        : '';
+      const prompt = knownGenre
+        ? `Suggest ${TARGET_COUNT} popular, well-known ${knownGenre} songs.${excludeNote} Respond ONLY with a JSON object (no markdown): {"genre":"${knownGenre}","songs":[{"title":"Track Title","artist":"Artist Name"}]}`
+        : `What genre is "${track}" by "${artist}"? Then suggest ${TARGET_COUNT} other popular, well-known songs in that same genre.${excludeNote} If you can't confidently determine the genre, respond with {"genre":null,"songs":[]}. Respond ONLY with a JSON object (no markdown): {"genre":"Genre Name","songs":[{"title":"Track Title","artist":"Artist Name"}]}`;
+      const resp = await this._hass.connection.sendMessagePromise({
+        type: 'conversation/process', text: prompt,
+        agent_id: agentId, language: navigator.language || 'en'
+      });
+      const raw = resp?.response?.speech?.plain?.speech || '';
+      const stripped = raw.replace(/```json?\s*/gi, '').replace(/```/g, '');
+      const objStart = stripped.indexOf('{'), objEnd = stripped.lastIndexOf('}');
+      if (objStart === -1 || objEnd <= objStart) throw new Error('No JSON in response');
+      return JSON.parse(stripped.slice(objStart, objEnd + 1));
+    };
+
+    let baseSongs = [];
+    try {
+      const result = await _askAI(null, genre);
+      if (!genre) genre = result?.genre || null;
+      baseSongs = Array.isArray(result?.songs) ? result.songs : [];
+    } catch (e) {
+      this._maBatchLoading = false;
+      this._showToast("AI couldn't fetch songs — try again"); return;
+    }
+
+    if (!genre) {
+      this._maBatchLoading = false;
+      this._showToast("Couldn't determine a genre for this track");
+      return;
+    }
+
+    // ── Dedup source 1: what's already sitting in the live queue ──
+    let _queueKeys = new Set();
+    try {
+      const hasMassQueue = !!(this._hass?.services?.mass_queue?.get_queue_items);
+      if (hasMassQueue) {
+        const mqRes = await this._hass.connection.sendMessagePromise({
+          type: 'call_service', domain: 'mass_queue', service: 'get_queue_items',
+          service_data: { entity: this._entity, limit_before: 0, limit_after: 9999 },
+          return_response: true
+        });
+        const raw = mqRes?.response?.[this._entity] || mqRes?.response || [];
+        if (Array.isArray(raw)) raw.forEach(item => {
+          const key = _normKey(item.media_title || item.name, item.media_artist || item.artist);
+          if (key) _queueKeys.add(key);
+        });
+      } else {
+        const qRes = await this._hass.connection.sendMessagePromise({
+          type: 'call_service', domain: 'music_assistant', service: 'get_queue',
+          service_data: { entity_id: this._entity }, return_response: true
+        });
+        const qData = qRes?.response?.[this._entity] || qRes?.response || null;
+        [qData?.current_item, qData?.next_item].forEach(item => {
+          const key = _normKey(item?.name || item?.media_item?.name, item?.media_item?.artists?.[0]?.name);
+          if (key) _queueKeys.add(key);
+        });
+      }
+    } catch (_) {
+      // Non-fatal — if we can't read the queue this time, just skip queue dedup.
+    }
+
+    // ── Dedup source 2: what we've already added for this genre in a
+    // previous press ──
+    const cacheKey = ('addgenre|' + _normGenre(genre)).toLowerCase();
+    if (!this._aiSameGenreAdded) this._aiSameGenreAdded = new Map();
+    let _alreadyAdded = this._aiSameGenreAdded.get(cacheKey);
+    if (!_alreadyAdded) {
+      try {
+        const store = JSON.parse(localStorage.getItem('crow_ai_same_genre_added') || '{}');
+        _alreadyAdded = new Set(store[cacheKey] || []);
+      } catch (_) { _alreadyAdded = new Set(); }
+      this._aiSameGenreAdded.set(cacheKey, _alreadyAdded);
+    }
+
+    // ── Filter out anything already queued, already added before, or
+    // duplicated within the AI's own response ──
+    const _seen = new Set();
+    let candidates = baseSongs.filter(t => {
+      const key = _normKey(t.title, t.artist);
+      if (!key || _queueKeys.has(key) || _alreadyAdded.has(key) || _seen.has(key)) return false;
+      _seen.add(key);
+      return true;
+    });
+
+    // ── Backfill: if dedup left us short of the target, ask once more with
+    // everything already seen excluded, to top back up ──
+    if (candidates.length < TARGET_COUNT) {
+      const excludeForRetry = new Set([..._queueKeys, ..._alreadyAdded, ..._seen]);
+      try {
+        const more = await _askAI(excludeForRetry, genre);
+        (more?.songs || []).forEach(t => {
+          const key = _normKey(t.title, t.artist);
+          if (!key || _queueKeys.has(key) || _alreadyAdded.has(key) || _seen.has(key)) return;
+          _seen.add(key);
+          candidates.push(t);
+        });
+      } catch (_) {
+        // Backfill failing is non-fatal — proceed with whatever we already have.
+      }
+    }
+
+    if (!candidates.length) {
+      this._maBatchLoading = false;
+      this._showToast(`No new ${genre} songs to add right now`);
+      return;
+    }
+
+    let added = 0;
+    for (const t of candidates.slice(0, TARGET_COUNT)) {
+      try {
+        await this._hass.connection.sendMessagePromise({
+          type: 'call_service', domain: 'music_assistant', service: 'play_media',
+          service_data: { entity_id: this._entity, media_id: `${t.title} ${t.artist}`, media_type: 'track', enqueue: 'add' }
+        });
+        added++;
+        _alreadyAdded.add(_normKey(t.title, t.artist));
+      } catch(_) {}
+    }
+
+    // Persist the updated "already added for this genre" set.
+    try {
+      const store = JSON.parse(localStorage.getItem('crow_ai_same_genre_added') || '{}');
+      store[cacheKey] = [..._alreadyAdded];
+      localStorage.setItem('crow_ai_same_genre_added', JSON.stringify(store));
+    } catch (_) {}
+
+    this._maBatchLoading = false;
+    clearTimeout(this._maBatchLoadingTimer);
+    this._pillPulse(0);
+    if (added > 0) {
+      this._showToast(`✓ Added ${added} ${genre} songs`, 3500);
+    } else {
+      this._showToast('Could not add songs — check Music Assistant');
+    }
+  }
+
   _showAIMoodQueue() {
     const r = this.shadowRoot;
     r?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
@@ -24136,6 +24597,7 @@ Include ALL tracks. Use null for unknown fields.`;
     if (_stale()) return;
     if (!hasAI) { this._aiShowNoAgentBanner(popup); return; }
     let _doSearchFn = null; // hoisted reference updated each time _renderSearch wires up
+    let _doLibrarySearchFn = null; // same, for the plain-MA-search button
     const _renderSearch = (query = '', results = null, loading = false, error = '') => {
       const _inputVal = query.replace(/"/g, '&quot;');
       r?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
@@ -24266,18 +24728,36 @@ Include ALL tracks. Use null for unknown fields.`;
       };
       _doSearchFn = _doSearch; // update hoisted ref so initialQuery block can call it
 
+      // The blue "Search" button specifically runs a plain Music Assistant
+      // library search instead of the AI round-trip above — same
+      // cross-category flow as the Library root screen's search button.
+      // Pressing Enter in the input still goes through the AI-powered
+      // _doSearch (kept for the other entry points into this panel, like
+      // "Music from {album}" soundtrack search, which need AI's descriptive
+      // matching to work at all — a literal MA search for that text
+      // wouldn't return anything meaningful).
+      const _doLibrarySearch = () => {
+        const _activeInp = content.querySelector('#ai-search-input');
+        const q = (_activeInp?.value || inp?.value || '').trim();
+        if (!q) { _activeInp?.focus(); return; }
+        if (_stale()) return;
+        this._closeInfoPopup();
+        this._maNavigateToLibrarySearch(q);
+      };
+      _doLibrarySearchFn = _doLibrarySearch; // update hoisted ref so initialQuery block can call it
+
       const _wireInputOnly = () => {
         const inp2 = content.querySelector('#ai-search-input');
         const btn2 = content.querySelector('#ai-search-btn');
         const clr2 = content.querySelector('#ai-search-clear');
-        if (inp2) inp2.addEventListener('keydown', e => { if (e.key === 'Enter') _doSearch(); });
-        if (btn2) btn2.addEventListener('click', _doSearch);
+        if (inp2) inp2.addEventListener('keydown', e => { if (e.key === 'Enter') _doLibrarySearch(); });
+        if (btn2) btn2.addEventListener('click', _doLibrarySearch);
         if (clr2) clr2.addEventListener('click', () => { _renderSearch(); _wireInputOnly(); });
         if (inp2) setTimeout(() => inp2.focus(), 50);
       };
 
-      if (inp) inp.addEventListener('keydown', e => { if (e.key === 'Enter') _doSearch(); });
-      if (btn) btn.addEventListener('click', _doSearch);
+      if (inp) inp.addEventListener('keydown', e => { if (e.key === 'Enter') _doLibrarySearch(); });
+      if (btn) btn.addEventListener('click', _doLibrarySearch);
       if (clr) clr.addEventListener('click', () => { _renderSearch(); _wireInputOnly(); });
       if (inp) inp.addEventListener('input', () => {
         const c2 = content.querySelector('#ai-search-clear');
@@ -24451,8 +24931,8 @@ Include ALL tracks. Use null for unknown fields.`;
       const _inp0 = content.querySelector('#ai-search-input');
       const _btn0 = content.querySelector('#ai-search-btn');
       const _clr0 = content.querySelector('#ai-search-clear');
-      if (_inp0) _inp0.addEventListener('keydown', e => { if (e.key === 'Enter') _doSearchFn?.(); });
-      if (_btn0) _btn0.addEventListener('click', () => _doSearchFn?.());
+      if (_inp0) _inp0.addEventListener('keydown', e => { if (e.key === 'Enter') _doLibrarySearchFn?.(); });
+      if (_btn0) _btn0.addEventListener('click', () => _doLibrarySearchFn?.());
       if (_clr0) _clr0.addEventListener('click', () => { _renderSearch(); _wireInputOnly?.(); });
       if (_inp0) _inp0.value = initialQuery;
       // _doSearchFn is assigned since _aiCheckAvailable has already resolved above
@@ -28705,7 +29185,8 @@ Include ALL tracks. Use null for unknown fields.`;
         self._fetchItunesArt(
           (item.artists && item.artists[0] && item.artists[0].name) || '',
           (item.album && item.album.name) || '',
-          item.name || item.title || '');
+          item.name || item.title || '',
+          { skipStaleGuard: true });
       }
 
       // Raw MA URL — stamp as data-ma-img-url so _patchQueueArt can find this
@@ -28880,10 +29361,16 @@ Include ALL tracks. Use null for unknown fields.`;
 
           var itunesKey2 = !discogsId2 ? self._maItunesKey(item) : '';
           if (itunesKey2 && !self._itunesArtCache?.[itunesKey2]) {
+            // skipStaleGuard: true — these are search results, not
+            // necessarily whatever's currently playing, so the "does this
+            // match the live track?" guard must not apply here. Same fix as
+            // the Pinned Songs list: without it, the guard silently discards
+            // every result whenever anything else is playing at the time.
             self._fetchItunesArt(
               (item.artists && item.artists[0] && item.artists[0].name) || '',
               (item.album && item.album.name) || '',
-              item.name || item.title || '');
+              item.name || item.title || '',
+              { skipStaleGuard: true });
           }
 
           var maRawUrl2 = !discogsId2
@@ -32646,7 +33133,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
             <div class="toggle-item" style="align-items:flex-start;gap:12px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid rgba(255,255,255,0.07);">
               <div style="flex:1;">
                 <div class="toggle-label">Enable AI Features</div>
-                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Master switch for all AI features — AI Search, Vibe, Recommendations, AI Artist Radio, Add Similar Songs, Add Songs from Same Year, Song Intro, Trivia, Mood Match, and AI-generated summaries. Off: the info panel uses Discogs data instead, and everything else in the card works as normal. Requires a conversation agent (e.g. Google Gemini) when on.</div>
+                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Master switch for all AI features — AI Search, Vibe, Recommendations, AI Artist Radio, Add Similar Songs, Add Songs from Same Year, Add Songs from Same Genre, Song Intro, Trivia, Mood Match, and AI-generated summaries. Off: the info panel uses Discogs data instead, and everything else in the card works as normal. Requires a conversation agent (e.g. Google Gemini) when on.</div>
               </div>
               <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="ai_features_enabled"><span class="toggle-track"></span></label>
             </div>
