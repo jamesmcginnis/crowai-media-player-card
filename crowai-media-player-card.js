@@ -137,6 +137,31 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     }
   }
 
+  // Returns true when `ent` (an entity NOT listed in ma_entities) is simply
+  // mirroring one of the configured ma_entities for the same physical
+  // speaker — e.g. the native HomeKit/AirPlay entity for a HomePod that
+  // Music Assistant is currently driving — rather than representing genuinely
+  // independent playback started on that device directly. Detected by
+  // matching current track metadata against every configured MA entity,
+  // which needs no async entity-registry lookup and so is reliable on the
+  // very first hass update after the card reconnects (app reopen/dashboard
+  // return), which is exactly when this matters most.
+  _isMirroredNonMAEntity(ent, hassStates) {
+    const maList = Array.isArray(this._config?.ma_entities) ? this._config.ma_entities : [];
+    if (!maList.length) return false;
+    const entState = hassStates?.[ent];
+    const entTitle  = entState?.attributes?.media_title  || '';
+    if (!entTitle) return false;
+    const entArtist = entState?.attributes?.media_artist || '';
+    return maList.some(maId => {
+      const maState = hassStates?.[maId];
+      if (!maState) return false;
+      if (maState.state !== 'playing' && maState.state !== 'buffering') return false;
+      return (maState.attributes?.media_title  || '') === entTitle &&
+             (maState.attributes?.media_artist || '') === entArtist;
+    });
+  }
+
   set hass(hass) {
     this._hass = hass;
 
@@ -357,7 +382,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         const st = hass.states[ent]?.state;
         const isMA = !!(this._knownMaEntities?.has(ent) || this._maEntityIds?.has(ent) ||
           (Array.isArray(this._config?.ma_entities) && this._config.ma_entities.includes(ent)));
-        return (st === 'playing' || st === 'buffering') && !isMA;
+        return (st === 'playing' || st === 'buffering') && !isMA &&
+          !this._isMirroredNonMAEntity(ent, hass.states);
       }) || null;
       if (_nonMANowPlaying && _nonMANowPlaying !== this._nonMAPlayingEntity && !this._manualSelection) {
         // A different non-MA entity just started playing — stop any playing MA speakers
@@ -388,10 +414,19 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       // ── Timestamp tracking ────────────────────────────────────────────────
       // Stamp entities that are actively playing or buffering so we always
       // know which device was most recently active across brief state gaps.
+      // Mirrored non-MA entities (see _isMirroredNonMAEntity) are skipped here:
+      // they report 'playing' continuously for as long as MA drives them, which
+      // would otherwise keep re-stamping "now" forever and make the skip-gap
+      // guard below think the mirrored entity was *just* active — permanently
+      // blocking the switch over to the real MA entity.
       for (const ent of this._config.entities) {
         const st    = hass.states[ent]?.state;
         if (st === 'playing' || st === 'buffering') {
-          this._playTimestamps[ent] = now;
+          const isMA = !!(this._knownMaEntities?.has(ent) || this._maEntityIds?.has(ent) ||
+            (Array.isArray(this._config?.ma_entities) && this._config.ma_entities.includes(ent)));
+          if (isMA || !this._isMirroredNonMAEntity(ent, hass.states)) {
+            this._playTimestamps[ent] = now;
+          }
         }
         // Note: paused entities are intentionally NOT re-stamped. The timestamp
         // set when the entity was genuinely 'playing' is the correct "last active"
@@ -426,7 +461,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             const st = hass.states[ent]?.state;
             const isMA = !!(this._knownMaEntities?.has(ent) || this._maEntityIds?.has(ent) ||
               (Array.isArray(this._config?.ma_entities) && this._config.ma_entities.includes(ent)));
-            return (st === 'playing' || st === 'buffering') && !isMA;
+            return (st === 'playing' || st === 'buffering') && !isMA &&
+              !this._isMirroredNonMAEntity(ent, hass.states);
           }) || null;
           // Only release if a non-MA entity is playing AND it's different from
           // the one that was playing when auto-switch last ran
@@ -451,7 +487,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           const st = hass.states[ent]?.state;
           const isMA = !!(this._knownMaEntities?.has(ent) || this._maEntityIds?.has(ent) ||
             (Array.isArray(this._config?.ma_entities) && this._config.ma_entities.includes(ent)));
-          return (st === 'playing' || st === 'buffering') && !isMA;
+          return (st === 'playing' || st === 'buffering') && !isMA &&
+            !this._isMirroredNonMAEntity(ent, hass.states);
         });
         const _maPlaying = sorted.filter(ent => {
           const st = hass.states[ent]?.state;
@@ -4251,7 +4288,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           this._showToast('Seek not available for live streams', 2000);
           return;
         }
-        const supportsSeek = ((state?.attributes?.supported_features || 0) & 4) !== 0;
+        // Guard: check SUPPORT_SEEK feature bit (2) — Alexa and some others don't support it
+        const supportsSeek = ((state?.attributes?.supported_features || 0) & 2) !== 0;
         const hasDuration  = state?.attributes?.media_duration > 0;
         const _eid   = this._entity.toLowerCase();
         const _fname = (state?.attributes?.friendly_name || '').toLowerCase();
@@ -4467,8 +4505,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             this._showToast('Seek not available for live streams', 2000);
             return;
           }
-          // Guard: check SUPPORT_SEEK feature bit (4) — Alexa and some others don't support it
-          const supportsSeek = ((state?.attributes?.supported_features || 0) & 4) !== 0;
+          const supportsSeek = ((state?.attributes?.supported_features || 0) & 2) !== 0;
           const hasDuration  = state?.attributes?.media_duration > 0;
           // Detect Alexa/Echo devices — check entity ID, friendly name, platform attribute,
           // and also the integration string used by the Alexa Media Player custom integration
@@ -29556,6 +29593,41 @@ Include ALL tracks. Use null for unknown fields.`;
     }
   }
 
+  // AirPlay/HomeKit speakers only accept one controlling stream at a time.
+  // If the *native* entity for a physical speaker (e.g. a HomePod controlled
+  // directly via HomeKit, alongside its separate Music Assistant entity) is
+  // still holding an active session from an earlier, non-MA play, MA's
+  // play_media call goes out fine but never actually reaches the speaker —
+  // it's still "owned" by the native session. Called right before handing
+  // off to MA so the native session releases the speaker first. Matched by
+  // friendly name, same approach as _resolveMAEntity but in reverse (MA → native).
+  async _releaseMirroredNativeEntity(maEntityId) {
+    const maName = (this._hass?.states[maEntityId]?.attributes?.friendly_name || '').toLowerCase().trim();
+    if (!maName) return;
+    const candidates = (this._config?.entities || []).filter(ent => {
+      if (ent === maEntityId) return false;
+      const isMA = !!(this._knownMaEntities?.has(ent) || this._maEntityIds?.has(ent) ||
+        (Array.isArray(this._config?.ma_entities) && this._config.ma_entities.includes(ent)));
+      if (isMA) return false;
+      const st = this._hass?.states[ent]?.state;
+      return st === 'playing' || st === 'buffering';
+    });
+    let stoppedAny = false;
+    for (const ent of candidates) {
+      const entName = (this._hass?.states[ent]?.attributes?.friendly_name || '').toLowerCase().trim();
+      if (entName && (entName === maName || maName.includes(entName) || entName.includes(maName))) {
+        try {
+          await this._hass.callService('media_player', 'media_stop', { entity_id: ent });
+          stoppedAny = true;
+        } catch (_) {}
+      }
+    }
+    // Give the AirPlay teardown a beat to actually complete before MA tries
+    // to claim the speaker — an immediate follow-up play_media can still lose
+    // the race even after media_stop has been issued.
+    if (stoppedAny) await new Promise(res => setTimeout(res, 400));
+  }
+
   _playMAItem(item, tab, shuffle, opts = {}) {
     const now = Date.now();
     if (this._lastMAPlay && (now - this._lastMAPlay) < 1500) return;
@@ -29610,6 +29682,7 @@ Include ALL tracks. Use null for unknown fields.`;
       service_data: { entity_id: targetEntity, media_content_id: uri, media_content_type: mediaType }
     });
     this._showLoadingToast('Starting playback…');
+    await this._releaseMirroredNativeEntity(targetEntity);
     let _played = true;
     try {
       await playViaMA();
