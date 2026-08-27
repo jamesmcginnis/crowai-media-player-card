@@ -137,28 +137,29 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     }
   }
 
-  // Returns true when `ent` (an entity NOT listed in ma_entities) is simply
-  // mirroring one of the configured ma_entities for the same physical
-  // speaker — e.g. the native HomeKit/AirPlay entity for a HomePod that
-  // Music Assistant is currently driving — rather than representing genuinely
-  // independent playback started on that device directly. Detected by
-  // matching current track metadata against every configured MA entity,
-  // which needs no async entity-registry lookup and so is reliable on the
-  // very first hass update after the card reconnects (app reopen/dashboard
-  // return), which is exactly when this matters most.
+  // Returns true when `ent` (an entity NOT listed in ma_entities) represents
+  // the same physical speaker as one of the configured ma_entities — e.g. the
+  // native HomeKit/AirPlay entity for a HomePod that also has a dedicated
+  // Music Assistant entity — rather than being a genuinely independent
+  // source. Matched by friendly_name (same approach _resolveMAEntity uses
+  // elsewhere for grouping), NOT by comparing media_title/media_artist:
+  // track metadata on the native entity is frequently stale or briefly blank
+  // right after the card reconnects (app reopen/dashboard return) — exactly
+  // when this check matters most — which made an earlier metadata-matching
+  // version of this function unreliable at that exact moment. friendly_name
+  // is a static entity property, present immediately regardless of playback
+  // state, and needs no async entity-registry lookup either.
   _isMirroredNonMAEntity(ent, hassStates) {
     const maList = Array.isArray(this._config?.ma_entities) ? this._config.ma_entities : [];
     if (!maList.length) return false;
-    const entState = hassStates?.[ent];
-    const entTitle  = entState?.attributes?.media_title  || '';
-    if (!entTitle) return false;
-    const entArtist = entState?.attributes?.media_artist || '';
+    const entName = (hassStates?.[ent]?.attributes?.friendly_name || '').toLowerCase().trim();
+    if (!entName) return false;
     return maList.some(maId => {
       const maState = hassStates?.[maId];
       if (!maState) return false;
       if (maState.state !== 'playing' && maState.state !== 'buffering') return false;
-      return (maState.attributes?.media_title  || '') === entTitle &&
-             (maState.attributes?.media_artist || '') === entArtist;
+      const maName = (maState.attributes?.friendly_name || '').toLowerCase().trim();
+      return !!maName && (maName === entName || maName.includes(entName) || entName.includes(maName));
     });
   }
 
