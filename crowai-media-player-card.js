@@ -163,6 +163,22 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     });
   }
 
+  // Returns true when two entities are two HA representations of the same
+  // physical speaker (e.g. a HomePod's native entity and its Music
+  // Assistant entity), matched by friendly_name — regardless of which one
+  // is currently playing. Unlike _isMirroredNonMAEntity (which only fires
+  // once the MA side is confirmed playing), this direction-agnostic check
+  // exists specifically to guard the "stop the MA speaker" logic: when a
+  // native entity (e.g. triggered by Siri) and an MA entity are the same
+  // physical device, calling media_stop on the MA entity stops the actual
+  // audio — there's only ever one real stream to a shared HomePod, not two.
+  _entitiesShareSpeaker(entA, entB, hassStates) {
+    const nameA = (hassStates?.[entA]?.attributes?.friendly_name || '').toLowerCase().trim();
+    const nameB = (hassStates?.[entB]?.attributes?.friendly_name || '').toLowerCase().trim();
+    if (!nameA || !nameB) return false;
+    return nameA === nameB || nameA.includes(nameB) || nameB.includes(nameA);
+  }
+
   set hass(hass) {
     this._hass = hass;
 
@@ -387,11 +403,17 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           !this._isMirroredNonMAEntity(ent, hass.states);
       }) || null;
       if (_nonMANowPlaying && _nonMANowPlaying !== this._nonMAPlayingEntity && !this._manualSelection) {
-        // A different non-MA entity just started playing — stop any playing MA speakers
+        // A different non-MA entity just started playing — stop any playing MA
+        // speakers, EXCEPT ones that are just the same physical speaker as
+        // _nonMANowPlaying (e.g. a HomePod's MA entity mirroring a Siri-
+        // initiated session on that same HomePod's native entity) — stopping
+        // those would cut the real, currently-intended audio rather than
+        // superseding a genuinely different stream.
         const _maEntities = Array.isArray(this._config?.ma_entities) ? this._config.ma_entities : [];
         _maEntities.forEach(eid => {
           const st = hass.states[eid]?.state;
-          if (st === 'playing' || st === 'buffering') {
+          if ((st === 'playing' || st === 'buffering') &&
+              !this._entitiesShareSpeaker(eid, _nonMANowPlaying, hass.states)) {
             this._hass.callService('media_player', 'media_stop', { entity_id: eid }).catch(() => {});
           }
         });
@@ -25921,6 +25943,19 @@ Include ALL tracks. Use null for unknown fields.`;
   _renderVideoInfoDetail(content, data, artUrl) {
     content.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
     if (!data) return;
+    // Normalize data.similar here — the single choke point every caller
+    // (initial lookup, disambiguation picker, Similar-row taps) funnels
+    // through. The AI is asked for {title,year,type} objects but sometimes
+    // simplifies its own output to a plain array of title strings instead —
+    // downstream code (row text, art fetch, click-through) all read s.title/
+    // s.year/s.type, which are undefined on a bare string, silently
+    // producing a blank title and no artwork (just the generic type label,
+    // e.g. "TV Series", left over from the fallback join). Coerce any
+    // string entries into the expected object shape so every reader sees
+    // the same thing regardless of which form the AI actually returned.
+    if (Array.isArray(data.similar)) {
+      data.similar = data.similar.map(s => (typeof s === 'string' ? { title: s } : s)).filter(s => s && s.title);
+    }
     // Store for rewiring after back navigation from bio/seasons
     content.dataset.videoDataJson = JSON.stringify(data);
     content.dataset.videoArtUrl   = artUrl || '';
