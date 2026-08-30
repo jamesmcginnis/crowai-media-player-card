@@ -137,48 +137,6 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     }
   }
 
-  // Returns true when `ent` (an entity NOT listed in ma_entities) represents
-  // the same physical speaker as one of the configured ma_entities — e.g. the
-  // native HomeKit/AirPlay entity for a HomePod that also has a dedicated
-  // Music Assistant entity — rather than being a genuinely independent
-  // source. Matched by friendly_name (same approach _resolveMAEntity uses
-  // elsewhere for grouping), NOT by comparing media_title/media_artist:
-  // track metadata on the native entity is frequently stale or briefly blank
-  // right after the card reconnects (app reopen/dashboard return) — exactly
-  // when this check matters most — which made an earlier metadata-matching
-  // version of this function unreliable at that exact moment. friendly_name
-  // is a static entity property, present immediately regardless of playback
-  // state, and needs no async entity-registry lookup either.
-  _isMirroredNonMAEntity(ent, hassStates) {
-    const maList = Array.isArray(this._config?.ma_entities) ? this._config.ma_entities : [];
-    if (!maList.length) return false;
-    const entName = (hassStates?.[ent]?.attributes?.friendly_name || '').toLowerCase().trim();
-    if (!entName) return false;
-    return maList.some(maId => {
-      const maState = hassStates?.[maId];
-      if (!maState) return false;
-      if (maState.state !== 'playing' && maState.state !== 'buffering') return false;
-      const maName = (maState.attributes?.friendly_name || '').toLowerCase().trim();
-      return !!maName && (maName === entName || maName.includes(entName) || entName.includes(maName));
-    });
-  }
-
-  // Returns true when two entities are two HA representations of the same
-  // physical speaker (e.g. a HomePod's native entity and its Music
-  // Assistant entity), matched by friendly_name — regardless of which one
-  // is currently playing. Unlike _isMirroredNonMAEntity (which only fires
-  // once the MA side is confirmed playing), this direction-agnostic check
-  // exists specifically to guard the "stop the MA speaker" logic: when a
-  // native entity (e.g. triggered by Siri) and an MA entity are the same
-  // physical device, calling media_stop on the MA entity stops the actual
-  // audio — there's only ever one real stream to a shared HomePod, not two.
-  _entitiesShareSpeaker(entA, entB, hassStates) {
-    const nameA = (hassStates?.[entA]?.attributes?.friendly_name || '').toLowerCase().trim();
-    const nameB = (hassStates?.[entB]?.attributes?.friendly_name || '').toLowerCase().trim();
-    if (!nameA || !nameB) return false;
-    return nameA === nameB || nameA.includes(nameB) || nameB.includes(nameA);
-  }
-
   set hass(hass) {
     this._hass = hass;
 
@@ -399,21 +357,14 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         const st = hass.states[ent]?.state;
         const isMA = !!(this._knownMaEntities?.has(ent) || this._maEntityIds?.has(ent) ||
           (Array.isArray(this._config?.ma_entities) && this._config.ma_entities.includes(ent)));
-        return (st === 'playing' || st === 'buffering') && !isMA &&
-          !this._isMirroredNonMAEntity(ent, hass.states);
+        return (st === 'playing' || st === 'buffering') && !isMA;
       }) || null;
       if (_nonMANowPlaying && _nonMANowPlaying !== this._nonMAPlayingEntity && !this._manualSelection) {
-        // A different non-MA entity just started playing — stop any playing MA
-        // speakers, EXCEPT ones that are just the same physical speaker as
-        // _nonMANowPlaying (e.g. a HomePod's MA entity mirroring a Siri-
-        // initiated session on that same HomePod's native entity) — stopping
-        // those would cut the real, currently-intended audio rather than
-        // superseding a genuinely different stream.
+        // A different non-MA entity just started playing — stop any playing MA speakers
         const _maEntities = Array.isArray(this._config?.ma_entities) ? this._config.ma_entities : [];
         _maEntities.forEach(eid => {
           const st = hass.states[eid]?.state;
-          if ((st === 'playing' || st === 'buffering') &&
-              !this._entitiesShareSpeaker(eid, _nonMANowPlaying, hass.states)) {
+          if (st === 'playing' || st === 'buffering') {
             this._hass.callService('media_player', 'media_stop', { entity_id: eid }).catch(() => {});
           }
         });
@@ -437,19 +388,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       // ── Timestamp tracking ────────────────────────────────────────────────
       // Stamp entities that are actively playing or buffering so we always
       // know which device was most recently active across brief state gaps.
-      // Mirrored non-MA entities (see _isMirroredNonMAEntity) are skipped here:
-      // they report 'playing' continuously for as long as MA drives them, which
-      // would otherwise keep re-stamping "now" forever and make the skip-gap
-      // guard below think the mirrored entity was *just* active — permanently
-      // blocking the switch over to the real MA entity.
       for (const ent of this._config.entities) {
         const st    = hass.states[ent]?.state;
         if (st === 'playing' || st === 'buffering') {
-          const isMA = !!(this._knownMaEntities?.has(ent) || this._maEntityIds?.has(ent) ||
-            (Array.isArray(this._config?.ma_entities) && this._config.ma_entities.includes(ent)));
-          if (isMA || !this._isMirroredNonMAEntity(ent, hass.states)) {
-            this._playTimestamps[ent] = now;
-          }
+          this._playTimestamps[ent] = now;
         }
         // Note: paused entities are intentionally NOT re-stamped. The timestamp
         // set when the entity was genuinely 'playing' is the correct "last active"
@@ -484,8 +426,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             const st = hass.states[ent]?.state;
             const isMA = !!(this._knownMaEntities?.has(ent) || this._maEntityIds?.has(ent) ||
               (Array.isArray(this._config?.ma_entities) && this._config.ma_entities.includes(ent)));
-            return (st === 'playing' || st === 'buffering') && !isMA &&
-              !this._isMirroredNonMAEntity(ent, hass.states);
+            return (st === 'playing' || st === 'buffering') && !isMA;
           }) || null;
           // Only release if a non-MA entity is playing AND it's different from
           // the one that was playing when auto-switch last ran
@@ -510,8 +451,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           const st = hass.states[ent]?.state;
           const isMA = !!(this._knownMaEntities?.has(ent) || this._maEntityIds?.has(ent) ||
             (Array.isArray(this._config?.ma_entities) && this._config.ma_entities.includes(ent)));
-          return (st === 'playing' || st === 'buffering') && !isMA &&
-            !this._isMirroredNonMAEntity(ent, hass.states);
+          return (st === 'playing' || st === 'buffering') && !isMA;
         });
         const _maPlaying = sorted.filter(ent => {
           const st = hass.states[ent]?.state;
@@ -13231,6 +13171,11 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const _input = sheet.querySelector('#sqNameInput');
     _input?.focus();
     _input?.select();
+    if (_input) {
+      const _sampleTracks = tracks.slice(0, 12).map(t => t.title + (t.artist ? ' by ' + t.artist : '')).join('; ');
+      this._wireAiPinNameSuggestion(sheet, _input, _defaultName,
+        'Suggest a short, catchy playlist name (3-6 words, no quotes, no hashtags) for a queue containing these tracks: ' + _sampleTracks + '. Reply with ONLY the name, nothing else.');
+    }
     sheet.querySelector('#sqSaveBtn')?.addEventListener('click', () => {
       const name = (_input?.value || '').trim() || _defaultName;
       const list = this._getSavedQueues();
@@ -13326,6 +13271,41 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const idx = starred.findIndex(b => b.id === book.id);
     if (idx >= 0) { starred.splice(idx, 1); this._abSaveStarred(starred); return false; }
     starred.unshift(book); this._abSaveStarred(starred); return true;
+  }
+
+  // Asks the AI for a short, punchy name given a plain-language description
+  // of what's being pinned (e.g. a track listing, or a recap's top artists).
+  // Shared by Pin Queue, Pin Music Recap, and Pin Video Recap so all three
+  // suggest a name instead of defaulting straight to a date/time stamp.
+  async _aiSuggestPinName(prompt) {
+    const hasAI = await this._aiCheckAvailable();
+    if (!hasAI) return null;
+    try {
+      const raw = await this._aiConverse(prompt);
+      if (!raw) return null;
+      let name = raw.trim()
+        .replace(/^["'“‘]+|["'”’]+$/g, '') // strip wrapping quotes the model likes to add
+        .replace(/\.$/, '')                 // strip a trailing period
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (name.length > 60) name = name.slice(0, 60).trim();
+      return name || null;
+    } catch (_) { return null; }
+  }
+
+  // Wires an AI name suggestion into an already-open naming sheet. Only
+  // swaps the suggestion in if the sheet is still open and the user hasn't
+  // already started editing away from the passed-in default — never
+  // overwrites something the user typed themselves.
+  _wireAiPinNameSuggestion(sheet, input, fallbackName, prompt) {
+    if (!input) return;
+    this._aiSuggestPinName(prompt).then(suggestion => {
+      if (!suggestion) return;
+      if (!sheet.isConnected) return;
+      if (input.value.trim() !== fallbackName.trim()) return;
+      input.value = suggestion;
+      input.select();
+    });
   }
 
   // AI query interpretation — extracts title/author from natural language
@@ -18786,6 +18766,11 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const _input = sheet.querySelector('#watchRecapNameInput');
     _input?.focus();
     _input?.select();
+    if (_input) {
+      const _titles = [...(snapshot.topShows || []), ...(snapshot.topMovies || [])].slice(0, 10).map(t => t.title).join(', ');
+      this._wireAiPinNameSuggestion(sheet, _input, snapshot.name,
+        'Suggest a short, catchy name (3-6 words, no quotes) for a viewing recap covering: ' + _titles + '. Reply with ONLY the name, nothing else.');
+    }
     sheet.querySelector('#watchRecapSaveBtn')?.addEventListener('click', () => {
       const name = (_input?.value || '').trim() || snapshot.name;
       const list = this._getPinnedWatchRecaps();
@@ -19029,6 +19014,11 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const _input = sheet.querySelector('#recapNameInput');
     _input?.focus();
     _input?.select();
+    if (_input) {
+      const _artists = (snapshot.topArtists || []).slice(0, 8).map(a => a.name).join(', ');
+      this._wireAiPinNameSuggestion(sheet, _input, snapshot.name,
+        'Suggest a short, catchy name (3-6 words, no quotes) for a music listening recap dominated by these artists: ' + _artists + '. Reply with ONLY the name, nothing else.');
+    }
     sheet.querySelector('#recapSaveBtn')?.addEventListener('click', () => {
       const name = (_input?.value || '').trim() || snapshot.name;
       const list = this._getPinnedRecaps();
