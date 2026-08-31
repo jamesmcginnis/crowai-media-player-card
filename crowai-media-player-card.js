@@ -137,6 +137,53 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     }
   }
 
+  // Finds the MA-side entity that represents the same physical speaker as
+  // `ent` (a non-MA entity), matched by friendly_name — e.g. a HomePod's
+  // native entity and its Music Assistant entity are two HA representations
+  // of one physical device, so whichever is actually playing, the other one
+  // mirrors it. Returns null if no match.
+  _pairedMAEntity(ent, hassStates) {
+    const maList = Array.isArray(this._config?.ma_entities) ? this._config.ma_entities : [];
+    if (!maList.length) return null;
+    const entName = (hassStates?.[ent]?.attributes?.friendly_name || '').toLowerCase().trim();
+    if (!entName) return null;
+    return maList.find(maId => {
+      const maName = (hassStates?.[maId]?.attributes?.friendly_name || '').toLowerCase().trim();
+      return !!maName && (maName === entName || maName.includes(entName) || entName.includes(maName));
+    }) || null;
+  }
+
+  // Determines whether `ent` (a non-MA entity) represents genuinely new,
+  // independent playback — as opposed to just mirroring a paired MA entity
+  // that's driving the same physical speaker. A HomePod's native entity and
+  // its MA entity always converge on the same 'playing' state (they both
+  // observe one physical device), so a state snapshot alone can't tell which
+  // one is the real source — that requires knowing which one started first.
+  // _becamePlayingAt (populated once per hass update, in the auto-switch
+  // block below) records exactly that. If the paired MA entity started at or
+  // before `ent`, or if `ent`'s own start time isn't known yet (e.g. right
+  // after the card reconnects, with no history to compare against), `ent` is
+  // treated as the mirror — erring toward not disrupting audio that may
+  // already be playing, since a wrongly-skipped switch is a cosmetic miss
+  // but a wrongly-issued stop cuts real audio.
+  _isGenuineNonMAPlaying(ent, hassStates) {
+    const st = hassStates?.[ent]?.state;
+    if (st !== 'playing' && st !== 'buffering') return false;
+    const isMA = !!(this._knownMaEntities?.has(ent) || this._maEntityIds?.has(ent) ||
+      (Array.isArray(this._config?.ma_entities) && this._config.ma_entities.includes(ent)));
+    if (isMA) return false;
+    const pairedMA = this._pairedMAEntity(ent, hassStates);
+    if (pairedMA) {
+      const maSt = hassStates?.[pairedMA]?.state;
+      if (maSt === 'playing' || maSt === 'buffering') {
+        const entStarted = this._becamePlayingAt?.[ent];
+        const maStarted  = this._becamePlayingAt?.[pairedMA];
+        if (!entStarted || (maStarted !== undefined && maStarted <= entStarted)) return false;
+      }
+    }
+    return true;
+  }
+
   set hass(hass) {
     this._hass = hass;
 
@@ -349,16 +396,28 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (this._config.auto_switch) {
       const now = Date.now();
 
+      // ── Transition tracking (genuine-source vs. mirror detection) ──────────
+      // Records the moment each entity most recently transitioned INTO a
+      // playing/buffering state — distinct from the "last seen playing" stamps
+      // below. This is what _isGenuineNonMAPlaying uses to tell which of a
+      // mirrored pair (e.g. a HomePod's native entity and its Music Assistant
+      // entity — both of which always converge on 'playing' since they observe
+      // the same physical speaker) actually started first.
+      if (!this._becamePlayingAt) this._becamePlayingAt = {};
+      if (!this._wasPlayingMap) this._wasPlayingMap = {};
+      for (const ent of this._config.entities) {
+        const isPlayingNow = (hass.states[ent]?.state === 'playing' || hass.states[ent]?.state === 'buffering');
+        if (isPlayingNow && !this._wasPlayingMap[ent]) this._becamePlayingAt[ent] = now;
+        this._wasPlayingMap[ent] = isPlayingNow;
+      }
+
       // ── Stop MA speaker when non-MA entity starts playing ─────────────────
       // When Apple TV or Alexa (non-MA entity) starts playing, stop any MA
       // speakers that are also playing — they've been superseded by AirPlay.
       // Track the specific entity so switching between non-MA entities also works.
-      const _nonMANowPlaying = this._config.entities.find(ent => {
-        const st = hass.states[ent]?.state;
-        const isMA = !!(this._knownMaEntities?.has(ent) || this._maEntityIds?.has(ent) ||
-          (Array.isArray(this._config?.ma_entities) && this._config.ma_entities.includes(ent)));
-        return (st === 'playing' || st === 'buffering') && !isMA;
-      }) || null;
+      const _nonMANowPlaying = this._config.entities.find(ent =>
+        this._isGenuineNonMAPlaying(ent, hass.states)
+      ) || null;
       if (_nonMANowPlaying && _nonMANowPlaying !== this._nonMAPlayingEntity && !this._manualSelection) {
         // A different non-MA entity just started playing — stop any playing MA speakers
         const _maEntities = Array.isArray(this._config?.ma_entities) ? this._config.ma_entities : [];
@@ -422,12 +481,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         // manual switch happened (e.g. kitchen_homepod was playing, user switches
         // to MA speaker — kitchen_homepod still playing shouldn't cancel that).
         if (this._manualSelection) {
-          const _nonMAActive = this._config.entities.find(ent => {
-            const st = hass.states[ent]?.state;
-            const isMA = !!(this._knownMaEntities?.has(ent) || this._maEntityIds?.has(ent) ||
-              (Array.isArray(this._config?.ma_entities) && this._config.ma_entities.includes(ent)));
-            return (st === 'playing' || st === 'buffering') && !isMA;
-          }) || null;
+          const _nonMAActive = this._config.entities.find(ent =>
+            this._isGenuineNonMAPlaying(ent, hass.states)
+          ) || null;
           // Only release if a non-MA entity is playing AND it's different from
           // the one that was playing when auto-switch last ran
           if (_nonMAActive && _nonMAActive !== this._nonMAPlayingEntity) {
@@ -447,12 +503,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         // they represent physical user intent (pressing play on a remote) and
         // should always win over an MA speaker that may still show playing
         // after AirPlay has taken the HomePods away from MA.
-        const _nonMAPlaying = sorted.filter(ent => {
-          const st = hass.states[ent]?.state;
-          const isMA = !!(this._knownMaEntities?.has(ent) || this._maEntityIds?.has(ent) ||
-            (Array.isArray(this._config?.ma_entities) && this._config.ma_entities.includes(ent)));
-          return (st === 'playing' || st === 'buffering') && !isMA;
-        });
+        const _nonMAPlaying = sorted.filter(ent =>
+          this._isGenuineNonMAPlaying(ent, hass.states)
+        );
         const _maPlaying = sorted.filter(ent => {
           const st = hass.states[ent]?.state;
           const isMA = !!(this._knownMaEntities?.has(ent) || this._maEntityIds?.has(ent) ||
