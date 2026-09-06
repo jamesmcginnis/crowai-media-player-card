@@ -664,9 +664,19 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           // progress while playback continued — classic MA silent skip.
           this._healGhostSkip(_gwPrev);
         }
+        // Seed maxPos from the entity's actual current position rather than
+        // always 0. Without this, a fresh card instance (e.g. the app was
+        // closed and reopened mid-track — pause, background, resume) has no
+        // memory of this track and would otherwise record it as having
+        // 'just started at position 0' even though it's well underway. If
+        // that track then changes again shortly after for any ordinary
+        // reason, the maxPos<2 heal condition below would wrongly read as a
+        // classic instant ghost-skip and trigger an unnecessary re-queue.
+        const _gwSeedPos = stateObj.attributes?.media_position;
         this._ghostWatch = {
           entity: this._entity, artist: newArtist, title: newTitle,
-          ts: _gwNow, maxPos: 0, live: this._isLiveStream(stateObj),
+          ts: _gwNow, maxPos: (typeof _gwSeedPos === 'number' ? _gwSeedPos : 0),
+          live: this._isLiveStream(stateObj),
         };
       }
       if (_trackChanged) {
@@ -1578,7 +1588,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   updateLiveProgress() {
     if (document.hidden) return;            // no point updating a hidden page
     const state = this._hass?.states[this._entity];
-    if (!state || state.state !== 'playing') return;
+    if (!state || (state.state !== 'playing' && state.state !== 'buffering')) return;
     const r = this.shadowRoot;
     const duration = state.attributes.media_duration;
     let pos = state.attributes.media_position;
@@ -2138,6 +2148,36 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         }
         .lyrics-line.active { color: var(--lyrics-text-active, #fff); font-size: 20px; }
         .lyrics-line.past   { color: var(--lyrics-text-past, rgba(255,255,255,0.38)); }
+
+        /* Instrumental-break placeholder — shown for long gaps between lines */
+        .lyrics-line.is-instrumental {
+          display: flex; align-items: center; justify-content: center;
+          min-height: 28px; padding: 6px 0;
+        }
+        .lyrics-eq {
+          display: inline-flex; align-items: center; justify-content: center;
+          gap: 4px; height: 22px; opacity: 0.4;
+          transition: opacity 0.35s ease, transform 0.35s ease;
+        }
+        .lyrics-line.is-instrumental.active .lyrics-eq { opacity: 0.95; transform: scale(1.1); }
+        .lyrics-eq .eq-bar {
+          width: 4px; height: 6px; border-radius: 2px;
+          background: currentColor;
+          transition: height 0.25s ease;
+        }
+        .lyrics-line.is-instrumental.active .eq-bar:nth-child(1) {
+          animation: lyricsEqBar1 0.8s ease-in-out infinite;
+        }
+        .lyrics-line.is-instrumental.active .eq-bar:nth-child(2) {
+          animation: lyricsEqBar2 0.6s ease-in-out 0.15s infinite;
+        }
+        .lyrics-line.is-instrumental.active .eq-bar:nth-child(3) {
+          animation: lyricsEqBar3 0.7s ease-in-out 0.3s infinite;
+        }
+        @keyframes lyricsEqBar1 { 0%, 100% { height: 6px; } 50% { height: 20px; } }
+        @keyframes lyricsEqBar2 { 0%, 100% { height: 6px; } 50% { height: 14px; } }
+        @keyframes lyricsEqBar3 { 0%, 100% { height: 6px; } 50% { height: 18px; } }
+
         /* Adaptive scrim — active when art is bright or bg is transparent */
         .lyrics-overlay.bright-art::before {
           content: '';
@@ -6277,6 +6317,17 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         service_data: { entity_id: prev.entity, media_id: uri, media_type: 'track', enqueue: 'next' }
       });
       this._showToast('\u201C' + prev.title + '\u201D failed to stream \u2014 re-queued to play next', 4000);
+      // The re-queue above is server-side only — mirror what normal track
+      // changes already do (see the wasNotPlaying/isNowPlaying block above)
+      // and refresh the queue panel so a re-queued track actually shows up
+      // if it's open.
+      if (this._queuePanelDirection != null && !this._queueReorderMode && !this._queueReordering) {
+        const _popup = this.shadowRoot?.getElementById('infoPopup');
+        if (_popup?.classList.contains('visible')) {
+          clearTimeout(this._queueRefreshDebounce);
+          this._queueRefreshDebounce = setTimeout(() => this._showQueuePanel(this._queuePanelDirection), 800);
+        }
+      }
     } catch (_) { /* healing is strictly best-effort — never surface errors */ }
   }
 
@@ -7623,17 +7674,58 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   }
 
   _parseLrc(lrc) {
-    // Parse "[mm:ss.xx] line text" — returns [{time, text}] sorted by time
+    // Parse "[mm:ss.xx][mm:ss.xx]... line text" — returns [{time, text}]
+    // sorted by time. Each raw line is trimmed first (an untrimmed leading
+    // space would otherwise fail the anchored tag match and silently drop
+    // the whole line — some sources emit lines like that). A line may also
+    // carry more than one leading time tag (LRC repeats a tag set for
+    // recurring lines like choruses); each tag becomes its own entry
+    // sharing that line's text, so the line correctly reappears at every
+    // timestamp it's tagged for instead of only the first.
     const lines = [];
-    for (const raw of lrc.split('\n')) {
-      const m = raw.match(/^\[(\d+):(\d+(?:\.\d+)?)\](.*)/);
-      if (!m) continue;
-      const time = parseInt(m[1], 10) * 60 + parseFloat(m[2]);
-      const text = m[3].trim();
-      // Skip metadata tags like [ar:], [al:], etc. (they have no decimal time)
-      lines.push({ time, text });
+    const tagRe = /^\[(\d+):(\d+(?:\.\d+)?)\]/;
+    for (let raw of lrc.split('\n')) {
+      raw = raw.trim();
+      if (!raw) continue;
+      const times = [];
+      while (true) {
+        const m = raw.match(tagRe);
+        if (!m) break;
+        times.push(parseInt(m[1], 10) * 60 + parseFloat(m[2]));
+        raw = raw.slice(m[0].length);
+      }
+      // No leading time tag at all — a metadata line ([ar:], [al:], etc.)
+      // or unsynced plain text; nothing for this synced parser to use.
+      if (!times.length) continue;
+      const text = raw.trim();
+      for (const time of times) lines.push({ time, text });
     }
-    return lines.sort((a, b) => a.time - b.time);
+    lines.sort((a, b) => a.time - b.time);
+    if (!lines.length) return lines;
+
+    // Insert an instrumental-break marker wherever there's a >=10s gap with
+    // no lyric — including a long intro before the first line — so the
+    // lyrics view has something to show (an animated waveform) instead of
+    // sitting blank through instrumental stretches.
+    const INSTRUMENTAL_GAP = 10;
+    const withGaps = [];
+    if (lines[0].time >= INSTRUMENTAL_GAP) {
+      withGaps.push({ time: 0, text: '', isInstrumental: true });
+    }
+    for (let i = 0; i < lines.length; i++) {
+      withGaps.push(lines[i]);
+      if (i < lines.length - 1) {
+        const gap = lines[i + 1].time - lines[i].time;
+        if (gap >= INSTRUMENTAL_GAP) {
+          // Place the marker a few seconds into the gap rather than right at
+          // the last line's own timestamp, so it doesn't compete with the
+          // line it's following for the same instant.
+          const at = gap >= 6 ? lines[i].time + 3 : lines[i].time + gap / 2;
+          withGaps.push({ time: at, text: '', isInstrumental: true });
+        }
+      }
+    }
+    return withGaps;
   }
 
   _showSyncedLyrics(lines) {
@@ -7646,8 +7738,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
     const scroll = r.getElementById('lyricsScroll');
     scroll.dataset.mode = this._config?.lyrics_scroll_mode || 'highlight';
-    scroll.innerHTML = lines.map((l, i) =>
-      `<div class="lyrics-line" data-idx="${i}">${l.text || '\u2022'}</div>`
+    const _eqBars = '<div class="lyrics-eq"><span class="eq-bar"></span><span class="eq-bar"></span><span class="eq-bar"></span></div>';
+    scroll.innerHTML = lines.map((l, i) => l.isInstrumental
+      ? `<div class="lyrics-line is-instrumental" data-idx="${i}" aria-label="Instrumental">${_eqBars}</div>`
+      : `<div class="lyrics-line" data-idx="${i}">${l.text || '\u2022'}</div>`
     ).join('');
 
     r.getElementById('lyricsLoading').classList.add('hidden');
