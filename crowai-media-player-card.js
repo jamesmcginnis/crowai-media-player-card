@@ -27,7 +27,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   }
 
   static getStubConfig() {
-    return { entities: [], auto_switch: true, accent_color: '#007AFF', volume_accent: '#007AFF', title_color: '#ffffff', artist_color: '#ffffff', button_color: '#ffffff', player_bg: '#1c1c1e', player_bg_opacity: 100, show_entity_selector: true, volume_control: 'slider', startup_mode: 'compact', remember_view: false, volume_entity: {}, entity_names: {}, ma_entities: [], show_vol_pct: true, vol_pct_color: 'rgba(255,255,255,0.45)', scroll_text: false, remember_last_entity: false, entity_startup_volumes: {}, lyrics_bg: '#0a0a0c', lyrics_text_color: '#ffffff', lyrics_scroll_mode: 'highlight', lyrics_persist: false, lyrics_cache_ttl: 7, lyrics_cache_enabled: true, lyrics_persistent_storage: false, pins_persistent_storage: false, show_pins_in_sections: true, ai_info_persistent_storage: false, itunes_persistent_storage: false, wiki_persistent_storage: false, ma_library_cache_enabled: true, ma_library_cache_ttl: 1, ma_radio_mode: false, show_ma_library_button: true, use_ha_theme: false, remote_buttons_position: 'bottom', ambient_glow: false, announce_tts_service: '', row_glow: false, show_remote_button: true, artwork_crossfade: false, icon_theme: 'robot', resize_btn_spin: true, pin_hearts: true, remote_art_blur: true, volume_hud: true, itunes_art: true, controls_theme: 'classic', add_pill_color: '', card_liquid_glass: true, volume_hud_glass: false, ai_features_enabled: false, ai_conversation_agent: '', share_service: 'youtube_music', song_intro_enabled: false, show_media_type_pill: false, show_youtube_button: true, atv_keyboard_panel: true, ghost_skip_heal: true };
+    return { entities: [], auto_switch: true, accent_color: '#007AFF', volume_accent: '#007AFF', title_color: '#ffffff', artist_color: '#ffffff', button_color: '#ffffff', player_bg: '#1c1c1e', player_bg_opacity: 100, show_entity_selector: true, volume_control: 'slider', startup_mode: 'compact', remember_view: false, volume_entity: {}, entity_names: {}, ma_entities: [], show_vol_pct: true, vol_pct_color: 'rgba(255,255,255,0.45)', scroll_text: false, remember_last_entity: false, entity_startup_volumes: {}, lyrics_bg: '#0a0a0c', lyrics_text_color: '#ffffff', lyrics_scroll_mode: 'highlight', lyrics_persist: false, lyrics_cache_ttl: 7, lyrics_cache_enabled: true, lyrics_persistent_storage: false, pins_persistent_storage: false, show_pins_in_sections: true, ai_info_persistent_storage: false, itunes_persistent_storage: false, wiki_persistent_storage: false, ma_library_cache_enabled: true, ma_library_cache_ttl: 1, ma_radio_mode: false, show_ma_library_button: true, use_ha_theme: false, remote_buttons_position: 'bottom', ambient_glow: false, announce_tts_service: '', row_glow: false, show_remote_button: true, artwork_crossfade: false, icon_theme: 'robot', resize_btn_spin: true, pin_hearts: true, remote_art_blur: true, volume_hud: true, itunes_art: true, controls_theme: 'classic', add_pill_color: '', card_liquid_glass: true, volume_hud_glass: false, ai_features_enabled: false, ai_conversation_agent: '', info_panel_priority: 'ai', library_search_mode: 'normal', tmdb_api_key: '', video_info_priority: 'ai', share_service: 'youtube_music', song_intro_enabled: false, show_media_type_pill: false, show_youtube_button: true, atv_keyboard_panel: true, ghost_skip_heal: true };
   }
 
   setConfig(config) {
@@ -91,6 +91,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       show_entity_selector: true,
      
       ai_features_enabled: false, ai_conversation_agent: '',
+      info_panel_priority: 'ai',
+      library_search_mode: 'normal',
+      tmdb_api_key: '',
+      video_info_priority: 'ai',
       ...config
     };
     if (!this._entity) {
@@ -5447,9 +5451,14 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         if (e.key === 'Enter' && iosInput.value.trim() && iosInput._fullSearchEnabled) {
           e.preventDefault();
           const query = iosInput.value.trim();
-          this._maInSearchResults = true;
-          this._maLastSearch = query;
-          this._searchMA(query);
+          const _tab = r.querySelector('.ma-tab.active')?.dataset?.tab || this._maCurrentTab;
+          if (this._config?.library_search_mode === 'ai' && this._aiEnabled() && ['track','artist','album'].includes(_tab)) {
+            this._doAiLibrarySearch(_tab, query);
+          } else {
+            this._maInSearchResults = true;
+            this._maLastSearch = query;
+            this._searchMA(query);
+          }
         }
       });
       iosClear.addEventListener('click', () => {
@@ -5480,7 +5489,15 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const maSearchInput = r.getElementById('maSearchInput');
     const maSearchBtn   = r.getElementById('maSearchBtn');
     const maSearchClear = r.getElementById('maSearchClear');
-    const _doMASearch = (query) => { this._searchMA(query); };
+    const _doMASearch = (query) => {
+      if (!query) return;
+      const _tab = r.querySelector('.ma-tab.active')?.dataset?.tab || this._maCurrentTab;
+      if (this._config?.library_search_mode === 'ai' && this._aiEnabled() && ['track','artist','album'].includes(_tab)) {
+        this._doAiLibrarySearch(_tab, query);
+      } else {
+        this._searchMA(query);
+      }
+    };
 
     maSearchBtn.onclick = () => _doMASearch(maSearchInput.value.trim());
     maSearchInput.addEventListener('keydown', (e) => {
@@ -13443,16 +13460,36 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // Wires an AI name suggestion into an already-open naming sheet. Only
   // swaps the suggestion in if the sheet is still open and the user hasn't
   // already started editing away from the passed-in default — never
-  // overwrites something the user typed themselves.
+  // overwrites something the user typed themselves. Shows a small spinner
+  // on the right edge of the input while the suggestion is in flight.
   _wireAiPinNameSuggestion(sheet, input, fallbackName, prompt) {
     if (!input) return;
+    if (!this._aiEnabled()) return; // no AI configured — nothing to wait on, skip the spinner entirely
+
+    // Wrap the input in a relative container (only once) so the spinner can
+    // sit absolutely positioned on its right edge regardless of where this
+    // sheet places the input.
+    let wrap = input.parentElement;
+    if (!wrap || !wrap.classList.contains('ai-name-wrap')) {
+      wrap = document.createElement('div');
+      wrap.className = 'ai-name-wrap';
+      wrap.style.cssText = 'position:relative;';
+      input.parentNode.insertBefore(wrap, input);
+      wrap.appendChild(input);
+      input.style.paddingRight = '34px'; // room for the spinner so typed text never sits under it
+    }
+    const spinner = document.createElement('div');
+    spinner.className = 'ai-name-spinner';
+    spinner.style.cssText = 'position:absolute;right:10px;top:50%;transform:translateY(-50%);width:15px;height:15px;border:2px solid rgba(255,255,255,0.25);border-top-color:#63b3ed;border-radius:50%;animation:ma-spin 0.7s linear infinite;pointer-events:none;';
+    wrap.appendChild(spinner);
+
     this._aiSuggestPinName(prompt).then(suggestion => {
       if (!suggestion) return;
       if (!sheet.isConnected) return;
       if (input.value.trim() !== fallbackName.trim()) return;
       input.value = suggestion;
       input.select();
-    });
+    }).finally(() => spinner.remove());
   }
 
   // AI query interpretation — extracts title/author from natural language
@@ -20295,7 +20332,40 @@ Include ALL tracks. Use null for unknown fields.`;
     // panel behaves consistently rather than showing AI data for some
     // tracks and Discogs for others.
     const _aiOff = !this._aiEnabled();
-    if (!_aiOff) {
+
+    // ── Info panel priority ── when the user has flipped this to "Discogs
+    // First" in the editor, try Discogs before AI is ever consulted: no
+    // agent-availability probe, no AI network call. A hit here renders
+    // through the exact same Discogs-sourced template used by the AI-first
+    // fallback chain below (data._fromDiscogs). A miss or rate limit simply
+    // falls through into the normal AI-first flow beneath it.
+    let _earlyDiscogsData = null;
+    if (!_aiOff && this._config?.info_panel_priority === 'discogs') {
+      const _fromSearchEarly = !!(context.fromSearch || context.overrideArt);
+      const _liveMediaTypeEarly = _fromSearchEarly ? null : this._detectMediaType(this._hass?.states[this._entity]);
+      if (!_liveMediaTypeEarly || _liveMediaTypeEarly === 'music') {
+        const _earlyAttrs = this._hass?.states[this._entity]?.attributes || {};
+        const _earlyRawAlbum = _earlyAttrs.media_album_name || '';
+        const _earlyAlbumLooksLikeTitle = !!(_earlyRawAlbum && trackTitle &&
+          _earlyRawAlbum.toLowerCase().replace(/[^a-z0-9]/g,'') === trackTitle.toLowerCase().replace(/[^a-z0-9]/g,''));
+        const _earlyAlbum = context.overrideAlbum || (_fromSearchEarly || _earlyAlbumLooksLikeTitle ? '' : _earlyRawAlbum) || '';
+        const _earlyResult = await this._lookupDiscogsForAIData(artistName, _earlyAlbum, trackTitle);
+        if (_stale()) return;
+        if (_earlyResult && _earlyResult !== 'rate_limited') {
+          const _earlyDurSecs = _fromSearchEarly ? null : _earlyAttrs.media_duration;
+          const _earlyDur = (() => {
+            if (!_earlyDurSecs) return null;
+            const s = Math.round(parseFloat(_earlyDurSecs));
+            const m = Math.floor(s / 60), h = Math.floor(m / 60);
+            return h > 0 ? h + ':' + String(m % 60).padStart(2,'0') + ':' + String(s % 60).padStart(2,'0')
+                         : m + ':' + String(s % 60).padStart(2,'0');
+          })();
+          _earlyDiscogsData = this._discogsResultToAIData(_earlyResult, _earlyAlbum, _earlyDur, trackTitle, artistName);
+        }
+      }
+    }
+
+    if (!_aiOff && !_earlyDiscogsData) {
       const hasAI = await this._aiCheckAvailable();
       if (_stale()) return;
       if (!hasAI) {
@@ -20322,7 +20392,7 @@ Include ALL tracks. Use null for unknown fields.`;
       if (persisted && !persisted._incomplete) this._aiTrackInfoCache.set(cacheKey, persisted);
     }
     // Clear incomplete cached entry so we retry AI
-    let data = _aiOff ? undefined : this._aiTrackInfoCache.get(cacheKey);
+    let data = _earlyDiscogsData || (_aiOff ? undefined : this._aiTrackInfoCache.get(cacheKey));
     if (data?._incomplete) { this._aiTrackInfoCache.delete(cacheKey); data = undefined; }
     if (_aiOff) {
       // Same shape a failed AI lookup produces — routes into the _notFound
@@ -20806,6 +20876,7 @@ Include ALL tracks. Use null for unknown fields.`;
         <div style="font-size:9px;font-weight:700;color:rgba(99,179,237,0.6);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:3px">✨ Fun Fact</div>
         <div style="font-size:12px;color:${this._pt("text")};line-height:1.5">${data.fact}</div>
       </div>` : ''}
+      ${(!_aiOff && !data._fromDiscogs) ? `
       <div id="music-action-row" style="display:flex;gap:8px;margin:0 0 12px;">
         <button id="music-ask-btn" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:9px 12px;border-radius:12px;background:${this._pt("btnBg")};border:1px solid ${this._pt("border")};color:${this._pt("text")};font-size:12px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;-webkit-tap-highlight-color:transparent;">
           <svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:rgba(99,179,237,0.8);flex-shrink:0"><path d="M20,2H4A2,2 0 0,0 2,4V22L6,18H20A2,2 0 0,0 22,16V4A2,2 0 0,0 20,2M6,9H18V11H6V9M14,14H6V12H14V14M18,8H6V6H18V8Z"/></svg>
@@ -20823,6 +20894,7 @@ Include ALL tracks. Use null for unknown fields.`;
       <div id="music-ask-panel" style="display:none;margin-bottom:12px;"></div>
       <div id="music-meaning-panel" style="display:none;margin-bottom:12px;"></div>
       <div id="music-trivia-panel" style="display:none;margin-bottom:12px;"></div>
+      ` : ''}
       ${(data.members && data.members.length >= 1) ? `
       <div style="margin-bottom:14px;">
         <div class="info-section-label">${data.members.length === 1 ? 'Artist' : 'Band Members'}</div>
@@ -25623,6 +25695,162 @@ Include ALL tracks. Use null for unknown fields.`;
     }
   }
 
+  // ── TMDB (The Movie Database) — optional alternative/fallback source for
+  // movie/TV info, ported from the card's original v0.0.1 release. Builds
+  // results into the exact same shape the AI lookup produces (type, title,
+  // year, genres, rating, overview, cast, director, seasons, status,
+  // similar) plus a few _tmdb-prefixed extras, so they drop straight into
+  // the existing _renderVideoInfoPicker / _renderVideoInfoDetail views
+  // without any changes to that rendering code.
+  _tmdbFetch(url) {
+    const key = (this._config?.tmdb_api_key || '').trim();
+    const isBearer = key.startsWith('ey'); // v4 read access tokens are JWTs
+    return fetch(
+      isBearer ? url : `${url}${url.includes('?') ? '&' : '?'}api_key=${encodeURIComponent(key)}`,
+      isBearer ? { headers: { Authorization: `Bearer ${key}` } } : {}
+    );
+  }
+
+  async _lookupTMDBVideoInfo(cleanTitle, isSeriesTitle) {
+    const tmdbKey = (this._config?.tmdb_api_key || '').trim();
+    if (!tmdbKey || !cleanTitle) return null;
+
+    const base    = 'https://api.themoviedb.org/3';
+    const imgBase = 'https://image.tmdb.org/t/p/w500';
+
+    // Strip a trailing year e.g. "Interstellar (2014)" → "Interstellar"
+    const yearMatch   = cleanTitle.match(/\s*\((\d{4})\)\s*$/);
+    const searchTitle = yearMatch ? cleanTitle.replace(yearMatch[0], '').trim() : cleanTitle;
+    const titleYear   = yearMatch ? yearMatch[1] : null;
+
+    const norm  = s => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const qNorm = norm(searchTitle);
+    const nameScore = (name) => {
+      const n = norm(name);
+      if (n === qNorm) return 4;
+      if (n.startsWith(qNorm) || qNorm.startsWith(n)) return 3;
+      if (n.includes(qNorm) || qNorm.includes(n)) return 2;
+      return 0;
+    };
+
+    let tvResults = [], mvResults = [];
+    try {
+      const [tvResp, mvResp] = await Promise.all([
+        this._tmdbFetch(`${base}/search/tv?query=${encodeURIComponent(searchTitle)}&page=1`),
+        this._tmdbFetch(`${base}/search/movie?query=${encodeURIComponent(searchTitle)}&page=1${titleYear ? '&year=' + titleYear : ''}`)
+      ]);
+      tvResults = tvResp.ok ? ((await tvResp.json()).results || []) : [];
+      mvResults = mvResp.ok ? ((await mvResp.json()).results || []) : [];
+    } catch (_) {
+      return null;
+    }
+
+    const scored = (results, nameKey) => results
+      .map(r => ({ r, s: nameScore(r[nameKey]), pop: r.popularity || 0 }))
+      .filter(x => x.s > 0)
+      .sort((a, b) => b.s - a.s || b.pop - a.pop);
+
+    const tvScored = scored(tvResults, 'name');
+    const mvScored = scored(mvResults, 'title');
+    if (!tvScored.length && !mvScored.length) return { candidates: [] };
+
+    const bestTV  = tvScored[0] || null;
+    const bestMV  = mvScored[0] || null;
+    const tvScore = bestTV ? bestTV.s : 0;
+    const mvScore = bestMV ? bestMV.s : 0;
+    // Both TV and movie have an equally strong match — genuine cross-type
+    // ambiguity (e.g. "Passengers", "Legend") rather than a clear winner.
+    const ambiguous = bestTV && bestMV && tvScore === mvScore;
+
+    const _movieGenreMap = {28:'Action',12:'Adventure',16:'Animation',35:'Comedy',80:'Crime',99:'Documentary',18:'Drama',10751:'Family',14:'Fantasy',36:'History',27:'Horror',10402:'Music',9648:'Mystery',10749:'Romance',878:'Science Fiction',53:'Thriller',10752:'War',37:'Western'};
+    const _tvGenreMap    = {28:'Action',12:'Adventure',16:'Animation',35:'Comedy',80:'Crime',99:'Documentary',18:'Drama',10751:'Family',14:'Fantasy',36:'History',27:'Horror',10402:'Music',9648:'Mystery',10749:'Romance',878:'Sci-Fi',53:'Thriller',10752:'War',37:'Western',10759:'Action & Adventure',10762:'Kids',10763:'News',10764:'Reality',10765:'Sci-Fi & Fantasy',10766:'Soap',10767:'Talk',10768:'War & Politics'};
+
+    const toFullMovie = async (r) => {
+      let detail = r, credits = null, similar = [];
+      try {
+        const [dResp, cResp, sResp] = await Promise.all([
+          this._tmdbFetch(`${base}/movie/${r.id}`),
+          this._tmdbFetch(`${base}/movie/${r.id}/credits`),
+          this._tmdbFetch(`${base}/movie/${r.id}/similar`)
+        ]);
+        if (dResp.ok) detail = await dResp.json();
+        if (cResp.ok) credits = await cResp.json();
+        if (sResp.ok) similar = ((await sResp.json()).results || []).slice(0, 10);
+      } catch (_) {}
+      const director = credits?.crew?.find(c => c.job === 'Director')?.name || null;
+      const genres = (detail.genres || []).map(g => g.name);
+      return {
+        type: 'movie',
+        title: detail.title || r.title,
+        year: (detail.release_date || r.release_date || '').split('-')[0] || '',
+        genres: genres.length ? genres : (r.genre_ids || []).map(id => _movieGenreMap[id]).filter(Boolean),
+        rating: detail.vote_average ? detail.vote_average.toFixed(1) : '',
+        overview: detail.overview || r.overview || '',
+        cast: (credits?.cast || []).slice(0, 15).map(c => c.name),
+        director,
+        status: detail.status || '',
+        similar: similar.map(s => ({ title: s.title, year: (s.release_date || '').split('-')[0] || '', type: 'movie' })),
+        _fromTmdb: true,
+        _tmdbPoster: detail.poster_path ? (imgBase + detail.poster_path) : (r.poster_path ? imgBase + r.poster_path : ''),
+        _tmdbUrl: `https://www.themoviedb.org/movie/${r.id}`,
+      };
+    };
+
+    const toFullTV = async (r) => {
+      let detail = r, credits = null, similar = [];
+      try {
+        const [dResp, cResp, sResp] = await Promise.all([
+          this._tmdbFetch(`${base}/tv/${r.id}`),
+          this._tmdbFetch(`${base}/tv/${r.id}/aggregate_credits`),
+          this._tmdbFetch(`${base}/tv/${r.id}/similar`)
+        ]);
+        if (dResp.ok) detail = await dResp.json();
+        if (cResp.ok) credits = await cResp.json();
+        if (sResp.ok) similar = ((await sResp.json()).results || []).slice(0, 10);
+      } catch (_) {}
+      const castSorted = (credits?.cast || []).slice().sort((a, b) => (b.total_episode_count || 0) - (a.total_episode_count || 0));
+      const genres = (detail.genres || []).map(g => g.name);
+      return {
+        type: 'tv',
+        title: detail.name || r.name,
+        year: (detail.first_air_date || r.first_air_date || '').split('-')[0] || '',
+        genres: genres.length ? genres : (r.genre_ids || []).map(id => _tvGenreMap[id]).filter(Boolean),
+        rating: detail.vote_average ? detail.vote_average.toFixed(1) : '',
+        overview: detail.overview || r.overview || '',
+        cast: castSorted.slice(0, 15).map(c => c.name),
+        seasons: (detail.seasons || []).filter(s => s.season_number > 0).length || detail.number_of_seasons || 0,
+        status: detail.status || '',
+        similar: similar.map(s => ({ title: s.name, year: (s.first_air_date || '').split('-')[0] || '', type: 'tv' })),
+        _fromTmdb: true,
+        _tmdbPoster: detail.poster_path ? (imgBase + detail.poster_path) : (r.poster_path ? imgBase + r.poster_path : ''),
+        _tmdbUrl: `https://www.themoviedb.org/tv/${r.id}`,
+      };
+    };
+
+    if (ambiguous) {
+      const mvTop = mvScored.slice(0, 3), tvTop = tvScored.slice(0, 3);
+      const full = await Promise.all([
+        ...mvTop.map(x => toFullMovie(x.r)),
+        ...tvTop.map(x => toFullTV(x.r)),
+      ]);
+      return { candidates: full };
+    }
+
+    if (mvScore > tvScore && bestMV) {
+      return { candidates: [await toFullMovie(bestMV.r)] };
+    }
+    if (bestTV) {
+      const topShows = tvScored.filter(x => x.s === tvScore).slice(0, 4);
+      if (topShows.length > 1) {
+        const full = await Promise.all(topShows.map(x => toFullTV(x.r)));
+        return { candidates: full };
+      }
+      return { candidates: [await toFullTV(bestTV.r)] };
+    }
+    if (bestMV) return { candidates: [await toFullMovie(bestMV.r)] };
+    return { candidates: [] };
+  }
+
   async _fetchVideoInfo(title, isKnownSeriesTitle, localFileMeta) {
     // Capture and clear the art override at the START so it's available throughout
     const overrideArt = this._videoInfoArtOverride || null;
@@ -25729,6 +25957,55 @@ Include ALL tracks. Use null for unknown fields.`;
         <div style="font-size:12px;color:${this._pt("dim")};">Looking up "${cleanTitle}"…</div>
       </div>`;
 
+    // ── TMDB priority / AI-off fallback ── when the user has flipped Movie/TV
+    // Info Priority to "TMDB First", or AI Features is off entirely, try TMDB
+    // before ever touching AI (no agent-availability probe, no AI network
+    // call). A hit renders through the same picker/detail views the AI path
+    // uses. A miss or missing key falls through to the normal AI-first flow
+    // below when AI is on — or shows a clear message when AI is off, since
+    // there's nowhere else left to fall back to.
+    const _aiOffForVideo = !this._aiEnabled();
+    const _tmdbKeyPresent = !!(this._config?.tmdb_api_key || '').trim();
+    const _tmdbFirst = _tmdbKeyPresent && (this._config?.video_info_priority === 'tmdb' || _aiOffForVideo);
+    if (_tmdbFirst) {
+      let _earlyTmdb = null;
+      try { _earlyTmdb = await this._lookupTMDBVideoInfo(cleanTitle, _isSeriesTitle); } catch (_) { _earlyTmdb = null; }
+      const _cands = _earlyTmdb?.candidates || [];
+      if (_cands.length) {
+        const _artUrls = _cands.map(c => c._tmdbPoster || '');
+        if (_cands.length > 1) {
+          this._videoInfoPickerState = { results: _cands, artUrls: _artUrls, artUrl, cacheKey: null };
+          this._renderVideoInfoPicker(content, _cands, artUrl, null, _artUrls);
+        } else {
+          this._videoInfoPickerState = null;
+          this._renderVideoInfoDetail(content, _cands[0], _cands[0]._tmdbPoster || artUrl);
+        }
+        return;
+      }
+      if (_aiOffForVideo) {
+        content.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
+        content.innerHTML = `
+          <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:16px;padding:32px;text-align:center;">
+            <svg viewBox="0 0 24 24" style="width:40px;height:40px;fill:${this._pt("icon")}"><path d="M18,4L20,8H17L15,4H13L15,8H12L10,4H8L10,8H7L5,4H4A2,2 0 0,0 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V4H18Z"/></svg>
+            <div style="font-size:15px;font-weight:600;color:${this._pt("text")}">Not found on TMDB</div>
+            <div style="font-size:13px;color:${this._pt("dim")};line-height:1.5">"${cleanTitle}" isn't in the TMDB database, or the AI Info tab could add more matches once AI Features is turned on.</div>
+          </div>`;
+        return;
+      }
+      // AI is on but was set to TMDB-first — fall through to the normal
+      // AI-first flow below since TMDB had nothing.
+    } else if (_aiOffForVideo) {
+      // AI is off and no TMDB key is configured — nothing left to show.
+      content.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
+      content.innerHTML = `
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:16px;padding:32px;text-align:center;">
+          <svg viewBox="0 0 24 24" style="width:40px;height:40px;fill:${this._pt("icon")}"><path d="M18,4L20,8H17L15,4H13L15,8H12L10,4H8L10,8H7L5,4H4A2,2 0 0,0 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V4H18Z"/></svg>
+          <div style="font-size:15px;font-weight:600;color:${this._pt("text")}">Movie/TV Info Unavailable</div>
+          <div style="font-size:13px;color:${this._pt("dim")};line-height:1.6">AI Features is off. Add a free TMDB API key in the card editor → Movies &amp; TV to show movie/TV info without AI.</div>
+        </div>`;
+      return;
+    }
+
     const hasAI = await this._aiCheckAvailable();
     if (!hasAI) { this._aiShowNoAgentBanner(popup); return; }
 
@@ -25824,10 +26101,33 @@ Include ALL tracks. Use null for unknown fields.`;
         this._aiSessionSet('videoInfo', cacheKey, results);
         this._aiLocalSet('videoInfo', cacheKey, results);
       } catch(e) {
-        // AI came back empty — try Wikipedia before giving up entirely.
-        // Won't have cast/rating/genres, but a summary is better than
-        // nothing, especially for titles the AI's training data doesn't
-        // cover or a mangled title that didn't resolve to anything.
+        // AI came back empty — try TMDB next if a key is configured and we
+        // haven't already tried it above (priority was AI-first, or off).
+        // Falls to Wikipedia, then local file info, then nothing, exactly
+        // as before, if TMDB also comes up empty.
+        if (_tmdbKeyPresent && !_tmdbFirst) {
+          let _fallbackTmdb = null;
+          try { _fallbackTmdb = await this._lookupTMDBVideoInfo(cleanTitle, _isSeriesTitle); } catch (_) { _fallbackTmdb = null; }
+          const _fbCands = _fallbackTmdb?.candidates || [];
+          if (_fbCands.length) {
+            const _fbArtUrls = _fbCands.map(c => c._tmdbPoster || '');
+            content.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
+            this.shadowRoot?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
+            if (_fbCands.length > 1) {
+              this._videoInfoPickerState = { results: _fbCands, artUrls: _fbArtUrls, artUrl, cacheKey: null };
+              this._renderVideoInfoPicker(content, _fbCands, artUrl, null, _fbArtUrls);
+            } else {
+              this._videoInfoPickerState = null;
+              this._renderVideoInfoDetail(content, _fbCands[0], _fbCands[0]._tmdbPoster || artUrl);
+            }
+            return;
+          }
+        }
+        // AI (and TMDB, if tried) came back empty — try Wikipedia before
+        // giving up entirely. Won't have cast/rating/genres, but a summary
+        // is better than nothing, especially for titles the AI's training
+        // data doesn't cover or a mangled title that didn't resolve to
+        // anything.
         const wikiFallback = await this._fetchWikipediaVideoFallback(cleanTitle, _isSeriesTitle);
         if (wikiFallback) {
           content.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
@@ -26138,6 +26438,12 @@ Include ALL tracks. Use null for unknown fields.`;
       }
     }
 
+    // Header label — matches the pattern used for the music info panel
+    // (✨ AI Info vs 💿 Discogs Info): shows which source this result came
+    // from so it's never ambiguous when both are configured.
+    const _videoTitleEl = this.shadowRoot?.getElementById('infoPopupTitle');
+    if (_videoTitleEl) _videoTitleEl.textContent = data._fromTmdb ? '🎬 TMDB Info' : '✨ AI Info';
+
     const genreTags = (data.genres || []).slice(0, 3).map(g => `<span class="info-tag bio-genre-tag" data-tag="${g.replace(/"/g,'&quot;')}">${g}</span>`).join('');
     const _seasonsCount = data.type === 'tv' && data.seasons ? data.seasons : 0;
     const metaItems = [data.year, data.status].filter(Boolean);
@@ -26199,7 +26505,9 @@ Include ALL tracks. Use null for unknown fields.`;
       ${data.overview ? `<div class="info-section-label">Overview</div><div class="info-overview">${data.overview}</div>` : ''}
       ${genreTags ? `<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:8px;">${genreTags}</div>` : ''}
       ${(data.fun_fact || data.fact) ? `<div style="margin:10px 0;padding:10px 12px;background:rgba(99,179,237,0.07);border:1px solid rgba(99,179,237,0.14);border-radius:10px;"><div style="font-size:10px;font-weight:700;color:rgba(99,179,237,0.6);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:4px">✨ Fun Fact</div><div style="font-size:12px;color:${this._pt("text")};line-height:1.5">${data.fun_fact || data.fact}</div></div>` : ''}
+      ${(data._fromTmdb && data._tmdbUrl) ? `<a class="info-ext-link" href="${data._tmdbUrl}" target="_blank" rel="noopener" style="margin:8px 0;"><svg viewBox="0 0 24 24"><path d="M11,9H13V7H11M12,20C7.59,20 4,16.41 4,12C4,7.59 7.59,4 12,4C16.41,4 20,7.59 20,12C20,16.41 16.41,20 12,20M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M11,17H13V11H11V17Z"/></svg>View on TMDB</a>` : ''}
       <div id="content-warning-section"></div>
+      ${(this._aiEnabled() && !data._fromTmdb) ? `
       <div id="action-row" style="display:flex;gap:8px;margin:12px 0 8px;">
         <button id="ask-btn" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:9px 12px;border-radius:12px;background:${this._pt("btnBg")};border:1px solid ${this._pt("border")};color:${this._pt("text")};font-size:12px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;-webkit-tap-highlight-color:transparent;">
           <svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:rgba(99,179,237,0.8);flex-shrink:0"><path d="M20,2H4A2,2 0 0,0 2,4V22L6,18H20A2,2 0 0,0 22,16V4A2,2 0 0,0 20,2M6,9H18V11H6V9M14,14H6V12H14V14M18,8H6V6H18V8Z"/></svg>
@@ -26217,6 +26525,7 @@ Include ALL tracks. Use null for unknown fields.`;
       <div id="ask-panel" style="display:none;margin-bottom:12px;"></div>
       <div id="mood-panel" style="display:none;margin-bottom:12px;"></div>
       <div id="trivia-panel" style="display:none;margin-bottom:12px;"></div>
+      ` : ''}
       ${castHtml}
       <div id="wtw-section"></div>
       ${(data.similar && data.similar.length) ? `
@@ -26322,6 +26631,28 @@ Include ALL tracks. Use null for unknown fields.`;
           const simArt   = simArtEl?.src || '';
           // Show loading
           content.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;"><div style="width:28px;height:28px;border:2.5px solid rgba(99,179,237,0.25);border-top-color:#63b3ed;border-radius:50%;animation:ma-spin 0.8s linear infinite;"></div></div>`;
+          _self._videoInfoPickerState = null;
+          // Respect the same source preference as the main lookup: skip
+          // the AI round-trip entirely when AI is off, or the user has
+          // set TMDB First and a key is configured — go straight to TMDB
+          // for this title instead.
+          const _simTmdbFirst = !!(_self._config?.tmdb_api_key || '').trim()
+            && (!_self._aiEnabled() || _self._config?.video_info_priority === 'tmdb');
+          if (_simTmdbFirst) {
+            try {
+              const _simTmdb = await _self._lookupTMDBVideoInfo(simTitle, simType === 'tv');
+              const _simCand = _simTmdb?.candidates?.[0];
+              if (_simCand) {
+                _self._renderVideoInfoDetail(content, _simCand, _simCand._tmdbPoster || simArt);
+                return;
+              }
+            } catch (_) {}
+            if (!_self._aiEnabled()) {
+              // No AI to fall back to and TMDB had nothing — show what we know.
+              _self._renderVideoInfoDetail(content, { title: simTitle, year: simYear, type: simType }, simArt);
+              return;
+            }
+          }
           // Fetch AI details for selected similar title
           try {
             const agentId3 = _self._config?.ai_conversation_agent || 'conversation.home_assistant';
@@ -33402,6 +33733,22 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                 <option value="">Default (Home Assistant)</option>
               </select>
             </div>
+            <div class="ai-dep" style="margin-bottom:12px;">
+              <div style="font-size:13px;font-weight:500;margin-bottom:6px;color:var(--primary-text-color, #111);">Info Panel Priority</div>
+              <div style="font-size:11px;color:#888;margin-bottom:8px;line-height:1.4;">Which source the track info panel tries first. The other source is still used as a fallback if the first one has nothing.</div>
+              <select id="info_panel_priority" style="width:100%;background:var(--card-background-color,rgba(255,255,255,0.07));border:1px solid var(--divider-color,rgba(128,128,128,0.2));border-radius:10px;color:var(--primary-text-color,#fff);font-size:13px;font-family:inherit;padding:10px 12px;outline:none;-webkit-appearance:none;cursor:pointer;">
+                <option value="ai">✨ AI Info First</option>
+                <option value="discogs">💿 Discogs First</option>
+              </select>
+            </div>
+            <div class="ai-dep" style="margin-bottom:12px;">
+              <div style="font-size:13px;font-weight:500;margin-bottom:6px;color:var(--primary-text-color, #111);">Library Search</div>
+              <div style="font-size:11px;color:#888;margin-bottom:8px;line-height:1.4;">Whether pressing Enter/Search in the library browser (Songs, Artists, Albums) runs a normal keyword search or interprets it as natural language with AI (e.g. "upbeat 90s rock"). The dedicated AI search button next to the search box always works either way.</div>
+              <select id="library_search_mode" style="width:100%;background:var(--card-background-color,rgba(255,255,255,0.07));border:1px solid var(--divider-color,rgba(128,128,128,0.2));border-radius:10px;color:var(--primary-text-color,#fff);font-size:13px;font-family:inherit;padding:10px 12px;outline:none;-webkit-appearance:none;cursor:pointer;">
+                <option value="normal">🔎 Normal Search</option>
+                <option value="ai">✨ AI Enhanced Search</option>
+              </select>
+            </div>
             <div class="ai-dep" style="margin-top:10px;padding:8px 10px;background:rgba(99,179,237,0.06);border:1px solid rgba(99,179,237,0.12);border-radius:8px;">
               <div style="font-size:10px;color:var(--secondary-text-color, rgba(0,0,0,0.5));line-height:1.5;">Add agents via <strong style="color:rgba(99,179,237,0.6)">Settings → Voice Assistants</strong>. Google Gemini recommended — other AI Agents may work.</div>
             </div>
@@ -33437,6 +33784,27 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                 <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">When Music Assistant silently skips a track that failed to stream (e.g. a stale Apple Music playlist reference), automatically re-look it up and queue the fresh match to play next.</div>
               </div>
               <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="ghost_skip_heal"><span class="toggle-track"></span></label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Movies & TV -->
+        <div>
+          <div class="section-title">🎬 Movies &amp; TV</div>
+          <div class="card-block" style="padding:12px;">
+            <div style="margin-bottom:12px;">
+              <div style="font-size:13px;font-weight:500;margin-bottom:6px;color:var(--primary-text-color, #111);">TMDB API Key</div>
+              <div style="font-size:11px;color:#888;margin-bottom:8px;line-height:1.4;">Optional. Adds TMDB (The Movie Database) as a source for movie/TV info panels — posters, ratings, cast and episode details. Works whether AI Features above is on or off. Get a free key at <strong style="color:rgba(99,179,237,0.8)">themoviedb.org/settings/api</strong> (either a v3 API key or a v4 Bearer token both work).</div>
+              <input type="text" id="tmdb_api_key" placeholder="TMDB API key…" autocomplete="off" spellcheck="false"
+                style="width:100%;background:var(--card-background-color,rgba(255,255,255,0.07));border:1px solid var(--divider-color,rgba(128,128,128,0.2));border-radius:10px;color:var(--primary-text-color,#fff);font-size:13px;font-family:inherit;padding:10px 12px;outline:none;box-sizing:border-box;">
+            </div>
+            <div class="ai-dep">
+              <div style="font-size:13px;font-weight:500;margin-bottom:6px;color:var(--primary-text-color, #111);">Movie/TV Info Priority</div>
+              <div style="font-size:11px;color:#888;margin-bottom:8px;line-height:1.4;">Which source the movie/TV info panel tries first when AI Features is on. The other source is still used as a fallback. With AI Features off, TMDB is always used (a key is required in that case).</div>
+              <select id="video_info_priority" style="width:100%;background:var(--card-background-color,rgba(255,255,255,0.07));border:1px solid var(--divider-color,rgba(128,128,128,0.2));border-radius:10px;color:var(--primary-text-color,#fff);font-size:13px;font-family:inherit;padding:10px 12px;outline:none;-webkit-appearance:none;cursor:pointer;">
+                <option value="ai">✨ AI Info First</option>
+                <option value="tmdb">🎬 TMDB First</option>
+              </select>
             </div>
           </div>
         </div>
@@ -34949,6 +35317,26 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       selectEl.onchange = (e) => this._updateConfig(selectEl.id, e.target.value);
     };
     _populateAgentSelect(root.getElementById('ai_conversation_agent'), this._config?.ai_conversation_agent || '', 'Default (Home Assistant)');
+    const infoPanelPriorityEl = root.getElementById('info_panel_priority');
+    if (infoPanelPriorityEl) {
+      infoPanelPriorityEl.value = this._config?.info_panel_priority || 'ai';
+      infoPanelPriorityEl.onchange = (e) => this._updateConfig('info_panel_priority', e.target.value);
+    }
+    const librarySearchModeEl = root.getElementById('library_search_mode');
+    if (librarySearchModeEl) {
+      librarySearchModeEl.value = this._config?.library_search_mode || 'normal';
+      librarySearchModeEl.onchange = (e) => this._updateConfig('library_search_mode', e.target.value);
+    }
+    const tmdbApiKeyEl = root.getElementById('tmdb_api_key');
+    if (tmdbApiKeyEl) {
+      tmdbApiKeyEl.value = this._config?.tmdb_api_key || '';
+      tmdbApiKeyEl.onchange = (e) => this._updateConfig('tmdb_api_key', e.target.value.trim());
+    }
+    const videoInfoPriorityEl = root.getElementById('video_info_priority');
+    if (videoInfoPriorityEl) {
+      videoInfoPriorityEl.value = this._config?.video_info_priority || 'ai';
+      videoInfoPriorityEl.onchange = (e) => this._updateConfig('video_info_priority', e.target.value);
+    }
     const _shareServiceEl = root.getElementById('share_service');
     if (_shareServiceEl) {
       _shareServiceEl.value = this._config?.share_service || 'youtube_music';
@@ -35197,6 +35585,10 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       resize_btn_spin: true, pin_hearts: true, remote_art_blur: true, volume_hud: true,
       itunes_art: true, controls_theme: 'classic', add_pill_color: '',
       ai_features_enabled: false, ai_conversation_agent: '',
+      info_panel_priority: 'ai',
+      library_search_mode: 'normal',
+      tmdb_api_key: '',
+      video_info_priority: 'ai',
       share_service: 'youtube_music',
       show_media_type_pill: false,
       show_youtube_button: true,
@@ -35236,6 +35628,10 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       resize_btn_spin: true, pin_hearts: true, remote_art_blur: true, volume_hud: true,
       itunes_art: true, controls_theme: 'classic', add_pill_color: '',
       ai_features_enabled: false, ai_conversation_agent: '',
+      info_panel_priority: 'ai',
+      library_search_mode: 'normal',
+      tmdb_api_key: '',
+      video_info_priority: 'ai',
       share_service: 'youtube_music',
       show_media_type_pill: false,
       show_youtube_button: true,
