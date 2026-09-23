@@ -27,7 +27,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   }
 
   static getStubConfig() {
-    return { entities: [], auto_switch: true, accent_color: '#007AFF', volume_accent: '#007AFF', title_color: '#ffffff', artist_color: '#ffffff', button_color: '#ffffff', player_bg: '#1c1c1e', player_bg_opacity: 100, show_entity_selector: true, volume_control: 'slider', startup_mode: 'compact', remember_view: false, volume_entity: {}, entity_names: {}, ma_entities: [], show_vol_pct: true, vol_pct_color: 'rgba(255,255,255,0.45)', scroll_text: false, remember_last_entity: false, entity_startup_volumes: {}, lyrics_bg: '#0a0a0c', lyrics_text_color: '#ffffff', lyrics_scroll_mode: 'highlight', lyrics_persist: false, lyrics_cache_ttl: 7, lyrics_cache_enabled: true, lyrics_persistent_storage: false, pins_persistent_storage: false, show_pins_in_sections: true, ai_info_persistent_storage: false, itunes_persistent_storage: false, wiki_persistent_storage: false, ma_library_cache_enabled: true, ma_library_cache_ttl: 1, ma_radio_mode: false, show_ma_library_button: true, use_ha_theme: false, remote_buttons_position: 'bottom', ambient_glow: false, announce_tts_service: '', row_glow: false, show_remote_button: true, artwork_crossfade: false, icon_theme: 'robot', resize_btn_spin: true, pin_hearts: true, remote_art_blur: true, volume_hud: true, itunes_art: true, controls_theme: 'classic', add_pill_color: '', card_liquid_glass: true, volume_hud_glass: false, ai_features_enabled: false, ai_conversation_agent: '', info_panel_priority: 'ai', library_search_mode: 'normal', tmdb_api_key: '', video_info_priority: 'ai', share_service: 'youtube_music', song_intro_enabled: false, show_media_type_pill: false, show_youtube_button: true, atv_keyboard_panel: true, ghost_skip_heal: true };
+    return { entities: [], auto_switch: true, accent_color: '#007AFF', volume_accent: '#007AFF', title_color: '#ffffff', artist_color: '#ffffff', button_color: '#ffffff', player_bg: '#1c1c1e', player_bg_opacity: 100, show_entity_selector: true, volume_control: 'slider', startup_mode: 'compact', remember_view: false, volume_entity: {}, entity_names: {}, ma_entities: [], show_vol_pct: true, vol_pct_color: 'rgba(255,255,255,0.45)', scroll_text: false, remember_last_entity: false, entity_startup_volumes: {}, lyrics_bg: '#0a0a0c', lyrics_text_color: '#ffffff', lyrics_scroll_mode: 'highlight', lyrics_persist: false, lyrics_cache_ttl: 7, lyrics_cache_enabled: true, lyrics_persistent_storage: false, pins_persistent_storage: false, show_pins_in_sections: true, ai_info_persistent_storage: false, itunes_persistent_storage: false, wiki_persistent_storage: false, ma_library_cache_enabled: true, ma_library_cache_ttl: 1, ma_radio_mode: false, show_ma_library_button: true, use_ha_theme: false, remote_buttons_position: 'bottom', ambient_glow: false, announce_tts_service: '', row_glow: false, show_remote_button: true, artwork_crossfade: false, icon_theme: 'robot', resize_btn_spin: true, pin_hearts: true, remote_art_blur: true, volume_hud: true, itunes_art: true, controls_theme: 'classic', add_pill_color: '', card_liquid_glass: true, appearance: 'auto', volume_hud_glass: false, ai_features_enabled: false, ai_conversation_agent: '', info_panel_priority: 'ai', library_search_mode: 'normal', tmdb_api_key: '', video_info_priority: 'ai', share_service: 'youtube_music', song_intro_enabled: false, show_media_type_pill: false, show_youtube_button: true, atv_keyboard_panel: true, ghost_skip_heal: true };
   }
 
   setConfig(config) {
@@ -1737,6 +1737,15 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     return map[key] || '#ffffff';
   }
 
+  // The user's Theme override (Auto / Light / Dark), from the Appearance section of the
+  // editor. Auto keeps the existing behaviour byte-for-byte (detect from Home Assistant's
+  // own theme). Light / Dark force the result, which — unlike before — lets Glass render
+  // even when the active Home Assistant theme is light.
+  _appearanceOverride() {
+    const v = this._config?.appearance;
+    return v === 'light' || v === 'dark' ? v : null;
+  }
+
   _applyHaTheme() {
     const docStyle = getComputedStyle(document.body);
     const get = (v, fallback) => { const val = docStyle.getPropertyValue(v).trim(); return val || fallback; };
@@ -1788,8 +1797,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       const avg = (+_ptRgb[1] + +_ptRgb[2] + +_ptRgb[3]) / 3;
       isLight = avg < 128;
     }
+    // Theme override: Auto keeps the Home-Assistant-driven detection above; Light / Dark
+    // replace it outright, which is what lets Glass render on a light Home Assistant theme.
+    const appearanceOverride = this._appearanceOverride();
+    if (appearanceOverride) isLight = appearanceOverride === 'light';
 
     const glassOn = this._config?.card_liquid_glass !== false;
+    r.host.classList.toggle('crow-glass', glassOn);
     r.host.style.setProperty("--crow-card-bg", "transparent");
     if (glassOn && !isLight) {
       // Dark HA theme + glass on: controls bar stays transparent over the dashboard/artwork
@@ -1802,7 +1816,19 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       r.host.style.setProperty("--player-bg", "var(--card-background-color, var(--ha-card-background, #1c1c1e))");
     }
 
-    const divider = get("--divider-color", isLight ? "rgba(0,0,0,0.12)" : "rgba(255,255,255,0.18)");
+    // Blur / shadow: the richer glass treatment only when Glass is selected —
+    // Classic keeps the original, flatter look.
+    r.host.style.setProperty("--crow-card-blur", glassOn ? "blur(24px) saturate(170%)" : "blur(18px) saturate(150%)");
+    r.host.style.setProperty("--crow-card-shadow", glassOn
+      ? "0 14px 36px rgba(0,0,0,0.32), inset 0 1px 0 rgba(255,255,255,0.35)"
+      : "0 8px 32px rgba(0,0,0,0.4)");
+    r.host.style.setProperty("--crow-badge-glow", glassOn ? "inset 0 1px 0 rgba(255,255,255,0.28)" : "none");
+    r.host.style.setProperty("--crow-progress-glow", glassOn ? "0 0 10px var(--accent)" : "none");
+    r.host.style.setProperty("--crow-sheen-opacity", glassOn ? "1" : "0");
+
+    const divider = get("--divider-color", isLight
+      ? (glassOn ? "rgba(0,0,0,0.16)" : "rgba(0,0,0,0.12)")
+      : (glassOn ? "rgba(255,255,255,0.26)" : "rgba(255,255,255,0.18)"));
     r.host.style.setProperty("--crow-card-border", "1px solid " + divider);
 
     // When the card is in "liquid glass" mode over a DARK HA theme, the controls/title/artist
@@ -1969,7 +1995,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
           position: relative;
           border: var(--crow-card-border, 1px solid rgba(255, 255, 255, 0.18)) !important;
-          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4) !important;
+          /* Classic keeps the original flat shadow; Glass gets the outer ambient shadow
+             plus a hairline catch-light along the top edge (--crow-card-shadow, set in JS) —
+             the same signature used by the button / washer / light-slider cards */
+          box-shadow: var(--crow-card-shadow, 0 8px 32px rgba(0, 0, 0, 0.4)) !important;
           transition: all 0.3s ease;
         }
         /* Absolute resize btn — expanded mode only, top-right of card */
@@ -1987,6 +2016,15 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         .size-toggle-abs.spin-loop svg { animation: ma-spin 0.7s linear infinite; }
 
         .art-wrapper { width: 100%; aspect-ratio: 1; background: linear-gradient(135deg, rgba(40,40,45,0.8), rgba(28,28,30,0.9)); display: flex; align-items: center; justify-content: center; overflow: hidden; cursor: pointer; position: relative; -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; touch-action: pan-y; }
+        /* Glass catch-light over the artwork — the same soft corner sheen used on the
+           button / washer / light-slider cards' glass surfaces. Sits above the art,
+           below the volume HUD and remote overlay (both positioned with a higher z-index). */
+        .art-wrapper::after {
+          content: ''; position: absolute; inset: 0; pointer-events: none;
+          background: radial-gradient(120% 70% at 15% -10%, rgba(255,255,255,0.22), transparent 55%);
+          mix-blend-mode: overlay;
+          opacity: var(--crow-sheen-opacity, 0);
+        }
         .pin-heart { will-change: transform, opacity; }
         @keyframes pin-heart-float {
           0%   { opacity: 0; transform: translate(-50%,-50%) rotate(var(--heart-rotate)) scale(0.5); }
@@ -2027,7 +2065,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         }
         .marquee-wrap span { padding-right: 64px; }
         .progress-bar { height: 6px; background: var(--progress-bar-bg, rgba(255,255,255,0.12)); border-radius: 3px; margin-bottom: 6px; cursor: pointer; touch-action: none; }
-        .progress-fill { height: 100%; background: var(--accent); width: 0%; border-radius: 3px; transition: width 0.3s ease; }
+        .progress-fill { height: 100%; background: var(--accent); width: 0%; border-radius: 3px; transition: width 0.3s ease; box-shadow: var(--crow-progress-glow, none); }
         .progress-times { display: flex; justify-content: space-between; font-size: 12px; color: var(--progress-time-color, rgba(255,255,255,0.5)); font-variant-numeric: tabular-nums; }
         .controls { display: flex; justify-content: center; align-items: center; margin: 15px 0; gap: 10px; position: relative; }
         .play-btn svg { width: 44px; height: 44px; fill: var(--btn-play-color, var(--btn-color)); opacity: var(--btn-play-opacity, 1); }
@@ -3298,6 +3336,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           padding: 0; border-radius: 20px;
           background: rgba(0,0,0,0.52);
           border: 1px solid rgba(255,255,255,0.22);
+          /* hairline glass catch-light on the inner top edge — only shown in Glass mode
+             (matches the chip styling on the button / washer / light-slider cards) */
+          box-shadow: var(--crow-badge-glow, none);
           color: rgba(255,255,255,0.9); font-size: 11px; font-weight: 500;
           font-family: inherit;
           backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
@@ -3902,7 +3943,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
           <!-- Live station badge (top-left of artwork) — shown when a radio station is playing -->
           <div id="liveStationBadge" style="display:none;position:absolute;top:10px;left:10px;z-index:21;cursor:pointer;-webkit-tap-highlight-color:transparent;">
-            <div style="display:inline-flex;align-items:center;gap:5px;background:rgba(0,0,0,0.58);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.18);border-radius:20px;padding:4px 9px 4px 7px;">
+            <div style="display:inline-flex;align-items:center;gap:5px;background:rgba(0,0,0,0.58);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.18);border-radius:20px;padding:4px 9px 4px 7px;box-shadow:var(--crow-badge-glow, none);">
               <span style="width:6px;height:6px;border-radius:50%;background:#ff3b30;flex-shrink:0;animation:crow-live-pulse 1.8s ease-in-out infinite;"></span>
               <span style="font-size:11px;font-weight:700;color:rgba(255,255,255,0.9);letter-spacing:0.5px;font-family:-apple-system,BlinkMacSystemFont,sans-serif;">LIVE</span>
             </div>
@@ -3910,7 +3951,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
           <!-- Podcast badge (top-left of artwork) — shown when a podcast episode is playing on MA -->
           <div id="podcastBadge" style="display:none;position:absolute;top:10px;left:10px;z-index:21;cursor:pointer;-webkit-tap-highlight-color:transparent;">
-            <div style="display:inline-flex;align-items:center;gap:5px;background:rgba(0,0,0,0.58);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.18);border-radius:20px;padding:4px 9px 4px 7px;">
+            <div style="display:inline-flex;align-items:center;gap:5px;background:rgba(0,0,0,0.58);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.18);border-radius:20px;padding:4px 9px 4px 7px;box-shadow:var(--crow-badge-glow, none);">
               <svg viewBox="0 0 24 24" style="width:9px;height:9px;fill:#BF5AF2;flex-shrink:0;"><path d="M12,2A3,3 0 0,1 15,5V11A3,3 0 0,1 12,14A3,3 0 0,1 9,11V5A3,3 0 0,1 12,2M19,11C19,14.53 16.39,17.44 13,17.93V21H11V17.93C7.61,17.44 5,14.53 5,11H7A5,5 0 0,0 12,16A5,5 0 0,0 17,11H19Z"/></svg>
               <span style="font-size:11px;font-weight:700;color:rgba(255,255,255,0.9);letter-spacing:0.5px;font-family:-apple-system,BlinkMacSystemFont,sans-serif;">PODCAST</span>
             </div>
@@ -3918,7 +3959,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
           <!-- Audiobook badge (top-left of artwork) — shown when a LibriVox chapter is playing -->
           <div id="audiobookBadge" style="display:none;position:absolute;top:10px;left:10px;z-index:21;cursor:pointer;-webkit-tap-highlight-color:transparent;">
-            <div style="display:inline-flex;align-items:center;gap:5px;background:rgba(0,0,0,0.58);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.18);border-radius:20px;padding:4px 9px 4px 7px;">
+            <div style="display:inline-flex;align-items:center;gap:5px;background:rgba(0,0,0,0.58);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.18);border-radius:20px;padding:4px 9px 4px 7px;box-shadow:var(--crow-badge-glow, none);">
               <svg viewBox="0 0 24 24" style="width:9px;height:9px;fill:#FF9500;flex-shrink:0;"><path d="M21,5C19.89,4.65 18.67,4.5 17.5,4.5C15.55,4.5 13.45,4.9 12,6C10.55,4.9 8.45,4.5 6.5,4.5C4.55,4.5 2.45,4.9 1,6V20.65C1,20.9 1.25,21.15 1.5,21.15C1.6,21.15 1.65,21.1 1.75,21.1C3.1,20.45 5.05,20 6.5,20C8.45,20 10.55,20.4 12,21.5C13.35,20.65 15.8,20 17.5,20C19.15,20 20.85,20.3 22.25,21.1C22.35,21.15 22.4,21.15 22.5,21.15C22.75,21.15 23,20.9 23,20.65V6C22.4,5.55 21.75,5.25 21,5M21,18.5C19.9,18.15 18.7,18 17.5,18C15.8,18 13.35,18.65 12,19.5V8C13.35,7.15 15.8,6.5 17.5,6.5C18.7,6.5 19.9,6.65 21,7V18.5Z"/></svg>
               <span style="font-size:11px;font-weight:700;color:rgba(255,255,255,0.9);letter-spacing:0.5px;font-family:-apple-system,BlinkMacSystemFont,sans-serif;">AUDIOBOOK</span>
             </div>
@@ -3928,7 +3969,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
                currently playing track/movie/show is pinned. Purely informational,
                no click handler, so it can't be confused with the double-tap-to-pin
                gesture living on the same artwork. -->
-          <div id="pinnedIndicatorBadge" style="display:none;position:absolute;bottom:10px;left:10px;z-index:14;width:28px;height:28px;border-radius:50%;background:rgba(0,0,0,0.58);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.18);align-items:center;justify-content:center;cursor:pointer;-webkit-tap-highlight-color:transparent;" title="Tap to unpin">
+          <div id="pinnedIndicatorBadge" style="display:none;position:absolute;bottom:10px;left:10px;z-index:14;width:28px;height:28px;border-radius:50%;background:rgba(0,0,0,0.58);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.18);box-shadow:var(--crow-badge-glow, none);align-items:center;justify-content:center;cursor:pointer;-webkit-tap-highlight-color:transparent;" title="Tap to unpin">
             <svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:#FFD60A;"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg>
           </div>
 
@@ -6508,6 +6549,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     }
     if (!this._config.use_ha_theme) {
       const _glassOn = this._config?.card_liquid_glass !== false;
+      r.host.classList.toggle('crow-glass', _glassOn);
       // Glass on → controls bar is transparent
       // Glass off → controls bar uses Custom Background, defaulting to dark if not set
       const bgHex = _glassOn ? '#000000' : (this._config.player_bg === '#000000' || !this._config.player_bg ? '#1c1c1e' : this._config.player_bg);
@@ -6531,12 +6573,21 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       const resolvedBg = _glassOn ? 'transparent' : 'var(--card-background-color, var(--ha-card-background, #1c1c1e))';
       r.host.style.setProperty('--crow-card-bg', 'transparent');
       r.host.style.setProperty('--player-bg', resolvedBg);
+      // Blur / shadow: the richer glass treatment only when Glass is selected —
+      // Classic keeps the original, flatter look.
+      r.host.style.setProperty('--crow-card-blur', _glassOn ? 'blur(24px) saturate(170%)' : 'blur(18px) saturate(150%)');
+      r.host.style.setProperty('--crow-card-shadow', _glassOn
+        ? '0 14px 36px rgba(0,0,0,0.32), inset 0 1px 0 rgba(255,255,255,0.35)'
+        : '0 8px 32px rgba(0,0,0,0.4)');
+      r.host.style.setProperty('--crow-badge-glow', _glassOn ? 'inset 0 1px 0 rgba(255,255,255,0.28)' : 'none');
+      r.host.style.setProperty('--crow-progress-glow', _glassOn ? '0 0 10px var(--accent)' : 'none');
+      r.host.style.setProperty('--crow-sheen-opacity', _glassOn ? '1' : '0');
       // Transparent border adapts to detected light/dark theme
       if (isTransparent) {
         const bgC = getComputedStyle(this.shadowRoot.host).getPropertyValue('--primary-background-color').trim();
         const bgM = bgC.replace(/\s/g,'').match(/rgb\((\d+),(\d+),(\d+)\)/);
         const isLightBg = bgM ? (+bgM[1] + +bgM[2] + +bgM[3]) / 3 >= 128 : false;
-        r.host.style.setProperty('--crow-card-border', isLightBg ? '1px solid rgba(0,0,0,0.12)' : '1px solid rgba(255,255,255,0.15)');
+        r.host.style.setProperty('--crow-card-border', isLightBg ? '1px solid rgba(0,0,0,0.16)' : '1px solid rgba(255,255,255,0.26)');
       } else {
         r.host.style.setProperty('--crow-card-border', '1px solid rgba(255,255,255,0.18)');
       }
@@ -17901,7 +17952,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
     const factHtml = data.fact
       ? `<div style="margin-top:10px;padding:10px 12px;background:rgba(99,179,237,0.07);border:1px solid rgba(99,179,237,0.14);border-radius:10px;">
-           <div style="font-size:10px;font-weight:700;color:rgba(99,179,237,0.6);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:4px">✨ Fun Fact</div>
+           <div style="font-size:10px;font-weight:700;color:rgba(99,179,237,0.6);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:4px">Fun Fact</div>
            <div style="font-size:12px;color:${this._pt("text")};line-height:1.5">${data.fact}</div>
          </div>`
       : '';
@@ -19512,7 +19563,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
               <div style="font-size:13px;font-weight:600;color:${this._pt("text")};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${rec.title||''}</div>
               <div style="font-size:11px;color:${this._pt("dim")};margin-top:1px;">${[rec.year, (rec.type === 'tv' || (!rec.type && isTv)) ? 'TV Series' : 'Movie'].filter(Boolean).join(' · ')}</div>
               ${rec.reason ? `<div style="font-size:10px;color:rgba(99,179,237,0.5);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${rec.reason}</div>` : ''}
-              ${rec.fun_fact ? `<div style="font-size:10px;color:${this._pt('dim')};margin-top:3px;line-height:1.4;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;">✨ ${rec.fun_fact}</div>` : ''}
+              ${rec.fun_fact ? `<div style="font-size:10px;color:${this._pt('dim')};margin-top:3px;line-height:1.4;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;">${rec.fun_fact}</div>` : ''}
             </div>
             <svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:${this._pt("dim")};flex-shrink:0"><path d="M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z"/></svg>
           </div>`).join('')}
@@ -20134,7 +20185,7 @@ Include ALL tracks. Use null for unknown fields.`;
     // Hide queue search bar while AI Info is showing
     const _qsr = r.getElementById('queueSearchRow');
     if (_qsr) _qsr.classList.add('hidden');
-    if (titleEl) titleEl.textContent = '✨ Info';
+    if (titleEl) titleEl.textContent = 'Info';
 
     // Staleness guard — if another panel opens while we're awaiting async work,
     // our continuations must not overwrite content with stale track info.
@@ -20725,7 +20776,7 @@ Include ALL tracks. Use null for unknown fields.`;
 
     // Reflect the actual data source in the header — Discogs-sourced data
     // (AI found nothing) gets its own label rather than claiming to be AI.
-    if (titleEl) titleEl.textContent = data._fromDiscogs ? '💿 Discogs Info' : '✨ AI Info';
+    if (titleEl) titleEl.textContent = data._fromDiscogs ? '💿 Discogs Info' : 'AI Info';
 
     const metaRows = [
       data.album    && ['Album',   data.album],
@@ -20873,7 +20924,7 @@ Include ALL tracks. Use null for unknown fields.`;
         </div>`).join('')}
       </div>` : ''}
       ${data.fact ? `<div style="padding:10px 12px;background:rgba(99,179,237,0.07);border:1px solid rgba(99,179,237,0.14);border-radius:10px;margin-bottom:12px;">
-        <div style="font-size:9px;font-weight:700;color:rgba(99,179,237,0.6);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:3px">✨ Fun Fact</div>
+        <div style="font-size:9px;font-weight:700;color:rgba(99,179,237,0.6);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:3px">Fun Fact</div>
         <div style="font-size:12px;color:${this._pt("text")};line-height:1.5">${data.fact}</div>
       </div>` : ''}
       ${(!_aiOff && !data._fromDiscogs) ? `
@@ -21106,7 +21157,7 @@ Include ALL tracks. Use null for unknown fields.`;
         this._albumPillTapped.add((albumName + '|' + albumArtist).toLowerCase());
         // Save current content so the back button can restore it
         const _savedContent = content.innerHTML;
-        const _savedTitle   = titleEl?.textContent || '✨ Info';
+        const _savedTitle   = titleEl?.textContent || 'Info';
         if (titleEl) titleEl.textContent = '💿 Album';
         this._showAIAlbumTracks(content, albumName, albumArtist, artUrl, () => {
           // Back callback — restore AI Info panel
@@ -21729,7 +21780,7 @@ Include ALL tracks. Use null for unknown fields.`;
     this._queuePanelDirection = null;
     const _rbo = r.getElementById('queueMenuBtn');
     if (_rbo) _rbo.classList.add('hidden');
-    if (title) title.textContent = '✨ Recommendations';
+    if (title) title.textContent = 'Recommendations';
 
     // Claim ownership of the panel generation counter — every other AI panel function
     // (_showAITrackInfo, _showAISearchPanel, etc.) does this so it can detect being
@@ -21856,7 +21907,7 @@ Include ALL tracks. Use null for unknown fields.`;
                 <div style="font-size:13px;font-weight:600;color:${this._pt("text")};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${rec.title||''}</div>
                 <div style="font-size:11px;color:${this._pt("dim")};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${rec.artist||''}</div>
                 ${rec.reason ? `<div style="font-size:10px;color:rgba(99,179,237,0.5);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${rec.reason}</div>` : ''}
-              ${rec.fun_fact ? `<div style="font-size:10px;color:${this._pt('dim')};margin-top:3px;line-height:1.4;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;">✨ ${rec.fun_fact}</div>` : ''}
+              ${rec.fun_fact ? `<div style="font-size:10px;color:${this._pt('dim')};margin-top:3px;line-height:1.4;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;">${rec.fun_fact}</div>` : ''}
               </div>
             </div>
           </div>`).join('')}
@@ -22600,7 +22651,7 @@ Include ALL tracks. Use null for unknown fields.`;
     if (!artist && !track) { this._maBatchLoading = false; this._showToast('No track info available'); return; }
     if (!this._maEntityIds?.has(this._entity)) { this._maBatchLoading = false; this._showToast('Music Assistant required'); return; }
 
-    this._showToast('✨ Finding similar songs…', 4000);
+    this._showToast('Finding similar songs…', 4000);
 
     const hasAI = await this._aiCheckAvailable();
     if (!hasAI) { this._maBatchLoading = false; this._showToast('No AI agent found — check Settings → Voice Assistants'); return; }
@@ -22788,7 +22839,7 @@ Include ALL tracks. Use null for unknown fields.`;
     const _cachedInfo = this._aiTrackInfoCache?.get(_trackInfoKey);
     if (_cachedInfo?.year && /^\d{4}$/.test(String(_cachedInfo.year))) year = String(_cachedInfo.year);
 
-    this._showToast(year ? `✨ Finding songs from ${year}…` : '✨ Finding release year…', 4000);
+    this._showToast(year ? `Finding songs from ${year}…` : 'Finding release year…', 4000);
 
     const _askAI = async (excludeKeys, knownYear) => {
       const excludeNote = excludeKeys?.size
@@ -22970,7 +23021,7 @@ Include ALL tracks. Use null for unknown fields.`;
     if (Array.isArray(_cachedInfo?.genre) && _cachedInfo.genre[0]) genre = _cachedInfo.genre[0];
     if (_cachedInfo?.year && /^\d{4}$/.test(String(_cachedInfo.year))) year = String(_cachedInfo.year);
 
-    this._showToast((genre && year) ? `✨ Finding ${genre} songs from ${year}…` : '✨ Finding genre & year…', 4000);
+    this._showToast((genre && year) ? `Finding ${genre} songs from ${year}…` : 'Finding genre & year…', 4000);
 
     const _askAI = async (excludeKeys, knownGenre, knownYear) => {
       const excludeNote = excludeKeys?.size
@@ -23149,7 +23200,7 @@ Include ALL tracks. Use null for unknown fields.`;
     const _cachedInfo = this._aiTrackInfoCache?.get(_trackInfoKey);
     if (Array.isArray(_cachedInfo?.genre) && _cachedInfo.genre[0]) genre = _cachedInfo.genre[0];
 
-    this._showToast(genre ? `✨ Finding ${genre} songs…` : '✨ Finding genre…', 4000);
+    this._showToast(genre ? `Finding ${genre} songs…` : 'Finding genre…', 4000);
 
     const _askAI = async (excludeKeys, knownGenre) => {
       const excludeNote = excludeKeys?.size
@@ -24942,7 +24993,7 @@ Include ALL tracks. Use null for unknown fields.`;
                       <div style="font-size:13px;font-weight:600;color:${this._pt("text")};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${rec.title||''}</div>
                       <div style="font-size:11px;color:${this._pt("dim")};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${rec.artist||''}</div>
                       ${rec.reason ? `<div style="font-size:10px;color:rgba(99,179,237,0.5);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${rec.reason}</div>` : ''}
-              ${rec.fun_fact ? `<div style="font-size:10px;color:${this._pt('dim')};margin-top:3px;line-height:1.4;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;">✨ ${rec.fun_fact}</div>` : ''}
+              ${rec.fun_fact ? `<div style="font-size:10px;color:${this._pt('dim')};margin-top:3px;line-height:1.4;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;">${rec.fun_fact}</div>` : ''}
                     </div>
                   </div>
                 </div>`).join('')}
@@ -26442,7 +26493,7 @@ Include ALL tracks. Use null for unknown fields.`;
     // (✨ AI Info vs 💿 Discogs Info): shows which source this result came
     // from so it's never ambiguous when both are configured.
     const _videoTitleEl = this.shadowRoot?.getElementById('infoPopupTitle');
-    if (_videoTitleEl) _videoTitleEl.textContent = data._fromTmdb ? '🎬 TMDB Info' : '✨ AI Info';
+    if (_videoTitleEl) _videoTitleEl.textContent = data._fromTmdb ? '🎬 TMDB Info' : 'AI Info';
 
     const genreTags = (data.genres || []).slice(0, 3).map(g => `<span class="info-tag bio-genre-tag" data-tag="${g.replace(/"/g,'&quot;')}">${g}</span>`).join('');
     const _seasonsCount = data.type === 'tv' && data.seasons ? data.seasons : 0;
@@ -26504,7 +26555,7 @@ Include ALL tracks. Use null for unknown fields.`;
       </div>
       ${data.overview ? `<div class="info-section-label">Overview</div><div class="info-overview">${data.overview}</div>` : ''}
       ${genreTags ? `<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:8px;">${genreTags}</div>` : ''}
-      ${(data.fun_fact || data.fact) ? `<div style="margin:10px 0;padding:10px 12px;background:rgba(99,179,237,0.07);border:1px solid rgba(99,179,237,0.14);border-radius:10px;"><div style="font-size:10px;font-weight:700;color:rgba(99,179,237,0.6);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:4px">✨ Fun Fact</div><div style="font-size:12px;color:${this._pt("text")};line-height:1.5">${data.fun_fact || data.fact}</div></div>` : ''}
+      ${(data.fun_fact || data.fact) ? `<div style="margin:10px 0;padding:10px 12px;background:rgba(99,179,237,0.07);border:1px solid rgba(99,179,237,0.14);border-radius:10px;"><div style="font-size:10px;font-weight:700;color:rgba(99,179,237,0.6);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:4px">Fun Fact</div><div style="font-size:12px;color:${this._pt("text")};line-height:1.5">${data.fun_fact || data.fact}</div></div>` : ''}
       ${(data._fromTmdb && data._tmdbUrl) ? `<a class="info-ext-link" href="${data._tmdbUrl}" target="_blank" rel="noopener" style="margin:8px 0;"><svg viewBox="0 0 24 24"><path d="M11,9H13V7H11M12,20C7.59,20 4,16.41 4,12C4,7.59 7.59,4 12,4C16.41,4 20,7.59 20,12C20,16.41 16.41,20 12,20M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M11,17H13V11H11V17Z"/></svg>View on TMDB</a>` : ''}
       <div id="content-warning-section"></div>
       ${(this._aiEnabled() && !data._fromTmdb) ? `
@@ -27514,7 +27565,7 @@ Include ALL tracks. Use null for unknown fields.`;
         </div>
         <div style="flex:1;min-width:0;">
           <div style="font-size:13px;font-weight:600;color:${this._pt("text")};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${ep.title || 'Episode ' + ep.ep}</div>
-          ${ep.tease ? '<div style="font-size:11px;color:' + this._pt('dim') + ';margin-top:2px;font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">✨ ' + ep.tease + '</div>' : ep.airdate ? '<div style="font-size:11px;color:' + this._pt('dim') + ';margin-top:1px;">' + self._formatAirdate(ep.airdate) + '</div>' : ''}
+          ${ep.tease ? '<div style="font-size:11px;color:' + this._pt('dim') + ';margin-top:2px;font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + ep.tease + '</div>' : ep.airdate ? '<div style="font-size:11px;color:' + this._pt('dim') + ';margin-top:1px;">' + self._formatAirdate(ep.airdate) + '</div>' : ''}
         </div>
         <svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:${this._pt("dim")};flex-shrink:0;margin-top:2px;"><path d="M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z"/></svg>
       </div>`).join('');
@@ -27562,7 +27613,7 @@ Include ALL tracks. Use null for unknown fields.`;
       const writerHtml = detail?.writer ? `<div style="font-size:11px;color:${this._pt("dim")};margin-top:6px;">Written by <span class="ep-writer-link" data-name="${(detail.writer||'').replace(/"/g,'&quot;')}" style="color:#63b3ed;cursor:pointer;-webkit-tap-highlight-color:transparent;">${detail.writer}</span></div>` : '';
       const directorHtml = detail?.director ? `<div style="font-size:11px;color:${this._pt("dim")};margin-top:2px;">Directed by <span class="ep-director-link" data-name="${(detail.director||'').replace(/"/g,'&quot;')}" style="color:#63b3ed;cursor:pointer;-webkit-tap-highlight-color:transparent;">${detail.director}</span></div>` : '';
       const ratingHtml = detail?.rating ? `<div style="display:inline-flex;align-items:center;gap:5px;margin-top:6px;"><svg viewBox="0 0 24 24" style="width:11px;height:11px;fill:#FFD60A"><path d="M12,17.27L18.18,21L16.54,13.97L22,9.24L14.81,8.62L12,2L9.19,8.62L2,9.24L7.46,13.97L5.82,21L12,17.27Z"/></svg><span style="font-size:12px;font-weight:600;color:#FFD60A;">${detail.rating}</span><span style="font-size:11px;color:${this._pt("dim")};">/ 10</span></div>` : '';
-      const funFactHtml = detail?.fun_fact ? `<div style="margin-top:12px;padding:10px 12px;background:rgba(99,179,237,0.07);border:1px solid rgba(99,179,237,0.14);border-radius:10px;"><div style="font-size:10px;font-weight:700;color:rgba(99,179,237,0.6);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:4px;">✨ Fun Fact</div><div style="font-size:12px;color:${this._pt("text")};line-height:1.5;">${detail.fun_fact}</div></div>` : '';
+      const funFactHtml = detail?.fun_fact ? `<div style="margin-top:12px;padding:10px 12px;background:rgba(99,179,237,0.07);border:1px solid rgba(99,179,237,0.14);border-radius:10px;"><div style="font-size:10px;font-weight:700;color:rgba(99,179,237,0.6);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:4px;">Fun Fact</div><div style="font-size:12px;color:${this._pt("text")};line-height:1.5;">${detail.fun_fact}</div></div>` : '';
 
       this.shadowRoot?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
       content.innerHTML = `
@@ -27911,7 +27962,7 @@ Include ALL tracks. Use null for unknown fields.`;
         </div>
         ${bio?.fun_fact ? `
           <div style="background:rgba(99,179,237,0.07);border:1px solid rgba(99,179,237,0.15);border-radius:12px;padding:12px 14px;margin-bottom:14px;">
-            <div style="font-size:10px;font-weight:700;color:#63b3ed;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:5px;">✨ Fun Fact</div>
+            <div style="font-size:10px;font-weight:700;color:#63b3ed;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:5px;">Fun Fact</div>
             <div style="font-size:13px;color:${this._pt("text")};line-height:1.5;">${bio.fun_fact}</div>
           </div>` : ''}
         <div id="bio-action-row" style="display:flex;gap:8px;margin:14px 0 8px;">
@@ -28400,7 +28451,7 @@ Include ALL tracks. Use null for unknown fields.`;
         if (!self._albumPillTapped) self._albumPillTapped = new Set();
         self._albumPillTapped.add((albumName + '|' + albumArtist).toLowerCase());
         const _savedContent2 = content.innerHTML;
-        const _savedTitle2   = titleEl2?.textContent || '✨ Info';
+        const _savedTitle2   = titleEl2?.textContent || 'Info';
         if (titleEl2) titleEl2.textContent = '💿 Album';
         self._showAIAlbumTracks(content, albumName, albumArtist, artUrl, () => {
           r2?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
@@ -32806,7 +32857,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       show_remote_button: true,
       artwork_crossfade: false, show_ma_library_button: true,
       resize_btn_spin: true, pin_hearts: true, remote_art_blur: true, volume_hud: true,
-      itunes_art: true, controls_theme: 'classic', add_pill_color: '', card_liquid_glass: true, volume_hud_glass: false,
+      itunes_art: true, controls_theme: 'classic', add_pill_color: '', card_liquid_glass: true, appearance: 'auto', volume_hud_glass: false,
       ai_features_enabled: false,
       ...config
     };
@@ -32872,18 +32923,23 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       if (ptRgb) return ((+ptRgb[1] + +ptRgb[2] + +ptRgb[3]) / 3) < 128;
       return isLightFromBg;
     };
-    const cardGlassRow   = root.getElementById('cardGlassRow');
-    const cardGlassInput = root.getElementById('card_liquid_glass');
     const cardGlassNote  = root.getElementById('cardGlassDisabledNote');
+    ['classic', 'glass'].forEach(v => {
+      const el = root.getElementById('cs_' + v);
+      if (el) el.checked = (this._config.card_liquid_glass !== false ? 'glass' : 'classic') === v;
+    });
+    ['auto', 'light', 'dark'].forEach(v => {
+      const el = root.getElementById('ap_' + v);
+      if (el) el.checked = (this._config.appearance || 'auto') === v;
+    });
     const _applyCardGlassAvailability = (haOn) => {
-      // Card Liquid Glass becomes a no-op whenever Follow HA Theme is on and the current HA
-      // theme is light — a solid theme-matched background is used instead for readability
-      // (see _applyHaTheme()). Grey the toggle out in that case rather than leaving it
-      // interactive with no visible effect.
-      const disable = haOn && _editorDetectIsLight();
-      if (cardGlassInput) cardGlassInput.disabled = disable;
-      if (cardGlassRow)   cardGlassRow.style.opacity = disable ? '0.45' : '1';
-      if (cardGlassNote)  cardGlassNote.style.display = disable ? 'block' : 'none';
+      // Glass becomes a no-op whenever Follow HA Theme is on, the Theme override above is
+      // still Auto, and the current HA theme is light — a solid theme-matched background is
+      // used instead for readability (see _applyHaTheme()). Not disabled, just noted — Theme
+      // is the way round it, so the control stays interactive.
+      const overridden = this._config.appearance === 'light' || this._config.appearance === 'dark';
+      const disable = haOn && !overridden && _editorDetectIsLight();
+      if (cardGlassNote) cardGlassNote.style.display = disable ? 'block' : 'none';
     };
     const _applyHaThemeUi = (on) => {
       if (colourGrid) {
@@ -33647,13 +33703,24 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
         <div>
           <div class="section-title">Visual Effects</div>
           <div class="card-block" style="padding:12px;">
-            <div id="cardGlassRow" style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding-bottom:12px;border-bottom:1px solid rgba(255,255,255,0.07);">
-              <div>
-                <div style="font-size:14px;font-weight:500;">Card Liquid Glass</div>
-                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Makes the card background transparent with a frosted-glass blur effect. Turn off to use a custom background colour.</div>
-                <div id="cardGlassDisabledNote" style="display:none;font-size:11px;color:rgba(255,159,10,0.9);margin-top:6px;line-height:1.4;">Disabled — your current Home Assistant theme is light, so a solid theme-matched background is used instead for readability.</div>
+            <div id="cardGlassRow" style="padding-bottom:14px;border-bottom:1px solid rgba(255,255,255,0.07);">
+              <div style="font-size:14px;font-weight:500;margin-bottom:8px;">Style</div>
+              <div style="font-size:11px;color:#888;margin-bottom:8px;line-height:1.4;">Classic uses a custom background colour (set below, under Colours &amp; Themes). Glass makes the card transparent with a frosted-glass blur, over the dashboard or the artwork.</div>
+              <div class="segmented" id="card-style-segmented">
+                <input type="radio" name="card_style" id="cs_classic" value="classic"><label for="cs_classic">Classic</label>
+                <input type="radio" name="card_style" id="cs_glass" value="glass"><label for="cs_glass">Glass</label>
               </div>
-              <label class="toggle-switch" style="flex-shrink:0"><input type="checkbox" id="card_liquid_glass" checked><span class="toggle-track"></span></label>
+              <div id="cardGlassDisabledNote" style="display:none;font-size:11px;color:rgba(255,159,10,0.9);margin-top:8px;line-height:1.4;">Glass needs a dark look to show through — set Theme to Dark below, or turn off Follow HA Theme, or switch Home Assistant itself to a dark theme.</div>
+            </div>
+
+            <div style="padding:14px 0;border-bottom:1px solid rgba(255,255,255,0.07);">
+              <div style="font-size:14px;font-weight:500;margin-bottom:8px;">Theme</div>
+              <div style="font-size:11px;color:#888;margin-bottom:8px;line-height:1.4;">Only affects the card when Follow HA Theme (under Colours &amp; Themes) is on. Auto follows Home Assistant’s own light/dark setting; Light or Dark forces it — the way to get Glass on a light Home Assistant theme.</div>
+              <div class="segmented" id="appearance-segmented">
+                <input type="radio" name="appearance" id="ap_auto"  value="auto"><label for="ap_auto">Auto</label>
+                <input type="radio" name="appearance" id="ap_light" value="light"><label for="ap_light">Light</label>
+                <input type="radio" name="appearance" id="ap_dark"  value="dark"><label for="ap_dark">Dark</label>
+              </div>
             </div>
 
             <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid rgba(255,255,255,0.07);">
@@ -33897,6 +33964,10 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                   <option value="lcd">LCD</option>
                 </select>
               </div>
+              <div style="margin-bottom:14px;">
+                <div style="font-size:13px;font-weight:600;color:var(--secondary-text-color, rgba(0,0,0,0.5));letter-spacing:0.05em;text-transform:uppercase;margin-bottom:10px;">Accent Preset</div>
+                <div id="accent-preset-row" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+              </div>
               <div class="colour-grid" id="colour-grid"></div>
             </div>
           </div>
@@ -33908,6 +33979,32 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
     `;
     this._setupSearch();
     this._setupReordering();
+
+    // Accent Preset — one tap sets Main Accent (and Volume Accent, if it still matches the
+    // default, so the two usually-matching colours don't silently drift apart)
+    const ACCENT_PRESETS = [
+      { id: 'classic', name: 'Classic', accent: '#007AFF' },
+      { id: 'ocean',   name: 'Ocean',   accent: '#30B0C7' },
+      { id: 'berry',   name: 'Berry',   accent: '#BF5AF2' },
+      { id: 'amber',   name: 'Amber',   accent: '#FF9F0A' },
+    ];
+    const presetRow = this.shadowRoot.getElementById('accent-preset-row');
+    if (presetRow) {
+      ACCENT_PRESETS.forEach(p => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.style.cssText = 'width:26px;height:26px;border-radius:50%;border:2px solid rgba(128,128,128,0.25);cursor:pointer;padding:0;background:' + p.accent + ';';
+        b.title = p.name;
+        b.addEventListener('click', () => {
+          const prevAccent = this._config.accent_color || '#007AFF';
+          const updates = { accent_color: p.accent };
+          if (!this._config.volume_accent || this._config.volume_accent === prevAccent) updates.volume_accent = p.accent;
+          this._updateConfigMulti(updates);
+          this.updateUI();
+        });
+        presetRow.appendChild(b);
+      });
+    }
 
     // ── Build colour cards (leopard style) ──────────────────────────
     const COLOUR_FIELDS = [
@@ -34918,11 +35015,14 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       volumeHudEl.onchange = (e) => this._updateConfig('volume_hud', e.target.checked);
     }
 
-    const cardLiquidGlassEl = root.getElementById('card_liquid_glass');
-    if (cardLiquidGlassEl) {
-      cardLiquidGlassEl.checked = this._config?.card_liquid_glass !== false;
-      cardLiquidGlassEl.onchange = (e) => this._updateConfig('card_liquid_glass', e.target.checked);
-    }
+    ['classic', 'glass'].forEach(v => {
+      const el = root.getElementById('cs_' + v);
+      if (el) el.onchange = () => this._updateConfig('card_liquid_glass', v === 'glass');
+    });
+    ['auto', 'light', 'dark'].forEach(v => {
+      const el = root.getElementById('ap_' + v);
+      if (el) el.onchange = () => this._updateConfig('appearance', v);
+    });
 
     const remoteArtBlurEl = root.getElementById('remote_art_blur');
     if (remoteArtBlurEl) {
@@ -35583,7 +35683,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       show_remote_button: true,
       artwork_crossfade: false, show_ma_library_button: true,
       resize_btn_spin: true, pin_hearts: true, remote_art_blur: true, volume_hud: true,
-      itunes_art: true, controls_theme: 'classic', add_pill_color: '',
+      itunes_art: true, controls_theme: 'classic', add_pill_color: '', appearance: 'auto',
       ai_features_enabled: false, ai_conversation_agent: '',
       info_panel_priority: 'ai',
       library_search_mode: 'normal',
@@ -35626,7 +35726,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       show_remote_button: true,
       artwork_crossfade: false, show_ma_library_button: true,
       resize_btn_spin: true, pin_hearts: true, remote_art_blur: true, volume_hud: true,
-      itunes_art: true, controls_theme: 'classic', add_pill_color: '',
+      itunes_art: true, controls_theme: 'classic', add_pill_color: '', appearance: 'auto',
       ai_features_enabled: false, ai_conversation_agent: '',
       info_panel_priority: 'ai',
       library_search_mode: 'normal',
