@@ -237,7 +237,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             : (_elapsedMs >= 10000); // TV/movie — just needs a genuine start, not a full watch
           if (_qualifies) {
             if (prev.kind === 'music') this._logListenEntry(prev.meta);
-            else this._logWatchEntry(prev.meta);
+            else this._logWatchEntry({ ...prev.meta, watchedMs: _elapsedMs });
             // Advance this entity's backfill checkpoint to now — otherwise
             // the next time any card reloads and runs the history backfill,
             // it would re-fetch this same time window from HA and log this
@@ -284,6 +284,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
               duration: attrs.media_duration || 0,
               uri: attrs.media_content_id || '',
               isMaEntity: true,
+              app: attrs.app_name || attrs.app_id || '',
             };
           } else {
             // No artist — only path left is TV/movie (Watch Recap). Music
@@ -298,6 +299,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
               entity: entId,
               mediaType: kind,
               duration: attrs.media_duration || 0,
+              season: cls.season ?? null,
+              episode: cls.episode ?? null,
             };
           }
 
@@ -9054,7 +9057,20 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           _lpFired = false;
           _lpTimer = setTimeout(() => {
             _lpFired = true;
-            this._showEnqueueMenu(item, 'track', wrap);
+            const _trash = '<path d="M9,3V4H4V6H5V19A2,2 0 0,0 7,21H17A2,2 0 0,0 19,19V6H20V4H15V3H9M7,6H17V19H7V6M9,8V17H11V8H9M13,8V17H15V8H13Z"/>';
+            const _mute  = '<path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M4,12A8,8 0 0,1 12,4C13.85,4 15.55,4.63 16.9,5.69L5.69,16.9C4.63,15.55 4,13.85 4,12M12,20C10.15,20 8.45,19.37 7.1,18.31L18.31,7.1C19.37,8.45 20,10.15 20,12A8,8 0 0,1 12,20Z"/>';
+            this._showEnqueueMenu(item, 'track', wrap, {
+              extraItems: [
+                { mode: 'history_remove', label: 'Remove from History', icon: _trash, danger: true,
+                  onClick: () => {
+                    this._removeListenEntries([e._key].filter(Boolean));
+                    this._showToast('Removed');
+                    this._renderRecentPlaysTab(content);
+                  } },
+                { mode: 'history_mute', label: 'Never Log This Artist', icon: _mute, danger: true,
+                  onClick: () => this._confirmMuteArtist(e.artist, content) },
+              ],
+            });
           }, 480);
         }, { passive: true });
         wrap.addEventListener('pointerup',     () => clearTimeout(_lpTimer), { passive: true });
@@ -9162,6 +9178,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         <svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12.5,7V12.25L17,14.92L16.25,16.15L11,13V7H12.5Z"/></svg>
         <span class="queue-dropdown-label">${_expanded ? 'Show last 10' : 'Show last 50'}</span>
       </div>
+      ${Object.keys(this._getMutedArtists()).length ? `<div class="queue-dropdown-item" id="rpMutedArtists" role="button">
+        <svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M4,12A8,8 0 0,1 12,4C13.85,4 15.55,4.63 16.9,5.69L5.69,16.9C4.63,15.55 4,13.85 4,12M12,20C10.15,20 8.45,19.37 7.1,18.31L18.31,7.1C19.37,8.45 20,10.15 20,12A8,8 0 0,1 12,20Z"/></svg>
+        <span class="queue-dropdown-label">Muted Artists</span>
+      </div>` : ''}
       <div class="queue-dropdown-item danger" id="rpClearHistory" role="button">
         <svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/></svg>
         <span class="queue-dropdown-label">Clear History</span>
@@ -9187,6 +9207,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     menu.querySelector('#rpClearHistory')?.addEventListener('click', () => {
       closeMenu();
       this._confirmClearRecentPlays();
+    });
+    menu.querySelector('#rpMutedArtists')?.addEventListener('click', () => {
+      closeMenu();
+      this._showMutedArtistsView(this.shadowRoot?.getElementById('maContent'));
     });
   }
 
@@ -9362,6 +9386,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // Wire category rows: push to nav stack, hide iOS view, load tab
     el.querySelectorAll('.ma-ios-cat-row').forEach(row => {
       row.addEventListener('click', () => {
+        // Ghost-tap guard. The long-press menu opens the library on
+        // pointerup, and iOS then fires the matching click a moment later
+        // at the same spot — which, with the library now open, lands on
+        // whichever category row happens to sit under the finger (e.g.
+        // Recent Searches), jumping straight into it. Any click this soon
+        // after opening can only be that leftover tap, never a real one.
+        if (Date.now() - (this._maBrowserOpenedAt || 0) < 450) return;
         const tab   = row.dataset.tab;
         const label = row.querySelector('.ma-ios-cat-label')?.textContent || tab;
         this._maNavigateToTab(tab, label, el);
@@ -9375,6 +9406,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // (see _saveLibraryOpenState / connectedCallback).
   _maNavigateToTab(tab, label, iosRootEl) {
     const rr = this.shadowRoot;
+    this._watchDetailActive = false;
+    this._watchDetailKey = null;
     const el = iosRootEl || rr.getElementById('maIosView');
 
     // Push a sentinel so _maNavBack knows to return to iOS list
@@ -9492,6 +9525,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     this._mtLocalStack = [];
     this._pinnedDetailActive = false;
     this._pinnedDetailCategory = null;
+    this._watchDetailActive = false;
+    this._watchDetailKey = null;
     const maSearchInput = this.shadowRoot?.getElementById('maSearchInput');
     const maSearchClear = this.shadowRoot?.getElementById('maSearchClear');
     const maIosInput    = this.shadowRoot?.getElementById('maIosSearchInput');
@@ -9538,6 +9573,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         this._mtLocalActive = false;
         this._loadMATab('movie_tv');
       }
+      return;
+    }
+    // Watch History title drill-in — one level only, back returns to the
+    // grouped list (at the same scroll position).
+    if (this._watchDetailActive && this._maCurrentTab === 'recently_watched') {
+      this._closeWatchGroupDetail();
       return;
     }
     // Pinned category drill-in — one level only, so back always returns to
@@ -10102,6 +10143,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     content.querySelectorAll('[data-ha-rb-title]').forEach(row => {
       row.style.display = (!q || row.dataset.haRbTitle.includes(q)) ? 'flex' : 'none';
     });
+    // Watch History drill-in — hide day headings left with no visible rows.
+    if (this._watchDetailActive) this._watchSyncDayHeadings(content.querySelector('#watchDetailList'));
   }
 
 
@@ -11255,7 +11298,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       infoPopup.classList.add('visible');
     }
     if (infoContent) infoContent.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
-    if (infoTitleEl) infoTitleEl.textContent = 'Media Info';
+    if (infoTitleEl) infoTitleEl.textContent = 'Info';
     this._infoPopupOpenedAt = Date.now();
     this._activeInfoPanelKind = null;
     this.shadowRoot?.getElementById('queueMenuBtn')?.classList.add('hidden');
@@ -11270,7 +11313,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   }
 
   // Build a movie/TV row (search result or starred)
-  _mtMakeRow(item, isStarred) {
+  // opts (optional):
+  //  - onTap: replaces the default tap action (open Info)
+  //  - trailingHtml: extra markup on the right of the row (e.g. a count pill)
+  _mtMakeRow(item, isStarred, opts) {
     const self = this;
     const wrap = document.createElement('div');
     wrap.className = 'ma-item-wrap';
@@ -11286,9 +11332,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     row.innerHTML =
       '<div class="ma-item-art" style="width:40px;height:40px;border-radius:8px;background:rgba(255,255,255,0.08);flex-shrink:0;overflow:hidden;display:flex;align-items:center;justify-content:center;">' + artHtml + '</div>' +
       '<div style="flex:1;min-width:0;">' +
-        '<div style="font-size:13px;font-weight:600;color:var(--primary-text-color,#fff);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + item.title + (item.kind === 'tv' ? ' <span style="opacity:0.5;font-weight:400;font-size:10px;">TV</span>' : '') + '</div>' +
-        '<div style="font-size:11px;color:rgba(255,255,255,0.45);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + item.subtitle + '</div>' +
-      '</div>';
+        // ma-item-title / ma-item-sub let the shared search bar
+        // (_filterMAGrid) filter these rows — without them, typing in the
+        // search bar on Watch History silently matched nothing.
+        '<div class="ma-item-title" style="font-size:13px;font-weight:600;color:var(--primary-text-color,#fff);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + item.title + (item.kind === 'tv' ? ' <span style="opacity:0.5;font-weight:400;font-size:10px;">TV</span>' : '') + '</div>' +
+        '<div class="ma-item-sub" style="font-size:11px;color:rgba(255,255,255,0.45);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + item.subtitle + '</div>' +
+      '</div>' +
+      (opts?.trailingHtml || '');
     wrap.appendChild(row);
 
     // Same structure and same technique the Songs tab's own rows use —
@@ -11312,28 +11362,46 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     row.addEventListener('pointermove',   () => clearTimeout(_lpTimer), { passive: true });
     row.addEventListener('click', () => {
       if (_lpFired) { _lpFired = false; return; }
-      const infoPopup = self.shadowRoot?.getElementById('infoPopup');
-      const infoContent = self.shadowRoot?.getElementById('infoContent');
-      const infoTitleEl = self.shadowRoot?.getElementById('infoPopupTitle');
-      if (infoPopup) {
-        infoPopup.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
-        infoPopup.style.setProperty('backdrop-filter', 'none');
-        infoPopup.style.setProperty('-webkit-backdrop-filter', 'none');
-        infoPopup.classList.add('visible');
-      }
-      if (infoContent) infoContent.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
-      if (infoTitleEl) infoTitleEl.textContent = 'Media Info';
-      self._infoPopupOpenedAt = Date.now();
-      self._activeInfoPanelKind = null;
-      self.shadowRoot?.getElementById('queueMenuBtn')?.classList.add('hidden');
-      // iTunes' search thumbnail is only 100x100 — upgrade to a larger size
-      // for the detail panel using the same URL-substitution pattern iTunes
-      // artwork URLs support.
-      self._videoInfoArtOverride = (item.artworkUrl100 || '').replace('100x100bb', '600x600bb') || null;
-      self._fetchVideoInfo(item.title, item.kind === 'tv');
+      if (typeof opts?.onTap === 'function') { opts.onTap(); return; }
+      self._openMtInfo(item);
     });
 
     return wrap;
+  }
+
+  // Opens the shared Info panel for a movie/TV item — pulled out of
+  // _mtMakeRow's tap handler so Watch History's drill-in (its Info button,
+  // episode rows) opens exactly the same panel the same way.
+  _openMtInfo(item) {
+    const infoPopup = this.shadowRoot?.getElementById('infoPopup');
+    const infoContent = this.shadowRoot?.getElementById('infoContent');
+    const infoTitleEl = this.shadowRoot?.getElementById('infoPopupTitle');
+    if (infoPopup) {
+      infoPopup.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
+      infoPopup.style.setProperty('backdrop-filter', 'none');
+      infoPopup.style.setProperty('-webkit-backdrop-filter', 'none');
+      infoPopup.classList.add('visible');
+    }
+    if (infoContent) infoContent.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
+    if (infoTitleEl) infoTitleEl.textContent = 'Info';
+    this._infoPopupOpenedAt = Date.now();
+    this._activeInfoPanelKind = null;
+    this.shadowRoot?.getElementById('queueMenuBtn')?.classList.add('hidden');
+    // iTunes' search thumbnail is only 100x100 — upgrade to a larger size
+    // for the detail panel using the same URL-substitution pattern iTunes
+    // artwork URLs support.
+    this._videoInfoArtOverride = (item.artworkUrl100 || '').replace('100x100bb', '600x600bb') || null;
+    this._fetchVideoInfo(item.title, item.kind === 'tv');
+  }
+
+  // Watch History's version of _openMtInfo — also remembers which history
+  // title this lookup is for, so if the Info lookup comes back saying it's
+  // actually a TV show, the log entries logged as "movie" get corrected
+  // (see _correctWatchKind). The pending key is consumed at the start of
+  // _fetchVideoInfo, so it only ever applies to this one lookup.
+  _openWatchInfo(item, groupKey) {
+    this._pendingWatchInfoKey = groupKey || null;
+    this._openMtInfo(item);
   }
 
   _showMtContextMenu(anchor, item) {
@@ -11379,22 +11447,22 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // shows "Watch History" as the title, same as Music History.
   _renderRecentlyWatchedTab(content) {
     if (!content) return;
-    const limit = this._mtWatchExpanded ? 50 : 10;
-    const entries = this._getWatchLogEntries()
-      .sort((a, b) => (b.ts || 0) - (a.ts || 0))
-      .slice(0, limit);
+    // Leaving (or never having entered) a title's drill-in — restore the
+    // list-level header title and ⋮ menu.
+    this._watchDetailActive = false;
+    this._watchDetailKey = null;
+    const _titleEl = this.shadowRoot?.getElementById('maTitle');
+    if (_titleEl) _titleEl.textContent = 'Watch History';
+    const _menuBtn = this.shadowRoot?.getElementById('recentPlaysMenuBtn');
+    if (_menuBtn) {
+      _menuBtn.classList.remove('hidden');
+      _menuBtn.onclick = () => this._showMtWatchOptionsMenu(_menuBtn);
+    }
 
-    const _relTime = ts => {
-      const diffSec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
-      if (diffSec < 60) return 'Just now';
-      const diffMin = Math.floor(diffSec / 60);
-      if (diffMin < 60) return diffMin + 'm ago';
-      const diffHr = Math.floor(diffMin / 60);
-      if (diffHr < 24) return diffHr + 'h ago';
-      const diffDay = Math.floor(diffHr / 24);
-      if (diffDay < 7) return diffDay + 'd ago';
-      return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-    };
+    // Grouped by title — one row per show/movie, most recently watched
+    // first. The 10/50 limit applies to titles, not individual plays.
+    const limit = this._mtWatchExpanded ? 50 : 10;
+    const groups = this._groupWatchLog(this._getWatchLogEntries()).slice(0, limit);
 
     content.innerHTML = '';
 
@@ -11402,7 +11470,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // reasoning as Recent Searches / Recent Played, which never vanish
     // either, so "nothing watched yet" reads differently from "this
     // feature doesn't exist here".
-    if (!entries.length) {
+    if (!groups.length) {
       const empty = document.createElement('div');
       empty.innerHTML = this._psEmpty(
         'M21,3H3C1.89,3 1,3.89 1,5V19A2,2 0 0,0 3,21H21A2,2 0 0,0 23,19V5C23,3.89 22.1,3 21,3M21,19H3V5H21V19M18,13.5L15.5,15.15L15.5,11.85L18,13.5M13,15.5L10.5,17.15L10.5,13.85L13,15.5M8,13.5L5.5,15.15L5.5,11.85L8,13.5Z',
@@ -11414,29 +11482,39 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     }
 
     const _pendingArt = [];
-    entries.forEach(e => {
-      const title = e.seriesTitle || e.title;
-      if (!title) return;
-      const kind = e.mediaType === 'tv' ? 'tv' : 'movie';
-      const artKey = kind + '|' + title.toLowerCase();
+    groups.forEach(g => {
+      const kind = g.kind;
+      const count = g.viewings.length;
+      const artKey = kind + '|' + g.title.toLowerCase();
+      // A single watch of an episode shows which one in the subtitle —
+      // there's no drill-in for single-watch titles, so this is the only
+      // place it would appear.
+      let subtitle = this._watchRelTime(g.lastTs);
+      if (count > 1) subtitle += ' \u00b7 ' + count + ' watches';
+      else if (kind === 'tv') {
+        const epLabel = this._watchEpisodeLabel(g.viewings[0].entry, g.title, true);
+        if (epLabel) subtitle += ' \u00b7 ' + epLabel;
+      }
       const item = {
-        id: kind + '_' + title.toLowerCase(),
+        id: kind + '_' + g.title.toLowerCase(),
         kind,
-        title,
-        subtitle: _relTime(e.ts),
-        // Watch log entries never store artwork, same situation Recent
-        // Played was in for songs — checks a cache first, and for a miss,
-        // the row renders with _mtMakeRow's own generic fallback icon
-        // immediately, then gets patched in place once the fetch below
-        // resolves (a direct reference to this exact row, rather than the
-        // global data-key patching Recent Played's music lookup uses,
-        // since there's no need here for multiple simultaneous views of
-        // the same title to stay in sync with each other).
+        title: g.title,
+        subtitle: this._watchEsc(subtitle),
+        // Watch log entries never store artwork — checks a cache first,
+        // and for a miss the row renders with _mtMakeRow's own fallback
+        // icon, then gets patched in place once the queued fetch resolves.
         artworkUrl100: this._mtArtCache?.[artKey] || '',
       };
-      const row = this._mtMakeRow(item, false);
+      const infoItem = { ...item, subtitle: '' };
+      const opts = count > 1
+        ? {
+            onTap: () => this._openWatchGroupDetail(g.key),
+            trailingHtml: this._watchCountPillHtml(count),
+          }
+        : { onTap: () => this._openWatchInfo(infoItem, g.key) };
+      const row = this._mtMakeRow(item, false, opts);
       content.appendChild(row);
-      if (!item.artworkUrl100) _pendingArt.push({ title, kind, row });
+      if (!item.artworkUrl100) _pendingArt.push({ title: g.title, kind, row });
     });
     // Fetched one at a time rather than all firing in parallel — up to 10
     // (or 50) rows each needing 2 iTunes requests would otherwise burst 20+
@@ -11446,6 +11524,449 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // known issue on Apple's end) — which would silently blank out
     // artwork for the whole list at once, not just mismatch a few titles.
     if (_pendingArt.length) this._fetchMtArtQueue(_pendingArt);
+  }
+
+  // ── Watch History grouping helpers ──────────────────────────────────────
+
+  _watchEsc(s) {
+    return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  _watchRelTime(ts) {
+    const diffSec = Math.max(0, Math.floor((Date.now() - (ts || 0)) / 1000));
+    if (diffSec < 60) return 'Just now';
+    const diffMin = Math.floor(diffSec / 60);
+    if (diffMin < 60) return diffMin + 'm ago';
+    const diffHr = Math.floor(diffMin / 60);
+    if (diffHr < 24) return diffHr + 'h ago';
+    const diffDay = Math.floor(diffHr / 24);
+    if (diffDay < 7) return diffDay + 'd ago';
+    return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
+
+  _watchDuration(ms) {
+    const totalMin = Math.round((ms || 0) / 60000);
+    if (totalMin < 1) return '';
+    const h = Math.floor(totalMin / 60), m = totalMin % 60;
+    return h ? (h + 'h' + (m ? ' ' + m + 'm' : '')) : (m + 'm');
+  }
+
+  // Grouping key for a title — case, a trailing "(2008)" year, "&" vs
+  // "and" and curly apostrophes all collapse to one key, so small
+  // differences in how players report the same title don't split it.
+  _watchTitleKey(title) {
+    return (title || '').toLowerCase()
+      .replace(/\s*\(\d{4}\)\s*$/, '')
+      .replace(/[\u2018\u2019\u02bc`]/g, "'")
+      .replace(/\s*&\s*/g, ' and ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  // "S3 E5 · Episode Title", "S3 E5", "Episode Title" — whatever's known.
+  // Returns '' when the entry has nothing beyond the series title itself.
+  // compact=true drops the episode title when numbers are known (for the
+  // one-line list subtitle).
+  _watchEpisodeLabel(entry, seriesTitle, compact) {
+    if (!entry) return '';
+    const num = Number.isFinite(entry.season) && Number.isFinite(entry.episode)
+      ? 'S' + entry.season + ' E' + entry.episode
+      : Number.isFinite(entry.episode) ? 'Episode ' + entry.episode : '';
+    const epTitle = (entry.title && this._watchTitleKey(entry.title) !== this._watchTitleKey(seriesTitle)) ? entry.title : '';
+    if (num && epTitle) return compact ? num : num + ' \u00b7 ' + epTitle;
+    return num || epTitle;
+  }
+
+  // Turns the flat watch log into one group per title, each with its
+  // individual viewings. A "viewing" merges sessions of the same thing
+  // (same movie, or same episode) that started within 6 hours of each
+  // other — a film paused and resumed later that evening, or picked up on
+  // another TV, counts as one watch, not two. Different episodes are never
+  // merged, whatever the gap.
+  _groupWatchLog(entries) {
+    const MERGE_GAP_MS = 6 * 3600 * 1000;
+    const groups = new Map();
+    entries.slice().sort((a, b) => (b.ts || 0) - (a.ts || 0)).forEach(e => {
+      const title = e.seriesTitle || e.title;
+      const key = this._watchTitleKey(title);
+      if (!key) return;
+      let g = groups.get(key);
+      if (!g) {
+        g = { key, title, kind: 'movie', entries: [], viewings: [], lastTs: e.ts || 0, firstTs: e.ts || 0, watchedMs: 0 };
+        groups.set(key, g);
+      }
+      // Any entry positively identified as TV makes the whole title TV —
+      // TV classification needs a real signal (see _classifyWatchMedia),
+      // "movie" is just the fallback.
+      if (e.mediaType === 'tv') g.kind = 'tv';
+      g.entries.push(e);
+      g.firstTs = Math.min(g.firstTs, e.ts || 0);
+      g.watchedMs += e.watchedMs || 0;
+    });
+
+    groups.forEach(g => {
+      const _viewingId = e => {
+        if (g.kind !== 'tv') return 'movie';
+        if (Number.isFinite(e.season) && Number.isFinite(e.episode)) return 's' + e.season + 'e' + e.episode;
+        const t = this._watchTitleKey(e.title);
+        // No way to tell episodes apart — never merge these.
+        if (!t || t === g.key) return 'u' + (e._key || Math.random());
+        return 't' + t;
+      };
+      g.entries.forEach(e => {
+        const id = _viewingId(e);
+        const last = g.viewings[g.viewings.length - 1];
+        if (last && last.id === id && (last.startTs - (e.ts || 0)) <= MERGE_GAP_MS) {
+          last.sessions.push(e);
+          last.startTs = e.ts || 0;
+          last.watchedMs += e.watchedMs || 0;
+          if (!last.entry.season && e.season) last.entry = e; // prefer the one with metadata
+        } else {
+          g.viewings.push({ id, entry: e, sessions: [e], startTs: e.ts || 0, lastTs: e.ts || 0, watchedMs: e.watchedMs || 0 });
+        }
+      });
+    });
+
+    return [...groups.values()].sort((a, b) => b.lastTs - a.lastTs);
+  }
+
+  _watchCountPillHtml(count) {
+    return '<div style="display:flex;align-items:center;gap:2px;flex-shrink:0;margin-left:6px;">' +
+      '<span style="min-width:22px;height:22px;padding:0 7px;box-sizing:border-box;border-radius:11px;background:rgba(167,139,250,0.18);color:#C4B5FD;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;">' + count + '</span>' +
+      '<svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:' + this._pt('iconDim') + ';"><path d="M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z"/></svg>' +
+    '</div>';
+  }
+
+  // Rewrites the stored mediaType for every entry of one title. Only ever
+  // called with 'tv' (movie → TV): TV classification needs a positive
+  // signal, so an entry already marked TV is never downgraded.
+  _correctWatchKind(groupKey, kind) {
+    if (kind !== 'tv' || !groupKey) return false;
+    try {
+      const lsKey = 'crow_ai_local_watchLog';
+      const store = JSON.parse(localStorage.getItem(lsKey) || '{}');
+      let changed = false;
+      Object.values(store).forEach(e => {
+        const d = e?.data;
+        if (!d || d.mediaType === 'tv') return;
+        if (this._watchTitleKey(d.seriesTitle || d.title) !== groupKey) return;
+        d.mediaType = 'tv';
+        changed = true;
+      });
+      if (!changed) return false;
+      localStorage.setItem(lsKey, JSON.stringify(store));
+      this._haStorageSaveAIImmediate('watchLog');
+      return true;
+    } catch (_) { return false; }
+  }
+
+  // Removes entries from the watch log by storage key.
+  _removeWatchEntries(keys) {
+    if (!keys?.length) return;
+    try {
+      const lsKey = 'crow_ai_local_watchLog';
+      const store = JSON.parse(localStorage.getItem(lsKey) || '{}');
+      keys.forEach(k => { delete store[k]; });
+      localStorage.setItem(lsKey, JSON.stringify(store));
+      this._haStorageSaveAIImmediate('watchLog');
+    } catch (_) {}
+  }
+
+  // Re-renders whichever Watch History view is showing (list or a title's
+  // drill-in), keeping the scroll position. No-op when Watch History isn't
+  // the current library view.
+  _refreshWatchHistoryView() {
+    if (this._maCurrentTab !== 'recently_watched') return;
+    const content = this.shadowRoot?.getElementById('maContent');
+    if (!content) return;
+    const scroll = content.scrollTop;
+    if (this._watchDetailActive && this._watchDetailKey) {
+      this._openWatchGroupDetail(this._watchDetailKey, { keepScroll: true });
+    } else {
+      this._renderRecentlyWatchedTab(content);
+    }
+    content.scrollTop = scroll;
+  }
+
+  _clearLibrarySearchInput() {
+    const r = this.shadowRoot;
+    const iosInput = r?.getElementById('maIosSearchInput');
+    const iosClear = r?.getElementById('maIosSearchClear');
+    if (iosInput) iosInput.value = '';
+    if (iosClear) iosClear.style.display = 'none';
+  }
+
+  // Back from a title's drill-in to the grouped list — called first thing
+  // by _maNavBack, same one-level pattern as the pinned category drill-in.
+  _closeWatchGroupDetail() {
+    const content = this.shadowRoot?.getElementById('maContent');
+    if (!content) return;
+    this._clearLibrarySearchInput();
+    this._renderRecentlyWatchedTab(content);
+    content.scrollTop = this._watchListScroll || 0;
+  }
+
+  // Drill-in for one title: summary, Info / Pin / Soundtrack actions, then
+  // every viewing grouped by day.
+  _openWatchGroupDetail(groupKey, opts = {}) {
+    const r = this.shadowRoot;
+    const content = r?.getElementById('maContent');
+    if (!content) return;
+    const g = this._groupWatchLog(this._getWatchLogEntries()).find(x => x.key === groupKey);
+    if (!g) { this._closeWatchGroupDetail(); return; }
+
+    if (!this._watchDetailActive) {
+      this._watchListScroll = content.scrollTop;
+      this._clearLibrarySearchInput();
+    }
+    this._watchDetailActive = true;
+    this._watchDetailKey = groupKey;
+
+    const titleEl = r.getElementById('maTitle');
+    if (titleEl) titleEl.textContent = g.title;
+    const menuBtn = r.getElementById('recentPlaysMenuBtn');
+    if (menuBtn) {
+      menuBtn.classList.remove('hidden');
+      menuBtn.onclick = () => this._showWatchDetailMenu(menuBtn, g);
+    }
+
+    const esc = s => this._watchEsc(s);
+    const artKey = g.kind + '|' + g.title.toLowerCase();
+    const art = this._mtArtCache?.[artKey] || '';
+    const item = { id: g.kind + '_' + g.title.toLowerCase(), kind: g.kind, title: g.title, subtitle: '', artworkUrl100: art };
+    const count = g.viewings.length;
+    const _fmtDate = ts => new Date(ts).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: new Date(ts).getFullYear() === new Date().getFullYear() ? undefined : 'numeric' });
+
+    const stats = [
+      count + (count === 1 ? ' watch' : ' watches'),
+      'Last watched ' + this._watchRelTime(g.lastTs).replace(/^Just now$/, 'just now'),
+      count > 1 ? 'Since ' + _fmtDate(g.firstTs) : '',
+      g.watchedMs >= 60000 ? this._watchDuration(g.watchedMs) + ' watched' : '',
+    ].filter(Boolean);
+
+    const fallbackIcon = '<svg viewBox="0 0 24 24" style="width:28px;height:28px;fill:' + this._pt('iconDim') + '"><path d="M21,3H3C1.89,3 1,3.89 1,5V19A2,2 0 0,0 3,21H21A2,2 0 0,0 23,19V5C23,3.89 22.1,3 21,3M21,19H3V5H21V19M18,13.5L15.5,15.15L15.5,11.85L18,13.5M13,15.5L10.5,17.15L10.5,13.85L13,15.5M8,13.5L5.5,15.15L5.5,11.85L8,13.5Z"/></svg>';
+    const isPinned = this._mtIsStarred(item);
+
+    content.innerHTML =
+      '<div style="display:flex;gap:14px;align-items:center;padding:6px 4px 12px;">' +
+        '<div id="watchDetailArt" style="width:84px;height:84px;border-radius:12px;overflow:hidden;flex-shrink:0;background:' + this._pt('btnBg') + ';display:flex;align-items:center;justify-content:center;">' +
+          (art ? '<img src="' + art + '" alt="" style="width:100%;height:100%;object-fit:cover;display:block;" onerror="this.remove()">' : fallbackIcon) +
+        '</div>' +
+        '<div style="flex:1;min-width:0;">' +
+          '<div style="font-size:10px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:#A78BFA;margin-bottom:4px;">' + (g.kind === 'tv' ? 'TV Show' : 'Movie') + '</div>' +
+          '<div style="font-size:16px;font-weight:700;color:' + this._pt('text') + ';line-height:1.25;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;">' + esc(g.title) + '</div>' +
+          '<div style="font-size:12px;color:' + this._pt('dim') + ';margin-top:4px;line-height:1.45;">' + stats.map(esc).join(' \u00b7 ') + '</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="ma-drill-actions" style="margin-bottom:10px;">' +
+        '<button class="ma-drill-action-btn" data-action="info"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M11,9H13V7H11M12,20C7.59,20 4,16.41 4,12C4,7.59 7.59,4 12,4C16.41,4 20,7.59 20,12C20,16.41 16.41,20 12,20M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M11,17H13V11H11V17Z"/></svg></div><span class="ma-drill-btn-label">Info</span></button>' +
+        '<button class="ma-drill-action-btn" data-action="pin"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"' + (isPinned ? ' style="fill:#FFD60A"' : '') + '><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg></div><span class="ma-drill-btn-label">' + (isPinned ? 'Unpin' : 'Pin') + '</span></button>' +
+        '<button class="ma-drill-action-btn" data-action="soundtrack"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg></div><span class="ma-drill-btn-label">Soundtrack</span></button>' +
+      '</div>' +
+      '<div id="watchDetailList"></div>';
+
+    const actions = content.querySelector('.ma-drill-actions');
+    actions?.querySelector('[data-action="info"]')?.addEventListener('click', () => this._openWatchInfo(item, g.key));
+    actions?.querySelector('[data-action="pin"]')?.addEventListener('click', () => {
+      const nowPinned = this._mtToggleStar(item);
+      this._showToast(nowPinned ? '\ud83d\udccd Pinned' : 'Unpinned');
+      this._updatePinnedIndicator();
+      this._openWatchGroupDetail(g.key, { keepScroll: true });
+    });
+    actions?.querySelector('[data-action="soundtrack"]')?.addEventListener('click', () => {
+      this._showAISearchPanel(`Music from ${g.title}`);
+    });
+
+    // Viewings, bucketed by day (Today / Yesterday / date).
+    const list = content.querySelector('#watchDetailList');
+    const _dayLabel = ts => {
+      const d = new Date(ts); d.setHours(0, 0, 0, 0);
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const diffDays = Math.round((today - d) / 86400000);
+      if (diffDays === 0) return 'Today';
+      if (diffDays === 1) return 'Yesterday';
+      return new Date(ts).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short', year: d.getFullYear() === today.getFullYear() ? undefined : 'numeric' });
+    };
+    let currentDay = null;
+    g.viewings.forEach(v => {
+      const day = _dayLabel(v.lastTs);
+      if (day !== currentDay) {
+        currentDay = day;
+        const h = document.createElement('div');
+        h.className = 'watch-day-heading';
+        h.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:' + this._pt('dim') + ';padding:10px 4px 6px;';
+        h.textContent = day;
+        list.appendChild(h);
+      }
+      list.appendChild(this._buildWatchViewingRow(v, g, item));
+    });
+
+    // Hide day headings whose rows are all filtered out by the search bar.
+    this._watchSyncDayHeadings(list);
+
+    if (!opts.keepScroll) content.scrollTop = 0;
+    if (!art) {
+      // Hero art wasn't cached yet — fetch it, then patch hero only.
+      this._fetchVideoArtWithWiki(g.title, null, g.kind).then(url => {
+        if (!url) return;
+        if (!this._mtArtCache) this._mtArtCache = {};
+        this._mtArtCache[artKey] = url;
+        const artEl = content.querySelector('#watchDetailArt');
+        if (artEl?.isConnected && this._watchDetailKey === g.key) {
+          artEl.innerHTML = '<img src="' + url + '" alt="" style="width:100%;height:100%;object-fit:cover;display:block;" onerror="this.remove()">';
+        }
+      }).catch(() => {});
+    }
+  }
+
+  _watchSyncDayHeadings(list) {
+    if (!list) return;
+    let heading = null, anyVisible = false;
+    const flush = () => { if (heading) heading.style.display = anyVisible ? '' : 'none'; };
+    [...list.children].forEach(el => {
+      if (el.classList.contains('watch-day-heading')) { flush(); heading = el; anyVisible = false; }
+      else if (el.style.display !== 'none') anyVisible = true;
+    });
+    flush();
+  }
+
+  // One row in a title's drill-in: time, episode (TV), which player, how
+  // long. Tap opens Info; long-press offers removing just this watch.
+  _buildWatchViewingRow(v, g, item) {
+    const esc = s => this._watchEsc(s);
+    const e = v.entry;
+    const time = new Date(v.lastTs).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    const primary = g.kind === 'tv'
+      ? (this._watchEpisodeLabel(e, g.title, false) || 'Episode')
+      : time;
+    const player = e.entity ? (this._hass?.states?.[e.entity]?.attributes?.friendly_name || e.entity) : '';
+    const dur = this._watchDuration(v.watchedMs);
+    const subBits = [
+      g.kind === 'tv' ? time : '',
+      player,
+      dur ? dur + ' watched' : '',
+      // Paused and picked back up (same movie/episode within 6h) — counted
+      // as one watch, so say "resumed" rather than a bare count that reads
+      // like seasons or extra watches.
+      v.sessions.length === 2 ? 'Resumed once'
+        : v.sessions.length > 2 ? 'Resumed ' + (v.sessions.length - 1) + ' times' : '',
+    ].filter(Boolean);
+
+    const wrap = document.createElement('div');
+    wrap.className = 'ma-item-wrap';
+    const row = document.createElement('div');
+    row.className = 'ma-item';
+    row.style.cssText = 'cursor:pointer;-webkit-tap-highlight-color:transparent;position:relative;';
+    row.innerHTML =
+      '<div style="width:32px;height:32px;border-radius:8px;flex-shrink:0;background:' + this._pt('btnBg') + ';display:flex;align-items:center;justify-content:center;">' +
+        '<svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:#A78BFA;"><path d="' + (g.kind === 'tv'
+          ? 'M21,17H3V5H21M21,3H3A2,2 0 0,0 1,5V17A2,2 0 0,0 3,19H8V21H16V19H21A2,2 0 0,0 23,17V5A2,2 0 0,0 21,3Z'
+          : 'M18,4L20,8H17L15,4H13L15,8H12L10,4H8L10,8H7L5,4H4A2,2 0 0,0 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V4H18Z') + '"/></svg>' +
+      '</div>' +
+      '<div style="flex:1;min-width:0;">' +
+        '<div class="ma-item-title">' + esc(primary) + '</div>' +
+        '<div class="ma-item-sub">' + esc(subBits.join(' \u00b7 ')) + '</div>' +
+      '</div>';
+    wrap.appendChild(row);
+
+    let _lpTimer = null, _lpFired = false;
+    row.addEventListener('contextmenu', ev => ev.preventDefault());
+    row.addEventListener('pointerdown', () => {
+      _lpFired = false;
+      _lpTimer = setTimeout(() => { _lpFired = true; this._showWatchViewingMenu(row, v, g); }, 480);
+    }, { passive: true });
+    row.addEventListener('pointerup',     () => clearTimeout(_lpTimer), { passive: true });
+    row.addEventListener('pointercancel', () => { clearTimeout(_lpTimer); _lpFired = false; }, { passive: true });
+    row.addEventListener('pointermove',   () => clearTimeout(_lpTimer), { passive: true });
+    row.addEventListener('click', () => {
+      if (_lpFired) { _lpFired = false; return; }
+      this._openWatchInfo(item, g.key);
+    });
+    return wrap;
+  }
+
+  // Shared dropdown builder for the two drill-in menus below — same
+  // markup/positioning as the other library dropdowns.
+  _showWatchDropdown(anchorEl, itemsHtml, wire) {
+    const r = this.shadowRoot;
+    r.getElementById('rpMenu')?.remove();
+    r.getElementById('rpMenuBackdrop')?.remove();
+    const backdrop = document.createElement('div');
+    backdrop.id = 'rpMenuBackdrop';
+    backdrop.className = 'queue-dropdown-backdrop';
+    const menu = document.createElement('div');
+    menu.id = 'rpMenu';
+    menu.className = 'queue-dropdown-menu';
+    menu.innerHTML = itemsHtml;
+    const anchorRect = anchorEl.getBoundingClientRect();
+    const cardRect = r.host.getBoundingClientRect();
+    menu.style.position = 'absolute';
+    menu.style.top = (anchorRect.bottom - cardRect.top + 4) + 'px';
+    menu.style.right = Math.max(4, cardRect.right - anchorRect.right) + 'px';
+    const host = r.getElementById('maPopup') || r.host;
+    host.appendChild(backdrop);
+    host.appendChild(menu);
+    const openedAt = Date.now();
+    const ready = () => Date.now() - openedAt > 320;
+    const closeMenu = () => { menu.remove(); backdrop.remove(); };
+    backdrop.addEventListener('pointerdown', () => { if (ready()) closeMenu(); });
+    wire(menu, closeMenu, ready);
+  }
+
+  // ⋮ menu while inside a title's drill-in.
+  _showWatchDetailMenu(anchorEl, g) {
+    const trash = '<svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M9,3V4H4V6H5V19A2,2 0 0,0 7,21H17A2,2 0 0,0 19,19V6H20V4H15V3H9M7,6H17V19H7V6M9,8V17H11V8H9M13,8V17H15V8H13Z"/></svg>';
+    this._showWatchDropdown(anchorEl,
+      '<div class="queue-dropdown-item danger" id="watchDetailRemoveAll" role="button">' + trash + '<span class="queue-dropdown-label">Remove from History</span></div>',
+      (menu, closeMenu) => {
+        menu.querySelector('#watchDetailRemoveAll')?.addEventListener('click', () => {
+          closeMenu();
+          this._confirmRemoveWatchGroup(g);
+        });
+      });
+  }
+
+  // Long-press on a single viewing row.
+  _showWatchViewingMenu(anchorEl, v, g) {
+    const trash = '<svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M9,3V4H4V6H5V19A2,2 0 0,0 7,21H17A2,2 0 0,0 19,19V6H20V4H15V3H9M7,6H17V19H7V6M9,8V17H11V8H9M13,8V17H15V8H13Z"/></svg>';
+    this._showWatchDropdown(anchorEl,
+      '<div class="queue-dropdown-item danger" id="watchViewingRemove" role="button">' + trash + '<span class="queue-dropdown-label">Remove this watch</span></div>',
+      (menu, closeMenu, ready) => {
+        menu.querySelector('#watchViewingRemove')?.addEventListener('click', ev => {
+          ev.stopPropagation();
+          if (!ready()) return;
+          closeMenu();
+          this._removeWatchEntries(v.sessions.map(s => s._key).filter(Boolean));
+          this._showToast('Removed');
+          // Last watch for this title gone → back to the list.
+          if (g.viewings.length <= 1) this._closeWatchGroupDetail();
+          else this._openWatchGroupDetail(g.key, { keepScroll: true });
+        });
+      });
+  }
+
+  _confirmRemoveWatchGroup(g) {
+    const content = this.shadowRoot?.getElementById('maContent');
+    if (!content) return;
+    content.innerHTML =
+      '<div class="panel-state confirm">' +
+        '<div class="panel-state-icon"><svg viewBox="0 0 24 24"><path d="M9,3V4H4V6H5V19A2,2 0 0,0 7,21H17A2,2 0 0,0 19,19V6H20V4H15V3H9M7,6H17V19H7V6M9,8V17H11V8H9M13,8V17H15V8H13Z"/></svg></div>' +
+        '<div class="panel-state-title">Remove from History?</div>' +
+        '<div class="panel-state-body">This removes every watch of \u201c' + this._watchEsc(g.title) + '\u201d from Watch History and Video Recap. This can\u2019t be undone.</div>' +
+        '<div class="panel-state-confirm-btns">' +
+          '<button class="panel-state-btn-cancel" id="watchGroupRemoveCancel">Cancel</button>' +
+          '<button class="panel-state-btn-danger" id="watchGroupRemoveConfirm">Remove</button>' +
+        '</div>' +
+      '</div>';
+    // Cancel re-renders rather than restoring saved innerHTML, so the
+    // drill-in's listeners are live again.
+    content.querySelector('#watchGroupRemoveCancel')?.addEventListener('click', () => {
+      this._openWatchGroupDetail(g.key);
+    }, { once: true });
+    content.querySelector('#watchGroupRemoveConfirm')?.addEventListener('click', () => {
+      this._removeWatchEntries(g.entries.map(e => e._key).filter(Boolean));
+      this._closeWatchGroupDetail();
+    }, { once: true });
   }
 
   // Runs a queued list of artwork lookups sequentially rather than in
@@ -12727,7 +13248,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         infoPopup.classList.add('visible');
       }
       if (infoContent) infoContent.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
-      if (infoTitleEl) infoTitleEl.textContent = 'Media Info';
+      if (infoTitleEl) infoTitleEl.textContent = 'Info';
       this._infoPopupOpenedAt = Date.now();
       this._activeInfoPanelKind = null;
       this.shadowRoot?.getElementById('queueMenuBtn')?.classList.add('hidden');
@@ -16214,7 +16735,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       }
       return;
     } else {
-      r.getElementById('infoPopupTitle').textContent = 'Media Info';
+      r.getElementById('infoPopupTitle').textContent = 'Info';
       // Use series title for TV shows, otherwise use media title
       const rawTitle = attrs.media_series_title || attrs.media_title || '';
       this._fetchVideoInfo(rawTitle);
@@ -18164,7 +18685,21 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           .trim();
       }
       if (!seriesTitle || _looksLikeBareDate(seriesTitle)) return { kind: null };
-      return { kind: 'tv', title: episodeTitle, seriesTitle };
+      // Season/episode numbers — HA's own attributes first, then an
+      // "S02E04" marker in media_title as a fallback for apps that only
+      // put it there. Stored with the watch entry so Watch History's
+      // drill-in can label episodes properly.
+      const _num = v => { const n = parseInt(v, 10); return Number.isFinite(n) && n >= 0 ? n : null; };
+      let season = _num(attrs?.media_season);
+      let episode = _num(attrs?.media_episode);
+      if (season === null || episode === null) {
+        const m = (attrs?.media_title || '').match(/\bS(\d{1,2})\s*E(\d{1,3})\b/i);
+        if (m) {
+          if (season === null) season = _num(m[1]);
+          if (episode === null) episode = _num(m[2]);
+        }
+      }
+      return { kind: 'tv', title: episodeTitle, seriesTitle, season, episode };
     }
 
     if (detected === 'movie') {
@@ -18206,6 +18741,11 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         },
         ts: now,
       };
+      // Optional extras — only written when known, so older entries and
+      // sources that don't report them simply omit the fields.
+      if (Number.isFinite(meta.season))  store[entryKey].data.season  = meta.season;
+      if (Number.isFinite(meta.episode)) store[entryKey].data.episode = meta.episode;
+      if (meta.watchedMs > 0) store[entryKey].data.watchedMs = Math.round(meta.watchedMs);
       const cutoff = Date.now() - 90 * 24 * 3600 * 1000;
       Object.keys(store).forEach(k => { if ((store[k].ts || 0) < cutoff) delete store[k]; });
       const keys = Object.keys(store);
@@ -18235,9 +18775,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           || /^\d{4}-\d{2}-\d{2}$/.test(t)
           || /^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}$/.test(t);
       };
-      return Object.values(store)
-        .filter(entry => entry && entry.data && !_looksLikeBareDate(entry.data.title) && !_looksLikeBareDate(entry.data.seriesTitle))
-        .map(entry => ({ ...entry.data, ts: entry.ts }));
+      // _key is the entry's storage key — lets Watch History remove a
+      // single entry (or every entry for one title) without touching the
+      // rest of the log.
+      return Object.entries(store)
+        .filter(([, entry]) => entry && entry.data && !_looksLikeBareDate(entry.data.title) && !_looksLikeBareDate(entry.data.seriesTitle))
+        .map(([k, entry]) => ({ ...entry.data, ts: entry.ts, _key: k }));
     } catch (_) { return []; }
   }
 
@@ -18255,10 +18798,144 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     return EXCLUDED.includes(a);
   }
 
+  // Video/streaming apps whose plays should never count as music. Matched
+  // against both app_id (bundle id) and app_name, since integrations differ
+  // in which one they populate. Music apps (Apple Music = com.apple.TVMusic,
+  // Spotify, etc.) are deliberately absent.
+  _isVideoApp(v) {
+    const s = (v || '').toString().trim().toLowerCase();
+    if (!s) return false;
+    const idParts = ['youtube', 'netflix', 'iplayer', 'disney', 'com.amazon.aiv', 'plexapp', 'firecore.infuse',
+      'twitch', 'vimeo', 'itv', 'channel4', 'hulu', 'peacock', 'crunchyroll', 'hbo', 'paramount',
+      'com.apple.tvwatchlist', 'tiktok', 'nowtv', 'uk.co.five', 'emby', 'jellyfin', 'pluto'];
+    if (s.includes('.') && idParts.some(p => s.includes(p))) return true;
+    const names = new Set(['youtube', 'youtube tv', 'youtube kids', 'netflix', 'bbc iplayer', 'iplayer', 'disney+',
+      'prime video', 'amazon prime video', 'plex', 'infuse', 'twitch', 'vimeo', 'itvx', 'channel 4', 'my5',
+      'now', 'now tv', 'hbo max', 'max', 'paramount+', 'hulu', 'peacock', 'crunchyroll', 'tiktok', 'tv',
+      'apple tv', 'emby', 'jellyfin', 'pluto tv']);
+    return names.has(s);
+  }
+
+  _normArtistKey(a) {
+    return (a || '').toString().toLowerCase().replace(/[\u2018\u2019'`]/g, '').replace(/\s+/g, ' ').trim();
+  }
+
+  // Cached on the raw string so the live watcher (which checks this on
+  // every state update) doesn't re-parse JSON each time, while still
+  // picking up changes synced in from HA storage or another card.
+  _getMutedArtists() {
+    try {
+      const raw = localStorage.getItem('crow_ai_local_mutedArtists') || '{}';
+      if (this._mutedArtistsRaw !== raw) {
+        this._mutedArtistsRaw = raw;
+        this._mutedArtistsCache = JSON.parse(raw) || {};
+      }
+      return { ...this._mutedArtistsCache };
+    } catch (_) { return {}; }
+  }
+
+  _isMutedArtist(artist) {
+    const k = this._normArtistKey(artist);
+    return !!(k && this._getMutedArtists()[k]);
+  }
+
+  // Stored in the same { key: { data, ts } } shape as the other ai_local
+  // stores so it syncs through HA user data the same way.
+  _muteArtist(artist) {
+    const k = this._normArtistKey(artist);
+    if (!k) return;
+    try {
+      const store = this._getMutedArtists();
+      store[k] = { data: artist, ts: Date.now() };
+      localStorage.setItem('crow_ai_local_mutedArtists', JSON.stringify(store));
+      this._haStorageSaveAIImmediate('mutedArtists');
+    } catch (_) {}
+  }
+
+  _unmuteArtist(key) {
+    try {
+      const store = this._getMutedArtists();
+      delete store[key];
+      localStorage.setItem('crow_ai_local_mutedArtists', JSON.stringify(store));
+      this._haStorageSaveAIImmediate('mutedArtists');
+    } catch (_) {}
+  }
+
+  _removeListenEntries(keys) {
+    if (!keys?.length) return;
+    try {
+      const store = JSON.parse(localStorage.getItem('crow_ai_local_listenLog') || '{}');
+      keys.forEach(k => { delete store[k]; });
+      localStorage.setItem('crow_ai_local_listenLog', JSON.stringify(store));
+      this._haStorageSaveAIImmediate('listenLog');
+    } catch (_) {}
+  }
+
+  _confirmMuteArtist(artist, content) {
+    if (!content || !artist) return;
+    const esc = s => (s || '').toString().replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    content.innerHTML =
+      '<div class="panel-state confirm">' +
+        '<div class="panel-state-icon"><svg viewBox="0 0 24 24"><path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M4,12A8,8 0 0,1 12,4C13.85,4 15.55,4.63 16.9,5.69L5.69,16.9C4.63,15.55 4,13.85 4,12M12,20C10.15,20 8.45,19.37 7.1,18.31L18.31,7.1C19.37,8.45 20,10.15 20,12A8,8 0 0,1 12,20Z"/></svg></div>' +
+        '<div class="panel-state-title">Never log \u201c' + esc(artist) + '\u201d?</div>' +
+        '<div class="panel-state-body">Everything by this artist is removed from Music History and Music Recap, and future plays won\u2019t be logged. You can undo this from the \u22ee menu.</div>' +
+        '<div class="panel-state-confirm-btns">' +
+          '<button class="panel-state-btn-cancel" id="muteArtistCancel">Cancel</button>' +
+          '<button class="panel-state-btn-danger" id="muteArtistConfirm">Don\u2019t Log</button>' +
+        '</div>' +
+      '</div>';
+    content.querySelector('#muteArtistCancel')?.addEventListener('click', () => this._renderRecentPlaysTab(content), { once: true });
+    content.querySelector('#muteArtistConfirm')?.addEventListener('click', () => {
+      this._muteArtist(artist);
+      this._getListenLogEntries(); // runs the purge, dropping existing entries
+      this._showToast('Won\u2019t log ' + artist);
+      this._renderRecentPlaysTab(content);
+    }, { once: true });
+  }
+
+  // "Muted Artists" list, reached from Music History's ⋮ menu — tap Unmute
+  // to start logging an artist again (already-removed plays don't return).
+  _showMutedArtistsView(content) {
+    if (!content) return;
+    const esc = s => (s || '').toString().replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const muted = Object.entries(this._getMutedArtists())
+      .sort((a, b) => (b[1]?.ts || 0) - (a[1]?.ts || 0));
+    content.innerHTML =
+      '<div style="display:flex;align-items:center;gap:8px;margin:2px 4px 12px;">' +
+        '<button id="mutedBack" style="background:none;border:none;color:#63b3ed;font-size:13px;font-weight:600;cursor:pointer;padding:0;font-family:inherit;">\u2039 Music History</button>' +
+      '</div>' +
+      '<div style="font-size:10px;font-weight:700;color:' + this._pt('dim') + ';letter-spacing:0.6px;text-transform:uppercase;margin:0 4px 10px;">Muted Artists</div>' +
+      (muted.length
+        ? muted.map(([k, v]) =>
+            '<div class="ma-item-wrap"><div class="ma-item" style="cursor:default;">' +
+              '<div class="ma-item-info" style="flex:1;min-width:0;"><div class="ma-item-title">' + esc(v?.data || k) + '</div></div>' +
+              '<button class="muted-unmute" data-key="' + esc(k).replace(/"/g, '&quot;') + '" style="flex-shrink:0;background:' + this._pt('btnBg') + ';border:1px solid ' + this._pt('btnBdr') + ';color:' + this._pt('text') + ';border-radius:14px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;">Unmute</button>' +
+            '</div></div>').join('')
+        : '<div style="padding:24px 8px;text-align:center;font-size:12px;color:' + this._pt('dim') + ';">No muted artists.</div>');
+    content.querySelector('#mutedBack')?.addEventListener('click', () => this._renderRecentPlaysTab(content));
+    content.querySelectorAll('.muted-unmute').forEach(btn => btn.addEventListener('click', () => {
+      this._unmuteArtist(btn.dataset.key);
+      this._showMutedArtistsView(content);
+    }));
+  }
+
   _recapShouldExclude(artist, title, attrs, pseudoState, entityId = this._entity) {
     // HA announcement automations (pyatv TTS/sound clips) — never real
     // listening, regardless of what else the entry looks like.
     if (this._isAnnouncementArtist(artist)) return true;
+
+    // Artists/channels muted from Music History ("Never log this artist").
+    if (this._isMutedArtist(artist)) return true;
+
+    // Playing inside a video app (YouTube, Netflix, iPlayer…) — the Apple
+    // TV integration reports the running app, and a YouTube channel name
+    // otherwise arrives as media_artist and looks exactly like a song.
+    if (this._isVideoApp(attrs?.app_id) || this._isVideoApp(attrs?.app_name)) return true;
+
+    // Safety net for video apps not on that list: "video" content with an
+    // artist but no album is an upload/clip, not a track. Real music
+    // videos (Apple Music etc.) carry an album name.
+    if ((attrs?.media_content_type || '').toLowerCase() === 'video' && !attrs?.media_album_name) return true;
 
     // Narrow notification/announcement filter — deliberately NOT a blanket
     // URI-scheme match (that's what silently excluded every real MA track
@@ -18391,6 +19068,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
               duration: entry.attrs.media_duration || 0,
               uri: entry.attrs.media_content_id || '',
               isMaEntity: true,
+              app: entry.attrs.app_name || entry.attrs.app_id || '',
             };
           } else {
             const cls = this._classifyWatchMedia(entry.attrs, { state: entry.state, attributes: entry.attrs });
@@ -18403,6 +19081,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
               entity: entId,
               mediaType: kind,
               duration: entry.attrs.media_duration || 0,
+              season: cls.season ?? null,
+              episode: cls.episode ?? null,
             };
           }
 
@@ -18414,7 +19094,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
               : (elapsedMs >= 10000); // TV/movie — just needs a genuine start, not a full watch
             if (qualifies) {
               if (prevKind === 'music') this._logListenEntry(prevMeta, prevStartTs);
-              else this._logWatchEntry(prevMeta, prevStartTs);
+              else this._logWatchEntry({ ...prevMeta, watchedMs: elapsedMs }, prevStartTs);
             }
           }
           if (!prevMeta || prevMeta.key !== key) {
@@ -18468,6 +19148,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         },
         ts: now,
       };
+      // Which app it played in, when the integration reports it — lets the
+      // video-app filter (and any future change to it) apply to already
+      // logged entries too, via the read-time purge in _getListenLogEntries.
+      if (meta.app) store[entryKey].data.app = meta.app;
       // Rolling 90-day window, hard cap of 2000 entries
       const cutoff = Date.now() - 90 * 24 * 3600 * 1000;
       Object.keys(store).forEach(k => { if ((store[k].ts || 0) < cutoff) delete store[k]; });
@@ -18503,16 +19187,16 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       let purged = false;
       Object.keys(store).forEach(k => {
         const d = store[k]?.data;
-        if (d && this._isAnnouncementArtist(d.artist)) { delete store[k]; purged = true; }
+        if (d && (this._isAnnouncementArtist(d.artist) || this._isMutedArtist(d.artist) || this._isVideoApp(d.app))) { delete store[k]; purged = true; }
       });
       if (purged) {
         try { localStorage.setItem('crow_ai_local_listenLog', JSON.stringify(store)); } catch (_) {}
         this._haStorageSaveAIImmediate('listenLog');
       }
 
-      return Object.values(store)
-        .filter(entry => entry && entry.data && !this._isAnnouncementArtist(entry.data.artist))
-        .map(entry => ({ ...entry.data, ts: entry.ts }));
+      return Object.entries(store)
+        .filter(([, entry]) => entry && entry.data && !this._isAnnouncementArtist(entry.data.artist))
+        .map(([k, entry]) => ({ ...entry.data, ts: entry.ts, _key: k }));
     } catch (_) { return []; }
   }
 
@@ -18890,7 +19574,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // resolve to anything useful), movie title for movies.
     const _openVideoInfo = (title, isTV) => {
       const titleElNow = r.getElementById('infoPopupTitle');
-      if (titleElNow) titleElNow.textContent = 'Media Info';
+      if (titleElNow) titleElNow.textContent = 'Info';
       this._fetchVideoInfo(title, isTV);
     };
 
@@ -20152,6 +20836,26 @@ Include ALL tracks. Use null for unknown fields.`;
     };
   }
 
+  // True when this card's entity is currently showing the given track —
+  // loose match (case, punctuation, "feat."/remaster suffixes ignored) so
+  // small differences in how a title was passed in don't count as a
+  // different song. No title on either side = not a match.
+  _entityPlayingTrack(trackTitle, artistName) {
+    const attrs = this._hass?.states?.[this._entity]?.attributes || {};
+    const norm = v => (v || '').toLowerCase()
+      .replace(/\s*[\(\[][^\)\]]*[\)\]]\s*/g, ' ')
+      .replace(/\s+-\s+.*(remaster|version|edit|mix|live).*$/i, '')
+      .replace(/[\u2018\u2019'`"]/g, '')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
+    const t = norm(trackTitle), et = norm(attrs.media_title);
+    if (!t || !et) return false;
+    if (t !== et && !et.startsWith(t) && !t.startsWith(et)) return false;
+    const a = norm(artistName), ea = norm(attrs.media_artist);
+    if (a && ea && !ea.includes(a) && !a.includes(ea)) return false;
+    return true;
+  }
+
   async _showAITrackInfo(trackTitle, artistName, context = {}) {
     const r = this.shadowRoot;
     if (!trackTitle && !artistName) return;
@@ -20205,7 +20909,12 @@ Include ALL tracks. Use null for unknown fields.`;
     // section underneath, which gets filled in once the AI call resolves
     // (the full re-render further down naturally replaces this shell —
     // nothing here needs manual cleanup).
-    const _quickArt = (context.overrideArt || (!context.fromSearch && (
+    // Only borrow the player's own artwork when it's actually playing this
+    // track — otherwise (a song opened from the library, Music History,
+    // etc. while something else plays) the hero showed whatever was on
+    // screen, e.g. a TV show's thumbnail next to a Supertramp song.
+    const _entityIsThisTrack = !context.fromSearch && this._entityPlayingTrack(trackTitle, artistName);
+    const _quickArt = (context.overrideArt || (_entityIsThisTrack && (
         this._hass?.states[this._entity]?.attributes?.entity_picture_local
         || this._hass?.states[this._entity]?.attributes?.entity_picture
         || this._hass?.states[this._entity]?.attributes?.album_art
@@ -20362,6 +21071,7 @@ Include ALL tracks. Use null for unknown fields.`;
 
     const artUrl = specificArt || (() => {
       if (context.fromSearch) return ''; // don't use entity art for search/rec results
+      if (!_entityIsThisTrack) return ''; // player is showing something else
       const state = this._hass?.states[this._entity];
       const attrs = state?.attributes || {};
       const itunesKey = [(attrs.media_artist||''), (attrs.media_album_name||attrs.media_title||'')]
@@ -20776,7 +21486,7 @@ Include ALL tracks. Use null for unknown fields.`;
 
     // Reflect the actual data source in the header — Discogs-sourced data
     // (AI found nothing) gets its own label rather than claiming to be AI.
-    if (titleEl) titleEl.textContent = data._fromDiscogs ? '💿 Discogs Info' : 'AI Info';
+    if (titleEl) titleEl.textContent = data._fromDiscogs ? '💿 Discogs Info' : 'Info';
 
     const metaRows = [
       data.album    && ['Album',   data.album],
@@ -25907,6 +26617,11 @@ Include ALL tracks. Use null for unknown fields.`;
     const overrideArt = this._videoInfoArtOverride || null;
     this._videoInfoArtOverride = null;
     this._videoInfoPickerState = null;
+    // Same capture-and-clear pattern for the Watch History title key — set
+    // only by _openWatchInfo, so every other way of opening this panel
+    // leaves it null and can never touch the watch log.
+    this._videoInfoWatchKey = this._pendingWatchInfoKey || null;
+    this._pendingWatchInfoKey = null;
     const r       = this.shadowRoot;
     const content = r.getElementById('infoContent');
     if (!content || !title) return;
@@ -26493,7 +27208,17 @@ Include ALL tracks. Use null for unknown fields.`;
     // (✨ AI Info vs 💿 Discogs Info): shows which source this result came
     // from so it's never ambiguous when both are configured.
     const _videoTitleEl = this.shadowRoot?.getElementById('infoPopupTitle');
-    if (_videoTitleEl) _videoTitleEl.textContent = data._fromTmdb ? '🎬 TMDB Info' : 'AI Info';
+    if (_videoTitleEl) _videoTitleEl.textContent = data._fromTmdb ? '🎬 TMDB Info' : 'Info';
+
+    // Opened from Watch History and the lookup says this is a TV show —
+    // fix any entries for that title that were logged as a movie (some
+    // players report a show with no series/episode metadata at all), so
+    // the history groups, labels and artwork lookups treat it as TV from
+    // now on. The list underneath is refreshed so the change shows as soon
+    // as this panel is closed.
+    if (this._videoInfoWatchKey && data.type === 'tv') {
+      if (this._correctWatchKind(this._videoInfoWatchKey, 'tv')) this._refreshWatchHistoryView();
+    }
 
     const genreTags = (data.genres || []).slice(0, 3).map(g => `<span class="info-tag bio-genre-tag" data-tag="${g.replace(/"/g,'&quot;')}">${g}</span>`).join('');
     const _seasonsCount = data.type === 'tv' && data.seasons ? data.seasons : 0;
@@ -31101,6 +31826,9 @@ Include ALL tracks. Use null for unknown fields.`;
       ...(_itemArtist ? [{ mode: 'artist_radio', label: 'AI Artist Radio', icon: '<path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6zm4 0v2h-2V3h2z"/>' }] : []),
       ...(!_isCollection ? [{ mode: 'copy_link', label: 'Share', icon: '<path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z"/>' }] : []),
       ...(opts.savedQueueRemove ? [{ mode: 'remove_from_saved_queue', label: 'Remove', icon: '<path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/>', danger: true }] : []),
+      // Caller-supplied extras (e.g. Music History's remove/mute) — each
+      // { mode, label, icon, danger, onClick }.
+      ...(Array.isArray(opts.extraItems) ? opts.extraItems : []),
     ];
 
     menu.innerHTML = speakerHtml +
@@ -31117,8 +31845,8 @@ Include ALL tracks. Use null for unknown fields.`;
     const cardRect   = r.host.getBoundingClientRect();
     const relTop   = anchorRect.bottom - cardRect.top + 4;
     const relRight = cardRect.right - anchorRect.right + 4;
-    const _extraH  = (_allMA.length > 1 ? 60 : 0) + 60;
-    menu.style.top   = Math.min(relTop, cardRect.height - 200 - _extraH) + 'px';
+    const _extraH  = (_allMA.length > 1 ? 60 : 0) + 60 + (Array.isArray(opts.extraItems) ? opts.extraItems.length * 44 : 0);
+    menu.style.top   = Math.max(4, Math.min(relTop, cardRect.height - 200 - _extraH)) + 'px';
     menu.style.right = Math.max(4, relRight) + 'px';
 
     // Wire summary row expand/collapse
@@ -31152,6 +31880,8 @@ Include ALL tracks. Use null for unknown fields.`;
         if (!_menuReady()) return;
         var mode = el.dataset.mode;
         self._closeEnqueueMenu();
+        const _extra = Array.isArray(opts.extraItems) ? opts.extraItems.find(x => x.mode === mode) : null;
+        if (_extra && typeof _extra.onClick === 'function') { _extra.onClick(); return; }
         if (mode === 'pin') {
           const pinTab = _pinTab;
           const nowPinned = self._maLibToggleStar(item, pinTab);
