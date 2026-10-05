@@ -1,14 +1,14 @@
 # CrowAI Media Player Card
 
-CrowAI is a Home Assistant media player card built specifically for **iPhone**. Designed from the ground up for iPhone, it brings frosted-glass aesthetics, fluid touch animations, full Music Assistant integration, synced lyrics, a queue browser, multi-room multicast playback, rich AI-powered media info panels, and an Apple TV remote — all in a card that feels like a native iPhone app.
+CrowAI is a Home Assistant media player card built specifically for **iPhone**. Designed from the ground up for iPhone, it brings frosted-glass aesthetics, fluid touch animations, full Music Assistant integration, synced lyrics, a queue browser, multi-room multicast playback, rich AI-powered media info panels, movie and TV info, an Apple TV remote, and the option to play on the iPhone itself — all in a card that feels like a native iPhone app.
 
-CrowAI is about **discovery** as much as playback — AI-powered info panels, recommendations, artist radio, similar tracks/shows/movies, AI-interpreted library search, and personal Music Recap / Video Recap recaps all help you find your next favourite song, album, TV show or film, not just control what's already playing.
+CrowAI is about **discovery** as much as playback — AI-powered info panels, recommendations, artist radio, similar tracks/shows/movies, AI-interpreted library search, Ask / Trivia panels, and personal Music Recap / Video Recap recaps all help you find your next favourite song, album, TV show or film, not just control what's already playing.
 
-> ⚠️ **Music Assistant is required** for the Music Library browser, queue management, Vibe Queue Builder, AI Artist Radio, multi-room multicast playback and all MA-specific features.
+> **Music Assistant is required** for the Music Library browser, queue management, Vibe Queue Builder, AI Artist Radio, multi-room multicast playback and all MA-specific features.
 
-> ⚠️ **Music Assistant Queue Actions is required** for the Recommended tab, full queue browsing and library drill-in. See [Music Assistant Queue Actions](https://github.com/droans/mass_queue) below.
+> **Music Assistant Queue Actions is required** for the Recommended tab, full queue browsing and library drill-in. See [Music Assistant Queue Actions](https://github.com/droans/mass_queue) below.
 
-> ✨ **AI features are optional and off by default.** Turn on **Enable AI Features** in the editor's AI Settings to unlock them — they need a conversation agent such as Google Gemini (see [AI Features Setup](#-ai-features-setup-optional) below). With AI off, the info panel shows **Discogs** data instead and everything else in the card works as normal.
+> **AI features are optional and off by default.** Turn on **Enable AI Features** in the editor's AI Settings to unlock them — they need a conversation agent such as Google Gemini (see [AI Features Setup](#ai-features-setup-optional) below). With AI off, the music info panel shows **Discogs** data, the movie/TV info panel uses **TMDB** if you add a free key, and everything else in the card works as normal.
 
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2026+-blue)
 ![HACS](https://img.shields.io/badge/HACS-Custom-orange)
@@ -19,7 +19,7 @@ CrowAI is about **discovery** as much as playback — AI-powered info panels, re
 
 ---
 
-## 🛠️ Installation
+## Installation
 
 ### Via HACS (Recommended)
 
@@ -41,9 +41,9 @@ CrowAI is about **discovery** as much as playback — AI-powered info panels, re
 
 ---
 
-## 🤖 AI Features Setup (Optional)
+## AI Features Setup (Optional)
 
-AI features are **off by default** — the card works fully without them, using Discogs for the info panel. To unlock the AI features (AI Info Panel, Vibe Queue Builder, AI Search, Recommendations, AI Artist Radio, Song Intro, Music/Video Recap summaries, Announce AI Improve and Send Message AI), turn on **Enable AI Features** at the top of the editor's **AI Settings** section, then set up a conversation agent. **Google Gemini** is the recommended and best-tested agent:
+AI features are **off by default** — the card works fully without them, using Discogs for the music info panel and TMDB (with a free key) for movies and TV. To unlock the AI features (AI Info Panel, Ask, Trivia, Mood Match, Vibe Queue Builder, AI Search, Recommendations, AI Artist Radio, Add Similar Songs, Add Songs from Same Year / Genre, Song Intro, Music/Video Recap summaries, Announce AI Improve and Send Message AI), turn on **Enable AI Features** in the editor's **AI Settings** section, then set up a conversation agent. **Google Gemini** is the recommended and best-tested agent:
 
 ### Step 1 — Enable the Generative Language API
 
@@ -52,7 +52,7 @@ AI features are **off by default** — the card works fully without them, using 
 3. Go to **APIs & Services → Library**
 4. Search for **Generative Language API** and click **Enable**
 
-> ⚠️ This step is essential. An API key without the Generative Language API enabled will return errors immediately.
+> Don't skip this step. An API key won't work until the Generative Language API is enabled; it will return errors straight away.
 
 ### Step 2 — Create an API Key
 
@@ -64,29 +64,21 @@ AI features are **off by default** — the card works fully without them, using 
 1. In Home Assistant go to **Settings → Devices & Services → + Add Integration**
 2. Search for **Google Generative AI** and select it
 3. Paste your API key and click Submit
-4. Click the **gear icon ⚙️** next to **Google AI Conversation**
-5. Uncheck **Recommended model settings**, select **`gemini-2.0-flash`** and save
+4. The recommended model settings work fine. If you choose a model yourself, pick a **current Flash model**, because Google retires older models regularly.
 
 ### Step 4 — Configure the Card
 
-In the card's visual editor, open the **AI Settings** section, turn on **Enable AI Features**, and select **Google AI Conversation** from the AI Agent dropdown.
+In the card's visual editor, open **AI Settings**, turn on **Enable AI Features**, and choose your Google AI agent under **AI Agent**.
 
-> 💡 Other conversation agents (Claude, OpenAI, Home Assistant's built-in AI, Ollama, etc., added via **Settings → Voice Assistants**) may also work for general-knowledge features like Media Info, but Google Gemini is the recommended and best-tested option.
+> Other conversation agents (Claude, OpenAI, Home Assistant's built-in AI, Ollama, etc., added via **Settings → Voice Assistants**) may also work for general-knowledge features like Media Info, but Google Gemini is the recommended and best-tested option.
 
-### Free Tier Limits
+### Rate limits
 
-| Model | Requests/day | Requests/min |
-|-------|-------------|--------------|
-| `gemini-2.0-flash` | 1,500 | 15 |
-| `gemini-2.0-flash-lite` | 1,500 | 30 |
-
-**`gemini-2.0-flash` is recommended.** The card caches all AI responses aggressively so daily quotas are rarely exhausted in normal use.
-
-> If you see "AI rate limit reached", your daily quota is exhausted — it resets daily.
+Free-tier limits vary by model and change over time, so check Google AI Studio for your current quota. The card caches AI answers (track info, bios, recommendations, search and panel results) for up to 30 days, so repeat lookups don't ask the agent again, and turning on **Persistent Info Storage** keeps them through app restarts. Music Recap and Video Recap summaries are the exception: they're written fresh each time you open them. You're unlikely to reach the limit in normal use. If you do see a quota message, it resets the next day.
 
 ---
 
-## 🎵 Music Assistant — Required
+## Music Assistant — Required
 
 **Music Assistant is required** for the Music Library, queue management, Vibe Queue Builder, AI Artist Radio and multi-room multicast playback.
 
@@ -101,7 +93,7 @@ The recommended way to run Music Assistant is as a Home Assistant **App** (forme
 5. Open the Music Assistant web interface (via the app's page or the integration card) to add your music providers (Spotify, Apple Music, local library, Tidal, etc.) and players (HomePod, Sonos, AirPlay, Chromecast, etc.)
 6. MA-managed players appear in Home Assistant as `media_player.mass_*` entities — use these in the card's `ma_entities` config
 
-> 🍎 **Apple Music is the preferred provider.** Connect a streaming provider to Music Assistant rather than relying on a local library alone — **Apple Music is the recommended choice** for this card, giving the most reliable catalogue, metadata and artwork matches. Spotify, YouTube Music, Tidal and others are also supported, but Apple Music is the safest choice if you're picking one. Recommendations, the Vibe Queue Builder, AI Artist Radio and Similar Tracks all suggest music that needs to actually be playable through MA — a streaming provider gives them a full catalogue to draw from instead of just what you already have.
+> **Apple Music is the preferred provider.** Connect a streaming provider to Music Assistant rather than relying on a local library alone — **Apple Music is the recommended choice** for this card, giving the most reliable catalogue, metadata and artwork matches. Spotify, YouTube Music, Tidal and others are also supported, but Apple Music is the safest choice if you're picking one. Recommendations, the Vibe Queue Builder, AI Artist Radio and Similar Tracks all suggest music that needs to actually be playable through MA — a streaming provider gives them a full catalogue to draw from instead of just what you already have.
 
 GitHub: [github.com/music-assistant](https://github.com/music-assistant) · Full documentation: [music-assistant.io](https://music-assistant.io)
 
@@ -127,58 +119,92 @@ Repository: [github.com/droans/mass_queue](https://github.com/droans/mass_queue)
 
 ---
 
-## ✨ Features
+## Features
 
 ### Core Player
 
-- 📱 **Built for iPhone** — touch targets, long-press suppression and layout are all iPhone-first
-- 🎨 **Modern design** — frosted-glass theme, rounded corners and customisable accent colours
-- 📱 **Compact and expanded modes** — toggle between full album art and a space-saving mini player
-- 🔄 **Automatic device switching** — card follows whichever device starts playing
-- 🎵 **Full media controls** — play/pause, skip, shuffle, repeat, seek via progress bar
-- ⏩ **Double-tap to seek** — double-tap left or right of artwork to seek −15s or +15s
-- 💗 **Double-tap to pin** — double-tap the *center* of the artwork to pin whatever's currently playing — a song, movie, TV show, or radio station — with a burst of red hearts floating up from the tap point (grey for unpinning; the heart burst can be turned off with the **Pin Hearts** toggle in Visual Effects, the pin itself always works). For radio, this uses the same station identification as the LIVE pill, so it only works once the station's been resolved (usually near-instant, but a station that's never been looked up this session may need a moment, or a tap of the LIVE pill first)
-- 📍 **Pinned indicator** — a small pin badge appears in the bottom-left corner of the artwork whenever the currently playing track/movie/show/radio station is pinned, and updates live regardless of which of the card's several pin buttons was used. Tap it to unpin — shows an iOS-style confirmation first, then the same grey heart-burst as unpinning via double-tap
-- 🖼️ **Artwork tap actions** — single-tap opens the info panel (music: AI Info or Discogs; TV/movies: Media Info; live radio with track metadata: that track's info); double-tap the left or right edge to seek −15s/+15s, double-tap the center to pin; long-press opens lyrics
-- 🖼️ **Artwork zoom** — tap the mini album art in the AI Info panel or album view to see a larger version
-- ✨ **Tactile button feedback** — glow and blur effects when buttons are pressed
-- 🔊 **Volume control** — slider or +/− buttons with optional per-speaker routing to a separate volume entity (e.g. an amp or receiver), configured on that speaker's own settings page in the editor
-- 🏷️ **Speaker Display Names** — give any speaker a short friendly name on its settings page in the editor; it's used everywhere the card shows a speaker (speaker menu, summary pill, group sheets, Announce, toasts) while Home Assistant keeps the real name
-- 📊 **Volume HUD** — sleek overlay showing current level; fades after 1.5 seconds
-- 🔇 **Mute toggle** — tap the volume badge or speaker icon to instantly mute/unmute
-- 🖼️ **Album artwork** — automatic iTunes artwork lookup when no artwork is provided
-- 🎨 **Artwork Crossfade** — optional cinematic fade-to-black transition between tracks
-- 🎛️ **Player Icon Themes** — eight icon sets: Standard, Modern, Robot, Chunky, Retro, Sharp, Pixel and LCD
-- 🌈 **Ambient glow** — extracts dominant colour from artwork and applies a subtle glow
-- 📻 **Radio mode indicator** — tap the radio icon to turn radio mode off immediately
-- 🔴 **Live station identification** — a LIVE pill appears on the artwork while a radio stream plays, on any speaker type (MA or native); tap it to see the station's format, country, votes, website and description, and the artwork automatically resolves to the station's own logo when available. Stations played straight from the Music Assistant library are identified from MA itself, so their panel opens (fully playable and pinnable) even when radio-browser.info doesn't know them. When a station broadcasts real track metadata (artist + title), tapping the *artwork* opens that track's own info panel with the station shown as a badge — the LIVE pill itself always opens the station panel
-- 📻 **HA Radio Browser integration** — browse Home Assistant's own Radio Browser categories (Popular, By Country, By Genre, etc.) directly from the Radio tab, alongside direct radio-browser.info search
-- 🏷️ **Live/Podcast/Audiobook pill** — optional badge on the artwork screen identifying what's currently playing (off by default)
-- 📋 **Multi-device support** — manage Apple TV, HomePod and Music Assistant speakers from one card
-- 🎯 **Live progress tracking** — smooth real-time position updates
-- 💬 **In-card notifications** — toast alerts appear inside the card
-- 🎨 **Controls Theme** — 12 colour presets for the control icons (Classic, Vivid, Warm, Ocean, Rose, Forest, Neon, Soft, Midnight, Gold, Retro, Ember)
+- **Built for iPhone** — touch targets, long-press suppression and layout are all iPhone-first
+- **Modern design** — choose a **Classic** solid card or a **Glass** frosted-glass card, with an Auto / Light / Dark theme setting, rounded corners and customisable accent colours
+- **Compact and expanded modes** — toggle between full album art and a space-saving mini player
+- **Automatic device switching** — card follows whichever device starts playing
+- **Full media controls** — play/pause, skip, shuffle, repeat, seek via progress bar
+- **Double-tap to seek** — double-tap left or right of artwork to seek −15s or +15s
+- **Double-tap to pin** — double-tap the *center* of the artwork to pin whatever's currently playing — a song, movie, TV show, or radio station — with a burst of red hearts floating up from the tap point (grey for unpinning; the heart burst can be turned off with the **Pin Hearts** toggle in Visual Effects, the pin itself always works). For radio, this uses the same station identification as the LIVE pill, so it only works once the station's been resolved (usually near-instant, but a station that's never been looked up this session may need a moment, or a tap of the LIVE pill first)
+- **Pinned indicator** — a small pin badge appears in the bottom-left corner of the artwork whenever the currently playing track/movie/show/radio station is pinned, and updates live regardless of which of the card's several pin buttons was used. Tap it to unpin — shows an iOS-style confirmation first, then the same grey heart-burst as unpinning via double-tap
+- **Artwork tap actions** — single-tap opens the info panel (music: AI Info or Discogs; TV/movies: Media Info; live radio with track metadata: that track's info); double-tap the left or right edge to seek −15s/+15s, double-tap the center to pin; long-press opens lyrics
+- **Artwork zoom** — tap the mini album art in the AI Info panel or album view to see a larger version
+- **Tactile button feedback** — glow and blur effects when buttons are pressed
+- **Volume control** — slider or +/− buttons with optional per-speaker routing to a separate volume entity (e.g. an amp or receiver), configured on that speaker's own settings page in the editor
+- **Speaker Display Names** — give any speaker a short friendly name on its settings page in the editor; it's used everywhere the card shows a speaker (speaker menu, summary pill, group sheets, Announce, toasts) while Home Assistant keeps the real name
+- **Volume HUD** — sleek overlay showing current level; fades after 1.5 seconds
+- **Mute toggle** — tap the volume badge or speaker icon to instantly mute/unmute
+- **Album artwork** — automatic iTunes artwork lookup when no artwork is provided
+- **Artwork Crossfade** — optional cinematic fade-to-black transition between tracks
+- **Player Icon Themes** — eight icon sets: Standard, Modern, Robot, Chunky, Retro, Sharp, Pixel and LCD
+- **Ambient glow** — extracts dominant colour from artwork and applies a subtle glow
+- **Radio mode indicator** — tap the radio icon to turn radio mode off immediately
+- **Live station identification** — a LIVE pill appears on the artwork while a radio stream plays, on any speaker type (MA or native); tap it to see the station's format, country, votes, website and description, and the artwork automatically resolves to the station's own logo when available. Stations played straight from the Music Assistant library are identified from MA itself, so their panel opens (fully playable and pinnable) even when radio-browser.info doesn't know them. When a station broadcasts real track metadata (artist + title), tapping the *artwork* opens that track's own info panel with the station shown as a badge — the LIVE pill itself always opens the station panel
+- **HA Radio Browser integration** — browse Home Assistant's own Radio Browser categories (Popular, By Country, By Genre, etc.) directly from the Radio tab, alongside direct radio-browser.info search
+- **Live/Podcast/Audiobook pill** — optional badge on the artwork screen identifying what's currently playing (off by default)
+- **Multi-device support** — manage Apple TV, HomePod and Music Assistant speakers from one card
+- **Play on this device** — optional: turn the iPhone (or any browser) showing the card into a Music Assistant speaker, so music plays from the phone itself. See [Play on This Device](#play-on-this-device)
+- **Live progress tracking** — smooth real-time position updates
+- **In-card notifications** — toast alerts appear inside the card
+- **Controls Theme** — 12 colour presets for the control icons (Classic, Vivid, Warm, Ocean, Rose, Forest, Neon, Soft, Midnight, Gold, Retro, Ember)
 
 ### AI Features
 
-- ✨ **AI Info Panel** — tap the artwork while music plays: year, label, length, fun fact, genre tags, band members / artist section, similar tracks; all AI-generated and cached per track
-- 💿 **Discogs Panel** — the default info panel when AI features are off, and the automatic fallback when AI can't identify a track: year, label, length, tappable genre tags, artist section and a full tracklist with community rating, in the same panel layout. The header reads "Discogs Info" so it's clear where the data came from; tapping a tracklist row opens that track's own info, same as everywhere else in the card. Built-in rate-limit protection backs off automatically for 10 seconds whenever Discogs asks the card to slow down.
-- 💬 **Song Intro** — a short, intriguing one-line fact about the playing track appears below the artist name a few seconds after it starts, then fades away; off by default, toggle in AI Settings
-- 🎭 **Vibe Queue Builder** — 100+ vibes across Energy, Calm, Focus, Mood, Social, Decades, Genre, Time, Seasons and Binaural & Noise; builds a themed MA queue instantly
-- 🔍 **AI Search** — natural language search, up to 18 results per query; available as a standalone panel, a box at the top of the library, and a dedicated AI search button next to the Songs, Artists and Albums tab search bars (each returns matching tracks, artists or albums respectively, on top of the tab's normal exact-match search)
-- 🕓 **Recent Searches** — a category at the top of the library listing every search you've run (Music Assistant, iTunes-backed searches like Podcasts/Movies & TV/Radio, and AI searches alike), capped at 50 and always sorted most-recent-first; tap an entry to re-run it, with a Clear option (iOS-style confirmation) to wipe the list
-- 🌟 **Recommendations** — AI-curated track/movie/show suggestions based on what's playing, up to 18 results
-- 📻 **AI Artist Radio** — builds a continuous radio queue around any artist
-- 🎵 **Similar Tracks / Similar Movies & Shows** — up to 10 shown in the AI Info / Media Info panels; tap to drill in, long-press for the enqueue menu
-- 👥 **Band Members / Artist** — tap any member for their bio with photo, fun fact and Known For songs; tap the bio photo to zoom
-- 💬 **Announce AI Improve** — rewrites your announcement naturally
-- 📨 **Send Message AI** — improves your notification text
-- 📚 **Audiobook search** — find free, public-domain audiobooks via LibriVox/Archive.org, with AI-assisted query refinement when AI features are enabled (plain search works without)
-- 🎙️ **Podcast search** — search iTunes for podcasts and pin your favourites
-- 🎬 **Find Soundtrack** — available from the media player's quick menu while watching on Apple TV, and from the long-press menu on any Pinned Movie/TV Show — opens an AI-powered search for "Music from [title]"
-- ▶️ **Open on YouTube / Trailer** — a button in the AI Info / Media Info panel header, next to Share: opens a YouTube search for the current song, or the trailer for a movie/TV show. Always searches YouTube specifically regardless of your configured Share service. Toggle in **Appearance & Behaviour**
-- 📊 **Music Recap** — a personal weekly snapshot: top artists and tracks (last 7 days, up to 10 each) plus a short AI-written summary that regenerates fresh every time you open it
-- 🎬 **Video Recap** — the same idea as Music Recap, but for movies and TV shows: top shows and top movies over the last 7 days plus a fresh AI-written summary every time you open it
+- **AI Info Panel** — tap the artwork while music plays: year, label, length, fun fact, genre tags, band members / artist section, similar tracks; all AI-generated and cached per track. **Info Panel Priority** in AI Settings chooses whether AI or Discogs is tried first
+- **Ask, Meaning and Trivia** — buttons in the music info panel: ask your own question about the song ("Who wrote this? Is there a live version?"), read what it means, or try a quiz. Movie and TV panels have **Ask**, **Mood Match** and **Trivia**, and episode and person pages have their own Ask box
+- **Discogs Panel** — the default info panel when AI features are off, and the automatic fallback when AI can't identify a track: year, label, length, tappable genre tags, artist section and a full tracklist with community rating, in the same panel layout. The header reads "Discogs Info" so it's clear where the data came from; tapping a tracklist row opens that track's own info, same as everywhere else in the card. Built-in rate-limit protection backs off automatically for 10 seconds whenever Discogs asks the card to slow down.
+- **Song Intro** — a short, intriguing one-line fact about the playing track appears below the artist name a few seconds after it starts, then fades away; off by default, toggle in AI Settings
+- **Vibe Queue Builder** — 100+ vibes across Energy, Calm, Focus, Mood, Social, Decades, Genre, Time, Seasons and Binaural & Noise; builds a themed MA queue instantly
+- **Add Songs from Same Year / Genre / Genre & Year** — quick-menu actions that add AI-picked songs matching what's playing to the queue
+- **Working indicator** — while the card is building or adding to a queue (Add Similar Songs, Same Year / Genre, AI Artist Radio, Vibe), a small spinner shows inside the mini artwork and the speaker pill on the artwork pulses. Both stop as soon as the songs are in. The first few songs are added straight away so the queue starts filling while the rest are found. The queue can't be opened mid-build: tapping it says your songs are still being added, and a message tells you when they're ready to see. If the queue is already open it shows "Building your queue" until they are
+- **Friendly error messages** — if the AI or Music Assistant can't help, a short toast says why in plain English: the AI's usage limit has been reached, it took too long, it couldn't sign in, the model has been retired, no AI agent is chosen, its answer didn't make sense, or the songs couldn't be found in Music Assistant (including "Added 12 of 18 songs" when only some were found)
+- **Mood Match and Trivia for video** — in the quick menu while a movie or show is playing
+- **Ghost-Skip Healer** — when Music Assistant silently skips a track that failed to stream (e.g. a stale Apple Music playlist reference), the card looks it up again and queues the fresh match to play next. On by default, toggle in AI Settings
+- **AI Search** — natural language search, up to 18 results per query; available as a standalone panel, a box at the top of the library, and a dedicated AI search button next to the Songs, Artists and Albums tab search bars (each returns matching tracks, artists or albums respectively, on top of the tab's normal exact-match search). Set **Library Search** in AI Settings to **AI Enhanced Search** to have pressing Search in those tabs use AI too
+- **Recent Searches** — a category at the top of the library listing every search you've run (Music Assistant, iTunes-backed searches like Podcasts/Movies & TV/Radio, and AI searches alike), capped at 50 and always sorted most-recent-first; tap an entry to re-run it, with a Clear option (iOS-style confirmation) to wipe the list
+- **Recommendations** — AI-curated track/movie/show suggestions based on what's playing, up to 18 results
+- **AI Artist Radio** — builds a continuous radio queue around any artist
+- **Similar Tracks / Similar Movies & Shows** — up to 10 shown in the AI Info / Media Info panels; tap to drill in, long-press for the enqueue menu
+- **Band Members / Artist** — tap any member for their bio with photo, fun fact and Known For songs; tap the bio photo to zoom
+- **Announce AI Improve** — rewrites your announcement naturally
+- **Send Message AI** — improves your notification text
+- **Audiobook search** — find free, public-domain audiobooks via LibriVox/Archive.org, with AI-assisted query refinement when AI features are enabled (plain search works without)
+- **Podcast search** — search iTunes for podcasts and pin your favourites
+- **Find Soundtrack** — available from the media player's quick menu while watching on Apple TV, and from the long-press menu on any Pinned Movie/TV Show — opens an AI-powered search for "Music from [title]"
+- **Open on YouTube / Trailer** — a button in the AI Info / Media Info panel header, next to Share: opens a YouTube search for the current song, or the trailer for a movie/TV show. Always searches YouTube specifically regardless of your configured Share service. Toggle in **Appearance & Behaviour**
+- **Music Recap** — a personal weekly snapshot: top artists and tracks (last 7 days, top 10 each, expandable to 50) plus a short AI-written summary that regenerates fresh every time you open it
+- **Video Recap** — the same idea as Music Recap, but for movies and TV shows: top shows and top movies over the last 7 days plus a fresh AI-written summary every time you open it
+
+### Movies & TV (TMDB)
+
+Add a free **TMDB** (The Movie Database) API key in the editor's **Movies & TV** section to use it as a source for movie and TV info panels — posters, ratings, cast and episode details. It works whether AI features are on or off:
+
+- **AI off** — TMDB is always used for movie/TV info (a key is required for movie/TV info in that case)
+- **AI on** — **Movie/TV Info Priority** chooses whether AI or TMDB is tried first; the other is used as a fallback
+- **Not this one?** — if the panel picks the wrong title, tap it to choose another match
+- Get a key at themoviedb.org/settings/api (a v3 API key or a v4 Bearer token both work)
+
+### Play on This Device
+
+Turn the browser showing the card — your iPhone, a tablet or a computer — into a Music Assistant speaker, using Music Assistant's **Sendspin** protocol. Needs **Music Assistant 2.10 or newer**.
+
+- Turn on **Show "Play on this device"** in the editor's **Play on This Device** section
+- Each device then opts in separately: tap **Play on this device** in the speaker menu on that device. It joins Music Assistant with a name like "James's iPhone (Safari)" (the browser is included so two browsers on one phone never share a name; rename it in Music Assistant) and appears in the card like any other speaker
+- **Browsers only** — it's offered in a web browser such as Safari, not in the Home Assistant Companion app. If the app was set up as a speaker by an earlier version of the card, it switches itself off; delete its leftover player in Music Assistant
+- **Setting up** — the first time, the menu shows "Almost ready — adding this device to Home Assistant" for a few seconds, then "Ready — tap to play on this device" (it updates while the menu is open). If Home Assistant still hasn't found it after 90 seconds, the menu says so and offers **Choose this device yourself…** to pick its entity from a list
+- **Connecting** — while it connects, the speaker pill reads "This device · Connecting…" and pulses, and a spinner shows in the mini artwork. A short toast marks the start, "Ready — playing on this device" when it's done, and a plain-English reason if it couldn't connect within 20 seconds. Reconnects in the background (for example coming back to Safari) stay quiet unless they take more than 3 seconds, when the pill shows "Reconnecting…"; you only get a toast if that fails
+- Once it's the selected speaker, **Disconnect this device** turns it off again
+- Only one browser tab plays at a time: if another tab took over, the menu offers to play here instead. If the tab that was playing has been closed or frozen by the phone, the next tab you use takes over by itself
+- **Coming back** — after switching apps or returning to a frozen Safari tab, the card reconnects straight away and wakes the audio on your next tap, including when another app interrupted it
+- **If a song won't resume** — pressing play checks that sound actually starts. If it doesn't, the card reconnects and asks again, then restarts the song from the same spot, and only as a last resort stops it with a message so you can simply play it again
+- **Status** — when this device's audio needs waking, the speaker menu says so (for example "Audio was interrupted by another app. Press play to wake it.")
+- **Locking the phone** — Safari pauses web pages when the iPhone locks, so music stops a few seconds later. That's a Safari limit; keep the screen on (or use a dedicated speaker) for longer listening
+- Volume works as for any speaker: the card's slider changes this device's loudness, on top of the phone's own volume buttons. Each device remembers its own volume (and mute) between connections; the very first time it starts at 50% rather than full volume
+- **Music Assistant server URL** — leave blank to use your Home Assistant host on Sendspin's port **8927** (not Music Assistant's web port 8095). If you open Home Assistant over https, this must be an https address too (for example a reverse proxy in front of Music Assistant), or the browser will block the connection
 
 ### Persistent Storage
 
@@ -209,26 +235,32 @@ Decade moods search your MA library for chart compilations first, then fall back
 
 ### Quick Menu (⋮)
 
+Related actions are grouped into sub-menus so the menu fits on a phone screen: tap a group (shown with › and how many items it holds) to slide its items in, and **‹** at the top to go back. A group with only one item available shows that item directly. The menu always fits between the status bar and the bottom of the screen, and scrolls if it needs to.
+
 | Item | Notes |
 |------|-------|
+| **Find & browse** | |
+| Search | AI natural language search, up to 18 results |
+| Library | Opens the library browser |
 | Queue | MA speakers only |
-| AI Search | Natural language search, up to 18 results |
-| Music Library | MA speakers only |
+| **Discover & build** | |
 | Vibe | Opens Vibe Queue Builder |
-| Add Similar Songs | Adds up to 18 AI-suggested tracks to queue |
-| Add Album | Adds the currently playing track's album to the queue |
 | Recommendations | AI track/movie/show suggestions, up to 18 results |
-| Music Recap | Personal weekly top artists/tracks with an AI summary |
-| Video Recap | Personal weekly top shows/movies with an AI summary |
-| AI Artist Radio | Builds artist radio queue |
+| AI Artist Radio | Builds an artist radio queue |
 | Radio Mode | Toggles MA radio mode |
+| Add to Queue › | Similar Songs, Same Genre, Same Year, Same Genre & Year, This Album (MA speakers) |
+| **What's playing** | |
 | Lyrics | Toggles lyrics panel |
-| Announce | TTS announcement panel |
-| Send Message | Push notification panel |
-| Share | Copies track info + a link to your chosen music service (see [Sharing](#sharing)) |
 | More Info | Opens AI/Media Info panel |
+| Pin / Unpin | Pins whatever's playing (song, radio, podcast or audiobook) |
+| Mood Match / Trivia | While a movie or show is playing |
+| Remote Control | Apple TV only |
+| Find Soundtrack | While watching on Apple TV |
+| **Recaps & sharing** | |
+| Recaps › | Music Recap, Video Recap |
+| Share & Announce › | Share (track info plus a link to your chosen music service, see [Sharing](#sharing)), Announce, Send Message |
 
-> The AI entries (AI Search, Vibe, Add Similar Songs, Recommendations, AI Artist Radio) only appear when **Enable AI Features** is on.
+> The AI entries (Search, Vibe, Recommendations, AI Artist Radio, the Add to Queue songs, Mood Match, Trivia) only appear when **Enable AI Features** is on.
 
 ### Multi-Room Multicast
 
@@ -236,18 +268,18 @@ Decade moods search your MA library for chart compilations first, then fall back
 - **Choose Speakers picker** — tap the broadcast icon to start a session: speakers are shown as a scrollable vertical list of pill rows (tap multiple to select for multicast); Play stays pinned at the bottom of the panel so a long speaker list never pushes it out of reach
 - **Summary pill** — a single compact pill showing the focused speaker's name and a "+N" count of others playing along with it, instead of a separate pill per speaker
 - **Tap to manage** — opens a sheet listing every speaker in the group as the same style of pill row; tap any to focus it for volume control, or tap the × to remove it
-- **Sync volumes** — a button in the sheet matches all grouped speakers to the focused speaker's volume
+- **Sync Volume** — a button in the sheet matches all grouped speakers to the focused speaker's volume
 - **Add a speaker** — a "+" button sits next to the summary pill (and solo speakers too, when other MA speakers are available to group with) once something is actually playing
 - Long-press menus for individual tracks/albums/etc. always target your current/default speaker directly rather than offering an in-menu speaker picker — use the "+" button to bring extra speakers into a multicast group instead
 - Pre-configured Music Assistant player groups (e.g. a permanently-synced stereo pair) can be played on individually, but can't be folded into a separate multi-room session alongside other speakers — this is a Music Assistant limitation, not a card one
 
 ### Pinning (Library)
 
-Pin your favourites for one-tap access. All pins also live together in a consolidated **Pinned** section in the Music Library, with its own sub-categories: Songs, Artists, Albums, Playlists, Queues, Radio, Podcasts and Audiobooks.
+Pin your favourites for one-tap access. All pins also live together in a consolidated **Pins** section in the library, with its own sub-categories: Songs, Artists, Albums, Playlists, Queues, Radio, Podcasts, Audiobooks, Music Recap, Video Recap and Movies & TV.
 
-- **What can be pinned** — radio stations, podcasts, audiobooks, saved queues (see [Pin Queue as Playlist](#pin-queue-as-playlist)), and MA library tracks, artists, albums and playlists
+- **What can be pinned** — radio stations, podcasts, audiobooks, movies and TV shows, saved queues (see [Pin Queue as Playlist](#pin-queue-as-playlist)), recap snapshots (see [Music Recap](#music-recap)), and MA library tracks, artists, albums and playlists
 - **How to pin** — long-press any item (or use the pin icon in its info panel) and choose Pin/Unpin; for whatever's currently playing (a song, movie, TV show, or radio station), double-tapping the center of the artwork does the same thing instantly, with a heart-burst animation to confirm it
-- **Show Pins in Sections** *(on by default)* — when enabled, pinned items also still appear inline at the top of their own tab (e.g. Pinned Songs in the Songs tab); turn it off in **Caches & Data** so pins only appear in the consolidated Pinned section
+- **Show Pins in Sections** *(on by default)* — when enabled, pinned items also still appear inline at the top of their own tab (e.g. Pinned Songs in the Songs tab); turn it off in **Caches & Data** so pins only appear in the consolidated Pins section
 - **Management** — view and clear pins individually or all at once from **Caches & Data → Pinned Items** in the visual editor
 - Pins are stored on-device only by default and aren't synced between browsers or devices
 - Enable **Persistent Pin Storage** in **Caches & Data** to also save pins to Home Assistant's database, so they survive app restarts and cache clears
@@ -255,13 +287,15 @@ Pin your favourites for one-tap access. All pins also live together in a consoli
 
 ### Pin Queue as Playlist
 
-Save the current queue as a named snapshot from the queue's 3-dot menu — **Pin Queue as Playlist**. It's saved as a point-in-time copy (not a live link to the original queue) and shows up under **Queues** in the consolidated Pinned section, ready to play back in full any time.
+Save the current queue as a named snapshot from the queue's 3-dot menu — **Pin Queue**. It's saved as a point-in-time copy (not a live link to the original queue) and shows up under **Queues** in the consolidated Pins section, ready to play back in full any time.
 
 ### Music Recap
 
 Open from the quick menu for a personal snapshot of your recent listening.
 
-- **Top Artists & Top Tracks** — up to 10 each, ranked by play count over a rolling last-7-days window
+- **Top Artists & Top Tracks** — top 10 each, ranked by play count over a rolling last-7-days window; **Show Top 50** in the 3-dot menu expands both lists
+- **3-dot menu** — Show Top 50 / Show Top 10, Play All, Add, Play Next, **Pin This Music Recap** and Clear Listening History
+- **Pin This Music Recap** — saves a frozen snapshot of the recap (like Pin Queue, not a live link) under **Music Recap** in the Pins section; long-press a pinned recap to rename it
 - **AI summary** — a short, warm write-up of your week's listening, regenerated fresh every time the panel opens (not cached, so it always matches the numbers below it). Requires AI features to be enabled — the stats themselves work without AI
 - **Tap a track** to open its AI Info panel; **tap an artist** to open their bio — the same panels used throughout the card
 - **What counts as a play** — a track has to play past 30 seconds or half its duration (whichever is smaller) to be logged, so quick skips don't pollute your stats
@@ -270,17 +304,18 @@ Open from the quick menu for a personal snapshot of your recent listening.
 - **Shared across rooms on the same device** — logging is scoped to whatever entities a card is configured with, but the Recap panel itself doesn't filter by entity when displaying results. If you run separate cards per room on the same phone/browser, they all read from one shared history, so every card's Recap shows the combined total of everything any of your cards have logged — not a breakdown per room
 - **Catches up on missed plays** — each time a card loads, it also pulls that entity's own state history from Home Assistant (not just what it observes live) to backfill anything played while that card wasn't open — e.g. a different room's tab was active at the time. This needs Home Assistant's recorder to actually be tracking the entity; it looks back up to 48 hours on a card's first-ever load, then only as far as its last check after that
 - **Per-user** — if you and other household members use separate Home Assistant accounts, each person's Recap is tracked and stored separately, the same way Pins are
-- **Clear History** — a button at the bottom of the panel (with an iOS-style confirmation) permanently deletes your history and resets the history-backfill checkpoint, so cleared plays don't get silently reinstated the next time a card loads; enable **AI Info Persistent Storage** in **Caches & Data** so this history survives app restarts and WKWebView cache evictions. This is the same history [Music History](#music-assistant-library-browser) reads from, so clearing either one clears both
+- **Clear Listening History** — in the 3-dot menu (with an iOS-style confirmation); permanently deletes your history and resets the history-backfill checkpoint, so cleared plays don't get silently reinstated the next time a card loads; enable **Persistent Info Storage** in **Caches & Data** so this history survives app restarts and WKWebView cache evictions. This is the same history [Music History](#music-assistant-library-browser) reads from, so clearing either one clears both
 
 ### Video Recap
 
 The same idea as Music Recap, but for movies and TV shows, reachable the same way — a personal snapshot of what's been watched on Apple TV or any other tracked video entity.
 
-- **Top Shows & Top Movies** — ranked by play count over a rolling last-7-days window
+- **Top Shows & Top Movies** — ranked by play count over a rolling last-7-days window; top 10 each, expandable to 50 from the 3-dot menu
+- **Pin This Video Recap** — saves a snapshot under **Video Recap** in the Pins section
 - **AI summary** — a fresh, warm write-up of the week's viewing, regenerated every time the panel opens; requires AI features to be enabled — the stats themselves work without AI
 - **Tap a title** to open its Media Info panel — poster, synopsis, cast, Similar Movies/Shows, all the same navigation used elsewhere in the card
 - **What's excluded** — entries that turn out to just be a bare date (some sources report a recording's date instead of a real title when no title metadata is available) are filtered out automatically, both going forward and retroactively from anything already logged
-- **Clear History** — same iOS-style confirmation pattern as Music Recap; enable **AI Info Persistent Storage** in **Caches & Data** so this history survives app restarts. Same history [Watch History](#music-assistant-library-browser) reads from, so clearing either one clears both
+- **Clear Watch History** — in the 3-dot menu, with the same iOS-style confirmation; enable **Persistent Info Storage** in **Caches & Data** so this history survives app restarts. Same history [Watch History](#music-assistant-library-browser) reads from, so clearing either one clears both
 
 ### Synced Lyrics
 
@@ -311,17 +346,22 @@ Share is available from the quick menu, the AI Info / Media Info panels, and the
 - Similar Tracks — tap to drill in, long-press for enqueue menu
 - Mini album art — tap to view a larger version
 - Action bar: Play Now, Add, Play Next, Add Album
+- **Ask / Meaning / Trivia** (AI) — ask your own question about the song, read its meaning, or try a quiz
 - **Discogs Panel** — the default panel when AI features are off, and the automatic fallback if AI has no info for a track: same layout with a full tracklist and community rating added; the header reads "Discogs Info" rather than "AI Info" so it's clear where the data came from. Tapping a track in the Discogs tracklist opens that track's own info
 
 **TV Shows:**
 - Poster (tap to zoom), genre tags, overview, cast
 - Similar Shows — same idea as Similar Tracks; tap any to drill straight into that show's info
-- Season and episode browser with formatted airdates
+- Season and episode browser with formatted airdates, and an Ask box on each episode
 - Full back-navigation from episode detail back to Media Info
+- **Ask / Mood Match / Trivia** (AI) and **Where to Watch**
 
 **Movies:**
 - Poster (tap to zoom), title, year, genre tags, synopsis, cast
 - Similar Movies — same idea as Similar Tracks; tap any to drill straight into that movie's info
+- **Ask / Mood Match / Trivia** (AI) and **Where to Watch**
+
+**Sources:** AI, TMDB, or both — see [Movies & TV (TMDB)](#movies--tv-tmdb). If the wrong title was identified, **Not this one?** lets you pick another match.
 
 **Cast navigation:** tap any cast member to open their bio with photo (tap to zoom), Known For credits and a fun fact — the same related-content pattern used throughout the card. Tap their photo in the bio to see a larger version.
 
@@ -332,23 +372,25 @@ Share is available from the quick menu, the AI Info / Media Info panels, and the
 - Now Playing row with animated sound bars — tap to open AI Info
 - Drag to reorder (MA only, requires Queue Actions)
 - Long-press any row: Play Now, Play Next, Move to Top of Queue, Add to Queue, Pin Song, AI Artist Radio, Remove from Queue, Share, More Info
-- Queue 3-dot menu: Music Library, Mood, AI Artist Radio, Radio Mode, Announce, Send Message, **Pin Queue as Playlist**, Clear Queue
+- Long-press also offers **Reorder Queue** to switch into drag-to-reorder mode
+- Queue 3-dot menu, grouped like the quick menu: Reorder, Jump to Current Track, Pin Song, **Pin Queue**, **Transfer Queue** (move the queue to another MA speaker) · Search, Library · Vibe, Recommendations, AI Artist Radio, Radio Mode, **Add to Queue ›** (Similar Songs, Same Genre, Same Year, Same Genre & Year, This Album) · **Share & Announce ›** (Announce, Send Message) · Clear Queue
 
 ### Music Assistant Library Browser
 
-Tabs: Recent Searches, Music History, Watch History, Recently Added, Pinned, Favourites, Made for You (Recommended), Playlists, Artists, Albums, Songs, Radio, Podcasts, Audiobooks. (Classic tab-bar mode replaces Recently Added/Pinned with its own MA-native Recently Played queue instead — toggle the layout in **Appearance & Behaviour**. Different feature to Music History: that one is MA's own queue history; Music History below is this card's personal listening history.)
+Categories: Recent Searches, Music History, Watch History, Recently Added, Pins, Favourites, Made for You (Recommended), Playlists, Artists, Albums, Songs, Radio, Podcasts, Audiobooks, Movies & TV. The library opens from **Library** in the quick menu on any speaker, MA or not — several categories (Movies & TV, Radio, Podcasts, Audiobooks) don't need Music Assistant at all.
 
 - Tap any item to play; drill into collections with a back button
 - Action bar: Play All, Add to Queue, Play Next
 - Long-press tracks for the enqueue menu
 - **AI Search** — a box at the top of the library for natural-language search; the Songs, Artists and Albums tabs also each have their own AI search button next to the regular search bar, returning matching tracks, artists or albums specifically
 - **Recent Searches** — every search you've run, MA and AI alike, most-recent-first, capped at 50; tap to re-run, with an iOS-style Clear confirmation
-- **Music History** — a plain chronological list of your last 10 songs played; the 3-dot menu expands the same view to your last 50, or clears history entirely (iOS-style confirmation). A hero bar (Play All / Add All / Play Next) acts on exactly whichever count is currently showing. Tap a song for its AI Info, long-press for the same context menu used throughout the library (Play Now/Next, Add to Queue, Pin, AI Artist Radio, Share). Pinning here lands in the same Pinned → Songs category as pinning anywhere else. This reads from the same history log as [Music Recap](#music-recap) — just as a list instead of weekly stats — so clearing history from either one clears it for both
-- **Watch History** — the movie/TV equivalent, same shape: last 10 (expandable to 50), 3-dot menu with Clear History, long-press for Pin/Find Soundtrack, reads from the same history as [Video Recap](#video-recap). No hero bar here — replaying several movies/shows back-to-back the way a music queue does isn't really the natural action for video the way it is for songs
+- **Music History** — a plain chronological list of your last 10 songs played; the 3-dot menu expands the same view to your last 50, or clears history entirely (iOS-style confirmation). A hero bar (Play All / Add All / Play Next) acts on exactly whichever count is currently showing. Tap a song for its AI Info, long-press for the same context menu used throughout the library (Play Now/Next, Add to Queue, Pin, AI Artist Radio, Share), plus **Remove from History** and **Never Log This Artist**. Muted artists are listed under **Muted Artists** in the 3-dot menu, where you can unmute them. Pinning here lands in the same Pinned → Songs category as pinning anywhere else. This reads from the same history log as [Music Recap](#music-recap) — just as a list instead of weekly stats — so clearing history from either one clears it for both
+- **Watch History** — the movie/TV equivalent, same shape: last 10 (expandable to 50), 3-dot menu with Clear History, long-press for Pin/Find Soundtrack/Remove from History (or remove a single viewing), reads from the same history as [Video Recap](#video-recap). No hero bar here — replaying several movies/shows back-to-back the way a music queue does isn't really the natural action for video the way it is for songs
 - **Podcasts tab** — search iTunes directly; pin favourites
 - **Audiobooks tab** — search free, public-domain titles on LibriVox via the Archive.org catalogue, with AI-assisted query refinement and chapter-by-chapter playback; pin favourites
 - **Radio tab** — search radio-browser.info directly, or use **Browse Home Assistant Radio** to explore categories from HA's own Radio Browser integration (requires the [Radio Browser](https://www.home-assistant.io/integrations/radio_browser/) integration under **Settings → Devices & Services**)
-- **Pinned tab** — everything you've pinned, grouped into Songs, Artists, Albums, Playlists, Queues, Radio, Podcasts and Audiobooks
+- **Movies & TV** — search movies and TV shows, open their info and pin favourites
+- **Pins** — everything you've pinned, grouped into Songs, Artists, Albums, Playlists, Queues, Radio, Podcasts, Audiobooks, Music Recap, Video Recap and Movies & TV
 - **Remembers where you left off** — reopening the library returns to whichever tab you were last in, even after fully closing and reopening the app (within a few hours; a deliberate close resets it back to the top)
 
 ### Apple TV Remote
@@ -359,27 +401,29 @@ Tabs: Recent Searches, Music History, Watch History, Recently Added, Pinned, Fav
 | **TV** | Home screen / wakes from sleep |
 | **Power Off** | Sends `suspend` to sleep the Apple TV |
 
-**Keyboard Panel** — the moment an Apple TV's on-screen keyboard becomes active (searching in an app, entering a password, etc.), a text input automatically appears over the card. Type on your phone's own keyboard and tap Send to push the text straight to the TV, instead of the actual remote's slow letter-by-letter D-pad entry. Detected via Home Assistant's own entity registry (finds whichever `binary_sensor` shares the same device as your Apple TV entity, so it works regardless of how entities happen to be named) — no setup needed beyond having the Apple TV integration configured. Toggle in **Appearance & Behaviour**.
+**Keyboard Panel** — while the remote is open, the moment an Apple TV's on-screen keyboard becomes active (searching in an app, entering a password, etc.), a text input automatically appears over the card. Type on your phone's own keyboard and tap Send to push the text straight to the TV, instead of the actual remote's slow letter-by-letter D-pad entry. Detected via Home Assistant's own entity registry (finds whichever `binary_sensor` shares the same device as your Apple TV entity, so it works regardless of how entities happen to be named) — no setup needed beyond having the Apple TV integration configured. Toggle in **Appearance & Behaviour**.
 
 ---
 
-## 🔧 Visual Editor
+## Visual Editor
 
 The editor includes a filter box at the top (search any setting by name) and a **Reset All Settings to Defaults** button. Several sections are collapsible — tap the header to expand.
 
 | Section | Settings |
 |---------|---------|
 | Manage & Reorder Media Players | Drag-and-drop reorder; enable/disable; tap a speaker's name to open its own dedicated settings page (Display Name, Startup Volume, Volume Entity, MA Speaker toggle) |
-| Appearance & Behaviour *(collapsible)* | Follow HA Theme, Auto Switch, Remember Last Speaker, Media Player Selector, Music Library Layout (iOS-style category list vs. classic tab bar), Always Show Library Button, Show Remote Button, Apple TV Keyboard Panel, Default Radio Mode on Startup, iTunes Artwork Fallback, Show Volume HUD, Live/Podcast/Audiobook Pill, Show YouTube Button, Volume Buttons, Volume Percentage, Scroll Long Text, Lyrics persistence and caching, and a **Startup & Navigation** sub-section (Startup View, Retain Current View, Remote Button Row Position) |
-| Caches & Data *(collapsible)* | AI caches (bios, trivia, where-to-watch, content warnings, year-in-music, vibe history, AI response cache), artwork caches (iTunes, Wikipedia) with Persistent Storage toggles, library & radio caches (MA library, radio stations, HA registry), lyrics cache & scroll style with its own Persistent Storage toggle, and management of all pinned items including a **Show Pins in Sections** toggle, a Persistent Pin Storage toggle and a Clear Persistent Storage button |
-| Visual Effects | Card Liquid Glass, Remote Liquid Glass, Volume HUD Liquid Glass, Ambient Glow, Library & Queue Row Glow, Artwork Crossfade, Pin Hearts, Resize Button Spin |
-| ✨ AI Settings | **Enable AI Features** master switch (off by default), AI Agent selector, Share Track service (YouTube Music, Apple Music, Spotify, Tidal, Amazon Music, Deezer), Announce TTS Service, Song Intro toggle |
+| Play on This Device | Show "Play on this device", Music Assistant server URL |
+| Appearance & Behaviour *(collapsible)* | **General:** Follow HA Theme, Always Show Library Button, Show Remote Button, Apple TV Keyboard Panel, Default Radio Mode on Startup, iTunes Artwork Fallback, Live/Podcast/Audiobook Pill, Show YouTube Button, Scroll Long Text. **Volume:** Volume HUD, Volume Buttons, Volume Percentage. **Startup & Navigation:** Auto Switch, Remember Last Speaker, Media Player Selector, Startup View, Retain Current View, Remote Button Row Position |
+| Caches & Data *(collapsible)* | AI caches (bios, trivia, where-to-watch, content warnings, year-in-music, vibe history, AI response cache), artwork caches (iTunes, Wikipedia) with Persistent Storage toggles, library & radio caches (MA library, radio stations, HA registry), **Lyrics** (line style, Keep Lyrics Open Between Tracks, Cache Lyrics, Save Lyrics For, Persistent Lyrics Storage), pinned items (Persistent Pin Storage, Show Pins in Sections, Clear All Pins), Persistent Info Storage, Clear All Caches and Clear Persistent Storage |
+| Visual Effects | Style (Classic or Glass), Theme (Auto, Light or Dark), Remote Liquid Glass, Volume HUD Liquid Glass, Ambient Glow, Row Glow, Artwork Crossfade, Pin Hearts, Resize Button Spin |
+| AI Settings | **Enable AI Features** master switch (off by default), AI Agent, Info Panel Priority (AI or Discogs first), Library Search (Normal or AI Enhanced), Share Track Service (YouTube Music, Apple Music, Spotify, Tidal, Amazon Music, Deezer), Announce TTS Service, Song Intro, Ghost-Skip Healer |
+| Movies & TV | TMDB API Key, Movie/TV Info Priority (AI or TMDB first) |
 | AI Vibe Artist Seeds | Playlist search terms and radio fallback artist per vibe; fully customisable |
-| Colours & Themes *(collapsible)* | Controls Theme (12 presets), Player Icon Theme (8 sets), accent, volume accent, title, artist, button, +Add pill, volume %, custom background and lyrics colours, with live preview |
+| Colours & Themes *(collapsible)* | Controls Theme (12 presets), Player Icon Theme (8 sets), Accent Preset, accent, volume accent, title, artist, button, +Add pill, volume %, custom background and lyrics colours, with live preview |
 
 ---
 
-## 📋 Quick Start
+## Quick Start
 
 ```yaml
 type: custom:crowai-media-player-card
@@ -391,6 +435,7 @@ ma_entities:
   - media_player.mass_living_room
 ai_features_enabled: true
 ai_conversation_agent: conversation.google_generative_ai
+tmdb_api_key: YOUR_TMDB_KEY
 accent_color: '#007AFF'
 controls_theme: classic
 startup_volume: 35
@@ -409,23 +454,23 @@ show_remote_button: true
 show_media_type_pill: false
 song_intro_enabled: true
 card_liquid_glass: true
-ma_ios_library: true
 show_pins_in_sections: true
 ```
 
-> **Note:** `ma_entities` should list your MA speaker entities (e.g. `media_player.mass_kitchen_homepod`). These do **not** need to also appear in `entities`. AI features are **off by default** — the example above enables them; leave `ai_features_enabled` out (or set it `false`) for a Discogs-powered card with no AI.
+> **Note:** `ma_entities` should list your MA speaker entities (e.g. `media_player.mass_kitchen_homepod`). These do **not** need to also appear in `entities`. AI features are **off by default** — the example above enables them; leave `ai_features_enabled` out (or set it `false`) for a Discogs-powered card with no AI. `tmdb_api_key` is optional; leave it out if you don't use movie/TV info without AI.
 
 ---
 
-## 🔧 Troubleshooting
+## Troubleshooting
 
-**AI features show "Could not build queue" or "AI rate limit reached"**
-- Your Gemini daily quota (1,500 requests for `gemini-2.0-flash`) is exhausted. It resets daily.
+**AI features say "The AI has reached its usage limit for now"**
+- Your Gemini quota is used up. Free-tier limits vary by model; check Google AI Studio for yours. It resets the next day.
+- If you picked an older Gemini model yourself, Google may have retired it: switch to a current Flash model, or the recommended model settings.
 
 **AI features are missing from the quick menu, or don't work**
 - Check **Enable AI Features** is turned on in the editor's **AI Settings** — AI is off by default, and its quick-menu entries are hidden until it's enabled.
 - Ensure the **Generative Language API** is enabled in Google Cloud Console — this is the most common setup mistake.
-- Confirm **Google AI Conversation** is selected as the AI Agent in the visual editor.
+- Confirm your Google AI agent is selected as the **AI Agent** in the visual editor.
 
 **Vibe queue plays only one song or none**
 - Ensure your MA speaker entity has the **Music Assistant Speaker** toggle enabled in the visual editor.
@@ -449,6 +494,18 @@ show_pins_in_sections: true
 **Apple TV won't turn on from Power Off**
 - Use the **TV button** instead — it wakes Apple TV from sleep reliably.
 
+**Movie/TV info is empty with AI off**
+- Add a free TMDB API key in the editor's **Movies & TV** section. With AI off, TMDB is the only source for movie/TV info.
+
+**"Play on this device" won't connect**
+- You need Music Assistant 2.10 or newer.
+- Leave the server URL blank, or point it at Sendspin's port **8927**, not Music Assistant's web port 8095.
+- If you open Home Assistant over https, the server URL must be https too, or the browser blocks the connection.
+- Stuck on "Home Assistant hasn't found this device yet"? In Music Assistant, check the player is turned on and available to Home Assistant, or tap **Choose this device yourself…** in the speaker menu.
+- If the speaker menu says it's playing in another tab, tap it to play here instead.
+- Using the Home Assistant Companion app? It's only offered in a web browser such as Safari.
+- Paused, left the page or switched apps, and now it won't resume? Press play once more: the card wakes the audio, reconnects and, if needed, restarts the song from the same spot. Check the speaker menu for a status line saying what was wrong.
+
 **"Can't browse Home Assistant Radio" in the Radio tab**
 - Add the [Radio Browser](https://www.home-assistant.io/integrations/radio_browser/) integration under **Settings → Devices & Services** in Home Assistant, then reopen the Radio tab.
 
@@ -457,22 +514,22 @@ show_pins_in_sections: true
 
 ---
 
-## 🙏 Credits & Acknowledgements
+## Credits & Acknowledgements
 
 - The [Home Assistant](https://www.home-assistant.io) team
 - The HA community for inspiration and feedback
 - All users who test, report issues and suggest improvements
-- My Loving Wife for her endless support ❤️
+- My Loving Wife for her endless support
 
 ---
 
-## 📄 License
+## License
 
 MIT License — free to use, modify and distribute.
 
 ---
 
-## 🐦 Why "CROW"?
+## Why "CROW"?
 
 - **C**lean design
 - **R**esponsive interface
@@ -481,7 +538,7 @@ MIT License — free to use, modify and distribute.
 
 ---
 
-## ⭐ Support
+## Support
 
 If this card is useful to you, please **star the repository** and share it with the community!
 

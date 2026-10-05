@@ -1,4 +1,513 @@
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Sendspin "This device" player
+// ---------------------------------------------------------------------------
+// Turns the browser running the card into a Music Assistant speaker using the
+// Sendspin protocol (@sendspin/sendspin-js, bundled at the bottom of this
+// file). MA registers it as a player, the MA integration exposes it to HA as a
+// media_player, and the card then treats it like any other MA entity.
+//
+// One shared manager lives on window so the player survives Lovelace
+// destroying/recreating cards on view changes, and every card instance on the
+// page uses the same connection. Each device opts in separately (stored in
+// localStorage), so enabling the feature in the card config does not turn
+// every wall tablet or phone into a speaker.
+// ═══════════════════════════════════════════════════════════════════════════
+const CROWAI_SS_PREFIX = 'crowai_ss:';
+const CROWAI_SS_PRODUCT = 'CrowAI Media Player Card';
+const CROWAI_SS_ICON = 'M4,6H20V16H4M20,18A2,2 0 0,0 22,16V6C22,4.89 21.1,4 20,4H4C2.89,4 2,4.89 2,6V16A2,2 0 0,0 4,18H0V20H24V18H20Z';
+
+// The Home Assistant Companion app (iPhone, iPad, Android, Mac) can't be a
+// Sendspin speaker reliably — it's an app's web view, not a browser — so
+// "Play on this device" is only offered in a real web browser such as Safari.
+function crowaiIsCompanionApp() {
+  try {
+    if (/Home ?Assistant\//i.test(navigator.userAgent || '')) return true;
+    if (window.externalApp) return true;                                   // Android app bridge
+    if (window.webkit?.messageHandlers?.getExternalAuth) return true;      // iPhone / iPad / Mac app bridge
+  } catch (_) {}
+  return false;
+}
+
+function crowaiSendspin() {
+  if (!window.__crowaiSendspin) window.__crowaiSendspin = new CrowAISendspinManager();
+  return window.__crowaiSendspin;
+}
+
+class CrowAISendspinManager {
+  constructor() {
+    this.player = null;
+    this.status = 'off';          // off | connecting | connected | error | standby
+    this.error = '';
+    this.entityId = null;
+    this.playerName = '';
+    this._hass = null;
+    this._opts = null;            // { url }
+    this._optsKey = '';
+    this._listeners = new Set();
+    this._lastRegistryFetch = 0;
+    this._registryInFlight = false;
+    this._connectedAt = 0;
+    this._tabId = Math.random().toString(36).slice(2);
+    this._lastAliveAt = 0;        // last heartbeat heard from the tab that's playing
+    this._resumeWatch = null;
+    // Prefixed storage so the library's identity keys never collide with MA's
+    // own web player when MA is opened through HA ingress (same origin).
+    this._storage = {
+      getItem: (k) => { try { return localStorage.getItem(CROWAI_SS_PREFIX + k); } catch (_) { return null; } },
+      setItem: (k, v) => { try { localStorage.setItem(CROWAI_SS_PREFIX + k, v); } catch (_) {} },
+    };
+    this._installGestureUnlock();
+    this._installTabHandover();
+    this._installPageLifecycle();
+  }
+
+  // False inside the Companion app: the feature is browser-only.
+  get supported() {
+    if (this._supported === undefined) this._supported = !crowaiIsCompanionApp();
+    return this._supported;
+  }
+
+  // ── Per-device opt-in ────────────────────────────────────────────────────
+  get optedIn() { return this._storage.getItem('enabled') === '1'; }
+  _setOptedIn(on) {
+    try {
+      if (on) localStorage.setItem(CROWAI_SS_PREFIX + 'enabled', '1');
+      else localStorage.removeItem(CROWAI_SS_PREFIX + 'enabled');
+    } catch (_) {}
+  }
+
+  subscribe(fn) { this._listeners.add(fn); return () => this._listeners.delete(fn); }
+  _emit() { this._listeners.forEach(fn => { try { fn(this); } catch (e) { console.warn('[CrowAI Sendspin] listener error', e); } }); }
+  _setStatus(status, error = '') {
+    if (this.status === status && this.error === error) return;
+    this.status = status;
+    this.error = error;
+    this._emit();
+  }
+
+  // Called from every card's `set hass`. Cheap unless the HA entity for this
+  // browser still needs to be found.
+  update(hass, opts) {
+    this._hass = hass;
+    this._opts = opts || {};
+    if (!this.optedIn) return;
+    // Opted in earlier from inside the Companion app: switch it off there.
+    if (!this.supported) { this.disable(); return; }
+    // Start on first sight, or reconnect when the URL/name in the card config
+    // changes. Failed attempts are only retried by a tap (enableFromGesture)
+    // or a config change, never on every hass update.
+    const key = this._resolveUrl() + '|' + this._resolveName();
+    if (key !== this._optsKey && this.status !== 'standby') {
+      this._teardown('restart');
+      this._start();
+    }
+    if (this.player && !this.entityId) this._resolveEntity();
+    else if (this.entityId && !hass.states[this.entityId]) {
+      // Entity vanished (MA recreated the player) — find it again.
+      this._setEntity(null);
+      this._resolveEntity();
+    }
+  }
+
+  // Must be called synchronously from a click/tap handler.
+  enableFromGesture() {
+    if (!this.supported) return;
+    this._setOptedIn(true);
+    if (this.status === 'standby' || this.status === 'error') this._teardown('restart');
+    if (!this.player) this._start();
+    if (this.player) {
+      this.player.unlock().catch(() => {});
+      this._claimTab();
+    }
+  }
+
+  disable() {
+    this._setOptedIn(false);
+    this._teardown('user_request');
+    this._setEntity(null);
+    this._setStatus('off');
+  }
+
+  // ── Connection ───────────────────────────────────────────────────────────
+  _resolveUrl() {
+    // Music Assistant serves Sendspin players on its own port (8927). Its web
+    // port (8095) also has a /sendspin route, but that one is an authenticated
+    // proxy for MA's own frontend and closes any connection that doesn't send
+    // an MA login token first — so never default to it.
+    let u = String(this._opts?.url || '').trim();
+    if (!u) u = `${location.protocol === 'https:' ? 'https:' : 'http:'}//${location.hostname}:8927`;
+    if (!/^[a-z]+:\/\//i.test(u)) u = 'http://' + u;
+    // The library derives ws/wss from http/https, so normalise ws(s) input.
+    u = u.replace(/^wss:/i, 'https:').replace(/^ws:/i, 'http:');
+    u = u.replace(/\/+$/, '').replace(/\/sendspin$/i, '');
+    // A plain-http address on MA's web port is almost certainly meant to be
+    // the Sendspin port.
+    if (/^http:\/\/[^/]+:8095$/i.test(u)) u = u.replace(/:8095$/, ':8927');
+    return u;
+  }
+
+  _deviceLabel() {
+    const ua = navigator.userAgent || '';
+    if (/iPad/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) return 'iPad';
+    if (/iPhone/.test(ua)) return 'iPhone';
+    if (/Android/.test(ua)) return /Mobile/.test(ua) ? 'Android phone' : 'Android tablet';
+    if (/CrOS/.test(ua)) return 'Chromebook';
+    if (/Mac/.test(ua)) return 'Mac';
+    if (/Win/.test(ua)) return 'PC';
+    return 'Browser';
+  }
+
+  _browserLabel() {
+    const ua = navigator.userAgent || '';
+    if (/EdgiOS|Edg\//.test(ua)) return 'Edge';
+    if (/FxiOS|Firefox\//.test(ua)) return 'Firefox';
+    if (/CriOS|Chrome\//.test(ua)) return 'Chrome';
+    if (/Safari\//.test(ua)) return 'Safari';
+    return '';
+  }
+
+  // Name announced to Music Assistant when a device first connects, e.g.
+  // "James's iPhone (Safari)". The browser is included so two browsers on the
+  // same phone never end up with the same name. Rename existing players in
+  // Music Assistant.
+  _resolveName() {
+    const user = this._hass?.user?.name || '';
+    const device = this._deviceLabel();
+    const browser = this._browserLabel();
+    const base = user ? `${user}'s ${device}` : `CrowAI ${device}`;
+    return browser ? `${base} (${browser})` : base;
+  }
+
+  _start() {
+    const url = this._resolveUrl();
+    this.playerName = this._resolveName();
+    this._optsKey = url + '|' + this.playerName;
+    if (location.protocol === 'https:' && /^http:/i.test(url)) {
+      this._setStatus('error', 'Home Assistant is open over https, so the browser blocks an insecure connection to Music Assistant. Set a secure (https) Sendspin server URL in the card settings.');
+      return;
+    }
+    let Lib;
+    try { Lib = __crowaiLoadSendspinLib(); } catch (e) {
+      this._setStatus('error', 'Could not load the Sendspin player library.');
+      console.error('[CrowAI Sendspin] library load failed', e);
+      return;
+    }
+    // Skip Opus when the browser has no native decoder: the fallback decoder
+    // isn't bundled, and FLAC/PCM are fine on a local network.
+    const codecs = typeof AudioDecoder !== 'undefined' ? ['opus', 'flac', 'pcm'] : ['flac', 'pcm'];
+    try {
+      this.player = new Lib.SendspinPlayer({
+        baseUrl: url,
+        clientName: this.playerName,
+        productName: CROWAI_SS_PRODUCT,
+        codecs,
+        storage: this._storage,
+        requiredLeadTimeMs: 250,
+        minBufferMs: 500,
+        onStateChange: () => this._rememberVolume(),
+        reconnect: {
+          baseDelayMs: 1000,
+          maxDelayMs: 30000,
+          // Keep the last failure visible while retrying so the menu can say why.
+          onReconnecting: () => this._setStatus('connecting', this.error),
+          onReconnected: () => { this._restoreVolume(true); this._connectedAt = Date.now(); this._setStatus('connected'); this._resolveEntity(true); },
+        },
+      });
+    } catch (e) {
+      this._setStatus('error', 'Could not start the player: ' + (e?.message || e));
+      return;
+    }
+    const p = this.player;
+    this._restoreVolume(false);
+    this._setStatus('connecting');
+    p.connect().then(() => {
+      if (this.player !== p) return;
+      this._connectedAt = Date.now();
+      this._setStatus('connected');
+      this._claimTab();
+      this._startHeartbeat();
+      this._resolveEntity(true);
+    }).catch((e) => {
+      if (this.player !== p) return;
+      console.warn('[CrowAI Sendspin] connect failed', e);
+      this._setStatus('error', `Couldn't reach Music Assistant at ${url}. Check the Sendspin server URL in the card settings.`);
+    });
+  }
+
+  _teardown(reason) {
+    this._stopHeartbeat();
+    if (this.player) {
+      try { this.player.disconnect(reason); } catch (_) {}
+      this.player = null;
+    }
+    this._optsKey = '';
+    this._connectedAt = 0;
+  }
+
+  // ── Find the HA entity MA created for this browser ───────────────────────
+  _setEntity(eid) {
+    if (this.entityId === eid) return;
+    this.entityId = eid;
+    if (eid && this.player) this._storage.setItem('entity:' + this.player.clientId, eid);
+    this._emit();
+  }
+
+  // Manual fallback when automatic matching can't tell which entity is this
+  // browser (e.g. Music Assistant merged or renamed the player).
+  linkEntity(eid) {
+    if (!eid) return;
+    this._setEntity(eid);
+  }
+
+  candidateEntities(excluded = []) {
+    const states = this._hass?.states || {};
+    const ids = this._maRegistry || Object.keys(states).filter(e => e.startsWith('media_player.'));
+    const name = (this.playerName || '').toLowerCase();
+    return ids
+      .filter(e => states[e] && states[e].state !== 'unavailable' && !excluded.includes(e))
+      .map(e => ({ id: e, name: states[e].attributes?.friendly_name || e }))
+      .sort((a, b) => {
+        const am = a.name.toLowerCase() === name ? 0 : 1;
+        const bm = b.name.toLowerCase() === name ? 0 : 1;
+        return am - bm || a.name.localeCompare(b.name);
+      });
+  }
+
+  get waitingTooLong() {
+    return this.status === 'connected' && !this.entityId && this._connectedAt && (Date.now() - this._connectedAt > 90000);
+  }
+
+  async _resolveEntity(force = false) {
+    const hass = this._hass;
+    const p = this.player;
+    if (!hass || !p || this.entityId) return;
+    const states = hass.states || {};
+    const clientId = p.clientId;
+
+    const cached = this._storage.getItem('entity:' + clientId);
+    if (cached && states[cached]) { this._setEntity(cached); return; }
+
+    // Registry lookup, throttled. MA's HA entities use the MA player_id as
+    // unique_id (equal to the Sendspin client id for standalone players); for
+    // players MA wraps, the HA device keeps the name this browser announced.
+    const now = Date.now();
+    if (this._registryInFlight || (!force && now - this._lastRegistryFetch < 5000)) return;
+    if (!force && this._connectedAt && now - this._connectedAt > 5 * 60000 && now - this._lastRegistryFetch < 60000) return;
+    this._registryInFlight = true;
+    this._lastRegistryFetch = now;
+    try {
+      const [ents, devs] = await Promise.all([
+        hass.connection.sendMessagePromise({ type: 'config/entity_registry/list' }),
+        hass.connection.sendMessagePromise({ type: 'config/device_registry/list' }),
+      ]);
+      if (this.player !== p || this.entityId) return;
+      const ma = (Array.isArray(ents) ? ents : []).filter(e =>
+        e.platform === 'music_assistant' && (e.entity_id || '').startsWith('media_player.') && !e.disabled_by);
+      this._maRegistry = ma.map(e => e.entity_id);
+      let hit = ma.find(e => e.unique_id === clientId);
+      if (!hit) {
+        const devById = {};
+        (Array.isArray(devs) ? devs : []).forEach(d => { devById[d.id] = d; });
+        // Compare names loosely: case, curly vs straight apostrophes, spacing.
+        const norm = (v) => String(v || '').toLowerCase().replace(/[\u2018\u2019\u02bc`]/g, "'").replace(/\s+/g, ' ').trim();
+        const want = norm(this.playerName);
+        const named = ma.filter(e => {
+          const d = devById[e.device_id];
+          return (d && (norm(d.name) === want || norm(d.name_by_user) === want)) ||
+            norm(e.original_name) === want || norm(e.name) === want ||
+            norm(states[e.entity_id]?.attributes?.friendly_name) === want;
+        });
+        // Only match a player that's online: an offline one with the same name
+        // is a different browser (or the Companion app) on this device.
+        const live = named.filter(e => states[e.entity_id] && states[e.entity_id].state !== 'unavailable');
+        hit = live[0];
+      }
+      if (hit && states[hit.entity_id]) this._setEntity(hit.entity_id);
+      else this._emit(); // lets the menu refresh its "waiting" hint
+    } catch (e) {
+      console.debug('[CrowAI Sendspin] registry lookup failed', e);
+    } finally {
+      this._registryInFlight = false;
+    }
+  }
+
+  // ── Browser audio unlock ─────────────────────────────────────────────────
+  // Audio can only start after a user gesture. A player reconnected on page
+  // load has no gesture, so resume audio on the first tap anywhere on the
+  // page. unlock() is cheap and idempotent, so call it on every gesture
+  // (iOS can re-suspend audio after interruptions).
+  _installGestureUnlock() {
+    const handler = () => {
+      if (!this.optedIn || !this.supported) return;
+      // A tab on standby whose playing tab has gone quiet (iPhone closed it in
+      // the background) takes over on the next tap.
+      if (this.status === 'standby') { if (this._activeTabGone()) this._leaveStandby(); return; }
+      if (this.player) this._wakeAudio();
+    };
+    ['touchend', 'click', 'keydown'].forEach(t =>
+      document.addEventListener(t, handler, { capture: true, passive: true }));
+  }
+
+  // Wakes the audio. Must run inside a tap so the browser allows it. The
+  // library only resumes audio that's "suspended"; on iPhone, audio another
+  // app took over is "interrupted" instead, and the hidden audio element the
+  // library plays through gets paused — neither of which it recovers from.
+  _wakeAudio() {
+    const p = this.player;
+    if (!p) return;
+    try { p.unlock().catch(() => {}); } catch (_) {}
+    const sc = p.scheduler;
+    const ctx = sc?.audioContext;
+    if (ctx && (ctx.state === 'interrupted' || ctx.state === 'suspended')) ctx.resume().catch(() => {});
+    const el = sc?.audioElement;
+    if (el && el.paused && (el.srcObject || el.src)) el.play().catch(() => {});
+  }
+
+  // Whether sound is really coming out: connected, audio awake, and audio
+  // queued or scheduled to play.
+  isSounding() {
+    const p = this.player;
+    if (!p || !p.isConnected) return false;
+    const sc = p.scheduler;
+    const ctx = sc?.audioContext;
+    if (!ctx || ctx.state !== 'running') return false;
+    const el = sc.audioElement;
+    if (sc.outputMode === 'media-element' && el && el.paused) return false;
+    return (sc.scheduledSources?.length || 0) > 0 || (sc.audioBufferQueue?.length || 0) > 0;
+  }
+
+  // Reconnects now (instead of waiting for the library's back-off), keeping
+  // the same audio set-up so no new tap is needed. Resolves true once connected.
+  reconnectNow() {
+    const p = this.player;
+    if (!p || !this.optedIn || !this.supported) return Promise.resolve(false);
+    if (p.isConnected) return Promise.resolve(true);
+    this._restoreVolume(false);
+    this._setStatus('connecting', this.error);
+    return p.connect().then(() => {
+      if (this.player !== p) return false;
+      this._connectedAt = Date.now();
+      this._setStatus('connected');
+      this._claimTab();
+      this._startHeartbeat();
+      this._resolveEntity(true);
+      return true;
+    }).catch(() => false);
+  }
+
+  // ── Volume kept between connections ─────────────────────────────────────
+  // The library starts every connection at 100% (and goes back to 100% after
+  // a dropped connection), which Music Assistant then adopts. Instead, keep
+  // this device's last volume and mute and hand them back before connecting.
+  // The first time, start at a comfortable 50% rather than full volume.
+  _rememberVolume() {
+    const p = this.player;
+    if (!p || this._restoringVolume || !p.isConnected) return;
+    const v = Math.round(p.volume), mu = !!p.muted;
+    if (!isFinite(v)) return;
+    if (this._storage.getItem('volume') !== String(v)) this._storage.setItem('volume', String(v));
+    if (this._storage.getItem('muted') !== (mu ? '1' : '0')) this._storage.setItem('muted', mu ? '1' : '0');
+  }
+  _savedVolume() {
+    const v = parseInt(this._storage.getItem('volume'), 10);
+    return { volume: isFinite(v) ? Math.max(0, Math.min(100, v)) : 50, muted: this._storage.getItem('muted') === '1' };
+  }
+  // send=false: set it quietly before connecting (it's announced in the hello);
+  // send=true: after a reconnect, tell Music Assistant straight away.
+  _restoreVolume(send) {
+    const p = this.player;
+    if (!p) return;
+    const { volume, muted } = this._savedVolume();
+    this._restoringVolume = true;
+    try {
+      if (send && p.isConnected) {
+        if (Math.round(p.volume) !== volume) p.setVolume(volume);
+        if (!!p.muted !== muted) p.setMuted(muted);
+      } else {
+        const sm = p.core?._stateManager || p.core?.stateManager;
+        if (sm) { sm._volume = volume; sm._muted = muted; }
+        try { p.scheduler?.updateVolume?.(); } catch (_) {}
+      }
+    } catch (_) {}
+    this._restoringVolume = false;
+  }
+
+  // A short line for the speaker menu when something is wrong, else ''.
+  audioProblem() {
+    const p = this.player;
+    if (!p || this.status !== 'connected') return '';
+    if (!p.isConnected) return 'Reconnecting to Music Assistant\u2026';
+    const ctx = p.scheduler?.audioContext;
+    if (ctx && ctx.state === 'interrupted') return 'Audio was interrupted by another app. Press play to wake it.';
+    if (ctx && ctx.state === 'suspended') return 'Audio is asleep. Press play to wake it.';
+    const el = p.scheduler?.audioElement;
+    if (p.isPlaying && el && el.paused && p.scheduler?.outputMode === 'media-element') return 'The browser paused the audio. Press play to wake it.';
+    return '';
+  }
+
+  // ── Coming back to the page ──────────────────────────────────────────────
+  // iPhone closes the connection while Safari is in the background, and
+  // Safari can restore a frozen tab whose connection is already gone. Either
+  // way, reconnect straight away rather than waiting up to 30 seconds.
+  _installPageLifecycle() {
+    const back = () => {
+      if (document.visibilityState === 'hidden' || !this.optedIn || !this.supported) return;
+      if (this.status === 'standby') { if (this._activeTabGone()) this._leaveStandby(); return; }
+      if (this.player && !this.player.isConnected) this.reconnectNow();
+      else if (!this.player && this._hass) this.update(this._hass, this._opts);
+      this._emit();
+    };
+    document.addEventListener('visibilitychange', back);
+    window.addEventListener('pageshow', back);
+    window.addEventListener('focus', back);
+  }
+
+  // ── One active tab per browser ───────────────────────────────────────────
+  // All tabs share one client id, so two tabs connecting would fight over the
+  // same MA player. The most recently active tab takes over; when it closes,
+  // the others reconnect.
+  _installTabHandover() {
+    if (typeof BroadcastChannel === 'undefined') return;
+    try { this._bc = new BroadcastChannel('crowai-sendspin'); } catch (_) { return; }
+    this._bc.onmessage = (ev) => {
+      const msg = ev.data || {};
+      if (msg.tab === this._tabId || !this.optedIn) return;
+      if (msg.type === 'alive' || msg.type === 'claim') this._lastAliveAt = Date.now();
+      if (msg.type === 'claim' && this.player) {
+        this._teardown('restart');
+        this._setStatus('standby', 'Playing in another tab of this browser.');
+      } else if (msg.type === 'release' && this.status === 'standby') {
+        this._leaveStandby();
+      }
+    };
+    window.addEventListener('pagehide', () => {
+      if (this.player) this._bc.postMessage({ type: 'release', tab: this._tabId });
+    });
+  }
+  _claimTab() { try { this._bc?.postMessage({ type: 'claim', tab: this._tabId }); } catch (_) {} }
+
+  // The playing tab says it's still there every 15 seconds. If a tab on
+  // standby hears nothing for 45 seconds (iPhone closed or froze the playing
+  // tab), it takes over when it's next looked at or tapped.
+  _startHeartbeat() {
+    if (this._hbTimer || !this._bc) return;
+    this._hbTimer = setInterval(() => {
+      if (this.player && this.status === 'connected') {
+        try { this._bc.postMessage({ type: 'alive', tab: this._tabId }); } catch (_) {}
+      }
+    }, 15000);
+  }
+  _stopHeartbeat() { if (this._hbTimer) { clearInterval(this._hbTimer); this._hbTimer = null; } }
+  _activeTabGone() { return !this._lastAliveAt || Date.now() - this._lastAliveAt > 45000; }
+  _leaveStandby() {
+    if (this.status !== 'standby') return;
+    this._setStatus('off');
+    if (this._hass) this.update(this._hass, this._opts);
+  }
+}
+
+
 class CrowAIMediaPlayerCard extends HTMLElement {
   constructor() {
     super();
@@ -95,6 +604,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       library_search_mode: 'normal',
       tmdb_api_key: '',
       video_info_priority: 'ai',
+      sendspin_enabled: false,
+      sendspin_url: '',
       ...config
     };
     if (!this._entity) {
@@ -120,6 +631,14 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       this._startupVolAppliedEntities = new Set();
     }
     this._config._prevEntityStartupVols = newEntityStartupVols;
+    // Sendspin: _config was rebuilt from the user's config, so any injected
+    // "this device" entity is gone — add it back.
+    this._ssInjected = null;
+    this._ssAdded = null;
+    this._ssApplyEntity();
+    if (this._config.sendspin_enabled && !this._ssUnsub && this.isConnected) {
+      this._ssUnsub = crowaiSendspin().subscribe(() => this._ssOnManagerChange());
+    }
   }
 
   _applyStartupMode() {
@@ -190,6 +709,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+
+    // ── Sendspin "this device" player ────────────────────────────────────
+    if (this._config?.sendspin_enabled) {
+      crowaiSendspin().update(hass, this._ssOpts());
+      this._ssApplyEntity();
+    }
 
     // ── Listening Recap — track configured entities directly ─────────────
     // Deliberately independent of this._entity/auto_switch (see below).
@@ -1012,6 +1537,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   }
 
   connectedCallback() {
+    if (this._config?.sendspin_enabled && !this._ssUnsub) this._ssUnsub = crowaiSendspin().subscribe(() => this._ssOnManagerChange());
     // Reset any expanded panel left open from a previous visit — navigating
     // away from the dashboard page and back reconnects the card without
     // otherwise touching its state, so a popup (Music Library browser, AI
@@ -1263,6 +1789,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   }
 
   disconnectedCallback() {
+    clearInterval(this._ssUiInterval); this._ssUiInterval = null;
+    // Only stop listening — the shared player keeps playing across views.
+    if (this._ssUnsub) { this._ssUnsub(); this._ssUnsub = null; }
     if (this._maQueueEventSub) {
       try { this._maQueueEventSub(); } catch(_) {}
       this._maQueueEventSub = null;
@@ -1292,6 +1821,328 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     }
     this._ghostClickGuardSetup = false;
 
+  }
+
+  // ── Sendspin "this device" helpers ────────────────────────────────────────
+
+  // After pressing play on this device: if no sound comes out, repair it in
+  // steps rather than leaving a stuck song on screen — reconnect and ask
+  // again, then restart the song from the same spot, and only as a last
+  // resort stop it so it can simply be played again.
+  _ssWatchResume(eid) {
+    const m = crowaiSendspin();
+    clearTimeout(this._ssWatchTimer);
+    const token = {};
+    this._ssWatch = token;
+    let sawPlaying = false;
+    const live = () => this._ssWatch === token && !!this._hass;
+    const state = () => this._hass?.states?.[eid];
+    // Stop if someone paused it on purpose after it had started.
+    const pausedOnPurpose = () => {
+      const st = state()?.state;
+      if (st === 'playing') sawPlaying = true;
+      return sawPlaying && (st === 'paused' || st === 'idle' || st === 'off');
+    };
+    const wait = (ms) => new Promise(r => { this._ssWatchTimer = setTimeout(r, ms); });
+    const svc = (name, data = {}) => this._hass.callService('media_player', name, { entity_id: eid, ...data }).catch(() => {});
+    (async () => {
+      await wait(3500);
+      if (!live() || pausedOnPurpose() || m.isSounding()) return;
+      // 1. Reconnect (keeps the same audio, so no new tap is needed) and ask again.
+      await m.reconnectNow();
+      if (!live()) return;
+      m._wakeAudio();
+      await svc('media_play');
+      await wait(4000);
+      if (!live() || pausedOnPurpose() || m.isSounding()) return;
+      // 2. Restart the song from where it was: seeking makes Music Assistant
+      //    start a fresh stream at that point.
+      const st = state();
+      let pos = st?.attributes?.media_position;
+      if (typeof pos === 'number' && st.state === 'playing' && st.attributes?.media_position_updated_at) {
+        const since = (Date.now() - Date.parse(st.attributes.media_position_updated_at)) / 1000;
+        if (since > 0 && since < 600) pos += since;
+      }
+      if (typeof pos === 'number' && isFinite(pos)) await svc('media_seek', { seek_position: Math.max(0, Math.floor(pos)) });
+      await svc('media_play');
+      await wait(5000);
+      if (!live() || pausedOnPurpose() || m.isSounding()) return;
+      // 3. Give up cleanly: stop it so the card isn't left on a song that won't play.
+      this._ssWatch = null;
+      await svc('media_stop');
+      this._showToast('Couldn\u2019t resume on this device. Play the song again to restart it.');
+    })();
+  }
+
+  _ssOpts() {
+    return { url: this._config?.sendspin_url || '' };
+  }
+
+  // Adds this browser's MA entity to the card's entity lists at runtime (it
+  // differs per device, so it can't live in the saved config), or removes it
+  // again when the device stops being a speaker.
+  _ssApplyEntity() {
+    if (!this._config) return;
+    if (!this._config.sendspin_enabled && !this._ssInjected) return;
+    const m = crowaiSendspin();
+    const want = (this._config.sendspin_enabled && m.supported && m.optedIn) ? m.entityId : null;
+    const cur = this._ssInjected || null;
+    if (cur === want) return;
+    const ents = Array.isArray(this._config.entities) ? this._config.entities : [];
+    const maEnts = Array.isArray(this._config.ma_entities) ? this._config.ma_entities : [];
+    let nextEnts = ents, nextMa = maEnts;
+    if (cur) {
+      if (this._ssAdded?.entities) nextEnts = nextEnts.filter(e => e !== cur);
+      if (this._ssAdded?.ma) nextMa = nextMa.filter(e => e !== cur);
+    }
+    const added = { entities: false, ma: false };
+    if (want) {
+      if (!nextEnts.includes(want)) { nextEnts = [...nextEnts, want]; added.entities = true; }
+      if (!nextMa.includes(want)) { nextMa = [...nextMa, want]; added.ma = true; }
+    }
+    this._config = { ...this._config, entities: nextEnts, ma_entities: nextMa };
+    this._ssInjected = want;
+    this._ssAdded = want ? added : null;
+    if (cur && this._entity === cur && !nextEnts.includes(cur)) {
+      this._entity = nextEnts[0];
+      this._manualSelection = false;
+      try { this._invalidateArtwork(); } catch (_) {}
+    }
+  }
+
+  _ssOnManagerChange() {
+    if (!this._config?.sendspin_enabled) return;
+    this._ssApplyEntity();
+    const m = crowaiSendspin();
+    if (this._ssSwitchWhenReady && m.entityId && (this._config.entities || []).includes(m.entityId)) {
+      this._ssSwitchWhenReady = false;
+      this._switchEntity(m.entityId);
+    }
+    this._ssUiTick();
+  }
+
+  // ── Connecting feedback for "Play on this device" ─────────────────────────
+  // While this device connects, the speaker pill reads "This device ·
+  // Connecting…" and pulses, and the mini artwork shows the spinner (the same
+  // working indicator as adding songs). Short toasts mark the start, the
+  // moment it's ready, and a plain-English reason if it fails. Background
+  // reconnects (coming back to Safari) stay quiet unless they take longer
+  // than 3 seconds, and only toast if they fail.
+  _ssReady(m) {
+    return m.status === 'connected' && !!m.entityId && (this._config?.entities || []).includes(m.entityId) &&
+      this._hass?.states?.[m.entityId]?.state !== 'unavailable';
+  }
+  _ssBeginConnectUi() {
+    const m = crowaiSendspin();
+    if (this._ssReady(m)) return;          // already ready: switching to it is feedback enough
+    this._ssUi = { kind: 'connecting', since: Date.now() };
+    this._showToast('Connecting this device to Music Assistant\u2026', 3500);
+    this._ssUiTimer();
+    this._ssUiTick();
+  }
+  _ssUiVisible() {
+    const ui = this._ssUi;
+    return !!ui && (ui.kind === 'connecting' || Date.now() - ui.since >= 3000);
+  }
+  _ssUiTimer() {
+    if (this._ssUiInterval) return;
+    this._ssUiInterval = setInterval(() => this._ssUiTick(), 1000);
+  }
+  _ssEndUi() {
+    this._ssUi = null;
+    clearInterval(this._ssUiInterval); this._ssUiInterval = null;
+    this._applyBusy();
+  }
+  _ssUiTick() {
+    if (!this._config?.sendspin_enabled) { if (this._ssUi) this._ssEndUi(); return; }
+    const m = crowaiSendspin();
+    const ready = this._ssReady(m);
+    // A connection that was working has dropped (e.g. coming back to Safari).
+    if (!this._ssUi && this._ssWasReady && m.optedIn && m.status !== 'standby' && !ready && (m.status === 'connecting' || (m.player && !m.player.isConnected))) {
+      this._ssUi = { kind: 'reconnecting', since: Date.now() };
+      this._ssUiTimer();
+    }
+    if (ready) this._ssWasReady = true;
+    if (!m.optedIn || m.status === 'off') this._ssWasReady = false;
+    const ui = this._ssUi;
+    if (!ui) return;
+    if (!this._ssUiInterval && this.isConnected) this._ssUiTimer();
+    if (ready) {
+      this._ssEndUi();
+      if (ui.kind === 'connecting') this._showToast('\u2713 Ready \u2014 playing on this device.', 3500);
+      return;
+    }
+    if (!m.optedIn || m.status === 'standby') { this._ssEndUi(); return; }
+    if (Date.now() - ui.since > 20000 || m.status === 'error') {
+      this._ssEndUi();
+      let msg;
+      if (m.status === 'connected' && !m.entityId) msg = 'Connected, but Home Assistant hasn\u2019t found this device yet \u2014 open the speaker menu to choose it.';
+      else if (ui.kind === 'reconnecting') msg = 'Lost the connection to Music Assistant on this device. Press play to try again.';
+      else msg = 'Couldn\u2019t reach Music Assistant. Check it\u2019s version 2.10 or newer and that it\u2019s running.';
+      this._showToast('\u26a0\ufe0f ' + msg, 6000);
+      return;
+    }
+    this._applyBusy();
+  }
+  // Shows "This device · Connecting…" on the speaker pill while it connects.
+  _ssApplyPillStatus() {
+    const pill = this.shadowRoot?.getElementById('mcSummaryPill');
+    const span = pill?.querySelector('.mc-pill-label span');
+    if (!span) return;
+    const vis = this._ssUiVisible();
+    if (vis) {
+      if (span.dataset.ssOrig === undefined) span.dataset.ssOrig = span.textContent;
+      span.textContent = `This device \u00b7 ${this._ssUi.kind === 'connecting' ? 'Connecting' : 'Reconnecting'}\u2026`;
+      pill.classList.add('mc-pill-status');
+    } else if (span.dataset.ssOrig !== undefined) {
+      span.textContent = span.dataset.ssOrig;
+      delete span.dataset.ssOrig;
+      pill.classList.remove('mc-pill-status');
+    }
+  }
+
+  // Keeps the runtime-injected entity out of any config this card emits.
+  dispatchEvent(ev) {
+    try {
+      if (ev && ev.type === 'config-changed' && this._ssInjected && ev.detail?.config) {
+        const c = ev.detail.config;
+        const id = this._ssInjected;
+        if (this._ssAdded?.entities && Array.isArray(c.entities)) c.entities = c.entities.filter(e => e !== id);
+        if (this._ssAdded?.ma && Array.isArray(c.ma_entities)) c.ma_entities = c.ma_entities.filter(e => e !== id);
+      }
+    } catch (_) {}
+    return super.dispatchEvent(ev);
+  }
+
+  // Rows for the speaker menu: connect this device, its status while it
+  // connects, and a way to stop using it.
+  _ssAppendMenuRows(popup) {
+    const m = crowaiSendspin();
+    if (!m.supported) return;   // not offered in the Companion app — browsers only
+    if (m.optedIn && m.player && !m.entityId) m._resolveEntity(true);
+    const shown = m.optedIn && m.entityId && (this._config.entities || []).includes(m.entityId);
+    const sep = () => {
+      const d = document.createElement('div');
+      d.style.cssText = `flex-shrink:0;height:1px;background:${this._pt("btnBg")};margin:2px 4px;`;
+      popup.appendChild(d);
+    };
+    // "Disconnect this device" only shows while this device is the selected
+    // speaker — or while it's still connecting, so a failing connection can
+    // always be cancelled.
+    const showOff = m.optedIn && (!shown || this._entity === m.entityId);
+    if (!shown || showOff) sep();
+    if (!shown) {
+      const subText = () => {
+      let sub;
+      if (!m.optedIn) sub = 'Use this browser as a Music Assistant speaker';
+      else if (m.status === 'error') sub = (m.error || 'Something went wrong.') + ' Tap to retry.';
+      else if (m.status === 'standby') sub = 'Playing in another tab. Tap to play here instead.';
+      else if (m.status === 'connecting' && m.error) sub = m.error + ' Retrying…';
+      else if (m.status === 'connecting' || m.status === 'off') sub = 'Connecting to Music Assistant…';
+      else if (m.waitingTooLong) sub = 'Home Assistant hasn\u2019t found this device yet. In Music Assistant, check the player is turned on and available to Home Assistant.';
+      else if (m.entityId) sub = 'Ready \u2014 tap to play on this device.';
+      else sub = 'Almost ready \u2014 adding this device to Home Assistant. This usually takes a few seconds.';
+      return sub;
+      };
+      const sub = subText();
+      const isErr = m.optedIn && m.status === 'error';
+      const btn = document.createElement('button');
+      btn.style.cssText = 'display:flex;flex-shrink:0;align-items:flex-start;gap:12px;width:100%;padding:12px 18px;border-radius:10px;background:transparent;border:none;' +
+        'font-family:-apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;text-align:left;box-sizing:border-box;-webkit-tap-highlight-color:transparent;';
+      btn.innerHTML =
+        '<span style="width:18px;height:18px;flex-shrink:0;margin-top:1px;display:inline-flex;"><svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:rgba(0,122,255,1)"><path d="' + CROWAI_SS_ICON + '"/></svg></span>' +
+        '<span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;">' +
+          '<span style="font-size:16px;font-weight:400;letter-spacing:-0.2px;color:rgba(0,122,255,1);">' + (m.optedIn ? 'This device' : 'Play on this device') + '</span>' +
+          '<span class="crow-ss-sub" style="font-size:12px;line-height:1.35;color:' + (isErr ? 'rgba(255,99,90,0.95)' : 'rgba(255,255,255,0.5)') + ';white-space:normal;"></span>' +
+        '</span>';
+      btn.querySelector('.crow-ss-sub').textContent = sub;
+      // Keep the message current while the menu is open (e.g. "Almost ready"
+      // turns into "Ready" once Home Assistant finds the device).
+      const unsubLive = m.subscribe(() => {
+        if (!btn.isConnected) { unsubLive(); return; }
+        const el = btn.querySelector('.crow-ss-sub');
+        if (el) el.textContent = subText();
+      });
+      btn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        // Synchronous so the browser treats the audio unlock as part of the tap.
+        m.enableFromGesture();
+        this._ssSwitchWhenReady = true;
+        popup.remove();
+        this._ssBeginConnectUi();
+        this._ssOnManagerChange();
+      });
+      popup.appendChild(btn);
+
+      // Only if Home Assistant still hasn't matched it after a while, offer a
+      // way to pick it by hand — tucked behind one link, so the normal wait is
+      // just a friendly message rather than a list of unrelated speakers.
+      if (m.optedIn && m.status === 'connected' && !m.entityId && m.waitingTooLong) {
+        const cands = m.candidateEntities(this._config.entities || []).slice(0, 6);
+        if (cands.length) {
+          const hdr = document.createElement('button');
+          hdr.style.cssText = 'display:block;flex-shrink:0;width:100%;padding:6px 18px 8px 48px;border:none;background:transparent;text-align:left;cursor:pointer;' +
+            'font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:13px;color:rgba(0,122,255,1);-webkit-tap-highlight-color:transparent;';
+          hdr.textContent = 'Choose this device yourself\u2026';
+          popup.appendChild(hdr);
+          const list = [];
+          hdr.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            hdr.style.color = 'rgba(255,255,255,0.5)';
+            hdr.style.cursor = 'default';
+            hdr.textContent = 'Which one is this device?';
+            list.forEach(b => { b.style.display = 'block'; });
+          });
+          cands.forEach(c => {
+            const b = document.createElement('button');
+            b.style.cssText = 'display:block;flex-shrink:0;width:100%;min-height:36px;line-height:20px;padding:8px 18px 8px 48px;border-radius:10px;background:transparent;border:none;' +
+              'font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:14px;color:rgba(255,255,255,0.9);cursor:pointer;text-align:left;box-sizing:border-box;' +
+              'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;-webkit-tap-highlight-color:transparent;';
+            b.textContent = c.name;
+            b.title = c.id;
+            b.style.display = 'none';
+            list.push(b);
+            b.addEventListener('click', (ev) => {
+              ev.stopPropagation();
+              popup.remove();
+              this._ssSwitchWhenReady = true;
+              m.linkEntity(c.id);
+              this._ssOnManagerChange();
+            });
+            popup.appendChild(b);
+          });
+        }
+      }
+    }
+    // When this device is the speaker and its audio needs waking, say so.
+    const problem = m.optedIn && shown ? m.audioProblem() : '';
+    if (problem) {
+      const note = document.createElement('div');
+      note.style.cssText = 'flex-shrink:0;padding:8px 18px 4px 48px;font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:12px;line-height:1.35;color:rgba(255,159,10,0.95);';
+      note.textContent = 'This device: ' + problem;
+      if (!showOff) sep();
+      popup.appendChild(note);
+    }
+    if (showOff) {
+      // Same row anatomy as the speaker rows (18px icon, 16px label), in the
+      // iOS destructive red, like an action-sheet "Disconnect" item.
+      const off = document.createElement('button');
+      off.style.cssText = 'display:flex;flex-shrink:0;align-items:center;gap:12px;width:100%;padding:12px 18px;border-radius:10px;background:transparent;border:none;' +
+        'font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:16px;font-weight:400;letter-spacing:-0.2px;color:rgba(255,69,58,1);' +
+        'cursor:pointer;text-align:left;box-sizing:border-box;-webkit-tap-highlight-color:transparent;';
+      off.innerHTML =
+        '<span style="width:18px;height:18px;flex-shrink:0;display:inline-flex;"><svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:rgba(255,69,58,1)">' +
+        '<path d="M12,20C7.59,20 4,16.41 4,12C4,7.59 7.59,4 12,4C16.41,4 20,7.59 20,12C20,16.41 16.41,20 12,20M12,2C6.47,2 2,6.47 2,12C2,17.53 6.47,22 12,22C17.53,22 22,17.53 22,12C22,6.47 17.53,2 12,2M14.59,8L12,10.59L9.41,8L8,9.41L10.59,12L8,14.59L9.41,16L12,13.41L14.59,16L16,14.59L13.41,12L16,9.41L14.59,8Z"/></svg></span>' +
+        '<span style="flex:1;">Disconnect this device</span>';
+      off.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        this._ssSwitchWhenReady = false;
+        popup.remove();
+        m.disable();
+        this._ssApplyEntity();
+      });
+      popup.appendChild(off);
+    }
   }
 
   // ── MA group helpers ──────────────────────────────────────────────────────
@@ -2044,6 +2895,18 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         .mode-compact .info-row { padding-right: 0; }
         .mini-art { display: none; width: 54px; height: 54px; border-radius: 10px; overflow: hidden; background: rgba(40,40,45,0.6); display: flex; align-items: center; justify-content: center; border: 1px solid var(--crow-panel-row-border,rgba(255,255,255,0.1)); cursor: pointer; flex-shrink: 0; }
         .mini-art img { width: 100%; height: 100%; object-fit: cover; }
+        .mini-art { position: relative; isolation: isolate; }
+        /* Working indicator: a spinner inside the mini artwork while the card is busy */
+        .mini-busy { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,0.45); z-index: 60; pointer-events: none; }
+        .mini-busy span { width: 18px; height: 18px; box-sizing: border-box; border-radius: 50%; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; animation: crow-busy-spin 0.8s linear infinite; }
+        .mode-compact .mini-busy span { width: 16px; height: 16px; }
+        #cardOuter.crow-busy .mini-busy { display: flex; }
+        #cardOuter.crow-busy .multicast-pill { animation: pill-pulse 1.1s ease-in-out infinite; border-color: var(--accent,#007AFF); }
+        @keyframes crow-busy-spin { to { transform: rotate(360deg); } }
+        @media (prefers-reduced-motion: reduce) {
+          .mini-busy span { animation: none; width: 8px; height: 8px; border: none; background: #fff; }
+          #cardOuter.crow-busy .multicast-pill { animation: none; }
+        }
         .track-title { font-size: 19px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: -0.3px; color:var(--crow-panel-text, #ffffff); }
         .track-artist { font-size: 15px; color: var(--crow-panel-text,rgba(255,255,255,0.7)); margin-bottom: 12px; font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         /* Volume percentage indicator */
@@ -2916,6 +3779,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           animation: enqueue-in 0.2s cubic-bezier(0.34,1.28,0.64,1) forwards;
         }
         .queue-dropdown-menu.hidden { display: none !important; }
+        .queue-dropdown-menu .qd-sep { height: 6px; background: rgba(0,0,0,0.18); border-bottom: 0.5px solid rgba(255,255,255,0.08); }
+        .queue-dropdown-menu .qd-off { display: none !important; }
+        .queue-dropdown-item .qd-count { margin-left: auto; font-size: 13px; color: var(--crow-panel-icon-dim,rgba(255,255,255,0.4)); }
+        .queue-dropdown-item .qd-chev { width: 16px; height: 16px; flex-shrink: 0; fill: var(--crow-panel-icon-dim,rgba(255,255,255,0.35)); }
+        .queue-dropdown-item.qd-back .queue-dropdown-label { color: rgba(0,122,255,1); font-weight: 600; }
+        .queue-dropdown-item.qd-back .queue-dropdown-icon { fill: rgba(0,122,255,1); }
         .queue-dropdown-item {
           display: flex; align-items: center; gap: 12px;
           padding: 14px 18px; cursor: pointer; transition: background 0.1s ease;
@@ -3361,6 +4230,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         }
         .mc-pill-label svg { width: 10px; height: 10px; fill: rgba(255,255,255,0.7); flex-shrink: 0; }
         .mc-pill-label span { max-width: 80px; overflow: hidden; text-overflow: ellipsis; }
+        .multicast-pill.mc-pill-status .mc-pill-label span { max-width: 190px; }
         .mc-pill-btn {
           display: inline-flex; align-items: center; justify-content: center;
           width: 26px; height: 26px; padding: 0; border: none; background: transparent;
@@ -4042,6 +4912,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             <div class="mini-art" id="miniArtClick">
               <img id="miniImg">
               <div id="miniPlaceholder" class="placeholder-svg"></div>
+              <div class="mini-busy" aria-hidden="true"><span></span></div>
               <div id="miniFadeOverlay" style="display:none;position:absolute;top:0;left:0;width:100%;height:100%;background:#000;opacity:0;pointer-events:none;z-index:50;transition:opacity 0.45s ease;border-radius:inherit;"></div>
             </div>
             <div style="flex:1; overflow:hidden;" id="trackInfo">
@@ -4875,6 +5746,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           'border:1px solid ${this._pt("border")}',
           'border-radius:16px',
           'padding:8px',
+          'box-sizing:border-box',
           'display:flex',
           'flex-direction:column',
           'gap:0',
@@ -4884,7 +5756,103 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           'font-family:-apple-system,BlinkMacSystemFont,sans-serif',
         ].join(';');
 
-        items.forEach(item => {
+        // ── Grouped menu ─────────────────────────────────────────────────────
+        // Related actions live in sub-menus so the list fits on a phone
+        // screen: tapping a group slides its items in, with a back row.
+        // A group with only one item available shows that item directly.
+        const QM_ICON = {
+          vibe:   '<path d="M22 12L20 13L19 14L18 13L17 16L16 13L15 21L14 13L13 15L12 13L11 17L10 13L9 22L8 13L7 19L6 13L5 14L4 13L2 12L4 11L5 10L6 11L7 5L8 11L9 2L10 11L11 7L12 11L13 9L14 11L15 3L16 11L17 8L18 11L19 10L20 11L22 12Z"/>',
+          artist: '<path d="M11,4A4,4 0 0,1 15,8A4,4 0 0,1 11,12A4,4 0 0,1 7,8A4,4 0 0,1 11,4M11,6A2,2 0 0,0 9,8A2,2 0 0,0 11,10A2,2 0 0,0 13,8A2,2 0 0,0 11,6M11,13C12.1,13 13.66,13.23 15.11,13.69C14.5,14.07 14,14.6 13.61,15.23C12.79,15.03 11.89,14.9 11,14.9C8.03,14.9 4.9,16.36 4.9,17V18.1H13.04C13.13,18.8 13.38,19.44 13.76,20H3V17C3,14.34 8.33,13 11,13M18.5,10H22V12H20V17.5A2.5,2.5 0 0,1 17.5,20A2.5,2.5 0 0,1 15,17.5A2.5,2.5 0 0,1 17.5,15C17.86,15 18.19,15.07 18.5,15.21V10Z"/>',
+          addq:   '<path d="M3 16H10V14H3M18 14V10H16V14H12V16H16V20H18V16H22V14M14 6H3V8H14M14 10H3V12H14V10Z"/>',
+          recaps: '<path d="M19,3H5C3.9,3 3,3.9 3,5V19C3,20.1 3.9,21 5,21H19C20.1,21 21,20.1 21,19V5C21,3.9 20.1,3 19,3M9,17H7V10H9V17M13,17H11V7H13V17M17,17H15V13H17V17Z"/>',
+          share:  '<path d="M12,5.5A3.5,3.5 0 0,1 15.5,9A3.5,3.5 0 0,1 12,12.5A3.5,3.5 0 0,1 8.5,9A3.5,3.5 0 0,1 12,5.5M5,8C5.56,8 6.08,8.15 6.53,8.42C6.38,9.85 6.8,11.27 7.66,12.38C7.16,13.34 6.16,14 5,14A3,3 0 0,1 2,11A3,3 0 0,1 5,8M19,8A3,3 0 0,1 22,11A3,3 0 0,1 19,14C17.84,14 16.84,13.34 16.34,12.38C17.2,11.27 17.62,9.85 17.47,8.42C17.92,8.15 18.44,8 19,8M5.5,18.25C5.5,16.18 8.41,14.5 12,14.5C15.59,14.5 18.5,16.18 18.5,18.25V20H5.5V18.25M0,20V18.5C0,17.11 1.89,15.94 4.45,15.6C3.86,16.28 3.5,17.22 3.5,18.25V20H0M24,20H20.5V18.25C20.5,17.22 20.14,16.28 19.55,15.6C22.11,15.94 24,17.11 24,18.5V20Z"/>',
+        };
+        // Distinct icons where two items looked the same.
+        items.forEach(it => {
+          if (it.id === 'qm_mood') it.icon = QM_ICON.vibe;
+          if (it.id === 'qm_artist_radio') it.icon = QM_ICON.artist;
+        });
+        const QM_GROUPS = {
+          addq:   { label: 'Add to Queue',     icon: QM_ICON.addq,   ids: ['qm_add_similar', 'qm_add_same_genre', 'qm_add_same_year', 'qm_add_same_genre_year', 'qm_play_album'] },
+          recaps: { label: 'Recaps',           icon: QM_ICON.recaps, ids: ['qm_ai_recap', 'qm_watch_recap'] },
+          share:  { label: 'Share & Announce', icon: QM_ICON.share,  ids: ['qm_copy_link', 'qm_announce', 'qm_sendmsg'] },
+        };
+        // Top level, in sections: find & browse · discover & build · what's
+        // playing now · recaps and sharing.
+        const QM_ORDER = [
+          'qm_ai_search', 'qm_library', 'qm_queue', '|',
+          'qm_mood', 'qm_ai_recs', 'qm_artist_radio', 'qm_radio', '@addq', '|',
+          'qm_lyrics', 'qm_info', 'qm_pin', 'qm_mood_video', 'qm_trivia', 'qm_remote', 'qm_soundtrack', '|',
+          '@recaps', '@share',
+        ];
+        const _byId = new Map(items.map(it => [it.id, it]));
+        const _used = new Set();
+        const _top = [];
+        QM_ORDER.forEach(tok => {
+          if (tok === '|') { _top.push({ sep: true }); return; }
+          if (tok[0] === '@') {
+            const g = QM_GROUPS[tok.slice(1)];
+            const kids = g.ids.map(id => _byId.get(id)).filter(Boolean);
+            kids.forEach(k => _used.add(k.id));
+            if (kids.length === 1) _top.push(kids[0]);
+            else if (kids.length > 1) _top.push({ group: g, kids });
+            return;
+          }
+          const it = _byId.get(tok);
+          if (it) { _top.push(it); _used.add(it.id); }
+        });
+        // Anything not placed above (a newer item) goes before the last section.
+        const _extra = items.filter(it => !_used.has(it.id));
+        if (_extra.length) {
+          const lastSep = _top.map(x => !!x.sep).lastIndexOf(true);
+          _top.splice(lastSep === -1 ? _top.length : lastSep, 0, ..._extra);
+        }
+        // Tidy separators: none at the ends, never two in a row.
+        const _clean = (list) => list.filter((x, i, arr) => !x.sep || (i > 0 && i < arr.length - 1 && !arr[i - 1].sep));
+
+        const _rowStyle = 'display:flex;align-items:center;gap:12px;width:100%;padding:14px 18px;background:transparent;' +
+          'border:none;font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:16px;font-weight:400;color:rgba(255,255,255,0.95);' +
+          'cursor:pointer;text-align:left;box-sizing:border-box;-webkit-tap-highlight-color:transparent;letter-spacing:-0.2px;';
+        const _tapGuard = (el, onTap) => {
+          const openedAt = Date.now();
+          let sy = 0, moved = false;
+          el.addEventListener('pointerdown', (ev) => { sy = ev.clientY; moved = false; }, { passive: true });
+          el.addEventListener('pointermove', (ev) => { if (Math.abs(ev.clientY - sy) > 6) moved = true; }, { passive: true });
+          el.addEventListener('pointerup', (ev) => {
+            if (moved || Date.now() - openedAt < 350) return;
+            ev.preventDefault(); ev.stopPropagation();
+            onTap();
+          });
+        };
+        const _sepEl = () => {
+          const d = document.createElement('div');
+          d.style.cssText = 'flex-shrink:0;height:1px;margin:4px 10px;background:rgba(255,255,255,0.08);';
+          return d;
+        };
+        const _groupRow = (entry) => {
+          const row = document.createElement('button');
+          row.style.cssText = _rowStyle;
+          row.innerHTML =
+            `<span style="width:18px;height:18px;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;"><svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:rgba(255,255,255,0.45)">${entry.group.icon}</svg></span>` +
+            `<span style="flex:1;"></span>` +
+            `<span style="font-size:13px;color:rgba(255,255,255,0.4);margin-left:auto;">${entry.kids.length}</span>` +
+            `<svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:rgba(255,255,255,0.35);flex-shrink:0;"><path d="M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z"/></svg>`;
+          row.querySelectorAll('span')[1].textContent = entry.group.label;
+          row.setAttribute('aria-haspopup', 'menu');
+          _tapGuard(row, () => _render(entry));
+          return row;
+        };
+        const _backRow = (label) => {
+          const row = document.createElement('button');
+          row.style.cssText = _rowStyle + 'padding:12px 14px;font-weight:600;color:rgba(0,122,255,1);';
+          row.innerHTML = `<svg viewBox="0 0 24 24" style="width:20px;height:20px;fill:rgba(0,122,255,1);flex-shrink:0;"><path d="M15.41,16.58L10.83,12L15.41,7.41L14,6L8,12L14,18L15.41,16.58Z"/></svg><span style="flex:1;"></span>`;
+          row.querySelector('span').textContent = label;
+          row.setAttribute('aria-label', 'Back');
+          _tapGuard(row, () => _render(null));
+          return row;
+        };
+
+        const _makeBtn = (item) => {
           const btn = document.createElement('button');
           const _popupOpenedAt = Date.now();
           btn.style.cssText = 'display:flex;align-items:center;gap:12px;width:100%;padding:14px 18px;' +
@@ -5018,8 +5986,26 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             }
             else if (item.id === 'qm_info')     { expand().then(() => this._openInfoPopup()); }
           });
-          popup.appendChild(btn);
-        });
+          return btn;
+        };
+
+        // Shows the top level (entry = null) or one group's items.
+        const _render = (entry) => {
+          popup._navAt = Date.now();   // the tapped row is replaced, so its click mustn't count as "outside"
+          popup.innerHTML = '';
+          if (entry) {
+            popup.appendChild(_backRow(entry.group.label));
+            popup.appendChild(_sepEl());
+            // Inside a group the shared words are dropped ("Add Songs from Same Year" → "Same Year").
+            const SHORT = { qm_add_similar: 'Similar Songs', qm_add_same_genre: 'Same Genre', qm_add_same_year: 'Same Year', qm_add_same_genre_year: 'Same Genre & Year', qm_play_album: 'This Album' };
+            entry.kids.forEach(it => popup.appendChild(_makeBtn(SHORT[it.id] ? { ...it, label: SHORT[it.id] } : it)));
+          } else {
+            _clean(_top).forEach(x => popup.appendChild(x.sep ? _sepEl() : x.group ? _groupRow(x) : _makeBtn(x)));
+          }
+          popup.scrollTop = 0;
+          popup.animate?.([{ opacity: 0.4, transform: `translateX(${entry ? 14 : -14}px)` }, { opacity: 1, transform: 'none' }], { duration: 160, easing: 'ease-out' });
+        };
+        _render(null);
 
         const btnRect = queueOpenBtn.getBoundingClientRect();
         document.body.appendChild(popup);
@@ -5036,8 +6022,17 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         popup.style.left = leftPos + 'px';
         // Measure actual popup height now it's in the DOM (no maxHeight set yet)
         const popH = popup.scrollHeight;
-        const spaceAbove = btnRect.top - 16;
-        const spaceBelow = vh - btnRect.bottom - 16;
+        // Keep clear of the status bar / notch and the home indicator.
+        const _inset = (side) => {
+          const probe = document.createElement('div');
+          probe.style.cssText = `position:fixed;left:0;width:0;visibility:hidden;pointer-events:none;height:env(safe-area-inset-${side},0px);`;
+          document.body.appendChild(probe);
+          const h = probe.offsetHeight || 0;
+          probe.remove();
+          return h;
+        };
+        const spaceAbove = btnRect.top - 16 - _inset('top');
+        const spaceBelow = vh - btnRect.bottom - 16 - _inset('bottom');
         if (spaceBelow >= spaceAbove || spaceBelow >= popH) {
           // More room below (or enough to fit) — open downward
           popup.style.top       = (btnRect.bottom + 8) + 'px';
@@ -5058,6 +6053,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           const path = ev.composedPath ? ev.composedPath() : [ev.target];
           const hitPopup = path.some(n => n === popup);
           const hitBtn   = path.some(n => n === queueOpenBtn);
+          if (popup._navAt && Date.now() - popup._navAt < 500) return;   // moving between menu levels
           if (!hitPopup && !hitBtn) {
             popup.remove();
             document.removeEventListener('click', _qClose, true);
@@ -5179,7 +6175,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           'cursor:pointer;text-align:left;box-sizing:border-box;-webkit-tap-highlight-color:transparent;letter-spacing:-0.2px;';
         const iconSpan = document.createElement('span');
         iconSpan.style.cssText = 'width:18px;height:18px;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;';
-        iconSpan.innerHTML = '<svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:' + (isActive ? 'rgba(0,122,255,1)' : 'rgba(255,255,255,0.45)') + '"><path d="M17,2H7A2,2 0 0,0 5,4V20A2,2 0 0,0 7,22H17A2,2 0 0,0 19,20V4A2,2 0 0,0 17,2M12,19A2,2 0 0,1 10,17A2,2 0 0,1 12,15A2,2 0 0,1 14,17A2,2 0 0,1 12,19M15,9H9V4H15V9Z"/></svg>';
+        const _iconPath = (eid === this._ssInjected) ? CROWAI_SS_ICON : 'M17,2H7A2,2 0 0,0 5,4V20A2,2 0 0,0 7,22H17A2,2 0 0,0 19,20V4A2,2 0 0,0 17,2M12,19A2,2 0 0,1 10,17A2,2 0 0,1 12,15A2,2 0 0,1 14,17A2,2 0 0,1 12,19M15,9H9V4H15V9Z';
+        iconSpan.innerHTML = '<svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:' + (isActive ? 'rgba(0,122,255,1)' : 'rgba(255,255,255,0.45)') + '"><path d="' + _iconPath + '"/></svg>';
         const label = document.createElement('span');
         label.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
         label.textContent = name;
@@ -5196,6 +6193,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         });
         popup.appendChild(btn);
       });
+
+      if (this._config.sendspin_enabled) this._ssAppendMenuRows(popup);
 
       // Append to document.body with fixed positioning so it escapes the
       // shadow DOM stacking context and overflow:hidden in compact mode
@@ -5933,6 +6932,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         const infoPopup = r.getElementById('infoPopup');
         infoPopup.appendChild(backdrop);
         infoPopup.appendChild(menu);
+        try { this._groupQueueMenu(menu); } catch (_e) { console.warn('CrowAI: queue menu grouping failed', _e); }
 
         // ── Reorder ──
         menu.querySelector('#qmReorder')?.addEventListener('pointerup', (ev) => { ev.preventDefault(); ev.stopPropagation(); if (!_menuReady()) return;
@@ -6309,6 +7309,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // Ghost-skip healer: a manual prev/next means the vanishing track was the
     // user's doing, not an MA stream failure — exempt it from healing.
     if (svc === 'media_next_track' || svc === 'media_previous_track') this._userNavTs = Date.now();
+    // Resuming on this device (Play on this device): make sure sound really starts.
+    const _ss = window.__crowaiSendspin;
+    if (_ss && _ss.optedIn && this._entity && this._entity === _ss.entityId) {
+      const cur = this._hass?.states?.[this._entity]?.state;
+      if (svc === 'media_play' || (svc === 'media_play_pause' && cur !== 'playing')) this._ssWatchResume(this._entity);
+      else if (svc === 'media_pause' || svc === 'media_stop' || svc === 'media_play_pause') this._ssWatch = null;
+    }
     this._hass.connection.sendMessagePromise({
       type: 'call_service', domain: 'media_player', service: svc,
       service_data: { entity_id: this._entity, ...data }
@@ -7159,7 +8166,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const sel = r.getElementById('eSelector');
     const entities = this._config.entities || [];
     const speakerWrap = r.getElementById('speakerBtnWrap');
-    if (speakerWrap) speakerWrap.style.display = (!showSel || entities.length < 2) ? 'none' : '';
+    // Always available unless the user turned the selector off
+    // (show_entity_selector: false), even with a single speaker.
+    if (speakerWrap) speakerWrap.style.display = !showSel ? 'none' : '';
     if (sel && showSel) {
       // Build option keys including a multicast token so the selector rebuilds
       // whenever the group membership changes.
@@ -12491,7 +13500,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       if (!desc) {
         const hasAI = await this._aiCheckAvailable();
         if (sheet.isConnected && hasAI) {
-          const raw = await this._aiConverse('In 1-2 sentences, describe the "' + genre + '" podcast genre. Be concise and factual.');
+          const raw = await this._aiConverseQuiet('In 1-2 sentences, describe the "' + genre + '" podcast genre. Be concise and factual.');
           desc = raw || 'No description available.';
           this._rbTagCache.set('pcgenre|' + genre, desc);
         } else { desc = 'No description available.'; }
@@ -12515,7 +13524,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         const hasAI = await this._aiCheckAvailable();
         if (_bioEl && _bioEl.isConnected && hasAI) {
           const genreCtx = pod.primaryGenreName ? ' in the ' + pod.primaryGenreName + ' genre' : '';
-          const raw = await this._aiConverse('In 2 sentences, describe the podcast "' + (pod.collectionName || '') + '" by ' + (pod.artistName || 'unknown') + genreCtx + '. Be factual and concise.');
+          const raw = await this._aiConverseQuiet('In 2 sentences, describe the podcast "' + (pod.collectionName || '') + '" by ' + (pod.artistName || 'unknown') + genreCtx + '. Be factual and concise.');
           this._rbTagCache.set(bioCacheKey, raw || '');
           if (raw) this._aiSessionSet('pcBio', bioCacheKey, raw);
           if (_bioEl && _bioEl.isConnected) _bioEl.innerHTML = raw ? '<div style="font-size:12px;color:' + _pt('dim') + ';line-height:1.6;">' + raw + '</div>' : '';
@@ -14017,7 +15026,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const hasAI = await this._aiCheckAvailable();
     if (!hasAI) return null;
     try {
-      const raw = await this._aiConverse(prompt);
+      const raw = await this._aiConverseQuiet(prompt);
       if (!raw) return null;
       let name = raw.trim()
         .replace(/^["'“‘]+|["'”’]+$/g, '') // strip wrapping quotes the model likes to add
@@ -14930,7 +15939,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           if (!desc) {
             const hasAI = await this._aiCheckAvailable();
             if (sheet.isConnected && hasAI) {
-              const raw = await this._aiConverse('In 1-2 sentences, describe the "' + tag + '" radio/music genre or category. Be concise and factual.');
+              const raw = await this._aiConverseQuiet('In 1-2 sentences, describe the "' + tag + '" radio/music genre or category. Be concise and factual.');
               desc = raw || 'No description available.';
               this._rbTagCache.set(tag, desc);
             } else {
@@ -14955,7 +15964,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         if (hasAI) {
           const countryCtx = st.country ? ' based in ' + st.country : '';
           const tagCtx = allTags.slice(0, 3).join(', ');
-          const bioProm = await this._aiConverse('In 2 sentences, describe the radio station "' + (st.name || '') + '"' + countryCtx + (tagCtx ? ' known for ' + tagCtx : '') + '. Be factual and concise — if you don\'t know this specific station, describe it based on its genre tags only.');
+          const bioProm = await this._aiConverseQuiet('In 2 sentences, describe the radio station "' + (st.name || '') + '"' + countryCtx + (tagCtx ? ' known for ' + tagCtx : '') + '. Be factual and concise — if you don\'t know this specific station, describe it based on its genre tags only.');
           if (!this._rbTagCache) this._rbTagCache = new Map();
           this._rbTagCache.set(bioCacheKey, bioProm || '');
           if (bioProm) this._aiSessionSet('rbBio', bioCacheKey, bioProm);
@@ -15474,7 +16483,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         : `You are a music search assistant. The user wants: "${query}". Suggest 18 specific tracks that match this description. Be varied across artists and eras. Respond ONLY with a JSON array: [{"title":"Track Title","artist":"Artist Name","reason":"5 word max reason"}]`;
 
       try {
-        const resp = await this._hass.connection.sendMessagePromise({
+        const resp = await this._aiProcess({
           type: 'conversation/process', text: prompt,
           agent_id: agentId, language: navigator.language || 'en'
         });
@@ -15968,6 +16977,15 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const r = this.shadowRoot;
     const state = this._hass?.states[this._entity];
     if (!state) return;
+    // Songs are still being added: don't show a half-built queue.
+    if ((this._busyJobs || 0) > 0) {
+      if (this._queuePanelOpen()) { this._syncQueueBuilding(); return; }
+      if (_userInitiated) {
+        this._queueWaiting = true;
+        this._showToast('Still adding your songs \u2014 we\u2019ll let you know when they\u2019re ready.', 3500);
+      }
+      return;
+    }
     this._activeInfoPanelKind = 'queue';
     // Hide queue building overlay in case it was left open from a previous panel
     r?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
@@ -17335,11 +18353,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
               textEl.style.height = Math.min(textEl.scrollHeight, 96) + 'px';
             }
           } catch (e) {
-            if (e?.message === 'rate_limited') {
-              self._showToast('⚠️ AI rate limit reached — try again in a moment');
-            } else {
-              self._showToast('AI unavailable — check your conversation agent');
-            }
+            self._aiFailToast(e);
           } finally {
             annAiBtn.style.opacity = '0.6';
             annAiBtn.style.pointerEvents = '';
@@ -17610,11 +18624,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             textEl.dispatchEvent(new Event('input'));
           }
         } catch(e) {
-          if (e?.message === 'rate_limited') {
-            self._showToast('⚠️ AI rate limit reached — try again in a moment');
-          } else {
-            self._showToast('AI unavailable — check your conversation agent');
-          }
+          self._aiFailToast(e);
         } finally {
           smAiBtn.style.opacity = '0.6';
           smAiBtn.style.pointerEvents = '';
@@ -18226,7 +19236,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
    * Central helper: calls the HA conversation agent and returns the response text.
    * Returns null on failure.
    */
-  async _aiConverse(prompt, { noCache = false } = {}) {
+  // Same as _aiConverse, but never shows an error toast (background look-ups).
+  _aiConverseQuiet(prompt, opts = {}) { return this._aiConverse(prompt, { ...opts, silent: true }); }
+
+  async _aiConverse(prompt, { noCache = false, silent = false } = {}) {
     if (!this._hass) return null;
     // Unified prompt-level cache — same prompt text always returns same result.
     // Vibe queue passes noCache:true because it embeds a random seed.
@@ -18239,8 +19252,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     }
     const agentId = this._config?.ai_conversation_agent || 'conversation.home_assistant';
     try {
-      const resp = await this._hass.connection.sendMessagePromise({
-        type: 'conversation/process',
+      const resp = await this._aiProcess({
+        type: 'conversation/process', _crowSilent: silent,
         text: prompt,
         agent_id: agentId,
         language: navigator.language || 'en',
@@ -18592,7 +19605,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   async _aiImproveAnnouncement(text) {
     const prompt = `Rewrite this home announcement to sound natural, friendly and concise (max 25 words). Keep the meaning. Announcement: "${text}". Respond with ONLY the rewritten announcement, no quotes.`;
     const result = await this._aiConverse(prompt);
-    if (!result) return null;
+    // No answer: let the caller show a friendly toast (skipped if one was just shown).
+    if (!result) { const e = new Error('no answer'); e.kind = 'error'; throw e; }
     const r = result.trim();
     // Detect error responses from HA (e.g. rate-limit or API errors passed through as speech)
     if (r.toLowerCase().includes('sorry') || r.toLowerCase().includes('problem') ||
@@ -20079,8 +21093,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (!hasAI) return;
     try {
       const prompt = 'You are a movie and TV encyclopedia. Return info about "' + cleanTitle + '" as a JSON array. Start with [ end with ]. Each entry: {"type":"movie","title":"...","year":"...","genres":["..."],"rating":"...","overview":"...","cast":["..."],"director":"...","status":"...","vibe":"...","fun_fact":"...","similar":[{"title":"...","year":"...","type":"movie"}]}. Include a fun_fact and up to 4 similar titles. Return [] if unknown.';
-      const resp = await this._hass.connection.sendMessagePromise({
-        type: 'conversation/process', text: prompt, agent_id: agentId, language: navigator.language || 'en'
+      const resp = await this._aiProcess({
+        type: 'conversation/process', _crowSilent: true, text: prompt, agent_id: agentId, language: navigator.language || 'en'
       });
       const raw = resp?.response?.speech?.plain?.speech || '';
       const stripped = raw.split(String.fromCharCode(96)+String.fromCharCode(96)+String.fromCharCode(96)).join('');
@@ -20124,7 +21138,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       const _cur = this._hass?.states[this._entity]?.attributes;
       if (_cur?.media_title !== trackTitle || _cur?.media_artist !== artistName) return;
       if (!hasAI) return;
-      const raw = await this._aiConverse(`For the song "${trackTitle}" by "${artistName}", give one short intriguing fact or context in under 12 words — something a music fan would find genuinely interesting. No preamble, no quotation marks.`);
+      const raw = await this._aiConverseQuiet(`For the song "${trackTitle}" by "${artistName}", give one short intriguing fact or context in under 12 words — something a music fan would find genuinely interesting. No preamble, no quotation marks.`);
       const _cur2 = this._hass?.states[this._entity]?.attributes;
       if (_cur2?.media_title !== trackTitle || _cur2?.media_artist !== artistName) return;
       if (!raw) return;
@@ -20202,7 +21216,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       const typeLabel = isTv ? 'TV show' : 'movie';
       const prompt = `I'm watching the ${typeLabel} "${displayTitle}". Suggest 18 similar ${typeLabel}s I might enjoy. Respond ONLY with JSON array (no markdown):\n[{"title":"Title","year":"YYYY","type":"tv or movie","genre":"Genre","reason":"10 word max reason","fun_fact":"One interesting fact about this title"}]`;
       try {
-        const resp = await this._hass.connection.sendMessagePromise({
+        const resp = await this._aiProcess({
           type: 'conversation/process', text: prompt,
           agent_id: agentId, language: navigator.language || 'en'
         });
@@ -20278,7 +21292,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           const agentId2 = self._config?.ai_conversation_agent || 'conversation.home_assistant';
           const typeLabel2 = type === 'tv' ? 'TV show' : 'movie';
           const detailPrompt = `Give me details about the ${typeLabel2} "${rec.title}"${rec.year ? ` (${rec.year})` : ''}. Respond ONLY with JSON (no markdown):\n{"title":"${rec.title}","year":"${rec.year||''}","type":"${type}","status":"e.g. Released/Ended","seasons":null,"rating":null,"overview":"2 sentence overview","genres":["Genre"],"director":"Name or null","cast":["Name1","Name2","Name3","Name4","Name5","Name6"],"fun_fact":"One interesting fun fact","vibe":"Short vibe","similar":[{"title":"Title","year":"YYYY","type":"${type}"}]}`;
-          const detailResp = await self._hass.connection.sendMessagePromise({
+          const detailResp = await self._aiProcess({
             type: 'conversation/process', text: detailPrompt,
             agent_id: agentId2, language: navigator.language || 'en'
           });
@@ -20322,8 +21336,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       const agentId = this._config?.ai_conversation_agent || 'conversation.home_assistant';
       const typeLabel = mediaType === 'tv' ? 'TV show' : 'movie';
       const prompt = `I'm watching the ${typeLabel} "${title}". Suggest 18 similar ${typeLabel}s I might enjoy. Respond ONLY with JSON array (no markdown):\n[{"title":"Title","year":"YYYY","genre":"Genre","reason":"10 word max reason","fun_fact":"One interesting fact about this title"}]`;
-      const resp = await this._hass.connection.sendMessagePromise({
-        type: 'conversation/process', text: prompt,
+      const resp = await this._aiProcess({
+        type: 'conversation/process', _crowSilent: true, text: prompt,
         agent_id: agentId, language: navigator.language || 'en'
       });
       const raw = resp?.response?.speech?.plain?.speech || '';
@@ -20354,8 +21368,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       const agentId = this._config?.ai_conversation_agent || 'conversation.home_assistant';
       const parts = [trackTitle && `"${trackTitle}"`, artistName && `by ${artistName}`, albumName && `(album: ${albumName})`].filter(Boolean).join(' ');
       const prompt = `I'm listening to ${parts}. Suggest 18 similar tracks I might enjoy. Respond ONLY with JSON array (no markdown):\n[{"title":"Track Name","artist":"Artist Name","reason":"10 word max reason","fun_fact":"One interesting fact about this track or artist"}]`;
-      const resp = await this._hass.connection.sendMessagePromise({
-        type: 'conversation/process', text: prompt,
+      const resp = await this._aiProcess({
+        type: 'conversation/process', _crowSilent: true, text: prompt,
         agent_id: agentId, language: navigator.language || 'en'
       });
       const raw = resp?.response?.speech?.plain?.speech || '';
@@ -20387,8 +21401,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       const agentId = this._config?.ai_conversation_agent || 'conversation.home_assistant';
       // Identical prompt to _showAITrackInfo so both functions share the same cached result
       const prompt = `You are a music encyclopedia. For the track "${trackTitle}" by "${primaryArtist}", provide a JSON object (no markdown, raw JSON only):\n{\n  "year": "release year",\n  "album": "album name",\n  "label": "record label",\n  "genre": ["genre1","genre2"],\n  "duration": "duration e.g. 3:42",\n  "fact": "One fascinating fact in 1-2 sentences. If this track does not exist or you are not confident, set this to null.",\n  "vibe": "3-word vibe e.g. Euphoric indie anthem",\n  "members": ["Member Name 1","Member Name 2"],\n  "similar": [{"title":"Track","artist":"Artist"},{"title":"Track","artist":"Artist"}],\n  "found": true\n}\nFor similar: list exactly 10 similar tracks in that array, varied across artists, not just 2-3. For members: list the band members (2-6 names). If the artist is a solo performer, set members to [\"${primaryArtist}\"] (just their own name as a single-element array). IMPORTANT: If you cannot find reliable information about this specific track, set "found" to false and all other fields to null. Do NOT invent or hallucinate details. Respond with ONLY the JSON.`;
-      const resp = await this._hass.connection.sendMessagePromise({
-        type: 'conversation/process', text: prompt, agent_id: agentId, language: navigator.language || 'en'
+      const resp = await this._aiProcess({
+        type: 'conversation/process', _crowSilent: true, text: prompt, agent_id: agentId, language: navigator.language || 'en'
       });
       const raw = resp?.response?.speech?.plain?.speech || '';
       const s = raw.indexOf('{'), e2 = raw.lastIndexOf('}');
@@ -20418,8 +21432,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       const prompt = `You are a music encyclopedia. For the album "${albumName}" by "${artistName}", respond ONLY with a JSON object (no markdown):
 {"year":"release year or null","label":"record label or null","genre":["genre1","genre2"],"vibe":"3-5 word album vibe","fact":"One fascinating fact in 1-2 sentences or null","tracks":[{"position":"1","title":"Track Name"},{"position":"2","title":"Track Name"}]}
 Include ALL tracks. Use null for unknown fields.`;
-      const resp = await this._hass.connection.sendMessagePromise({
-        type: 'conversation/process', text: prompt,
+      const resp = await this._aiProcess({
+        type: 'conversation/process', _crowSilent: true, text: prompt,
         agent_id: agentId, language: navigator.language || 'en'
       });
       const raw = resp?.response?.speech?.plain?.speech || '';
@@ -21167,7 +22181,7 @@ Include ALL tracks. Use null for unknown fields.`;
 
       const prompt = `You are a music encyclopedia. For the track "${trackTitle}" by "${queryArtist}", provide a JSON object (no markdown, raw JSON only):\n{\n  \"year\": \"release year\",\n  \"chart\": \"highest chart position e.g. UK #1 or US #4 Billboard Hot 100, or null if truly unknown\",\n  \"reception\": \"one short phrase e.g. 4x Platinum or Critically acclaimed or GRAMMY winner, null only if no notable reception\",\n  \"album\": \"album name\",\n  \"label\": \"record label\",\n  \"genre\": [\"genre1\",\"genre2\"],\n  \"duration\": \"duration e.g. 3:42\",\n  \"fact\": \"One fascinating fact in 1-2 sentences. If this track does not exist or you are not confident, set this to null.\",\n  \"vibe\": \"3-word vibe e.g. Euphoric indie anthem\",\n  \"members\": [\"Member Name 1\",\"Member Name 2\"],\n  \"similar\": [{\"title\":\"Track\",\"artist\":\"Artist\"},{\"title\":\"Track\",\"artist\":\"Artist\"}],\n  \"found\": true\n}\\nFor similar: list exactly 10 similar tracks in that array, varied across artists, not just 2-3. For members: list the band members (2-6 names). If the artist is a solo performer, set members to [\"${queryArtist}\"] (just their own name as a single-element array). IMPORTANT: If you cannot find reliable information about this specific track, set \"found\" to false and all other fields to null. Do NOT invent or hallucinate details. Respond with ONLY the JSON.`;
       try {
-        const resp = await this._hass.connection.sendMessagePromise({
+        const resp = await this._aiProcess({
           type: 'conversation/process', text: prompt,
           agent_id: agentId, language: navigator.language || 'en'
         });
@@ -22540,7 +23554,7 @@ Include ALL tracks. Use null for unknown fields.`;
       const prompt = `I'm listening to ${parts}. Suggest 18 similar tracks I might enjoy. Respond ONLY with JSON array (no markdown):
 [{"title":"Track Name","artist":"Artist Name","reason":"10 word max reason","fun_fact":"One interesting fact about this track or artist"}]`;
       try {
-        const resp = await this._hass.connection.sendMessagePromise({
+        const resp = await this._aiProcess({
           type: 'conversation/process', text: prompt,
           agent_id: agentId, language: navigator.language || 'en'
         });
@@ -23030,7 +24044,7 @@ Include ALL tracks. Use null for unknown fields.`;
 {"year":"release year or null","label":"record label or null","genre":["genre1","genre2"],"vibe":"3-5 word album vibe","fact":"One fascinating fact in 1-2 sentences or null","tracks":[{"position":"1","title":"Track Name"},{"position":"2","title":"Track Name"}]}
 Include ALL tracks. Use null for unknown fields.`;
     try {
-      const resp = await this._hass.connection.sendMessagePromise({
+      const resp = await this._aiProcess({
         type: 'conversation/process', text: prompt,
         agent_id: agentId, language: navigator.language || 'en'
       });
@@ -23264,12 +24278,12 @@ Include ALL tracks. Use null for unknown fields.`;
       const hasAI = await this._aiCheckAvailable();
       if (!hasAI) {
         this._maBatchLoading = false;
-        this._showToast('No AI agent found — check Settings → Voice Assistants'); return;
+        this._showToast('\u26a0\ufe0f ' + this._aiErrorMessage('agent'), 5000); return;
       }
       try {
         const agentId = this._config?.ai_conversation_agent || 'conversation.home_assistant';
         const prompt = `List all tracks on the album "${album}" by "${artist}". Respond ONLY with a JSON array (no markdown):\n[{"position":"1","title":"Track Name"},{"position":"2","title":"Track Name"}]\nInclude ALL tracks.`;
-        const resp = await this._hass.connection.sendMessagePromise({
+        const resp = await this._aiProcess({
           type: 'conversation/process', text: prompt,
           agent_id: agentId, language: navigator.language || 'en'
         });
@@ -23283,7 +24297,7 @@ Include ALL tracks. Use null for unknown fields.`;
         }
       } catch(e) {
         this._maBatchLoading = false;
-        this._showToast("Couldn't fetch album tracks — try again"); return;
+        this._aiFailToast(e); return;
       }
     }
 
@@ -23343,13 +24357,14 @@ Include ALL tracks. Use null for unknown fields.`;
    * (excluding what's already been used) if dedup leaves us short of the
    * target count.
    */
-  async _addSimilarSongsToQueue() {
+  async _addSimilarSongsToQueue() { return this._busyJob(() => this.__addSimilarSongsToQueue()); }
+
+  async __addSimilarSongsToQueue() {
     // AI-driven feature — its quick-menu entry is hidden when AI features
     // are off, but other entry points (queue panel shortcut) route here
     // too, so guard with a clearer message than the generic "no agent"
     // toast, which would misleadingly send the user to HA settings.
     if (!this._aiEnabled()) { this._showToast('AI features are turned off in the card editor'); return; }
-    this._pillPulse(10000);
     this._maBatchLoading = true;
     clearTimeout(this._maBatchLoadingTimer);
     this._maBatchLoadingTimer = setTimeout(() => { this._maBatchLoading = false; }, 15000);
@@ -23361,16 +24376,16 @@ Include ALL tracks. Use null for unknown fields.`;
     if (!artist && !track) { this._maBatchLoading = false; this._showToast('No track info available'); return; }
     if (!this._maEntityIds?.has(this._entity)) { this._maBatchLoading = false; this._showToast('Music Assistant required'); return; }
 
-    this._showToast('Finding similar songs…', 4000);
-
     const hasAI = await this._aiCheckAvailable();
-    if (!hasAI) { this._maBatchLoading = false; this._showToast('No AI agent found — check Settings → Voice Assistants'); return; }
+    if (!hasAI) { this._maBatchLoading = false; this._showToast('\u26a0\ufe0f ' + this._aiErrorMessage('agent'), 5000); return; }
 
     const TARGET_COUNT = 18;
     const _normKey = (title, artistName) => (String(title || '').toLowerCase().trim() + '|' + String(artistName || '').toLowerCase().trim()).replace(/[^a-z0-9|]/g, '');
 
+    // Read what's already queued while the AI is thinking (not before asking it).
     // ── Dedup source 1: what's already sitting in the live queue ──
-    let _queueKeys = new Set();
+    const _queueKeysP = (async () => {
+    const _queueKeys = new Set();
     try {
       const hasMassQueue = !!(this._hass?.services?.mass_queue?.get_queue_items);
       if (hasMassQueue) {
@@ -23398,6 +24413,9 @@ Include ALL tracks. Use null for unknown fields.`;
     } catch (_) {
       // Non-fatal — if we can't read the queue this time, just skip queue dedup.
     }
+    return _queueKeys;
+    })();
+
 
     // ── Dedup source 2: what we've already added for this exact track before ──
     // (persisted, so pressing the button again later for the same song
@@ -23427,17 +24445,22 @@ Include ALL tracks. Use null for unknown fields.`;
       const excludeNote = excludeKeys?.size
         ? `\nDon't suggest any of these again: ${[...excludeKeys].slice(0, 20).join(', ')}`
         : '';
-      const prompt = `I'm listening to "${track}" by "${artist}". Suggest ${TARGET_COUNT} similar tracks to add to my queue.${excludeNote} Respond ONLY with a JSON array (no markdown):
+      const prompt = `I'm listening to "${track}" by "${artist}". Suggest ${TARGET_COUNT + 4} similar tracks to add to my queue.${excludeNote} Respond ONLY with a JSON array (no markdown):
 [{"title":"Track Title","artist":"Artist Name"}]`;
-      const resp = await this._hass.connection.sendMessagePromise({
+      const resp = await this._aiProcess({
         type: 'conversation/process', text: prompt,
         agent_id: agentId, language: navigator.language || 'en'
       });
       const raw = resp?.response?.speech?.plain?.speech || '';
-      return JSON.parse(raw.replace(/```json?\s*/gi, '').replace(/```/g, '').trim());
+      // The list can arrive wrapped in text or in an object — find it either way.
+      const list = this._aiCleanSongs(this._aiExtractList(raw));
+      if (!list.length) { const e = new Error('empty AI answer'); e.kind = 'unreadable'; throw e; }
+      return list;
     };
 
     let baseTracks = this._aiAddSimilarCache.get(cacheKey);
+    // An answer cached by an older version may not be a usable list — drop it.
+    if (baseTracks && !this._aiCleanSongs(baseTracks).length) baseTracks = null;
     if (!baseTracks) {
       try {
         baseTracks = await _askAI(null);
@@ -23445,9 +24468,11 @@ Include ALL tracks. Use null for unknown fields.`;
         this._aiSessionSet('addSimilar', cacheKey, baseTracks);
       } catch (e) {
         this._maBatchLoading = false;
-        this._showToast('AI couldn\'t find similar songs — try again'); return;
+        this._aiFailToast(e); return;
       }
     }
+
+    const _queueKeys = await _queueKeysP;
 
     // ── Filter out anything already queued, already added before, or
     // duplicated within the AI's own response ──
@@ -23461,11 +24486,11 @@ Include ALL tracks. Use null for unknown fields.`;
 
     // ── Backfill: if dedup left us short of the target, ask once more with
     // everything already seen excluded, to top back up ──
-    if (candidates.length < TARGET_COUNT) {
+    if (candidates.length < Math.ceil(TARGET_COUNT * 0.6)) {
       const excludeForRetry = new Set([..._queueKeys, ..._alreadyAdded, ..._seen]);
       try {
         const more = await _askAI(excludeForRetry);
-        (more || []).forEach(t => {
+        this._aiCleanSongs(more || []).forEach(t => {
           const key = _normKey(t.title, t.artist);
           if (!key || _queueKeys.has(key) || _alreadyAdded.has(key) || _seen.has(key)) return;
           _seen.add(key);
@@ -23482,17 +24507,11 @@ Include ALL tracks. Use null for unknown fields.`;
       return;
     }
 
-    let added = 0;
-    for (const t of candidates.slice(0, TARGET_COUNT)) {
-      try {
-        await this._hass.connection.sendMessagePromise({
-          type: 'call_service', domain: 'music_assistant', service: 'play_media',
-          service_data: { entity_id: this._entity, media_id: `${t.title} ${t.artist}`, media_type: 'track', enqueue: 'add' }
-        });
-        added++;
-        _alreadyAdded.add(_normKey(t.title, t.artist));
-      } catch(_) {}
-    }
+    // Find the songs in Music Assistant in parallel and add them in order —
+    // the first few straight away so the queue starts filling.
+    const _enq = await this._enqueueTracksFast(candidates.slice(0, TARGET_COUNT), this._entity);
+    const added = _enq.added, _missed = _enq.missed;
+    _enq.addedTracks.forEach(t => _alreadyAdded.add(_normKey(t.title, t.artist)));
 
     // Persist the updated "already added for this track" set.
     try {
@@ -23505,9 +24524,9 @@ Include ALL tracks. Use null for unknown fields.`;
     clearTimeout(this._maBatchLoadingTimer);
     this._pillPulse(0);
     if (added > 0) {
-      this._showToast(`✓ Added ${added} songs similar to "${track}"`, 3500);
+      this._showToast(_missed ? `Added ${added} of ${added + _missed} songs similar to "${track}" — ${_missed} couldn\u2019t be found in Music Assistant` : `✓ Added ${added} songs similar to "${track}"`, 4500);
     } else {
-      this._showToast('Could not add songs — check Music Assistant');
+      this._showToast('\u26a0\ufe0f Couldn\u2019t find these songs in Music Assistant.', 5000);
     }
   }
 
@@ -23520,9 +24539,10 @@ Include ALL tracks. Use null for unknown fields.`;
    * (not by track+artist) so pressing this again later from a different
    * song that happens to share the same year still doesn't repeat suggestions.
    */
-  async _addSameYearSongsToQueue() {
+  async _addSameYearSongsToQueue() { return this._busyJob(() => this.__addSameYearSongsToQueue()); }
+
+  async __addSameYearSongsToQueue() {
     if (!this._aiEnabled()) { this._showToast('AI features are turned off in the card editor'); return; }
-    this._pillPulse(10000);
     this._maBatchLoading = true;
     clearTimeout(this._maBatchLoadingTimer);
     this._maBatchLoadingTimer = setTimeout(() => { this._maBatchLoading = false; }, 15000);
@@ -23535,58 +24555,15 @@ Include ALL tracks. Use null for unknown fields.`;
     if (!this._maEntityIds?.has(this._entity)) { this._maBatchLoading = false; this._showToast('Music Assistant required'); return; }
 
     const hasAI = await this._aiCheckAvailable();
-    if (!hasAI) { this._maBatchLoading = false; this._showToast('No AI agent found — check Settings → Voice Assistants'); return; }
+    if (!hasAI) { this._maBatchLoading = false; this._showToast('\u26a0\ufe0f ' + this._aiErrorMessage('agent'), 5000); return; }
 
     const TARGET_COUNT = 18;
     const _normKey = (title, artistName) => (String(title || '').toLowerCase().trim() + '|' + String(artistName || '').toLowerCase().trim()).replace(/[^a-z0-9|]/g, '');
-    const agentId = this._config?.ai_conversation_agent || 'conversation.home_assistant';
 
-    // ── Resolve the release year — reuse AI Info's cache if this exact track's
-    // panel has already been opened this session (same cache key/format as
-    // _showAITrackInfo), avoiding a redundant AI round-trip just for the year.
-    let year = null;
-    const _trackInfoKey = ('trackinfo3|' + artist + '|' + track).toLowerCase();
-    const _cachedInfo = this._aiTrackInfoCache?.get(_trackInfoKey);
-    if (_cachedInfo?.year && /^\d{4}$/.test(String(_cachedInfo.year))) year = String(_cachedInfo.year);
-
-    this._showToast(year ? `Finding songs from ${year}…` : 'Finding release year…', 4000);
-
-    const _askAI = async (excludeKeys, knownYear) => {
-      const excludeNote = excludeKeys?.size
-        ? `\nDon't suggest any of these again: ${[...excludeKeys].slice(0, 20).join(', ')}`
-        : '';
-      const prompt = knownYear
-        ? `Suggest ${TARGET_COUNT} popular, well-known songs released in ${knownYear}.${excludeNote} Respond ONLY with a JSON object (no markdown): {"year":${knownYear},"songs":[{"title":"Track Title","artist":"Artist Name"}]}`
-        : `What year was "${track}" by "${artist}" released? Then suggest ${TARGET_COUNT} other popular, well-known songs from that same year.${excludeNote} If you can't confidently determine the release year, respond with {"year":null,"songs":[]}. Respond ONLY with a JSON object (no markdown): {"year":YYYY,"songs":[{"title":"Track Title","artist":"Artist Name"}]}`;
-      const resp = await this._hass.connection.sendMessagePromise({
-        type: 'conversation/process', text: prompt,
-        agent_id: agentId, language: navigator.language || 'en'
-      });
-      const raw = resp?.response?.speech?.plain?.speech || '';
-      const stripped = raw.replace(/```json?\s*/gi, '').replace(/```/g, '');
-      const objStart = stripped.indexOf('{'), objEnd = stripped.lastIndexOf('}');
-      if (objStart === -1 || objEnd <= objStart) throw new Error('No JSON in response');
-      return JSON.parse(stripped.slice(objStart, objEnd + 1));
-    };
-
-    let baseSongs = [];
-    try {
-      const result = await _askAI(null, year);
-      if (!year) year = result?.year ? String(result.year) : null;
-      baseSongs = Array.isArray(result?.songs) ? result.songs : [];
-    } catch (e) {
-      this._maBatchLoading = false;
-      this._showToast("AI couldn't fetch songs — try again"); return;
-    }
-
-    if (!year) {
-      this._maBatchLoading = false;
-      this._showToast("Couldn't determine a release year for this track");
-      return;
-    }
-
+    // Read what's already queued while the AI is thinking (not before asking it).
     // ── Dedup source 1: what's already sitting in the live queue ──
-    let _queueKeys = new Set();
+    const _queueKeysP = (async () => {
+    const _queueKeys = new Set();
     try {
       const hasMassQueue = !!(this._hass?.services?.mass_queue?.get_queue_items);
       if (hasMassQueue) {
@@ -23614,6 +24591,54 @@ Include ALL tracks. Use null for unknown fields.`;
     } catch (_) {
       // Non-fatal — if we can't read the queue this time, just skip queue dedup.
     }
+    return _queueKeys;
+    })();
+
+    const agentId = this._config?.ai_conversation_agent || 'conversation.home_assistant';
+
+    // ── Resolve the release year — reuse AI Info's cache if this exact track's
+    // panel has already been opened this session (same cache key/format as
+    // _showAITrackInfo), avoiding a redundant AI round-trip just for the year.
+    let year = null;
+    const _trackInfoKey = ('trackinfo3|' + artist + '|' + track).toLowerCase();
+    const _cachedInfo = this._aiTrackInfoCache?.get(_trackInfoKey);
+    if (_cachedInfo?.year && /^\d{4}$/.test(String(_cachedInfo.year))) year = String(_cachedInfo.year);
+
+    const _askAI = async (excludeKeys, knownYear) => {
+      const excludeNote = excludeKeys?.size
+        ? `\nDon't suggest any of these again: ${[...excludeKeys].slice(0, 20).join(', ')}`
+        : '';
+      const prompt = knownYear
+        ? `Suggest ${TARGET_COUNT + 4} popular, well-known songs released in ${knownYear}.${excludeNote} Respond ONLY with a JSON object (no markdown): {"year":${knownYear},"songs":[{"title":"Track Title","artist":"Artist Name"}]}`
+        : `What year was "${track}" by "${artist}" released? Then suggest ${TARGET_COUNT + 4} other popular, well-known songs from that same year.${excludeNote} If you can't confidently determine the release year, respond with {"year":null,"songs":[]}. Respond ONLY with a JSON object (no markdown): {"year":YYYY,"songs":[{"title":"Track Title","artist":"Artist Name"}]}`;
+      const resp = await this._aiProcess({
+        type: 'conversation/process', text: prompt,
+        agent_id: agentId, language: navigator.language || 'en'
+      });
+      const raw = resp?.response?.speech?.plain?.speech || '';
+      const stripped = raw.replace(/```json?\s*/gi, '').replace(/```/g, '');
+      const objStart = stripped.indexOf('{'), objEnd = stripped.lastIndexOf('}');
+      if (objStart === -1 || objEnd <= objStart) throw new Error('No JSON in response');
+      return JSON.parse(stripped.slice(objStart, objEnd + 1));
+    };
+
+    let baseSongs = [];
+    try {
+      const result = await _askAI(null, year);
+      if (!year) year = result?.year ? String(result.year) : null;
+      baseSongs = this._aiCleanSongs(Array.isArray(result?.songs) ? result.songs : []);
+    } catch (e) {
+      this._maBatchLoading = false;
+      this._aiFailToast(e); return;
+    }
+
+    if (!year) {
+      this._maBatchLoading = false;
+      this._showToast("Couldn't determine a release year for this track");
+      return;
+    }
+
+    const _queueKeys = await _queueKeysP;
 
     // ── Dedup source 2: what we've already added for this year in a previous
     // press — keyed by year, not track+artist, so a different same-year song
@@ -23641,11 +24666,11 @@ Include ALL tracks. Use null for unknown fields.`;
 
     // ── Backfill: if dedup left us short of the target, ask once more with
     // everything already seen excluded, to top back up ──
-    if (candidates.length < TARGET_COUNT) {
+    if (candidates.length < Math.ceil(TARGET_COUNT * 0.6)) {
       const excludeForRetry = new Set([..._queueKeys, ..._alreadyAdded, ..._seen]);
       try {
         const more = await _askAI(excludeForRetry, year);
-        (more?.songs || []).forEach(t => {
+        this._aiCleanSongs(more?.songs || []).forEach(t => {
           const key = _normKey(t.title, t.artist);
           if (!key || _queueKeys.has(key) || _alreadyAdded.has(key) || _seen.has(key)) return;
           _seen.add(key);
@@ -23662,17 +24687,11 @@ Include ALL tracks. Use null for unknown fields.`;
       return;
     }
 
-    let added = 0;
-    for (const t of candidates.slice(0, TARGET_COUNT)) {
-      try {
-        await this._hass.connection.sendMessagePromise({
-          type: 'call_service', domain: 'music_assistant', service: 'play_media',
-          service_data: { entity_id: this._entity, media_id: `${t.title} ${t.artist}`, media_type: 'track', enqueue: 'add' }
-        });
-        added++;
-        _alreadyAdded.add(_normKey(t.title, t.artist));
-      } catch(_) {}
-    }
+    // Find the songs in Music Assistant in parallel and add them in order —
+    // the first few straight away so the queue starts filling.
+    const _enq = await this._enqueueTracksFast(candidates.slice(0, TARGET_COUNT), this._entity);
+    const added = _enq.added, _missed = _enq.missed;
+    _enq.addedTracks.forEach(t => _alreadyAdded.add(_normKey(t.title, t.artist)));
 
     // Persist the updated "already added for this year" set.
     try {
@@ -23685,9 +24704,9 @@ Include ALL tracks. Use null for unknown fields.`;
     clearTimeout(this._maBatchLoadingTimer);
     this._pillPulse(0);
     if (added > 0) {
-      this._showToast(`✓ Added ${added} songs from ${year}`, 3500);
+      this._showToast(_missed ? `Added ${added} of ${added + _missed} songs from ${year} — ${_missed} couldn\u2019t be found in Music Assistant` : `✓ Added ${added} songs from ${year}`, 4500);
     } else {
-      this._showToast('Could not add songs — check Music Assistant');
+      this._showToast('\u26a0\ufe0f Couldn\u2019t find these songs in Music Assistant.', 5000);
     }
   }
 
@@ -23697,9 +24716,10 @@ Include ALL tracks. Use null for unknown fields.`;
    * see that function's doc comment for the shared dedup/backfill approach.
    * The "already added" cache is keyed by normalized-genre + year together.
    */
-  async _addSameGenreYearSongsToQueue() {
+  async _addSameGenreYearSongsToQueue() { return this._busyJob(() => this.__addSameGenreYearSongsToQueue()); }
+
+  async __addSameGenreYearSongsToQueue() {
     if (!this._aiEnabled()) { this._showToast('AI features are turned off in the card editor'); return; }
-    this._pillPulse(10000);
     this._maBatchLoading = true;
     clearTimeout(this._maBatchLoadingTimer);
     this._maBatchLoadingTimer = setTimeout(() => { this._maBatchLoading = false; }, 15000);
@@ -23712,64 +24732,15 @@ Include ALL tracks. Use null for unknown fields.`;
     if (!this._maEntityIds?.has(this._entity)) { this._maBatchLoading = false; this._showToast('Music Assistant required'); return; }
 
     const hasAI = await this._aiCheckAvailable();
-    if (!hasAI) { this._maBatchLoading = false; this._showToast('No AI agent found — check Settings → Voice Assistants'); return; }
+    if (!hasAI) { this._maBatchLoading = false; this._showToast('\u26a0\ufe0f ' + this._aiErrorMessage('agent'), 5000); return; }
 
     const TARGET_COUNT = 18;
     const _normKey   = (title, artistName) => (String(title || '').toLowerCase().trim() + '|' + String(artistName || '').toLowerCase().trim()).replace(/[^a-z0-9|]/g, '');
-    // Genre labels can vary in phrasing between AI calls ("Punk" vs "Punk
-    // Rock") — normalize before using as a cache key so repeat presses for
-    // the same genre don't quietly split into separate dedup buckets.
-    const _normGenre = g => String(g || '').toLowerCase().trim().replace(/\s+/g, ' ');
-    const agentId = this._config?.ai_conversation_agent || 'conversation.home_assistant';
 
-    // ── Resolve genre + year — reuse AI Info's cache if this exact track's
-    // panel has already been opened this session, avoiding a redundant AI
-    // round-trip just for the metadata.
-    let genre = null, year = null;
-    const _trackInfoKey = ('trackinfo3|' + artist + '|' + track).toLowerCase();
-    const _cachedInfo = this._aiTrackInfoCache?.get(_trackInfoKey);
-    if (Array.isArray(_cachedInfo?.genre) && _cachedInfo.genre[0]) genre = _cachedInfo.genre[0];
-    if (_cachedInfo?.year && /^\d{4}$/.test(String(_cachedInfo.year))) year = String(_cachedInfo.year);
-
-    this._showToast((genre && year) ? `Finding ${genre} songs from ${year}…` : 'Finding genre & year…', 4000);
-
-    const _askAI = async (excludeKeys, knownGenre, knownYear) => {
-      const excludeNote = excludeKeys?.size
-        ? `\nDon't suggest any of these again: ${[...excludeKeys].slice(0, 20).join(', ')}`
-        : '';
-      const prompt = (knownGenre && knownYear)
-        ? `Suggest ${TARGET_COUNT} popular, well-known ${knownGenre} songs released in ${knownYear}.${excludeNote} Respond ONLY with a JSON object (no markdown): {"genre":"${knownGenre}","year":${knownYear},"songs":[{"title":"Track Title","artist":"Artist Name"}]}`
-        : `What genre is "${track}" by "${artist}", and what year was it released? Then suggest ${TARGET_COUNT} other popular, well-known songs matching that same genre AND released in that same year.${excludeNote} If you can't confidently determine both the genre and year, respond with {"genre":null,"year":null,"songs":[]}. Respond ONLY with a JSON object (no markdown): {"genre":"Genre Name","year":YYYY,"songs":[{"title":"Track Title","artist":"Artist Name"}]}`;
-      const resp = await this._hass.connection.sendMessagePromise({
-        type: 'conversation/process', text: prompt,
-        agent_id: agentId, language: navigator.language || 'en'
-      });
-      const raw = resp?.response?.speech?.plain?.speech || '';
-      const stripped = raw.replace(/```json?\s*/gi, '').replace(/```/g, '');
-      const objStart = stripped.indexOf('{'), objEnd = stripped.lastIndexOf('}');
-      if (objStart === -1 || objEnd <= objStart) throw new Error('No JSON in response');
-      return JSON.parse(stripped.slice(objStart, objEnd + 1));
-    };
-
-    let baseSongs = [];
-    try {
-      const result = await _askAI(null, genre, year);
-      if (!genre) genre = result?.genre || null;
-      if (!year)  year  = result?.year ? String(result.year) : null;
-      baseSongs = Array.isArray(result?.songs) ? result.songs : [];
-    } catch (e) {
-      this._maBatchLoading = false;
-      this._showToast("AI couldn't fetch songs — try again"); return;
-    }
-
-    if (!genre || !year) {
-      this._maBatchLoading = false;
-      this._showToast("Couldn't determine this track's genre and year");
-      return;
-    }
-
+    // Read what's already queued while the AI is thinking (not before asking it).
     // ── Dedup source 1: what's already sitting in the live queue ──
-    let _queueKeys = new Set();
+    const _queueKeysP = (async () => {
+    const _queueKeys = new Set();
     try {
       const hasMassQueue = !!(this._hass?.services?.mass_queue?.get_queue_items);
       if (hasMassQueue) {
@@ -23797,6 +24768,60 @@ Include ALL tracks. Use null for unknown fields.`;
     } catch (_) {
       // Non-fatal — if we can't read the queue this time, just skip queue dedup.
     }
+    return _queueKeys;
+    })();
+
+    // Genre labels can vary in phrasing between AI calls ("Punk" vs "Punk
+    // Rock") — normalize before using as a cache key so repeat presses for
+    // the same genre don't quietly split into separate dedup buckets.
+    const _normGenre = g => String(g || '').toLowerCase().trim().replace(/\s+/g, ' ');
+    const agentId = this._config?.ai_conversation_agent || 'conversation.home_assistant';
+
+    // ── Resolve genre + year — reuse AI Info's cache if this exact track's
+    // panel has already been opened this session, avoiding a redundant AI
+    // round-trip just for the metadata.
+    let genre = null, year = null;
+    const _trackInfoKey = ('trackinfo3|' + artist + '|' + track).toLowerCase();
+    const _cachedInfo = this._aiTrackInfoCache?.get(_trackInfoKey);
+    if (Array.isArray(_cachedInfo?.genre) && _cachedInfo.genre[0]) genre = _cachedInfo.genre[0];
+    if (_cachedInfo?.year && /^\d{4}$/.test(String(_cachedInfo.year))) year = String(_cachedInfo.year);
+
+    const _askAI = async (excludeKeys, knownGenre, knownYear) => {
+      const excludeNote = excludeKeys?.size
+        ? `\nDon't suggest any of these again: ${[...excludeKeys].slice(0, 20).join(', ')}`
+        : '';
+      const prompt = (knownGenre && knownYear)
+        ? `Suggest ${TARGET_COUNT + 4} popular, well-known ${knownGenre} songs released in ${knownYear}.${excludeNote} Respond ONLY with a JSON object (no markdown): {"genre":"${knownGenre}","year":${knownYear},"songs":[{"title":"Track Title","artist":"Artist Name"}]}`
+        : `What genre is "${track}" by "${artist}", and what year was it released? Then suggest ${TARGET_COUNT + 4} other popular, well-known songs matching that same genre AND released in that same year.${excludeNote} If you can't confidently determine both the genre and year, respond with {"genre":null,"year":null,"songs":[]}. Respond ONLY with a JSON object (no markdown): {"genre":"Genre Name","year":YYYY,"songs":[{"title":"Track Title","artist":"Artist Name"}]}`;
+      const resp = await this._aiProcess({
+        type: 'conversation/process', text: prompt,
+        agent_id: agentId, language: navigator.language || 'en'
+      });
+      const raw = resp?.response?.speech?.plain?.speech || '';
+      const stripped = raw.replace(/```json?\s*/gi, '').replace(/```/g, '');
+      const objStart = stripped.indexOf('{'), objEnd = stripped.lastIndexOf('}');
+      if (objStart === -1 || objEnd <= objStart) throw new Error('No JSON in response');
+      return JSON.parse(stripped.slice(objStart, objEnd + 1));
+    };
+
+    let baseSongs = [];
+    try {
+      const result = await _askAI(null, genre, year);
+      if (!genre) genre = result?.genre || null;
+      if (!year)  year  = result?.year ? String(result.year) : null;
+      baseSongs = this._aiCleanSongs(Array.isArray(result?.songs) ? result.songs : []);
+    } catch (e) {
+      this._maBatchLoading = false;
+      this._aiFailToast(e); return;
+    }
+
+    if (!genre || !year) {
+      this._maBatchLoading = false;
+      this._showToast("Couldn't determine this track's genre and year");
+      return;
+    }
+
+    const _queueKeys = await _queueKeysP;
 
     // ── Dedup source 2: what we've already added for this genre+year combo
     // in a previous press ──
@@ -23823,11 +24848,11 @@ Include ALL tracks. Use null for unknown fields.`;
 
     // ── Backfill: if dedup left us short of the target, ask once more with
     // everything already seen excluded, to top back up ──
-    if (candidates.length < TARGET_COUNT) {
+    if (candidates.length < Math.ceil(TARGET_COUNT * 0.6)) {
       const excludeForRetry = new Set([..._queueKeys, ..._alreadyAdded, ..._seen]);
       try {
         const more = await _askAI(excludeForRetry, genre, year);
-        (more?.songs || []).forEach(t => {
+        this._aiCleanSongs(more?.songs || []).forEach(t => {
           const key = _normKey(t.title, t.artist);
           if (!key || _queueKeys.has(key) || _alreadyAdded.has(key) || _seen.has(key)) return;
           _seen.add(key);
@@ -23844,17 +24869,11 @@ Include ALL tracks. Use null for unknown fields.`;
       return;
     }
 
-    let added = 0;
-    for (const t of candidates.slice(0, TARGET_COUNT)) {
-      try {
-        await this._hass.connection.sendMessagePromise({
-          type: 'call_service', domain: 'music_assistant', service: 'play_media',
-          service_data: { entity_id: this._entity, media_id: `${t.title} ${t.artist}`, media_type: 'track', enqueue: 'add' }
-        });
-        added++;
-        _alreadyAdded.add(_normKey(t.title, t.artist));
-      } catch(_) {}
-    }
+    // Find the songs in Music Assistant in parallel and add them in order —
+    // the first few straight away so the queue starts filling.
+    const _enq = await this._enqueueTracksFast(candidates.slice(0, TARGET_COUNT), this._entity);
+    const added = _enq.added, _missed = _enq.missed;
+    _enq.addedTracks.forEach(t => _alreadyAdded.add(_normKey(t.title, t.artist)));
 
     // Persist the updated "already added for this genre+year" set.
     try {
@@ -23867,9 +24886,9 @@ Include ALL tracks. Use null for unknown fields.`;
     clearTimeout(this._maBatchLoadingTimer);
     this._pillPulse(0);
     if (added > 0) {
-      this._showToast(`✓ Added ${added} ${genre} songs from ${year}`, 3500);
+      this._showToast(_missed ? `Added ${added} of ${added + _missed} ${genre} songs from ${year} — ${_missed} couldn\u2019t be found in Music Assistant` : `✓ Added ${added} ${genre} songs from ${year}`, 4500);
     } else {
-      this._showToast('Could not add songs — check Music Assistant');
+      this._showToast('\u26a0\ufe0f Couldn\u2019t find these songs in Music Assistant.', 5000);
     }
   }
 
@@ -23880,9 +24899,10 @@ Include ALL tracks. Use null for unknown fields.`;
    * shared dedup/backfill approach. The "already added" cache is keyed by
    * normalized genre alone.
    */
-  async _addSameGenreSongsToQueue() {
+  async _addSameGenreSongsToQueue() { return this._busyJob(() => this.__addSameGenreSongsToQueue()); }
+
+  async __addSameGenreSongsToQueue() {
     if (!this._aiEnabled()) { this._showToast('AI features are turned off in the card editor'); return; }
-    this._pillPulse(10000);
     this._maBatchLoading = true;
     clearTimeout(this._maBatchLoadingTimer);
     this._maBatchLoadingTimer = setTimeout(() => { this._maBatchLoading = false; }, 15000);
@@ -23895,59 +24915,15 @@ Include ALL tracks. Use null for unknown fields.`;
     if (!this._maEntityIds?.has(this._entity)) { this._maBatchLoading = false; this._showToast('Music Assistant required'); return; }
 
     const hasAI = await this._aiCheckAvailable();
-    if (!hasAI) { this._maBatchLoading = false; this._showToast('No AI agent found — check Settings → Voice Assistants'); return; }
+    if (!hasAI) { this._maBatchLoading = false; this._showToast('\u26a0\ufe0f ' + this._aiErrorMessage('agent'), 5000); return; }
 
     const TARGET_COUNT = 18;
     const _normKey   = (title, artistName) => (String(title || '').toLowerCase().trim() + '|' + String(artistName || '').toLowerCase().trim()).replace(/[^a-z0-9|]/g, '');
-    const _normGenre = g => String(g || '').toLowerCase().trim().replace(/\s+/g, ' ');
-    const agentId = this._config?.ai_conversation_agent || 'conversation.home_assistant';
 
-    // ── Resolve genre — reuse AI Info's cache if this exact track's panel
-    // has already been opened this session, avoiding a redundant AI
-    // round-trip just for the genre.
-    let genre = null;
-    const _trackInfoKey = ('trackinfo3|' + artist + '|' + track).toLowerCase();
-    const _cachedInfo = this._aiTrackInfoCache?.get(_trackInfoKey);
-    if (Array.isArray(_cachedInfo?.genre) && _cachedInfo.genre[0]) genre = _cachedInfo.genre[0];
-
-    this._showToast(genre ? `Finding ${genre} songs…` : 'Finding genre…', 4000);
-
-    const _askAI = async (excludeKeys, knownGenre) => {
-      const excludeNote = excludeKeys?.size
-        ? `\nDon't suggest any of these again: ${[...excludeKeys].slice(0, 20).join(', ')}`
-        : '';
-      const prompt = knownGenre
-        ? `Suggest ${TARGET_COUNT} popular, well-known ${knownGenre} songs.${excludeNote} Respond ONLY with a JSON object (no markdown): {"genre":"${knownGenre}","songs":[{"title":"Track Title","artist":"Artist Name"}]}`
-        : `What genre is "${track}" by "${artist}"? Then suggest ${TARGET_COUNT} other popular, well-known songs in that same genre.${excludeNote} If you can't confidently determine the genre, respond with {"genre":null,"songs":[]}. Respond ONLY with a JSON object (no markdown): {"genre":"Genre Name","songs":[{"title":"Track Title","artist":"Artist Name"}]}`;
-      const resp = await this._hass.connection.sendMessagePromise({
-        type: 'conversation/process', text: prompt,
-        agent_id: agentId, language: navigator.language || 'en'
-      });
-      const raw = resp?.response?.speech?.plain?.speech || '';
-      const stripped = raw.replace(/```json?\s*/gi, '').replace(/```/g, '');
-      const objStart = stripped.indexOf('{'), objEnd = stripped.lastIndexOf('}');
-      if (objStart === -1 || objEnd <= objStart) throw new Error('No JSON in response');
-      return JSON.parse(stripped.slice(objStart, objEnd + 1));
-    };
-
-    let baseSongs = [];
-    try {
-      const result = await _askAI(null, genre);
-      if (!genre) genre = result?.genre || null;
-      baseSongs = Array.isArray(result?.songs) ? result.songs : [];
-    } catch (e) {
-      this._maBatchLoading = false;
-      this._showToast("AI couldn't fetch songs — try again"); return;
-    }
-
-    if (!genre) {
-      this._maBatchLoading = false;
-      this._showToast("Couldn't determine a genre for this track");
-      return;
-    }
-
+    // Read what's already queued while the AI is thinking (not before asking it).
     // ── Dedup source 1: what's already sitting in the live queue ──
-    let _queueKeys = new Set();
+    const _queueKeysP = (async () => {
+    const _queueKeys = new Set();
     try {
       const hasMassQueue = !!(this._hass?.services?.mass_queue?.get_queue_items);
       if (hasMassQueue) {
@@ -23975,6 +24951,55 @@ Include ALL tracks. Use null for unknown fields.`;
     } catch (_) {
       // Non-fatal — if we can't read the queue this time, just skip queue dedup.
     }
+    return _queueKeys;
+    })();
+
+    const _normGenre = g => String(g || '').toLowerCase().trim().replace(/\s+/g, ' ');
+    const agentId = this._config?.ai_conversation_agent || 'conversation.home_assistant';
+
+    // ── Resolve genre — reuse AI Info's cache if this exact track's panel
+    // has already been opened this session, avoiding a redundant AI
+    // round-trip just for the genre.
+    let genre = null;
+    const _trackInfoKey = ('trackinfo3|' + artist + '|' + track).toLowerCase();
+    const _cachedInfo = this._aiTrackInfoCache?.get(_trackInfoKey);
+    if (Array.isArray(_cachedInfo?.genre) && _cachedInfo.genre[0]) genre = _cachedInfo.genre[0];
+
+    const _askAI = async (excludeKeys, knownGenre) => {
+      const excludeNote = excludeKeys?.size
+        ? `\nDon't suggest any of these again: ${[...excludeKeys].slice(0, 20).join(', ')}`
+        : '';
+      const prompt = knownGenre
+        ? `Suggest ${TARGET_COUNT + 4} popular, well-known ${knownGenre} songs.${excludeNote} Respond ONLY with a JSON object (no markdown): {"genre":"${knownGenre}","songs":[{"title":"Track Title","artist":"Artist Name"}]}`
+        : `What genre is "${track}" by "${artist}"? Then suggest ${TARGET_COUNT + 4} other popular, well-known songs in that same genre.${excludeNote} If you can't confidently determine the genre, respond with {"genre":null,"songs":[]}. Respond ONLY with a JSON object (no markdown): {"genre":"Genre Name","songs":[{"title":"Track Title","artist":"Artist Name"}]}`;
+      const resp = await this._aiProcess({
+        type: 'conversation/process', text: prompt,
+        agent_id: agentId, language: navigator.language || 'en'
+      });
+      const raw = resp?.response?.speech?.plain?.speech || '';
+      const stripped = raw.replace(/```json?\s*/gi, '').replace(/```/g, '');
+      const objStart = stripped.indexOf('{'), objEnd = stripped.lastIndexOf('}');
+      if (objStart === -1 || objEnd <= objStart) throw new Error('No JSON in response');
+      return JSON.parse(stripped.slice(objStart, objEnd + 1));
+    };
+
+    let baseSongs = [];
+    try {
+      const result = await _askAI(null, genre);
+      if (!genre) genre = result?.genre || null;
+      baseSongs = this._aiCleanSongs(Array.isArray(result?.songs) ? result.songs : []);
+    } catch (e) {
+      this._maBatchLoading = false;
+      this._aiFailToast(e); return;
+    }
+
+    if (!genre) {
+      this._maBatchLoading = false;
+      this._showToast("Couldn't determine a genre for this track");
+      return;
+    }
+
+    const _queueKeys = await _queueKeysP;
 
     // ── Dedup source 2: what we've already added for this genre in a
     // previous press ──
@@ -24001,11 +25026,11 @@ Include ALL tracks. Use null for unknown fields.`;
 
     // ── Backfill: if dedup left us short of the target, ask once more with
     // everything already seen excluded, to top back up ──
-    if (candidates.length < TARGET_COUNT) {
+    if (candidates.length < Math.ceil(TARGET_COUNT * 0.6)) {
       const excludeForRetry = new Set([..._queueKeys, ..._alreadyAdded, ..._seen]);
       try {
         const more = await _askAI(excludeForRetry, genre);
-        (more?.songs || []).forEach(t => {
+        this._aiCleanSongs(more?.songs || []).forEach(t => {
           const key = _normKey(t.title, t.artist);
           if (!key || _queueKeys.has(key) || _alreadyAdded.has(key) || _seen.has(key)) return;
           _seen.add(key);
@@ -24022,17 +25047,11 @@ Include ALL tracks. Use null for unknown fields.`;
       return;
     }
 
-    let added = 0;
-    for (const t of candidates.slice(0, TARGET_COUNT)) {
-      try {
-        await this._hass.connection.sendMessagePromise({
-          type: 'call_service', domain: 'music_assistant', service: 'play_media',
-          service_data: { entity_id: this._entity, media_id: `${t.title} ${t.artist}`, media_type: 'track', enqueue: 'add' }
-        });
-        added++;
-        _alreadyAdded.add(_normKey(t.title, t.artist));
-      } catch(_) {}
-    }
+    // Find the songs in Music Assistant in parallel and add them in order —
+    // the first few straight away so the queue starts filling.
+    const _enq = await this._enqueueTracksFast(candidates.slice(0, TARGET_COUNT), this._entity);
+    const added = _enq.added, _missed = _enq.missed;
+    _enq.addedTracks.forEach(t => _alreadyAdded.add(_normKey(t.title, t.artist)));
 
     // Persist the updated "already added for this genre" set.
     try {
@@ -24045,9 +25064,9 @@ Include ALL tracks. Use null for unknown fields.`;
     clearTimeout(this._maBatchLoadingTimer);
     this._pillPulse(0);
     if (added > 0) {
-      this._showToast(`✓ Added ${added} ${genre} songs`, 3500);
+      this._showToast(_missed ? `Added ${added} of ${added + _missed} ${genre} songs — ${_missed} couldn\u2019t be found in Music Assistant` : `✓ Added ${added} ${genre} songs`, 4500);
     } else {
-      this._showToast('Could not add songs — check Music Assistant');
+      this._showToast('\u26a0\ufe0f Couldn\u2019t find these songs in Music Assistant.', 5000);
     }
   }
 
@@ -25323,6 +26342,10 @@ Include ALL tracks. Use null for unknown fields.`;
   // ── Artist Radio — direct play, no panel ───────────────────────────────────
   async _playArtistRadio(artistName) {
     if (!artistName) return;
+    return this._busyJob(() => this.__playArtistRadio(artistName));
+  }
+
+  async __playArtistRadio(artistName) {
     // AI-driven feature — reached from several long-press entry points
     // (artist name, library rows, info panel) beyond its hidden quick-menu
     // item, so guard here at the function itself with a clear message.
@@ -25334,8 +26357,6 @@ Include ALL tracks. Use null for unknown fields.`;
     clearTimeout(this._suppressArtTapTimer);
     this._suppressArtTapTimer = setTimeout(() => { this._suppressArtTap = false; }, 3000);
 
-    this._showToast(`Building ${artistName} queue…`, 4000);
-    this._pillPulse(30000);
     this._maBatchLoading = true;
     clearTimeout(this._maBatchLoadingTimer);
     this._maBatchLoadingTimer = setTimeout(() => { this._maBatchLoading = false; }, 60000);
@@ -25348,29 +26369,16 @@ Include ALL tracks. Use null for unknown fields.`;
         const _seed = Math.random().toString(36).slice(2, 7);
         const agentId = this._config?.ai_conversation_agent || 'conversation.home_assistant';
         const prompt = `List 10 well-known tracks by "${artistName}". Only songs by ${artistName} — no other artists. Mix popular hits with deeper cuts. ref:${_seed}. Respond ONLY with a JSON array: [{"title":"Track Title","artist":"${artistName}"}]`;
-        const resp = await this._hass.connection.sendMessagePromise({
-          type: 'conversation/process', text: prompt,
+        const resp = await this._aiProcess({
+          type: 'conversation/process', _crowSilent: true, text: prompt,
           agent_id: agentId, language: navigator.language || 'en'
         });
         const raw = resp?.response?.speech?.plain?.speech || '';
-        const s = raw.indexOf('['), e2 = raw.lastIndexOf(']');
-        if (s === -1 || e2 <= s) throw new Error('No JSON');
-        const tracks = JSON.parse(raw.slice(s, e2 + 1));
-        if (!Array.isArray(tracks) || !tracks.length) throw new Error('Empty');
-
-        let added = 0;
-        for (const t of tracks) {
-          if (!t.title) continue;
-          try {
-            const enqueue = added === 0 ? 'replace' : 'add';
-            await this._hass.connection.sendMessagePromise({
-              type: 'call_service', domain: 'music_assistant', service: 'play_media',
-              service_data: { entity_id: target, media_id: `${t.title} ${artistName}`, media_type: 'track', enqueue }
-            });
-            added++;
-            if (added === 1) await new Promise(res => setTimeout(res, 1500));
-          } catch(_) {}
-        }
+        const tracks = this._aiCleanSongs(this._aiExtractList(raw), artistName).map(t => ({ ...t, artist: artistName }));
+        if (!tracks.length) throw new Error('Empty');
+        // Find them in parallel; the first few start playing straight away.
+        const { added } = await this._enqueueTracksFast(tracks, target, { firstEnqueue: 'replace' });
+        if (!added) throw new Error('none found');
         this._maBatchLoading = false;
         clearTimeout(this._maBatchLoadingTimer);
         this._pillPulse(0);
@@ -25410,7 +26418,7 @@ Include ALL tracks. Use null for unknown fields.`;
       clearTimeout(this._maBatchLoadingTimer);
       this._pillPulse(0);
       this._suppressArtTap = false;
-      this._showToast('Could not start Artist Radio — try again');
+      this._showToast(`\u26a0\ufe0f Couldn\u2019t find music by ${artistName} in Music Assistant.`, 5000);
     }
   }
 
@@ -25485,7 +26493,7 @@ Include ALL tracks. Use null for unknown fields.`;
       + `Respond ONLY with a JSON array: [{"name":"Artist Name","reason":"5 word max reason"}]`;
 
     try {
-      const resp = await this._hass.connection.sendMessagePromise({
+      const resp = await this._aiProcess({
         type: 'conversation/process', text: prompt,
         agent_id: agentId, language: navigator.language || 'en'
       });
@@ -25748,7 +26756,7 @@ Include ALL tracks. Use null for unknown fields.`;
         const prompt = `You are a music search assistant. The user wants: "${q}". Suggest 18 specific tracks that match this description. Be varied across artists and eras. Respond ONLY with a JSON array:
 [{"title":"Track Title","artist":"Artist Name","reason":"5 word max reason"}]`;
         try {
-          const resp = await this._hass.connection.sendMessagePromise({
+          const resp = await this._aiProcess({
             type: 'conversation/process', text: prompt,
             agent_id: agentId, language: navigator.language || 'en'
           });
@@ -26228,7 +27236,7 @@ Include ALL tracks. Use null for unknown fields.`;
           if (body) body.textContent = 'AI agent not available.';
           return;
         }
-        const raw = await this._aiConverse(`"${trackTitle}" by "${artistName}" was released in ${year}. In 2-3 sentences, describe what was happening in music and pop culture in ${year} — notable albums, cultural moments, or musical movements. No preamble, no mention of this specific song.`);
+        const raw = await this._aiConverseQuiet(`"${trackTitle}" by "${artistName}" was released in ${year}. In 2-3 sentences, describe what was happening in music and pop culture in ${year} — notable albums, cultural moments, or musical movements. No preamble, no mention of this specific song.`);
         if (!popup.isConnected) return;
         if (!raw) {
           const body = popup.querySelector('#year-popup-body');
@@ -26836,7 +27844,7 @@ Include ALL tracks. Use null for unknown fields.`;
       const prompt = 'You are a movie and TV encyclopedia. Use the full breadth of your training knowledge, including recent releases — do not assume you only know about older titles. I need information about "' + cleanTitle + '". CRITICAL: You MUST use your training knowledge to answer this. Do NOT say you cannot access the internet. ' + _exactInstruction + ' Return as a raw JSON array. Start with [ end with ]. Include up to 15 cast members, a "fun_fact" string with one genuinely interesting or surprising fact, and a "similar" array of 10 similar titles. Movie: [{"type":"movie","title":"Heat","year":"1995","genres":["Crime"],"rating":"8.3","overview":"...","cast":["Al Pacino"],"director":"Michael Mann","status":"Released","vibe":"Intense","fun_fact":"Al Pacino and Robert De Niro share only one scene together.","similar":[{"title":"Michael Mann\'s Collateral","year":"2004","type":"movie"},{"title":"Heat 2","year":"2022","type":"movie"}]}] TV: [{"type":"tv","title":"Doctor Who","year":"2005","genres":["Sci-Fi"],"rating":"8.6","overview":"...","cast":["David Tennant"],"seasons":14,"status":"Continuing","vibe":"Epic","fun_fact":"The show originally ran from 1963 to 1989 before being revived in 2005.","similar":[{"title":"Torchwood","year":"2006","type":"tv"},{"title":"The Sarah Jane Adventures","year":"2007","type":"tv"}]}] If truly unknown return [].' ;
 
       try {
-        const resp = await this._hass.connection.sendMessagePromise({
+        const resp = await this._aiProcess({
           type: 'conversation/process', text: prompt,
           agent_id: agentId, language: navigator.language || 'en'
         });
@@ -27028,7 +28036,7 @@ Include ALL tracks. Use null for unknown fields.`;
       const agentId = this._config?.ai_conversation_agent || '';
       const pickerPrompt = 'For each of these movies/TV shows, give me the most specific and unambiguous Wikipedia article title that would show its poster/thumbnail. Return ONLY a JSON array of strings, one per item, in the same order. Example: ["Star Trek (film)", "Star Trek: The Next Generation", "Doctor Who (2005 TV series)"]. Items: '
         + results.map((r, i) => `${i+1}. "${r.title}" (${r.year}, ${r.type === 'tv' ? 'TV series' : 'movie'})`).join(', ');
-      const resp = await this._hass.connection.sendMessagePromise({
+      const resp = await this._aiProcess({
         type: 'conversation/process', text: pickerPrompt,
         agent_id: agentId, language: navigator.language || 'en'
       });
@@ -27434,7 +28442,7 @@ Include ALL tracks. Use null for unknown fields.`;
             const agentId3 = _self._config?.ai_conversation_agent || 'conversation.home_assistant';
             const typeLabel3 = simType === 'tv' ? 'TV show' : 'movie';
             const simPrompt = `You are a movie and TV encyclopedia. For the ${typeLabel3} "${simTitle}"${simYear ? ` (${simYear})` : ''}, return a single JSON object (no array, no markdown): {"type":"${simType}","title":"${simTitle}","year":"${simYear||''}","genres":["Genre"],"rating":"8.0","overview":"2 sentence overview","cast":["Name1","Name2","Name3","Name4","Name5","Name6"],"director":"Name or null","status":"Released or Continuing","vibe":"Short vibe","fun_fact":"One interesting fact","similar":[{"title":"Title","year":"YYYY","type":"${simType}"}]}`;
-            const simResp = await _self._hass.connection.sendMessagePromise({
+            const simResp = await _self._aiProcess({
               type: 'conversation/process', text: simPrompt,
               agent_id: agentId3, language: navigator.language || 'en'
             });
@@ -27836,7 +28844,7 @@ Include ALL tracks. Use null for unknown fields.`;
     const prompt = `Where can I watch the ${typeLabel} "${title}"${year ? ` (${year})` : ''} ? Respond ONLY with a JSON array, no markdown, no preamble: [{"service":"Netflix","note":""},{"service":"Amazon Prime Video","note":""}]. The "note" field must be at most 3 words (e.g. "Subscription", "Rent/Buy", "Season 1-3") or an empty string — never a full sentence or disclaimer.`;
 
     try {
-      const raw = await this._aiConverse(prompt);
+      const raw = await this._aiConverseQuiet(prompt);
       if (!_section()) return; // panel navigated away
       if (!raw) { const el = _section(); if (el) el.innerHTML = ''; return; }
       const i1 = raw.indexOf('['), i2 = raw.lastIndexOf(']');
@@ -27879,7 +28887,7 @@ Include ALL tracks. Use null for unknown fields.`;
       if (!content.querySelector('#content-warning-section')) return;
       if (!hasAI) return;
       const typeLabel = data.type === 'tv' ? 'TV series' : 'movie';
-      const raw = await this._aiConverse(`For the ${typeLabel} "${data.title}"${data.year ? ' (' + data.year + ')' : ''}, give a brief content advisory. Respond ONLY with a JSON object: {"rating":"e.g. 15","rating_desc":"One sentence explaining what this UK age rating means for this title","themes":[{"label":"Violence","desc":"One sentence describing the nature of violence in this title"},{"label":"Language","desc":"One sentence describing the language"}],"kid_friendly":false}. Use UK age ratings (U, PG, 12, 15, 18). Max 3 themes.`);
+      const raw = await this._aiConverseQuiet(`For the ${typeLabel} "${data.title}"${data.year ? ' (' + data.year + ')' : ''}, give a brief content advisory. Respond ONLY with a JSON object: {"rating":"e.g. 15","rating_desc":"One sentence explaining what this UK age rating means for this title","themes":[{"label":"Violence","desc":"One sentence describing the nature of violence in this title"},{"label":"Language","desc":"One sentence describing the language"}],"kid_friendly":false}. Use UK age ratings (U, PG, 12, 15, 18). Max 3 themes.`);
       if (!raw) return;
       try {
         const i1 = raw.indexOf('{'), i2 = raw.lastIndexOf('}');
@@ -28188,7 +29196,7 @@ Include ALL tracks. Use null for unknown fields.`;
     if (!counts) {
       try {
         const prompt = `For the TV series "${showTitle}" (${totalSeasons} seasons), list the episode count for each season. Reply ONLY with a JSON object like {"1":13,"2":13,"3":16} — season number as string key, episode count as integer value. No markdown.`;
-        const resp = await this._hass.connection.sendMessagePromise({
+        const resp = await this._aiProcess({
           type: 'conversation/process', text: prompt, agent_id: agentId, language: navigator.language || 'en'
         });
         const raw = resp?.response?.speech?.plain?.speech || '';
@@ -28253,7 +29261,7 @@ Include ALL tracks. Use null for unknown fields.`;
     if (!episodes) {
       try {
         const prompt = `List all episodes of Season ${seasonNum} of "${showTitle}". Reply ONLY with a JSON array — no markdown:\n[{"ep":1,"title":"Episode Title","airdate":"YYYY-MM-DD","tease":"Under 10 words, spoiler-free teaser"}]\nKeep teases intriguing but spoiler-free — no plot reveals.`;
-        const resp = await this._hass.connection.sendMessagePromise({
+        const resp = await this._aiProcess({
           type: 'conversation/process', text: prompt, agent_id: agentId, language: navigator.language || 'en'
         });
         const raw = resp?.response?.speech?.plain?.speech || '';
@@ -28392,7 +29400,7 @@ Include ALL tracks. Use null for unknown fields.`;
     if (!detail) {
       try {
         const prompt = `Give details for S${seasonNum}E${ep.ep} "${ep.title || ''}" of the TV series "${showTitle}". Reply ONLY with JSON — no markdown: {"overview":"2-3 sentence synopsis","director":"Name","writer":"Name","rating":"8.1","fun_fact":"One interesting behind-the-scenes fact"}`;
-        const resp = await this._hass.connection.sendMessagePromise({
+        const resp = await this._aiProcess({
           type: 'conversation/process', text: prompt, agent_id: agentId, language: navigator.language || 'en'
         });
         const raw = resp?.response?.speech?.plain?.speech || '';
@@ -28590,8 +29598,8 @@ Include ALL tracks. Use null for unknown fields.`;
       const prompt = isMusicContext
         ? 'Give me a short biography of the musician "' + name + '" known for their work with "' + (showTitle || '') + '". Reply ONLY with JSON: {"known_for":[{"title":"Song or Album 1","year":"YYYY","type":"song"},{"title":"Song or Album 2","year":"YYYY","type":"album"},{"title":"Song or Album 3","year":"YYYY","type":"song"}],"born":"1970","nationality":"American","bio":"2 sentence overview","fun_fact":"One surprising fact about them"}'
         : 'Give me a short biography of the actor/actress "' + name + '" known for appearing in "' + (showTitle || '') + '". Reply ONLY with JSON: {"known_for":[{"title":"Work 1","year":"YYYY","type":"tv"},{"title":"Work 2","year":"YYYY","type":"movie"},{"title":"Work 3","year":"YYYY","type":"tv"}],"born":"1970","nationality":"American","bio":"2 sentence overview","fun_fact":"One surprising fact about them"}';
-      const resp = await this._hass.connection.sendMessagePromise({
-        type: 'conversation/process', text: prompt, agent_id: agentId, language: navigator.language || 'en'
+      const resp = await this._aiProcess({
+        type: 'conversation/process', _crowSilent: true, text: prompt, agent_id: agentId, language: navigator.language || 'en'
       });
       const raw = resp?.response?.speech?.plain?.speech || '';
       const start = raw.indexOf('{'), end = raw.lastIndexOf('}');
@@ -28809,7 +29817,7 @@ Include ALL tracks. Use null for unknown fields.`;
         const prompt = isMusicContext
           ? 'Give me a short biography of the musician "' + name + '" known for their work with "' + showTitle + '". Reply ONLY with JSON: {"known_for":[{"title":"Song or Album 1","year":"YYYY","type":"song"},{"title":"Song or Album 2","year":"YYYY","type":"album"},{"title":"Song or Album 3","year":"YYYY","type":"song"}],"born":"1970","nationality":"American","bio":"2 sentence overview","fun_fact":"One surprising fact about them"}'
           : 'Give me a short biography of the actor/actress "' + name + '" known for appearing in "' + showTitle + '". Reply ONLY with JSON: {"known_for":[{"title":"Work 1","year":"YYYY","type":"tv"},{"title":"Work 2","year":"YYYY","type":"movie"},{"title":"Work 3","year":"YYYY","type":"tv"}],"born":"1970","nationality":"American","bio":"2 sentence overview","fun_fact":"One surprising fact about them"}';
-        const resp = await this._hass.connection.sendMessagePromise({
+        const resp = await this._aiProcess({
           type: 'conversation/process', text: prompt, agent_id: agentId, language: navigator.language || 'en'
         });
         const raw = resp?.response?.speech?.plain?.speech || '';
@@ -28896,7 +29904,7 @@ Include ALL tracks. Use null for unknown fields.`;
               const _agentId = _self._config?.ai_conversation_agent || 'conversation.home_assistant';
               const _typeLabel = kType === 'tv' ? 'TV show' : 'movie';
               const _kPrompt = `You are a movie and TV encyclopedia. For the ${_typeLabel} "${kTitle}"${kYear ? ` (${kYear})` : ''}, return a single JSON object (no array, no markdown): {"type":"${kType}","title":"${kTitle}","year":"${kYear||''}","genres":["Genre"],"rating":"8.0","overview":"2 sentence overview","cast":["Name1","Name2","Name3","Name4","Name5","Name6"],"director":"Name or null","status":"Released or Continuing","vibe":"Short vibe","fun_fact":"One interesting fact","similar":[{"title":"Title","year":"YYYY","type":"${kType}"}]}`;
-              const _kResp = await _self._hass.connection.sendMessagePromise({
+              const _kResp = await _self._aiProcess({
                 type: 'conversation/process', text: _kPrompt,
                 agent_id: _agentId, language: navigator.language || 'en'
               });
@@ -30772,26 +31780,368 @@ Include ALL tracks. Use null for unknown fields.`;
 
   // Pulse the active MA speaker pill for `ms` milliseconds to signal queue activity.
   // pill to open the queue while it is still being populated.
-  _pillPulse(ms = 3000) {
-    const pill = this.shadowRoot?.querySelector('.multicast-pill.mc-pill-active') ||
-                 this.shadowRoot?.querySelector('.multicast-pill');
-    if (!pill) return;
-    const row = this.shadowRoot?.getElementById('multicastPillsRow');
-    clearTimeout(this._pillPulseTimer);
-    if (ms <= 0) {
-      pill.classList.remove('mc-pill-loading');
-      return;
+  // ── Queue ⋮ menu: grouped like the quick menu ──────────────────────────────
+  // Rows already have their actions wired, so they're regrouped in place:
+  // ordered into sections, related ones tucked behind a group row (›) that
+  // swaps the view to just those rows plus a back row. A group with only one
+  // row available shows that row directly.
+  _groupQueueMenu(menu) {
+    const SVG_NS = (inner) => `<svg class="queue-dropdown-icon" viewBox="0 0 24 24">${inner}</svg>`;
+    const ICON = {
+      vibe:   '<path d="M22 12L20 13L19 14L18 13L17 16L16 13L15 21L14 13L13 15L12 13L11 17L10 13L9 22L8 13L7 19L6 13L5 14L4 13L2 12L4 11L5 10L6 11L7 5L8 11L9 2L10 11L11 7L12 11L13 9L14 11L15 3L16 11L17 8L18 11L19 10L20 11L22 12Z"/>',
+      artist: '<path d="M11,4A4,4 0 0,1 15,8A4,4 0 0,1 11,12A4,4 0 0,1 7,8A4,4 0 0,1 11,4M11,6A2,2 0 0,0 9,8A2,2 0 0,0 11,10A2,2 0 0,0 13,8A2,2 0 0,0 11,6M11,13C12.1,13 13.66,13.23 15.11,13.69C14.5,14.07 14,14.6 13.61,15.23C12.79,15.03 11.89,14.9 11,14.9C8.03,14.9 4.9,16.36 4.9,17V18.1H13.04C13.13,18.8 13.38,19.44 13.76,20H3V17C3,14.34 8.33,13 11,13M18.5,10H22V12H20V17.5A2.5,2.5 0 0,1 17.5,20A2.5,2.5 0 0,1 15,17.5A2.5,2.5 0 0,1 17.5,15C17.86,15 18.19,15.07 18.5,15.21V10Z"/>',
+      addq:   '<path d="M3 16H10V14H3M18 14V10H16V14H12V16H16V20H18V16H22V14M14 6H3V8H14M14 10H3V12H14V10Z"/>',
+      share:  '<path d="M12,5.5A3.5,3.5 0 0,1 15.5,9A3.5,3.5 0 0,1 12,12.5A3.5,3.5 0 0,1 8.5,9A3.5,3.5 0 0,1 12,5.5M5,8C5.56,8 6.08,8.15 6.53,8.42C6.38,9.85 6.8,11.27 7.66,12.38C7.16,13.34 6.16,14 5,14A3,3 0 0,1 2,11A3,3 0 0,1 5,8M19,8A3,3 0 0,1 22,11A3,3 0 0,1 19,14C17.84,14 16.84,13.34 16.34,12.38C17.2,11.27 17.62,9.85 17.47,8.42C17.92,8.15 18.44,8 19,8M5.5,18.25C5.5,16.18 8.41,14.5 12,14.5C15.59,14.5 18.5,16.18 18.5,18.25V20H5.5V18.25M0,20V18.5C0,17.11 1.89,15.94 4.45,15.6C3.86,16.28 3.5,17.22 3.5,18.25V20H0M24,20H20.5V18.25C20.5,17.22 20.14,16.28 19.55,15.6C22.11,15.94 24,17.11 24,18.5V20Z"/>',
+      chev:   '<path d="M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z"/>',
+      back:   '<path d="M15.41,16.58L10.83,12L15.41,7.41L14,6L8,12L14,18L15.41,16.58Z"/>',
+    };
+    const rows = new Map([...menu.querySelectorAll(':scope > .queue-dropdown-item[id]')].map(el => [el.id, el]));
+    // Distinct icons where two rows looked the same.
+    const setIcon = (id, inner) => { const svg = rows.get(id)?.querySelector('.queue-dropdown-icon'); if (svg) svg.innerHTML = inner; };
+    setIcon('qmMood', ICON.vibe);
+    setIcon('qmArtistRadio', ICON.artist);
+
+    const GROUPS = {
+      addq:  { label: 'Add to Queue', icon: ICON.addq, ids: ['qmAddSimilar', 'qmAddSameGenre', 'qmAddSameYear', 'qmAddSameGenreYear', 'qmPlayAlbum'],
+               short: { qmAddSimilar: 'Similar Songs', qmAddSameGenre: 'Same Genre', qmAddSameYear: 'Same Year', qmAddSameGenreYear: 'Same Genre & Year', qmPlayAlbum: 'This Album' } },
+      share: { label: 'Share & Announce', icon: ICON.share, ids: ['qmAnnounce', 'qmSendMsg'], short: {} },
+    };
+    // Sections: this queue · find & browse · discover & build · share · clear.
+    const ORDER = [
+      'qmReorder', 'qmJumpCurrent', 'qmPinTrack', 'qmSaveQueue', 'qmTransfer', '|',
+      'qmAISearch', 'qmLibrary', '|',
+      'qmMood', 'qmAIRecs', 'qmArtistRadio', 'qmRadioMode', '@addq', '|',
+      '@share', '|',
+      'qmClear',
+    ];
+    const used = new Set();
+    const top = [];
+    const groupKids = [];
+    ORDER.forEach(tok => {
+      if (tok === '|') { top.push('|'); return; }
+      if (tok[0] === '@') {
+        const g = GROUPS[tok.slice(1)];
+        const kids = g.ids.map(id => rows.get(id)).filter(Boolean);
+        kids.forEach(k => used.add(k.id));
+        if (kids.length === 1) { top.push(kids[0]); return; }
+        if (!kids.length) return;
+        const row = document.createElement('div');
+        row.className = 'queue-dropdown-item qd-group';
+        row.setAttribute('role', 'button');
+        row.setAttribute('aria-haspopup', 'menu');
+        row.innerHTML = `${SVG_NS(g.icon)}<span class="queue-dropdown-label"></span><span class="qd-count">${kids.length}</span><svg class="qd-chev" viewBox="0 0 24 24">${ICON.chev}</svg>`;
+        row.querySelector('.queue-dropdown-label').textContent = g.label;
+        kids.forEach(k => { const lab = k.querySelector('.queue-dropdown-label'); if (lab && g.short[k.id]) lab.textContent = g.short[k.id]; });
+        row._qdGroup = { g, kids };
+        groupKids.push(...kids);
+        top.push(row);
+        return;
+      }
+      const el = rows.get(tok);
+      if (el) { top.push(el); used.add(tok); }
+    });
+    // Rows not placed above (newer items) go just before Clear Queue.
+    const extra = [...rows.values()].filter(el => !used.has(el.id));
+    if (extra.length) {
+      const clearAt = top.indexOf(rows.get('qmClear'));
+      top.splice(clearAt === -1 ? top.length : clearAt, 0, ...extra);
     }
-    pill.classList.add('mc-pill-loading');
-    this._pillPulseTimer = setTimeout(() => {
-      pill.classList.remove('mc-pill-loading');
-    }, ms);
+    // Separators: none at the ends, never two in a row.
+    const clean = top.filter((x, i, arr) => x !== '|' || (i > 0 && i < arr.length - 1 && arr[i - 1] !== '|'));
+
+    const back = document.createElement('div');
+    back.className = 'queue-dropdown-item qd-back qd-off';
+    back.setAttribute('role', 'button');
+    back.setAttribute('aria-label', 'Back');
+    back.innerHTML = `${SVG_NS(ICON.back)}<span class="queue-dropdown-label"></span>`;
+
+    menu.innerHTML = '';
+    menu.appendChild(back);
+    const topEls = clean.map(x => {
+      if (x !== '|') return x;
+      const d = document.createElement('div'); d.className = 'qd-sep'; return d;
+    });
+    topEls.forEach(el => menu.appendChild(el));
+    groupKids.forEach(k => { k.classList.add('qd-off'); menu.appendChild(k); });
+
+    const anim = (dir) => menu.animate?.([{ opacity: 0.4, transform: `translateX(${dir}px)` }, { opacity: 1, transform: 'none' }], { duration: 160, easing: 'ease-out' });
+    const showTop = () => {
+      back.classList.add('qd-off');
+      groupKids.forEach(k => k.classList.add('qd-off'));
+      topEls.forEach(el => el.classList.remove('qd-off'));
+      menu.scrollTop = 0; anim(-14);
+    };
+    const showGroup = ({ g, kids }) => {
+      topEls.forEach(el => el.classList.add('qd-off'));
+      groupKids.forEach(k => k.classList.toggle('qd-off', !kids.includes(k)));
+      back.querySelector('.queue-dropdown-label').textContent = g.label;
+      back.classList.remove('qd-off');
+      menu.scrollTop = 0; anim(14);
+    };
+    const tap = (el, fn) => el.addEventListener('pointerup', (ev) => { ev.preventDefault(); ev.stopPropagation(); fn(); });
+    tap(back, showTop);
+    topEls.forEach(el => { if (el._qdGroup) tap(el, () => showGroup(el._qdGroup)); });
+  }
+
+  // ── Working indicator ──────────────────────────────────────────────────────
+  // One "busy" state drives both the spinner inside the mini artwork and the
+  // pulsing speaker pill. It's a class on the card itself, so it survives the
+  // pill being re-drawn on every Home Assistant update. _busyJob() wraps a
+  // whole task (on until it finishes, however it ends); _pillPulse(ms) is the
+  // older timed pulse, kept for the places that use it. A 60-second cap means
+  // it can never get stuck on.
+  _applyBusy() {
+    const on = (this._busyJobs || 0) > 0 || (this._pulseUntil || 0) > Date.now() || this._ssUiVisible();
+    this.shadowRoot?.getElementById('cardOuter')?.classList.toggle('crow-busy', on);
+    this._ssApplyPillStatus();
+  }
+  async _busyJob(fn) {
+    this._busyJobs = (this._busyJobs || 0) + 1;
+    clearTimeout(this._busyCapTimer);
+    this._busyCapTimer = setTimeout(() => { this._busyJobs = 0; this._pulseUntil = 0; this._applyBusy(); this._busyEnded(); }, 60000);
+    this._applyBusy();
+    this._syncQueueBuilding();
+    try { return await fn(); }
+    finally {
+      this._busyJobs = Math.max(0, (this._busyJobs || 1) - 1);
+      if (!this._busyJobs) { this._pulseUntil = 0; this._maBatchLoading = false; clearTimeout(this._maBatchLoadingTimer); }
+      this._applyBusy();
+      if (!this._busyJobs) this._busyEnded();
+    }
+  }
+
+  // The queue can't be opened while songs are still being added (it would
+  // only show a half-built or empty list). If it's already open, it shows
+  // "Building your queue" instead, and refreshes once the songs are in.
+  _queuePanelOpen() {
+    const popup = this.shadowRoot?.getElementById('infoPopup');
+    return !!(popup?.classList.contains('visible') && this._activeInfoPanelKind === 'queue');
+  }
+  _syncQueueBuilding() {
+    const ov = this.shadowRoot?.getElementById('queueBuildingOverlay');
+    if (!ov) return;
+    ov.style.setProperty('display', (this._busyJobs || 0) > 0 && this._queuePanelOpen() ? 'flex' : 'none');
+  }
+  _busyEnded() {
+    clearTimeout(this._busyCapTimer);
+    this.shadowRoot?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
+    const waited = this._queueWaiting;
+    this._queueWaiting = false;
+    // Someone tried to open the queue while it was being built: don't open
+    // it for them, just tell them it's ready (folded into the feature's own
+    // "Added …" message when there is one; an error message is left alone).
+    if (waited) {
+      const last = this._lastToast;
+      const recent = last && Date.now() - last.at < 1500;
+      if (recent && /^(\u2713|Added )/.test(String(last.msg))) this._showToast(`${last.msg}. Tap Queue to see them.`, 5000);
+      else if (!(recent && String(last.msg).startsWith('\u26a0'))) this._showToast('\u2713 Your queue is ready. Tap Queue to see the new songs.', 4500);
+    }
+    // A queue that was already open refreshes once Music Assistant reports the new songs.
+    setTimeout(() => {
+      if (this.isConnected && this._queuePanelOpen()) this._showQueuePanel(this._queuePanelDirection);
+    }, 600);
+  }
+  _pillPulse(ms = 3000) {
+    clearTimeout(this._pillPulseTimer);
+    this._pulseUntil = ms > 0 ? Date.now() + Math.min(ms, 60000) : 0;
+    this._applyBusy();
+    if (ms > 0) this._pillPulseTimer = setTimeout(() => this._applyBusy(), Math.min(ms, 60000) + 20);
+  }
+
+  // ── Friendly AI errors ────────────────────────────────────────────────────
+  // Every request to the AI goes through _aiProcess: it adds a 30-second
+  // limit, spots error answers (quota, sign-in, retired model, no agent…) and
+  // shows one plain-English toast for them. Background look-ups pass
+  // _crowSilent so they never pop up a toast on their own.
+  _aiErrorKind(text) {
+    const t = String(text || '').toLowerCase();
+    if (/429|quota|resource_exhausted|rate.?limit|too many requests|exceeded/.test(t)) return 'quota';
+    if (/api.?key|unauthori[sz]ed|unauthenticated|permission|forbidden|\b403\b|invalid.?key/.test(t)) return 'auth';
+    if (/not found|\b404\b|is not supported|deprecated|no longer available|unknown model/.test(t) && /model|gemini|gpt|claude/.test(t)) return 'model';
+    if (/agent/.test(t) && /not found|unknown|invalid|no /.test(t)) return 'agent';
+    if (/timeout|timed out|deadline/.test(t)) return 'timeout';
+    if (/connection|network|offline|lost|socket/.test(t)) return 'offline';
+    return 'error';
+  }
+  _aiErrorMessage(kind) {
+    switch (kind) {
+      case 'quota':   return 'The AI has reached its usage limit for now. Try again later.';
+      case 'auth':    return 'The AI couldn\u2019t sign in. Check the AI integration in Home Assistant.';
+      case 'model':   return 'The AI model isn\u2019t available any more. Choose a current model in the AI integration settings.';
+      case 'agent':   return 'Choose an AI agent in the card settings (AI Settings \u2192 AI Agent).';
+      case 'timeout': return 'The AI took too long to answer. Try again in a moment.';
+      case 'offline': return 'Can\u2019t reach Home Assistant right now. Check your connection.';
+      case 'unreadable': return 'The AI\u2019s answer didn\u2019t make sense this time. Try again.';
+      default:        return 'The AI couldn\u2019t help with that just now. Try again.';
+    }
+  }
+  _aiReport(err, silent) {
+    if (!err || err._reported) return;
+    err._reported = true;
+    if (err.kind === 'quota') this._aiRateLimitUntil = Date.now() + 60000;
+    if (silent) return;
+    this._showToast('\u26a0\ufe0f ' + this._aiErrorMessage(err.kind), 5000);
+    this._aiErrorToastAt = Date.now();
+  }
+  // For a feature's own catch block: shows the friendly message unless one
+  // was already shown for this error (an unreadable answer otherwise).
+  _aiFailToast(err) {
+    if (err?._reported) return;
+    // One friendly message per failure: skip if one was shown a moment ago.
+    if (this._aiErrorToastAt && Date.now() - this._aiErrorToastAt < 2500) return;
+    const e = err instanceof Error ? err : new Error(String(err || 'ai'));
+    if (!e.kind) {
+      const k = this._aiErrorKind(e.message);
+      e.kind = k !== 'error' ? k : (e instanceof SyntaxError || /json|parse|unexpected token|no list|empty/i.test(e.message)) ? 'unreadable' : 'error';
+    }
+    this._aiReport(e, false);
+  }
+  async _aiProcess(msg, opts = {}) {
+    const silent = !!(opts.silent || msg?._crowSilent);
+    const send = { ...msg };
+    delete send._crowSilent;
+    const fail = (kind, text) => { const e = new Error(text || kind); e.kind = kind; this._aiReport(e, silent); return e; };
+    if (!this._hass?.connection) throw fail('offline');
+    let timer;
+    const timeout = new Promise((_, rej) => { timer = setTimeout(() => rej(fail('timeout')), opts.timeoutMs || 30000); });
+    try {
+      const resp = await Promise.race([this._hass.connection.sendMessagePromise(send), timeout]);
+      const r = resp?.response;
+      const speech = r?.speech?.plain?.speech || '';
+      if (r?.response_type === 'error' || /^(sorry, i had a problem|error talking to|unexpected error during intent)/i.test(speech.trim())) {
+        throw fail(this._aiErrorKind(speech + ' ' + (r?.data?.code || '')), speech);
+      }
+      return resp;
+    } catch (e) {
+      if (!e?._reported) {
+        const k = e?.kind || this._aiErrorKind(e?.message || e?.code || String(e));
+        if (e && typeof e === 'object') { e.kind = k; this._aiReport(e, silent); throw e; }
+        throw fail(k, String(e));
+      }
+      throw e;
+    } finally { clearTimeout(timer); }
+  }
+  // Finds the list in an AI answer however it's wrapped: a bare array, an
+  // object holding one ({"tracks":[...]}), with or without code fences/text.
+  _aiExtractList(raw) {
+    const t = String(raw || '').replace(/```json?\s*/gi, '').replace(/```/g, '');
+    const tryParse = (str) => { try { return JSON.parse(str); } catch (_) { return undefined; } };
+    let v;
+    const a = t.indexOf('['), b = t.lastIndexOf(']');
+    if (a !== -1 && b > a) v = tryParse(t.slice(a, b + 1));
+    if (!Array.isArray(v)) {
+      const o1 = t.indexOf('{'), o2 = t.lastIndexOf('}');
+      const obj = o1 !== -1 && o2 > o1 ? tryParse(t.slice(o1, o2 + 1)) : undefined;
+      if (obj && typeof obj === 'object') v = Array.isArray(obj) ? obj : Object.values(obj).find(Array.isArray);
+    }
+    if (!Array.isArray(v)) { const e = new Error('no list in AI answer'); e.kind = 'unreadable'; throw e; }
+    return v;
+  }
+  // Keeps only usable {title, artist} songs (accepts a few common key names).
+  _aiCleanSongs(list, defaultArtist = '') {
+    return (Array.isArray(list) ? list : []).map(x => {
+      if (!x || typeof x !== 'object') return null;
+      const title = String(x.title || x.name || x.song || x.track || x.t || '').trim();
+      const artist = String(x.artist || x.artists || x.by || x.a || defaultArtist || '').trim();
+      return title ? { title, artist } : null;
+    }).filter(Boolean);
+  }
+
+  // ── Fast enqueue ──────────────────────────────────────────────────────────
+  // Finds each song in Music Assistant (5 searches at a time, keeping the
+  // order), adds the first few straight away so the queue starts filling, then
+  // the rest in one call. Songs search can't find fall back to adding by name.
+  // firstEnqueue: 'add' (default) or 'replace' to start playing the first one.
+  async _enqueueTracksFast(tracks, entityId, { firstEnqueue = 'add' } = {}) {
+    const list = (tracks || []).filter(t => t && t.title);
+    const result = { added: 0, missed: 0, addedTracks: [] };
+    if (!list.length) return result;
+    const cid = this._maConfigEntryId || await this._getMAConfigEntryId().catch(() => null);
+    const uris = new Array(list.length).fill(undefined);   // undefined = pending, null = not found
+    const norm = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const find = async (t) => {
+      if (!cid) return null;
+      try {
+        const r = await this._hass.connection.sendMessagePromise({
+          type: 'call_service', domain: 'music_assistant', service: 'search',
+          service_data: { config_entry_id: cid, name: t.title, ...(t.artist ? { artist: t.artist } : {}), media_type: 'track', limit: 3 },
+          return_response: true,
+        });
+        const hits = r?.response?.tracks || [];
+        const want = norm(t.artist);
+        const best = hits.find(h => want && (h.artists || []).some(a => norm(a.name).includes(want) || want.includes(norm(a.name)))) || hits[0];
+        return best?.uri || null;
+      } catch (_) { return null; }
+    };
+    let enqueueMode = firstEnqueue;
+    const send = async (items) => {
+      if (!items.length) return;
+      const ids = items.map(i => uris[i]);
+      try {
+        await this._hass.connection.sendMessagePromise({
+          type: 'call_service', domain: 'music_assistant', service: 'play_media',
+          service_data: { entity_id: entityId, media_id: ids.length === 1 ? ids[0] : ids, media_type: 'track', enqueue: enqueueMode },
+        });
+        enqueueMode = 'add';
+        items.forEach(i => { result.added++; result.addedTracks.push(list[i]); });
+      } catch (_) {
+        // A list Music Assistant wouldn't take in one go: add them one by one.
+        for (const i of items) {
+          try {
+            await this._hass.connection.sendMessagePromise({
+              type: 'call_service', domain: 'music_assistant', service: 'play_media',
+              service_data: { entity_id: entityId, media_id: uris[i], media_type: 'track', enqueue: enqueueMode },
+            });
+            enqueueMode = 'add';
+            result.added++; result.addedTracks.push(list[i]);
+          } catch (_) { result.missed++; }
+        }
+      }
+    };
+    // Search in parallel, 5 at a time.
+    let next = 0, firstSent = false;
+    const FIRST = Math.min(3, list.length);
+    const firstReady = () => uris.slice(0, FIRST).every(u => u !== undefined);
+    let firstPromise = null;
+    const worker = async () => {
+      while (next < list.length) {
+        const i = next++;
+        uris[i] = await find(list[i]);
+        if (!firstSent && firstReady()) {
+          firstSent = true;
+          const idx = [...Array(FIRST).keys()].filter(k => uris[k]);
+          firstPromise = send(idx);
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(5, list.length) }, worker));
+    if (firstPromise) await firstPromise;
+    const rest = [];
+    for (let i = FIRST; i < list.length; i++) if (uris[i]) rest.push(i);
+    await send(rest);
+    // Not found by search: try adding by name, as before.
+    for (let i = 0; i < list.length; i++) {
+      if (uris[i]) continue;
+      try {
+        await this._hass.connection.sendMessagePromise({
+          type: 'call_service', domain: 'music_assistant', service: 'play_media',
+          service_data: { entity_id: entityId, media_id: `${list[i].title} ${list[i].artist || ''}`.trim(), media_type: 'track', enqueue: enqueueMode },
+        });
+        enqueueMode = 'add';
+        result.added++; result.addedTracks.push(list[i]);
+      } catch (_) { result.missed++; }
+    }
+    return result;
   }
 
   _showToast(message, duration = 3500) {
     const toast  = this.shadowRoot?.getElementById('crowToast');
     const textEl = this.shadowRoot?.getElementById('crowToastText');
     if (!toast || !textEl) return;
+    // A friendly AI error was just shown — don't let a feature's own generic
+    // follow-up message replace it.
+    if (this._aiErrorToastAt && Date.now() - this._aiErrorToastAt < 2500 && !String(message).startsWith('\u26a0\ufe0f ')) return;
+    this._lastToast = { msg: message, at: Date.now() };
     if (this._toastTimer) clearTimeout(this._toastTimer);
     toast.classList.remove('loading');
     textEl.textContent = message;
@@ -31074,6 +32424,11 @@ Include ALL tracks. Use null for unknown fields.`;
   // Reads group_members directly from HA — no in-memory tracking.
   // Pills update automatically on every set hass() cycle when MA updates state.
   _updateMulticastPills() {
+    this.__updateMulticastPills();
+    this._ssApplyPillStatus();
+  }
+
+  __updateMulticastPills() {
     const r   = this.shadowRoot;
     const row = r?.getElementById('multicastPillsRow');
     if (!row) return;
@@ -33570,6 +34925,8 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
     if (!this._initialized) this.render();
   }
 
+
+
   setConfig(config) {
     // Merge with defaults so toggles show correct state even when keys aren't in YAML
     this._config = {
@@ -34019,6 +35376,25 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                 <input type="checkbox" id="entitySettingsMaToggle">
                 <span class="toggle-track" style="border-radius:22px;"></span>
               </label>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div class="section-title">🔊 Play on This Device</div>
+          <div class="card-block" style="padding:12px;">
+            <div class="toggle-item" style="align-items:flex-start;gap:12px;">
+              <div style="flex:1;">
+                <div class="toggle-label">Show "Play on this device"</div>
+                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Adds "Play on this device" to the speaker menu. Tapping it turns the browser showing this card into a Music Assistant speaker (via Sendspin) that appears here like any other player. Each device opts in separately and appears with a name like "James's iPhone (Safari)", which you can change in Music Assistant. Works in a web browser such as Safari; it isn't offered in the Home Assistant Companion app. Needs Music Assistant 2.10 or newer.</div>
+              </div>
+              <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="sendspin_enabled"><span class="toggle-track"></span></label>
+            </div>
+            <div id="sendspinOpts" style="margin-top:14px;">
+              <div style="font-size:13px;font-weight:500;margin-bottom:6px;color:var(--primary-text-color, #111);">Music Assistant server URL</div>
+              <div style="font-size:11px;color:#888;margin-bottom:8px;line-height:1.4;">Leave blank to use this Home Assistant host on Music Assistant's Sendspin port (8927). Use the Sendspin port, not Music Assistant's web port 8095. If you open Home Assistant over https, this must be an https address too (for example a reverse proxy in front of Music Assistant), or the browser will block the connection.</div>
+              <input type="text" id="sendspin_url" placeholder="http://homeassistant.local:8927" autocomplete="off" spellcheck="false"
+                style="width:100%;background:var(--card-background-color,rgba(255,255,255,0.07));border:1px solid var(--divider-color,rgba(128,128,128,0.2));border-radius:10px;color:var(--primary-text-color,#fff);font-size:13px;font-family:inherit;padding:10px 12px;outline:none;box-sizing:border-box;">
             </div>
           </div>
         </div>
@@ -34524,7 +35900,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
               <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="ai_features_enabled"><span class="toggle-track"></span></label>
             </div>
             <div class="ai-dep" style="margin-bottom:12px;">
-              <div style="font-size:13px;font-weight:500;margin-bottom:6px;color:var(--primary-text-color, #111);">AI Agent <span class="editor-tooltip"><span class="tooltip-icon" tabindex="0">i</span><span class="tooltip-text">The AI agent used for all AI features. Google Gemini 2.0 Flash is recommended — set it up in Settings → Voice Assistants first.</span></span></div>
+              <div style="font-size:13px;font-weight:500;margin-bottom:6px;color:var(--primary-text-color, #111);">AI Agent <span class="editor-tooltip"><span class="tooltip-icon" tabindex="0">i</span><span class="tooltip-text">The AI agent used for all AI features. Google Gemini with a current Flash model is recommended — add the Google Generative AI integration under Settings → Devices &amp; Services first.</span></span></div>
               <div style="font-size:11px;color:#888;margin-bottom:8px;line-height:1.4;">Used for all AI features — Recommendations, Mood, Search, Info panels and Announce AI.</div>
               <select id="ai_conversation_agent" style="width:100%;background:var(--card-background-color,rgba(255,255,255,0.07));border:1px solid var(--divider-color,rgba(128,128,128,0.2));border-radius:10px;color:var(--primary-text-color,#fff);font-size:13px;font-family:inherit;padding:10px 12px;outline:none;-webkit-appearance:none;cursor:pointer;">
                 <option value="">Default (Home Assistant)</option>
@@ -34547,7 +35923,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
               </select>
             </div>
             <div class="ai-dep" style="margin-top:10px;padding:8px 10px;background:rgba(99,179,237,0.06);border:1px solid rgba(99,179,237,0.12);border-radius:8px;">
-              <div style="font-size:10px;color:var(--secondary-text-color, rgba(0,0,0,0.5));line-height:1.5;">Add agents via <strong style="color:rgba(99,179,237,0.6)">Settings → Voice Assistants</strong>. Google Gemini recommended — other AI Agents may work.</div>
+              <div style="font-size:10px;color:var(--secondary-text-color, rgba(0,0,0,0.5));line-height:1.5;">Add agents via <strong style="color:rgba(99,179,237,0.6)">Settings → Devices &amp; Services</strong> (for example the Google Generative AI integration). Google Gemini with a current Flash model is recommended — other AI Agents may work.</div>
             </div>
             <div style="margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.07);">
               <div style="font-size:13px;font-weight:500;margin-bottom:6px;color:var(--primary-text-color, #111);">Share Track Service</div>
@@ -35709,6 +37085,21 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       songIntroEl.checked = this._config.song_intro_enabled === true;
       songIntroEl.onchange = (e) => this._updateConfig('song_intro_enabled', e.target.checked);
     }
+    const sendspinEnabledEl = root.getElementById('sendspin_enabled');
+    const sendspinOptsEl = root.getElementById('sendspinOpts');
+    if (sendspinEnabledEl) {
+      sendspinEnabledEl.checked = this._config?.sendspin_enabled === true;
+      if (sendspinOptsEl) sendspinOptsEl.style.display = sendspinEnabledEl.checked ? '' : 'none';
+      sendspinEnabledEl.onchange = (e) => {
+        if (sendspinOptsEl) sendspinOptsEl.style.display = e.target.checked ? '' : 'none';
+        this._updateConfig('sendspin_enabled', e.target.checked);
+      };
+    }
+    const sendspinUrlEl = root.getElementById('sendspin_url');
+    if (sendspinUrlEl) {
+      sendspinUrlEl.value = this._config?.sendspin_url || '';
+      sendspinUrlEl.onchange = (e) => this._updateConfig('sendspin_url', e.target.value.trim());
+    }
     const ghostSkipHealEl = root.getElementById('ghost_skip_heal');
     if (ghostSkipHealEl) {
       ghostSkipHealEl.checked = this._config?.ghost_skip_heal !== false; // default on
@@ -36423,6 +37814,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       show_media_type_pill: false,
       show_youtube_button: true,
       atv_keyboard_panel: true,
+      sendspin_enabled: false, sendspin_url: '',
     };
     // Strip keys that match their default value to keep YAML clean
     const cleanConfig = { ...this._config, [key]: value };
@@ -36466,6 +37858,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       show_media_type_pill: false,
       show_youtube_button: true,
       atv_keyboard_panel: true,
+      sendspin_enabled: false, sendspin_url: '',
     };
     const updatedKeys = Object.keys(updates);
     const cleanConfig = { ...this._config, ...updates };
@@ -36493,3 +37886,18 @@ if (!window.customCards.some(card => card.type === "crowai-media-player-card")) 
     description: "An AI-powered media player card built for iPhone, with deep Music Assistant integration, synced lyrics, and Apple TV remote control."
   });
 };
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Bundled @sendspin/sendspin-js 5.0.0 (Apache-2.0, Open Home Foundation)
+// https://github.com/Sendspin/sendspin-js — same version Music Assistant 2.10
+// ships. Wrapped in a function so it is only evaluated when a device actually
+// opts in. The opus-encdec fallback decoder is stubbed out; the player only
+// offers Opus when the browser has a native decoder.
+// ═══════════════════════════════════════════════════════════════════════════
+function __crowaiLoadSendspinLib() {
+  if (window.__crowaiSendspinLib) return window.__crowaiSendspinLib;
+console.info('%c CROWAI MEDIA PLAYER CARD %c build 2026-10-04 connect status ', 'background:#007AFF;color:#fff;font-weight:700;border-radius:3px 0 0 3px;padding:2px 4px', 'background:#333;color:#fff;border-radius:0 3px 3px 0;padding:2px 4px');
+var __CrowSendspinLib=(()=>{var Se=Object.defineProperty;var Tr=Object.getOwnPropertyDescriptor;var Dr=Object.getOwnPropertyNames;var vr=Object.prototype.hasOwnProperty;var Ir=(e,A,t)=>()=>{if(t)throw t[0];try{return e&&(A=e(e=0)),A}catch(n){throw t=[n],n}};var xn=(e,A)=>{for(var t in A)Se(e,t,{get:A[t],enumerable:!0})},Jr=(e,A,t,n)=>{if(A&&typeof A=="object"||typeof A=="function")for(let s of Dr(A))!vr.call(e,s)&&s!==t&&Se(e,s,{get:()=>A[s],enumerable:!(n=Tr(A,s))||n.enumerable});return e};var Br=e=>Jr(Se({},"__esModule",{value:!0}),e);var Me={};xn(Me,{default:()=>Pr});var Pr,Ce=Ir(()=>{Pr={};throw new Error("[CrowAI] opus-encdec fallback not bundled")});var Ro={};xn(Ro,{SendspinPlayer:()=>ye});var tt=class{constructor(A,t){this.webCodecsDecoder=null,this.webCodecsDecoderReady=null,this.webCodecsFormat=null,this.useNativeOpus=!0,this.nativeDecoderQueue=[],this.opusDecoder=null,this.opusDecoderModule=null,this.opusDecoderReady=null,this.flacDecodingContext=null,this.flacDecodingContextSampleRate=0,this.flacDecodingContextChannels=0,this.onDecodedChunk=A,this.currentGeneration=t}async handleBinaryMessage(A,t,n){if(new Uint8Array(A)[0]===4){let r=new DataView(A,1,8),i=Number(r.getBigInt64(0,!1)),a=A.slice(9);if(t.codec==="opus"&&this.useNativeOpus&&(await this.initWebCodecsDecoder(t),this.useNativeOpus&&this.webCodecsDecoder&&this.queueToNativeOpusDecoder(a,i,n)))return;try{let o=await this.decode(a,t);o&&n===this.currentGeneration()&&this.onDecodedChunk({samples:o.samples,sampleRate:o.sampleRate,serverTimeUs:i,generation:n})}catch(o){console.error("Sendspin: Failed to decode audio buffer:",o)}}}async decode(A,t){return t.codec==="opus"?this.decodeOpusWithEncdec(A,t):t.codec==="flac"?this.decodeFLAC(A,t):t.codec==="pcm"?this.decodePCM(A,t):null}decodePCM(A,t){let n=t.bit_depth??16;if(n!==16&&n!==24&&n!==32)return console.warn(`Sendspin: unsupported PCM bit_depth ${n}`),null;let s=n/8,r=new DataView(A),i=A.byteLength/(s*t.channels),a=[];for(let o=0;o<t.channels;o++)a.push(new Float32Array(i));for(let o=0;o<t.channels;o++){let h=a[o];for(let u=0;u<i;u++){let l=(u*t.channels+o)*s,c=0;if(n===16)c=r.getInt16(l,!0)/32768;else if(n===24){let f=r.getUint8(l),d=r.getUint8(l+1),m=r.getUint8(l+2)<<16|d<<8|f;m&8388608&&(m|=4278190080),c=m/8388608}else n===32&&(c=r.getInt32(l,!0)/2147483648);h[u]=c}}return{samples:a,sampleRate:t.sample_rate}}getFlacDecodingContext(A,t){return(!this.flacDecodingContext||this.flacDecodingContextSampleRate!==A||this.flacDecodingContextChannels!==t)&&(this.flacDecodingContext=new OfflineAudioContext(t,1,A),this.flacDecodingContextSampleRate=A,this.flacDecodingContextChannels=t),this.flacDecodingContext}async decodeFLAC(A,t){try{let n=A;if(t.codec_header){let a=Uint8Array.from(atob(t.codec_header),h=>h.charCodeAt(0)),o=new Uint8Array(a.length+A.byteLength);o.set(a,0),o.set(new Uint8Array(A),a.length),n=o.buffer}let r=await this.getFlacDecodingContext(t.sample_rate,t.channels).decodeAudioData(n),i=[];for(let a=0;a<r.numberOfChannels;a++)i.push(new Float32Array(r.getChannelData(a)));return{samples:i,sampleRate:r.sampleRate}}catch(n){return console.error("Error decoding FLAC data:",n),null}}async initWebCodecsDecoder(A){let t=()=>{if(!this.webCodecsDecoder)return!1;let n=!!this.webCodecsFormat&&this.webCodecsFormat.sample_rate===A.sample_rate&&this.webCodecsFormat.channels===A.channels;if(this.webCodecsDecoder.state==="configured"&&n)return!0;if(this.webCodecsDecoder.state==="closed")return!1;try{return this.webCodecsDecoder.configure({codec:"opus",sampleRate:A.sample_rate,numberOfChannels:A.channels}),this.webCodecsFormat=A,!0}catch{return!1}};if(!t()){if(this.webCodecsDecoderReady){if(await this.webCodecsDecoderReady,t())return;try{this.webCodecsDecoder?.close()}catch{}this.webCodecsDecoder=null,this.webCodecsDecoderReady=null,this.webCodecsFormat=null}if(this.webCodecsDecoderReady){await this.webCodecsDecoderReady;return}this.webCodecsDecoderReady=this.createWebCodecsDecoder(A),await this.webCodecsDecoderReady}}async createWebCodecsDecoder(A){if(typeof AudioDecoder>"u"){this.useNativeOpus=!1;return}try{if(!(await AudioDecoder.isConfigSupported({codec:"opus",sampleRate:A.sample_rate,numberOfChannels:A.channels})).supported){console.log("[NativeOpus] WebCodecs Opus not supported, will use fallback"),this.useNativeOpus=!1;return}this.webCodecsDecoder=new AudioDecoder({output:n=>this.handleAudioData(n),error:n=>{console.error("[NativeOpus] WebCodecs decoder error:",n)}}),this.webCodecsDecoder.configure({codec:"opus",sampleRate:A.sample_rate,numberOfChannels:A.channels}),this.webCodecsFormat=A,console.log(`[NativeOpus] Using WebCodecs AudioDecoder: ${A.sample_rate}Hz, ${A.channels}ch`)}catch(t){console.warn("[NativeOpus] WebCodecs init failed, will use fallback:",t),this.useNativeOpus=!1}}handleAudioData(A){try{let t=Number(A.timestamp),n=this.nativeDecoderQueue.shift();if(!n){console.warn(`[NativeOpus] Dropping frame with empty decode queue (out ts=${t})`),A.close();return}let{serverTimeUs:s,generation:r}=n,i=this.webCodecsFormat;if(!i){A.close();return}if(r!==this.currentGeneration()){console.warn(`[NativeOpus] Dropping old-stream frame (ts=${s}, gen=${r} != current=${this.currentGeneration()})`),A.close();return}let a=A.numberOfChannels,o=A.numberOfFrames,h=A.format,u=[];for(let l=0;l<a;l++)u.push(new Float32Array(o));if(h==="f32-planar")for(let l=0;l<a;l++)A.copyTo(u[l],{planeIndex:l});else if(h==="s16-planar"){let l=new Int16Array(o);for(let c=0;c<a;c++){A.copyTo(l,{planeIndex:c});let f=u[c];for(let d=0;d<o;d++)f[d]=l[d]/32768}}else if(h==="f32"){let l=new Float32Array(o*a);A.copyTo(l,{planeIndex:0});for(let c=0;c<a;c++){let f=u[c];for(let d=0;d<o;d++)f[d]=l[d*a+c]}}else if(h==="s16"){let l=new Int16Array(o*a);A.copyTo(l,{planeIndex:0});for(let c=0;c<a;c++){let f=u[c];for(let d=0;d<o;d++)f[d]=l[d*a+c]/32768}}else{console.warn(`[NativeOpus] Unsupported AudioData format: ${h}`),A.close();return}A.close(),this.onDecodedChunk({samples:u,sampleRate:i.sample_rate,serverTimeUs:s,generation:r})}catch(t){console.error("[NativeOpus] Error in output callback:",t),A.close()}}queueToNativeOpusDecoder(A,t,n){if(!this.webCodecsDecoder||this.webCodecsDecoder.state!=="configured")return!1;try{this.nativeDecoderQueue.push({serverTimeUs:t,generation:n});let s=new EncodedAudioChunk({type:"key",timestamp:t,data:A});return this.webCodecsDecoder.decode(s),!0}catch(s){return this.nativeDecoderQueue.length>0&&this.nativeDecoderQueue.pop(),console.error("[NativeOpus] WebCodecs queue error:",s),!1}}resolveOpusDecoderModule(A){let t=A?.default,n=A?.["module.exports"],s=t??n??A;if(!s||typeof s!="object")throw new Error("[Opus] Invalid libopus decoder module export");return s}resolveOggOpusDecoderClass(A){let t=A?.default,n=A?.["module.exports"],s=t??n??A,r=s?.OggOpusDecoder??s;if(typeof r!="function")throw new Error("[Opus] OggOpusDecoder class export not found");return r}async waitForOpusReady(A){if(!A.isReady){if(Object.isExtensible(A)){await new Promise(t=>{A.onready=()=>t()});return}for(;!A.isReady;)await new Promise(t=>setTimeout(t,20))}}async initOpusEncdecDecoder(A){if(this.opusDecoderReady){await this.opusDecoderReady;return}this.opusDecoderReady=(async()=>{console.log("[Opus] Initializing decoder (opus-encdec)...");let[t,n]=await Promise.all([Promise.resolve().then(()=>(Ce(),Me)),Promise.resolve().then(()=>(Ce(),Me))]);this.opusDecoderModule=this.resolveOpusDecoderModule(t);let s=this.resolveOggOpusDecoderClass(n);await this.waitForOpusReady(this.opusDecoderModule),this.opusDecoder=new s({rawOpus:!0,decoderSampleRate:A.sample_rate,outputBufferSampleRate:A.sample_rate,numberOfChannels:A.channels},this.opusDecoderModule),await this.waitForOpusReady(this.opusDecoder),console.log("[Opus] Decoder ready")})(),await this.opusDecoderReady}async decodeOpusWithEncdec(A,t){try{await this.initOpusEncdecDecoder(t);let n=new Uint8Array(A),s=[];if(this.opusDecoder.decodeRaw(n,o=>{s.push(new Float32Array(o))}),s.length===0)return console.warn("[Opus] Fallback decoder produced no samples"),null;let r=s[0],i=r.length/t.channels,a=[];for(let o=0;o<t.channels;o++){let h=new Float32Array(i);for(let u=0;u<i;u++)h[u]=r[u*t.channels+o];a.push(h)}return{samples:a,sampleRate:t.sample_rate}}catch(n){return console.error("[Opus] Decode error:",n),null}}clearState(){this.nativeDecoderQueue=[];try{this.webCodecsDecoder?.close()}catch{}this.webCodecsDecoder=null,this.webCodecsDecoderReady=null,this.webCodecsFormat=null}close(){this.clearState(),this.opusDecoder&&(this.opusDecoder=null,this.opusDecoderModule=null,this.opusDecoderReady=null),this.useNativeOpus=!0,this.flacDecodingContext=null,this.flacDecodingContextSampleRate=0,this.flacDecodingContextChannels=0}};var It=class{constructor(A,t,n){this.sender=A,this.stateManager=t,this.timeFilter=n,this.timeSyncBurstActive=!1,this.timeSyncBurstSentCount=0,this.timeSyncInFlightClientTransmitted=null,this.timeSyncInFlightTimeout=null,this.timeSyncBurstSamples=[]}startAndSchedule(){this.stop(),this.startTimeSyncBurstIfIdle(),this.scheduleNextTimeSyncBurstTick()}scheduleNextTimeSyncBurstTick(){let A=globalThis.setTimeout(()=>{this.startTimeSyncBurstIfIdle(),this.scheduleNextTimeSyncBurstTick()},1e4);this.stateManager.setTimeSyncInterval(A)}startTimeSyncBurstIfIdle(){this.timeSyncBurstActive||(this.timeSyncBurstActive=!0,this.timeSyncBurstSentCount=0,this.timeSyncBurstSamples=[],this.timeSyncInFlightClientTransmitted=null,this.sendNextTimeSyncBurstProbe())}sendNextTimeSyncBurstProbe(){if(!this.timeSyncBurstActive||this.timeSyncInFlightClientTransmitted!==null)return;if(this.timeSyncBurstSentCount>=8){this.finalizeTimeSyncBurst();return}let A=this.sendTimeSync();this.timeSyncBurstSentCount+=1,this.timeSyncInFlightClientTransmitted=A,this.armTimeSyncProbeTimeout(A)}armTimeSyncProbeTimeout(A){this.clearTimeSyncProbeTimeout(),this.timeSyncInFlightTimeout=globalThis.setTimeout(()=>{this.handleTimeSyncProbeTimeout(A)},2e3)}clearTimeSyncProbeTimeout(){this.timeSyncInFlightTimeout!==null&&(clearTimeout(this.timeSyncInFlightTimeout),this.timeSyncInFlightTimeout=null)}handleTimeSyncProbeTimeout(A){!this.timeSyncBurstActive||this.timeSyncInFlightClientTransmitted!==A||(console.warn("Sendspin: Time sync probe timed out, aborting current burst"),this.abortTimeSyncBurst())}finalizeTimeSyncBurst(){this.clearTimeSyncProbeTimeout();let A=this.selectTimeSyncBurstCandidate();A&&this.timeFilter.update(A.measurement,A.maxError,A.t4),this.timeSyncBurstActive=!1,this.timeSyncBurstSentCount=0,this.timeSyncInFlightClientTransmitted=null,this.timeSyncBurstSamples=[]}selectTimeSyncBurstCandidate(){if(this.timeSyncBurstSamples.length===0)return null;let t=[...[...this.timeSyncBurstSamples].sort((n,s)=>n.rttTerm-s.rttTerm).slice(0,Math.min(3,this.timeSyncBurstSamples.length))].sort((n,s)=>n.measurement-s.measurement);return t[Math.floor(t.length/2)]}abortTimeSyncBurst(){this.clearTimeSyncProbeTimeout(),this.timeSyncBurstActive=!1,this.timeSyncBurstSentCount=0,this.timeSyncInFlightClientTransmitted=null,this.timeSyncBurstSamples=[]}stop(){this.stateManager.clearTimeSyncInterval(),this.abortTimeSyncBurst()}handleServerTime(A){if(!this.timeSyncBurstActive||this.timeSyncInFlightClientTransmitted===null)return;let t=A.payload.client_transmitted;if(t!==this.timeSyncInFlightClientTransmitted){console.warn("Sendspin: Ignoring out-of-order time response",t,this.timeSyncInFlightClientTransmitted);return}let n=Math.floor(performance.now()*1e3),s=A.payload.server_received,r=A.payload.server_transmitted,i=(s-t+(r-n))/2,a=Math.max(0,n-t-(r-s)),o=Math.max(1e3,a/2);if(this.timeSyncBurstSamples.push({measurement:i,maxError:o,t4:n,rttTerm:a}),this.clearTimeSyncProbeTimeout(),this.timeSyncInFlightClientTransmitted=null,this.timeSyncBurstSentCount>=8){this.finalizeTimeSyncBurst();return}this.sendNextTimeSyncBurstProbe()}sendTimeSync(A=Math.floor(performance.now()*1e3)){let t={type:"client/time",payload:{client_transmitted:A}};return this.sender.sendControl(t),A}};function Rr(){let e=typeof navigator<"u"?navigator.userAgent:"",A=/^((?!chrome|android).)*safari/i.test(e),t=/firefox/i.test(e),n=typeof AudioDecoder<"u";return n||(typeof window<"u"&&!window.isSecureContext?console.warn("[Opus] Running in insecure context, falling back to FLAC/PCM"):console.warn("[Opus] Native decoder not available, falling back to FLAC/PCM")),A?new Set(["pcm","opus"]):t?new Set(["pcm","flac"]):n?new Set(["pcm","opus","flac"]):new Set(["pcm","flac"])}function Jt(e){let A=Rr(),t=[];for(let n of e)A.has(n)&&(n==="opus"?t.push({codec:"opus",sample_rate:48e3,channels:2,bit_depth:16}):(t.push({codec:n,sample_rate:48e3,channels:2,bit_depth:16}),t.push({codec:n,sample_rate:44100,channels:2,bit_depth:16})));if(t.length===0)throw new Error(`No supported codecs: requested [${e.join(", ")}], browser supports [${[...A].join(", ")}]`);return t}function Or(e){let A=e.sample_rate*e.channels*Math.ceil(e.bit_depth/8);switch(e.codec){case"opus":return 64e3;case"flac":return A*1.02;default:return A}}function En(e){let A=Math.max(...e.map(Or));return Math.ceil(A*30)}function nA(e){return isFinite(e)?Math.max(0,Math.min(5e3,Math.round(e))):0}var bn=5e3,Lr=250,Ur=250;function Bt(e,A){if(!isFinite(e)||e<0)throw new RangeError(`${A} must be a non-negative finite number`)}var Pt=class{constructor(A,t,n,s,r,i={}){this.sender=A,this.helloContext=t,this.streamHandler=n,this.stateManager=s,this.timeFilter=r,this.activated=!1,this.activeRoles=null,this.pairingSuspended=!1,this.lastSentPlayer=null,this.clientName=i.clientName??"Sendspin Player",this.productName=i.productName,this.codecs=i.codecs??["opus","flac","pcm"],this.bufferCapacity=i.bufferCapacity,this.requiredLeadTimeMs=i.requiredLeadTimeMs??Lr,Bt(this.requiredLeadTimeMs,"requiredLeadTimeMs"),this.minBufferMs=i.minBufferMs??Ur,Bt(this.minBufferMs,"minBufferMs"),this.useHardwareVolume=i.useHardwareVolume??!1,this.onVolumeCommand=i.onVolumeCommand,this.onDelayCommand=i.onDelayCommand,this.getExternalVolume=i.getExternalVolume,this.timeSyncManager=new It(A,s,r)}handleServerMessage(A){switch(A.type){case"server/hello":this.handleServerHello();break;case"server/activate":this.handleServerActivate(A);break;case"server/time":this.timeSyncManager.handleServerTime(A);break;case"stream/start":this.handleStreamStart(A);break;case"stream/clear":this.handleStreamClear(A);break;case"stream/end":this.handleStreamEnd(A);break;case"server/command":this.handleServerCommand(A);break;case"server/state":this.stateManager.updateServerState(A.payload);break;case"group/update":this.stateManager.updateGroupState(A.payload);break}}handleServerHello(){console.log("Sendspin: Connected to server"),this.sendClientHello()}handleServerActivate(A){this.pairingSuspended=!1;let t=!1;if(A.payload.active_roles!==void 0){let s=new Set(A.payload.active_roles);t=this.activeRoles===null||s.size!==this.activeRoles.size||[...s].some(r=>!this.activeRoles.has(r)),this.activeRoles=s}if(this.activated){t&&this.sendStateUpdate();return}this.activated=!0,this.sendStateUpdate(),this.timeSyncManager.startAndSchedule();let n=globalThis.setInterval(()=>this.sendStateUpdate(),bn);this.stateManager.setStateUpdateInterval(n)}restartStateUpdateInterval(){let A=globalThis.setInterval(()=>this.sendStateUpdate(),bn);this.stateManager.setStateUpdateInterval(A)}stopTimeSync(){this.timeSyncManager.stop()}suspendForPairing(){this.pairingSuspended=!0,this.activated=!1,this.activeRoles=new Set,this.timeSyncManager.stop(),this.stateManager.clearStateUpdateInterval()}resetActivation(A=!1){this.pairingSuspended=!1,this.activated=!1,A||(this.activeRoles=null),this.timeSyncManager.stop(),this.stateManager.clearStateUpdateInterval()}handleStreamStart(A){let t=this.stateManager.currentStreamFormat!==null;this.stateManager.currentStreamFormat=A.payload.player,console.log(t?"Sendspin: Stream format updated":"Sendspin: Stream started",this.stateManager.currentStreamFormat),console.log(`Sendspin: Codec=${this.stateManager.currentStreamFormat.codec.toUpperCase()}, SampleRate=${this.stateManager.currentStreamFormat.sample_rate}Hz, Channels=${this.stateManager.currentStreamFormat.channels}, BitDepth=${this.stateManager.currentStreamFormat.bit_depth}bit`),this.streamHandler.handleStreamStart(this.stateManager.currentStreamFormat,t),this.stateManager.isPlaying=!0,typeof navigator<"u"&&navigator.mediaSession&&(navigator.mediaSession.playbackState="playing")}handleStreamClear(A){let t=A.payload.roles;(!t||t.includes("player"))&&(console.log("Sendspin: Stream clear (seek)"),this.streamHandler.handleStreamClear())}handleStreamEnd(A){let t=A.payload?.roles;(!t||t.includes("player"))&&(console.log("Sendspin: Stream ended"),this.streamHandler.handleStreamEnd(),this.stateManager.currentStreamFormat=null,this.stateManager.isPlaying=!1,typeof navigator<"u"&&navigator.mediaSession&&(navigator.mediaSession.playbackState="paused"),this.sendStateUpdate())}handleServerCommand(A){let t=A.payload.player;if(t){switch(t.command){case"volume":t.volume!==void 0&&(this.stateManager.volume=t.volume,this.streamHandler.handleVolumeUpdate(),this.useHardwareVolume&&this.onVolumeCommand&&this.onVolumeCommand(t.volume,this.stateManager.muted));break;case"mute":t.mute!==void 0&&(this.stateManager.muted=t.mute,this.streamHandler.handleVolumeUpdate(),this.useHardwareVolume&&this.onVolumeCommand&&this.onVolumeCommand(this.stateManager.volume,t.mute));break;case"set_static_delay":{let n=t.static_delay_ms;if(typeof n=="number"&&isFinite(n)){let s=nA(n);this.streamHandler.handleSyncDelayChange(s),this.onDelayCommand?.(s)}break}}this.restartStateUpdateInterval(),this.sendStateUpdate(!0)}}sendClientHello(){let A=Jt(this.codecs),t={type:"client/hello",payload:{name:this.clientName,supported_roles:["player@v1","controller@v1","metadata@v1"],trust_level:this.helloContext.trustLevel(),supported_pair_methods:this.helloContext.pairMethods(),unpaired_access:{enabled:this.helloContext.unpairedAccess},device_info:{product_name:this.productName,manufacturer:typeof navigator<"u"&&navigator.vendor||"Unknown",software_version:typeof navigator<"u"&&navigator.userAgent||"Unknown"},"player@v1_support":{supported_formats:A,buffer_capacity:this.bufferCapacity??En(A),supported_commands:["volume","mute"]}}};this.lastSentPlayer=null,this.sender.sendControl(t)}setRequiredLeadTimeMs(A){Bt(A,"requiredLeadTimeMs"),this.requiredLeadTimeMs=A,this.sendStateUpdate()}setMinBufferMs(A){Bt(A,"minBufferMs"),this.minBufferMs=A,this.sendStateUpdate()}sendStateUpdate(A=!1){if(this.pairingSuspended)return;let t=this.stateManager.volume,n=this.stateManager.muted;if(!A&&this.useHardwareVolume&&this.getExternalVolume){let o=this.getExternalVolume();t=o.volume,n=o.muted}let s=this.streamHandler.getSyncDelayMs(),r=nA(s),i={available:!0};if(this.activeRoles===null||this.activeRoles.has("player@v1")){let o={volume:t,muted:n,static_delay_ms:r,required_lead_time_ms:this.requiredLeadTimeMs,min_buffer_ms:this.minBufferMs},h=this.lastSentPlayer;if(h===null)i.player={...o,supported_commands:["set_static_delay"]};else{let u={};o.static_delay_ms!==h.static_delay_ms&&(u.static_delay_ms=o.static_delay_ms),o.volume!==h.volume&&(u.volume=o.volume),o.muted!==h.muted&&(u.muted=o.muted),o.required_lead_time_ms!==h.required_lead_time_ms&&(u.required_lead_time_ms=o.required_lead_time_ms),o.min_buffer_ms!==h.min_buffer_ms&&(u.min_buffer_ms=o.min_buffer_ms),i.player=u}this.lastSentPlayer=o}let a={type:"client/state",payload:i};this.sender.sendControl(a)}sendGoodbye(A){this.sender.sendControl({type:"client/goodbye",payload:{reason:A}})}sendCommand(A,t){this.pairingSuspended||!this.activeRoles?.has("controller@v1")||this.sender.sendControl({type:"client/command",payload:{controller:{command:A,...t}}})}};function we(e,A){let t={...e};for(let n of Object.keys(A)){let s=A[n];if(s===null)delete t[n];else if(s!==void 0){let r=t[n];typeof s=="object"&&!Array.isArray(s)&&typeof r=="object"&&r!==null&&!Array.isArray(r)?t[n]=we(r,s):t[n]=s}}return t}var Rt=class{constructor(A){this._volume=100,this._muted=!1,this._playerState="synchronized",this._isPlaying=!1,this._currentStreamFormat=null,this._streamStartServerTime=0,this._streamStartAudioTime=0,this._streamGeneration=0,this._serverState={},this._groupState={},this.timeSyncInterval=null,this.stateUpdateInterval=null,this.onStateChangeCallback=A}get volume(){return this._volume}set volume(A){this._volume=Math.max(0,Math.min(100,A)),this.notifyStateChange()}get muted(){return this._muted}set muted(A){this._muted=A,this.notifyStateChange()}get playerState(){return this._playerState}set playerState(A){this._playerState=A,this.notifyStateChange()}get isPlaying(){return this._isPlaying}set isPlaying(A){this._isPlaying=A,this.notifyStateChange()}get currentStreamFormat(){return this._currentStreamFormat}set currentStreamFormat(A){this._currentStreamFormat=A}get streamStartServerTime(){return this._streamStartServerTime}set streamStartServerTime(A){this._streamStartServerTime=A}get streamStartAudioTime(){return this._streamStartAudioTime}set streamStartAudioTime(A){this._streamStartAudioTime=A}resetStreamAnchors(){this._streamStartServerTime=0,this._streamStartAudioTime=0,this._streamGeneration++}get streamGeneration(){return this._streamGeneration}setTimeSyncInterval(A){this.clearTimeSyncInterval(),this.timeSyncInterval=A}clearTimeSyncInterval(){this.timeSyncInterval!==null&&(clearTimeout(this.timeSyncInterval),this.timeSyncInterval=null)}setStateUpdateInterval(A){this.clearStateUpdateInterval(),this.stateUpdateInterval=A}clearStateUpdateInterval(){this.stateUpdateInterval!==null&&(clearInterval(this.stateUpdateInterval),this.stateUpdateInterval=null)}clearAllIntervals(){this.clearTimeSyncInterval(),this.clearStateUpdateInterval()}reset(){this._volume=100,this._muted=!1,this._playerState="synchronized",this._isPlaying=!1,this._currentStreamFormat=null,this._streamStartServerTime=0,this._streamStartAudioTime=0,this._serverState={},this._groupState={},this.clearAllIntervals()}notifyStateChange(){this.onStateChangeCallback&&this.onStateChangeCallback({isPlaying:this._isPlaying,volume:this._volume,muted:this._muted,playerState:this._playerState,serverState:this._serverState,groupState:this._groupState})}updateServerState(A){this._serverState=we(this._serverState,A),this.notifyStateChange()}updateGroupState(A){this._groupState=we(this._groupState,A),this.notifyStateChange()}get serverState(){return this._serverState}get groupState(){return this._groupState}};var Ot=class{constructor(A){this.ws=null,this.reconnectTimeout=null,this.shouldReconnect=!1,this.isReconnecting=!1,this.reconnectAttempt=0,this.baseDelayMs=Math.max(0,A?.baseDelayMs??1e3),this.maxDelayMs=Math.max(this.baseDelayMs,A?.maxDelayMs??15e3),this.maxAttempts=A?.maxAttempts===void 0?1/0:Math.max(0,A.maxAttempts),this.onReconnecting=A?.onReconnecting,this.onReconnected=A?.onReconnected,this.onExhausted=A?.onExhausted}adopt(A,t,n,s,r){if(A.readyState!==WebSocket.OPEN&&A.readyState!==WebSocket.CONNECTING)throw new Error(`Sendspin: Cannot adopt WebSocket in readyState ${A.readyState} (must be OPEN or CONNECTING)`);if(this.onOpenHandler=t,this.onMessageHandler=n,this.onErrorHandler=s,this.onCloseHandler=r,this.ws){let i=this.ws;i.onopen=null,i.onmessage=null,i.onerror=null,i.onclose=null,i.close(),this.ws=null}return this.ws=A,this.ws.binaryType="arraybuffer",this.shouldReconnect=!1,this.clearReconnectState(),this.ws.onmessage=i=>{this.onMessageHandler&&this.onMessageHandler(i)},this.ws.onerror=i=>{console.error("Sendspin: WebSocket error",i),this.onErrorHandler&&this.onErrorHandler(i)},this.ws.onclose=()=>{console.log("Sendspin: WebSocket disconnected"),this.onCloseHandler&&this.onCloseHandler()},new Promise((i,a)=>{let o=()=>{this.onOpenHandler&&this.onOpenHandler(),i()};if(A.readyState===WebSocket.OPEN){console.log("Sendspin: Adopted open WebSocket"),o();return}let h=this.ws.onclose;this.ws.onopen=()=>{console.log("Sendspin: Adopted WebSocket connected"),o()},this.ws.onclose=u=>{h&&h.call(this.ws,u),a(new Error("Sendspin: Adopted WebSocket closed before opening"))}})}async connect(A,t,n,s,r){if(this.onOpenHandler=t,this.onMessageHandler=n,this.onErrorHandler=s,this.onCloseHandler=r,this.shouldReconnect=!1,this.clearReconnectState(),this.ws){let i=this.ws;i.onopen=null,i.onmessage=null,i.onerror=null,i.onclose=null,i.close(),this.ws=null}return this.openSocket(A)}openSocket(A){return new Promise((t,n)=>{try{console.log("Sendspin: Connecting to",A),this.ws=new WebSocket(A),this.ws.binaryType="arraybuffer",this.shouldReconnect=!0;let s=!1;this.ws.onopen=()=>{console.log("Sendspin: WebSocket connected"),s=!0;let r=this.isReconnecting;this.isReconnecting=!1,this.reconnectAttempt=0,this.onOpenHandler&&this.onOpenHandler(),r&&this.onReconnected?.(),t()},this.ws.onmessage=r=>{this.onMessageHandler&&this.onMessageHandler(r)},this.ws.onerror=r=>{console.error("Sendspin: WebSocket error",r),this.onErrorHandler&&this.onErrorHandler(r),n(r)},this.ws.onclose=()=>{console.log("Sendspin: WebSocket disconnected"),s&&this.onCloseHandler&&this.onCloseHandler(),this.shouldReconnect&&this.scheduleReconnect(A)}}catch(s){console.error("Sendspin: Failed to connect",s),n(s)}})}getReconnectDelayMs(A){let t=this.baseDelayMs*2**(A-1);return Math.min(t,this.maxDelayMs)}scheduleReconnect(A){this.reconnectTimeout!==null&&(clearTimeout(this.reconnectTimeout),this.reconnectTimeout=null);let t=this.reconnectAttempt+1;if(t>this.maxAttempts){console.warn(`Sendspin: Reconnect exhausted after ${this.maxAttempts} attempt(s)`),this.shouldReconnect=!1,this.isReconnecting=!1,this.reconnectAttempt=0,this.onExhausted?.();return}this.reconnectAttempt=t,this.isReconnecting=!0;let n=this.getReconnectDelayMs(t);this.reconnectTimeout=globalThis.setTimeout(()=>{this.reconnectTimeout=null,this.shouldReconnect&&(this.onReconnecting?.(t),console.log(`Sendspin: Attempting to reconnect (attempt ${t}${this.maxAttempts===1/0?"":`/${this.maxAttempts}`})...`),this.openSocket(A).catch(s=>{console.error("Sendspin: Reconnection failed",s)}))},n)}clearReconnectState(){this.reconnectTimeout!==null&&(clearTimeout(this.reconnectTimeout),this.reconnectTimeout=null),this.isReconnecting=!1,this.reconnectAttempt=0}disconnect(){this.shouldReconnect=!1,this.clearReconnectState(),this.ws&&(this.ws.close(),this.ws=null)}sendText(A){this.ws&&this.ws.readyState===WebSocket.OPEN?this.ws.send(A):console.warn("Sendspin: Cannot send text, WebSocket not connected")}sendBinary(A){this.ws&&this.ws.readyState===WebSocket.OPEN?this.ws.send(A):console.warn("Sendspin: Cannot send binary, WebSocket not connected")}isConnected(){return this.ws!==null&&this.ws.readyState===WebSocket.OPEN}getReadyState(){return this.ws?this.ws.readyState:WebSocket.CLOSED}};var et=class{constructor(A=.01,t=1.1,n=2,s=0){this._last_update=0,this._count=0,this._measurements_processed=0,this._offset=0,this._drift=0,this._offset_covariance=1/0,this._offset_drift_covariance=0,this._drift_covariance=0,this._use_drift=!1,this._offset_process_variance=A*A,this._drift_process_variance=s*s,this._forget_variance_factor=t*t,this._drift_significance_threshold_squared=n*n,this._current_time_element=this._createDefaultTimeElement()}_createDefaultTimeElement(){return{last_update:0,offset:0,drift:0}}update(A,t,n){if(n<=this._last_update)return;let s=n-this._last_update;this._last_update=n,this._measurements_processed+=1;let r=t,i=r*r;if(this._count<=0){this._count+=1,this._offset=A,this._offset_covariance=i,this._drift=0,this._current_time_element={last_update:this._last_update,offset:this._offset,drift:this._drift},this._use_drift=!1;return}if(this._count===1){this._count+=1,this._drift=(A-this._offset)/s,this._offset=A,this._drift_covariance=(this._offset_covariance+i)/(s*s),this._offset_covariance=i,this._current_time_element={last_update:this._last_update,offset:this._offset,drift:this._drift},this._use_drift=!1;return}let a=this._offset+this._drift*s,o=s*s,h=s*this._drift_process_variance,u=this._drift_covariance+h,c=this._offset_drift_covariance+this._drift_covariance*s+0,f=s*this._offset_process_variance,d=this._offset_covariance+2*this._offset_drift_covariance*s+this._drift_covariance*o+f,g=A-a,m=t*2;this._count<100?this._count+=1:Math.abs(g)>m&&(u*=this._forget_variance_factor,c*=this._forget_variance_factor,d*=this._forget_variance_factor);let p=1/(d+i),S=d*p,y=c*p;this._offset=a+S*g,this._drift+=y*g,this._drift_covariance=u-y*c,this._offset_drift_covariance=c-y*d,this._offset_covariance=d-S*d;let _=this._drift*this._drift;this._use_drift=_>this._drift_significance_threshold_squared*this._drift_covariance,this._current_time_element={last_update:this._last_update,offset:this._offset,drift:this._drift}}computeServerTime(A){let t=A-this._current_time_element.last_update,n=this._use_drift?this._current_time_element.drift:0,s=Math.round(this._current_time_element.offset+n*t);return A+s}computeClientTime(A){let t=this._use_drift?this._current_time_element.drift:0;return Math.round((A-this._current_time_element.offset+t*this._current_time_element.last_update)/(1+t))}reset(){this._count=0,this._measurements_processed=0,this._last_update=0,this._offset=0,this._drift=0,this._offset_covariance=1/0,this._offset_drift_covariance=0,this._drift_covariance=0,this._use_drift=!1,this._current_time_element=this._createDefaultTimeElement()}get count(){return this._measurements_processed}get is_synchronized(){return this._count>=1&&isFinite(this._offset_covariance)}get error(){return Math.round(Math.sqrt(this._offset_covariance))}get covariance(){return Math.round(this._offset_covariance)}get offset(){return this._offset}get drift(){return this._drift}};var Tn="sendspin-static-delay-ms-v2",Lt=class{constructor(A){this.storage=A}load(){if(!this.storage)return null;try{let A=this.storage.getItem(Tn);if(A===null)return null;let t=parseFloat(A);return isNaN(t)?null:nA(t)}catch{return null}}save(A){if(this.storage)try{this.storage.setItem(Tn,A.toString())}catch{}}};var BA=typeof globalThis=="object"&&"crypto"in globalThis?globalThis.crypto:void 0;function PA(e){return e instanceof Uint8Array||ArrayBuffer.isView(e)&&e.constructor.name==="Uint8Array"}function nt(e){if(!Number.isSafeInteger(e)||e<0)throw new Error("positive integer expected, got "+e)}function W(e,...A){if(!PA(e))throw new Error("Uint8Array expected");if(A.length>0&&!A.includes(e.length))throw new Error("Uint8Array expected of length "+A+", got length="+e.length)}function vn(e){if(typeof e!="function"||typeof e.create!="function")throw new Error("Hash should be wrapped by utils.createHasher");nt(e.outputLen),nt(e.blockLen)}function YA(e,A=!0){if(e.destroyed)throw new Error("Hash instance has been destroyed");if(A&&e.finished)throw new Error("Hash#digest() has already been called")}function In(e,A){W(e);let t=A.outputLen;if(e.length<t)throw new Error("digestInto() expects output buffer of length at least "+t)}function SA(...e){for(let A=0;A<e.length;A++)e[A].fill(0)}function Ut(e){return new DataView(e.buffer,e.byteOffset,e.byteLength)}function sA(e,A){return e<<32-A|e>>>A}var Jn=typeof Uint8Array.from([]).toHex=="function"&&typeof Uint8Array.fromHex=="function",zr=Array.from({length:256},(e,A)=>A.toString(16).padStart(2,"0"));function RA(e){if(W(e),Jn)return e.toHex();let A="";for(let t=0;t<e.length;t++)A+=zr[e[t]];return A}var yA={_0:48,_9:57,A:65,F:70,a:97,f:102};function Dn(e){if(e>=yA._0&&e<=yA._9)return e-yA._0;if(e>=yA.A&&e<=yA.F)return e-(yA.A-10);if(e>=yA.a&&e<=yA.f)return e-(yA.a-10)}function zt(e){if(typeof e!="string")throw new Error("hex string expected, got "+typeof e);if(Jn)return Uint8Array.fromHex(e);let A=e.length,t=A/2;if(A%2)throw new Error("hex string expected, got unpadded hex of length "+A);let n=new Uint8Array(t);for(let s=0,r=0;s<t;s++,r+=2){let i=Dn(e.charCodeAt(r)),a=Dn(e.charCodeAt(r+1));if(i===void 0||a===void 0){let o=e[r]+e[r+1];throw new Error('hex string expected, got non-hex character "'+o+'" at index '+r)}n[s]=i*16+a}return n}function ke(e){if(typeof e!="string")throw new Error("string expected");return new Uint8Array(new TextEncoder().encode(e))}function st(e){return typeof e=="string"&&(e=ke(e)),W(e),e}function qA(...e){let A=0;for(let n=0;n<e.length;n++){let s=e[n];W(s),A+=s.length}let t=new Uint8Array(A);for(let n=0,s=0;n<e.length;n++){let r=e[n];t.set(r,s),s+=r.length}return t}var ZA=class{};function _e(e){let A=n=>e().update(st(n)).digest(),t=e();return A.outputLen=t.outputLen,A.blockLen=t.blockLen,A.create=()=>e(),A}function rt(e=32){if(BA&&typeof BA.getRandomValues=="function")return BA.getRandomValues(new Uint8Array(e));if(BA&&typeof BA.randomBytes=="function")return Uint8Array.from(BA.randomBytes(e));throw new Error("crypto.getRandomValues must be defined")}function Qr(e,A,t,n){if(typeof e.setBigUint64=="function")return e.setBigUint64(A,t,n);let s=BigInt(32),r=BigInt(4294967295),i=Number(t>>s&r),a=Number(t&r),o=n?4:0,h=n?0:4;e.setUint32(A+o,i,n),e.setUint32(A+h,a,n)}function Bn(e,A,t){return e&A^~e&t}function Pn(e,A,t){return e&A^e&t^A&t}var it=class extends ZA{constructor(A,t,n,s){super(),this.finished=!1,this.length=0,this.pos=0,this.destroyed=!1,this.blockLen=A,this.outputLen=t,this.padOffset=n,this.isLE=s,this.buffer=new Uint8Array(A),this.view=Ut(this.buffer)}update(A){YA(this),A=st(A),W(A);let{view:t,buffer:n,blockLen:s}=this,r=A.length;for(let i=0;i<r;){let a=Math.min(s-this.pos,r-i);if(a===s){let o=Ut(A);for(;s<=r-i;i+=s)this.process(o,i);continue}n.set(A.subarray(i,i+a),this.pos),this.pos+=a,i+=a,this.pos===s&&(this.process(t,0),this.pos=0)}return this.length+=A.length,this.roundClean(),this}digestInto(A){YA(this),In(A,this),this.finished=!0;let{buffer:t,view:n,blockLen:s,isLE:r}=this,{pos:i}=this;t[i++]=128,SA(this.buffer.subarray(i)),this.padOffset>s-i&&(this.process(n,0),i=0);for(let l=i;l<s;l++)t[l]=0;Qr(n,s-8,BigInt(this.length*8),r),this.process(n,0);let a=Ut(A),o=this.outputLen;if(o%4)throw new Error("_sha2: outputLen should be aligned to 32bit");let h=o/4,u=this.get();if(h>u.length)throw new Error("_sha2: outputLen bigger than state");for(let l=0;l<h;l++)a.setUint32(4*l,u[l],r)}digest(){let{buffer:A,outputLen:t}=this;this.digestInto(A);let n=A.slice(0,t);return this.destroy(),n}_cloneInto(A){A||(A=new this.constructor),A.set(...this.get());let{blockLen:t,buffer:n,length:s,finished:r,destroyed:i,pos:a}=this;return A.destroyed=i,A.finished=r,A.length=s,A.pos=a,s%t&&A.buffer.set(n),A}clone(){return this._cloneInto()}},MA=Uint32Array.from([1779033703,3144134277,1013904242,2773480762,1359893119,2600822924,528734635,1541459225]);var Z=Uint32Array.from([1779033703,4089235720,3144134277,2227873595,1013904242,4271175723,2773480762,1595750129,1359893119,2917565137,2600822924,725511199,528734635,4215389547,1541459225,327033209]);var Qt=BigInt(4294967295),Rn=BigInt(32);function Nr(e,A=!1){return A?{h:Number(e&Qt),l:Number(e>>Rn&Qt)}:{h:Number(e>>Rn&Qt)|0,l:Number(e&Qt)|0}}function On(e,A=!1){let t=e.length,n=new Uint32Array(t),s=new Uint32Array(t);for(let r=0;r<t;r++){let{h:i,l:a}=Nr(e[r],A);[n[r],s[r]]=[i,a]}return[n,s]}var xe=(e,A,t)=>e>>>t,Ee=(e,A,t)=>e<<32-t|A>>>t,OA=(e,A,t)=>e>>>t|A<<32-t,LA=(e,A,t)=>e<<32-t|A>>>t,ot=(e,A,t)=>e<<64-t|A>>>t-32,at=(e,A,t)=>e>>>t-32|A<<64-t;function hA(e,A,t,n){let s=(A>>>0)+(n>>>0);return{h:e+t+(s/2**32|0)|0,l:s|0}}var Ln=(e,A,t)=>(e>>>0)+(A>>>0)+(t>>>0),Un=(e,A,t,n)=>A+t+n+(e/2**32|0)|0,zn=(e,A,t,n)=>(e>>>0)+(A>>>0)+(t>>>0)+(n>>>0),Qn=(e,A,t,n,s)=>A+t+n+s+(e/2**32|0)|0,Nn=(e,A,t,n,s)=>(e>>>0)+(A>>>0)+(t>>>0)+(n>>>0)+(s>>>0),Hn=(e,A,t,n,s,r)=>A+t+n+s+r+(e/2**32|0)|0;var Kr=Uint32Array.from([1116352408,1899447441,3049323471,3921009573,961987163,1508970993,2453635748,2870763221,3624381080,310598401,607225278,1426881987,1925078388,2162078206,2614888103,3248222580,3835390401,4022224774,264347078,604807628,770255983,1249150122,1555081692,1996064986,2554220882,2821834349,2952996808,3210313671,3336571891,3584528711,113926993,338241895,666307205,773529912,1294757372,1396182291,1695183700,1986661051,2177026350,2456956037,2730485921,2820302411,3259730800,3345764771,3516065817,3600352804,4094571909,275423344,430227734,506948616,659060556,883997877,958139571,1322822218,1537002063,1747873779,1955562222,2024104815,2227730452,2361852424,2428436474,2756734187,3204031479,3329325298]),bA=new Uint32Array(64),be=class extends it{constructor(A=32){super(64,A,8,!1),this.A=MA[0]|0,this.B=MA[1]|0,this.C=MA[2]|0,this.D=MA[3]|0,this.E=MA[4]|0,this.F=MA[5]|0,this.G=MA[6]|0,this.H=MA[7]|0}get(){let{A,B:t,C:n,D:s,E:r,F:i,G:a,H:o}=this;return[A,t,n,s,r,i,a,o]}set(A,t,n,s,r,i,a,o){this.A=A|0,this.B=t|0,this.C=n|0,this.D=s|0,this.E=r|0,this.F=i|0,this.G=a|0,this.H=o|0}process(A,t){for(let l=0;l<16;l++,t+=4)bA[l]=A.getUint32(t,!1);for(let l=16;l<64;l++){let c=bA[l-15],f=bA[l-2],d=sA(c,7)^sA(c,18)^c>>>3,g=sA(f,17)^sA(f,19)^f>>>10;bA[l]=g+bA[l-7]+d+bA[l-16]|0}let{A:n,B:s,C:r,D:i,E:a,F:o,G:h,H:u}=this;for(let l=0;l<64;l++){let c=sA(a,6)^sA(a,11)^sA(a,25),f=u+c+Bn(a,o,h)+Kr[l]+bA[l]|0,g=(sA(n,2)^sA(n,13)^sA(n,22))+Pn(n,s,r)|0;u=h,h=o,o=a,a=i+f|0,i=r,r=s,s=n,n=f+g|0}n=n+this.A|0,s=s+this.B|0,r=r+this.C|0,i=i+this.D|0,a=a+this.E|0,o=o+this.F|0,h=h+this.G|0,u=u+this.H|0,this.set(n,s,r,i,a,o,h,u)}roundClean(){SA(bA)}destroy(){this.set(0,0,0,0,0,0,0,0),SA(this.buffer)}};var Kn=On(["0x428a2f98d728ae22","0x7137449123ef65cd","0xb5c0fbcfec4d3b2f","0xe9b5dba58189dbbc","0x3956c25bf348b538","0x59f111f1b605d019","0x923f82a4af194f9b","0xab1c5ed5da6d8118","0xd807aa98a3030242","0x12835b0145706fbe","0x243185be4ee4b28c","0x550c7dc3d5ffb4e2","0x72be5d74f27b896f","0x80deb1fe3b1696b1","0x9bdc06a725c71235","0xc19bf174cf692694","0xe49b69c19ef14ad2","0xefbe4786384f25e3","0x0fc19dc68b8cd5b5","0x240ca1cc77ac9c65","0x2de92c6f592b0275","0x4a7484aa6ea6e483","0x5cb0a9dcbd41fbd4","0x76f988da831153b5","0x983e5152ee66dfab","0xa831c66d2db43210","0xb00327c898fb213f","0xbf597fc7beef0ee4","0xc6e00bf33da88fc2","0xd5a79147930aa725","0x06ca6351e003826f","0x142929670a0e6e70","0x27b70a8546d22ffc","0x2e1b21385c26c926","0x4d2c6dfc5ac42aed","0x53380d139d95b3df","0x650a73548baf63de","0x766a0abb3c77b2a8","0x81c2c92e47edaee6","0x92722c851482353b","0xa2bfe8a14cf10364","0xa81a664bbc423001","0xc24b8b70d0f89791","0xc76c51a30654be30","0xd192e819d6ef5218","0xd69906245565a910","0xf40e35855771202a","0x106aa07032bbd1b8","0x19a4c116b8d2d0c8","0x1e376c085141ab53","0x2748774cdf8eeb99","0x34b0bcb5e19b48a8","0x391c0cb3c5c95a63","0x4ed8aa4ae3418acb","0x5b9cca4f7763e373","0x682e6ff3d6b2b8a3","0x748f82ee5defb2fc","0x78a5636f43172f60","0x84c87814a1f0ab72","0x8cc702081a6439ec","0x90befffa23631e28","0xa4506cebde82bde9","0xbef9a3f7b2c67915","0xc67178f2e372532b","0xca273eceea26619c","0xd186b8c721c0c207","0xeada7dd6cde0eb1e","0xf57d4f7fee6ed178","0x06f067aa72176fba","0x0a637dc5a2c898a6","0x113f9804bef90dae","0x1b710b35131c471b","0x28db77f523047d84","0x32caab7b40c72493","0x3c9ebe0a15c9bebc","0x431d67c49c100d4c","0x4cc5d4becb3e42b6","0x597f299cfc657e2a","0x5fcb6fab3ad6faec","0x6c44198c4a475817"].map(e=>BigInt(e))),Fr=Kn[0],Gr=Kn[1],TA=new Uint32Array(80),DA=new Uint32Array(80),Te=class extends it{constructor(A=64){super(128,A,16,!1),this.Ah=Z[0]|0,this.Al=Z[1]|0,this.Bh=Z[2]|0,this.Bl=Z[3]|0,this.Ch=Z[4]|0,this.Cl=Z[5]|0,this.Dh=Z[6]|0,this.Dl=Z[7]|0,this.Eh=Z[8]|0,this.El=Z[9]|0,this.Fh=Z[10]|0,this.Fl=Z[11]|0,this.Gh=Z[12]|0,this.Gl=Z[13]|0,this.Hh=Z[14]|0,this.Hl=Z[15]|0}get(){let{Ah:A,Al:t,Bh:n,Bl:s,Ch:r,Cl:i,Dh:a,Dl:o,Eh:h,El:u,Fh:l,Fl:c,Gh:f,Gl:d,Hh:g,Hl:m}=this;return[A,t,n,s,r,i,a,o,h,u,l,c,f,d,g,m]}set(A,t,n,s,r,i,a,o,h,u,l,c,f,d,g,m){this.Ah=A|0,this.Al=t|0,this.Bh=n|0,this.Bl=s|0,this.Ch=r|0,this.Cl=i|0,this.Dh=a|0,this.Dl=o|0,this.Eh=h|0,this.El=u|0,this.Fh=l|0,this.Fl=c|0,this.Gh=f|0,this.Gl=d|0,this.Hh=g|0,this.Hl=m|0}process(A,t){for(let y=0;y<16;y++,t+=4)TA[y]=A.getUint32(t),DA[y]=A.getUint32(t+=4);for(let y=16;y<80;y++){let _=TA[y-15]|0,J=DA[y-15]|0,D=OA(_,J,1)^OA(_,J,8)^xe(_,J,7),B=LA(_,J,1)^LA(_,J,8)^Ee(_,J,7),I=TA[y-2]|0,M=DA[y-2]|0,C=OA(I,M,19)^ot(I,M,61)^xe(I,M,6),k=LA(I,M,19)^at(I,M,61)^Ee(I,M,6),T=zn(B,k,DA[y-7],DA[y-16]),w=Qn(T,D,C,TA[y-7],TA[y-16]);TA[y]=w|0,DA[y]=T|0}let{Ah:n,Al:s,Bh:r,Bl:i,Ch:a,Cl:o,Dh:h,Dl:u,Eh:l,El:c,Fh:f,Fl:d,Gh:g,Gl:m,Hh:p,Hl:S}=this;for(let y=0;y<80;y++){let _=OA(l,c,14)^OA(l,c,18)^ot(l,c,41),J=LA(l,c,14)^LA(l,c,18)^at(l,c,41),D=l&f^~l&g,B=c&d^~c&m,I=Nn(S,J,B,Gr[y],DA[y]),M=Hn(I,p,_,D,Fr[y],TA[y]),C=I|0,k=OA(n,s,28)^ot(n,s,34)^ot(n,s,39),T=LA(n,s,28)^at(n,s,34)^at(n,s,39),w=n&r^n&a^r&a,E=s&i^s&o^i&o;p=g|0,S=m|0,g=f|0,m=d|0,f=l|0,d=c|0,{h:l,l:c}=hA(h|0,u|0,M|0,C|0),h=a|0,u=o|0,a=r|0,o=i|0,r=n|0,i=s|0;let v=Ln(C,T,E);n=Un(v,M,k,w),s=v|0}({h:n,l:s}=hA(this.Ah|0,this.Al|0,n|0,s|0)),{h:r,l:i}=hA(this.Bh|0,this.Bl|0,r|0,i|0),{h:a,l:o}=hA(this.Ch|0,this.Cl|0,a|0,o|0),{h,l:u}=hA(this.Dh|0,this.Dl|0,h|0,u|0),{h:l,l:c}=hA(this.Eh|0,this.El|0,l|0,c|0),{h:f,l:d}=hA(this.Fh|0,this.Fl|0,f|0,d|0),{h:g,l:m}=hA(this.Gh|0,this.Gl|0,g|0,m|0),{h:p,l:S}=hA(this.Hh|0,this.Hl|0,p|0,S|0),this.set(n,s,r,i,a,o,h,u,l,c,f,d,g,m,p,S)}roundClean(){SA(TA,DA)}destroy(){SA(this.buffer),this.set(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)}};var j=_e(()=>new be);var UA=_e(()=>new Te);var Ie=BigInt(0),ve=BigInt(1);function Nt(e,A=""){if(typeof e!="boolean"){let t=A&&`"${A}"`;throw new Error(t+"expected boolean, got type="+typeof e)}return e}function ct(e,A,t=""){let n=PA(e),s=e?.length,r=A!==void 0;if(!n||r&&s!==A){let i=t&&`"${t}" `,a=r?` of length ${A}`:"",o=n?`length=${s}`:`type=${typeof e}`;throw new Error(i+"expected Uint8Array"+a+", got "+o)}return e}function Fn(e){if(typeof e!="string")throw new Error("hex string expected, got "+typeof e);return e===""?Ie:BigInt("0x"+e)}function Gn(e){return Fn(RA(e))}function rA(e){return W(e),Fn(RA(Uint8Array.from(e).reverse()))}function Je(e,A){return zt(e.toString(16).padStart(A*2,"0"))}function Ht(e,A){return Je(e,A).reverse()}function X(e,A,t){let n;if(typeof A=="string")try{n=zt(A)}catch(r){throw new Error(e+" must be hex string or Uint8Array, cause: "+r)}else if(PA(A))n=Uint8Array.from(A);else throw new Error(e+" must be hex string or Uint8Array");let s=n.length;if(typeof t=="number"&&s!==t)throw new Error(e+" of length "+t+" expected, got "+s);return n}function Zn(e,A){if(e.length!==A.length)return!1;let t=0;for(let n=0;n<e.length;n++)t|=e[n]^A[n];return t===0}function Be(e){return Uint8Array.from(e)}var De=e=>typeof e=="bigint"&&Ie<=e;function Zr(e,A,t){return De(e)&&De(A)&&De(t)&&A<=e&&e<t}function VA(e,A,t,n){if(!Zr(A,t,n))throw new Error("expected valid "+e+": "+t+" <= n < "+n+", got "+A)}function Yn(e){let A;for(A=0;e>Ie;e>>=ve,A+=1);return A}var ht=e=>(ve<<BigInt(e))-ve;function zA(e,A,t={}){if(!e||typeof e!="object")throw new Error("expected valid options object");function n(s,r,i){let a=e[s];if(i&&a===void 0)return;let o=typeof a;if(o!==r||a===null)throw new Error(`param "${s}" is invalid: expected ${r}, got ${o}`)}Object.entries(A).forEach(([s,r])=>n(s,r,!1)),Object.entries(t).forEach(([s,r])=>n(s,r,!0))}var Pe=()=>{throw new Error("not implemented")};function Re(e){let A=new WeakMap;return(t,...n)=>{let s=A.get(t);if(s!==void 0)return s;let r=e(t,...n);return A.set(t,r),r}}var AA=BigInt(0),$=BigInt(1),QA=BigInt(2),Wn=BigInt(3),jn=BigInt(4),Xn=BigInt(5),Yr=BigInt(7),$n=BigInt(8),qr=BigInt(9),As=BigInt(16);function N(e,A){let t=e%A;return t>=AA?t:A+t}function tA(e,A,t){let n=e;for(;A-- >AA;)n*=n,n%=t;return n}function qn(e,A){if(e===AA)throw new Error("invert: expected non-zero number");if(A<=AA)throw new Error("invert: expected positive modulus, got "+A);let t=N(e,A),n=A,s=AA,r=$,i=$,a=AA;for(;t!==AA;){let h=n/t,u=n%t,l=s-i*h,c=r-a*h;n=t,t=u,s=i,r=a,i=l,a=c}if(n!==$)throw new Error("invert: does not exist");return N(s,A)}function Oe(e,A,t){if(!e.eql(e.sqr(A),t))throw new Error("Cannot find square root")}function ts(e,A){let t=(e.ORDER+$)/jn,n=e.pow(A,t);return Oe(e,n,A),n}function Vr(e,A){let t=(e.ORDER-Xn)/$n,n=e.mul(A,QA),s=e.pow(n,t),r=e.mul(A,s),i=e.mul(e.mul(r,QA),s),a=e.mul(r,e.sub(i,e.ONE));return Oe(e,a,A),a}function Wr(e){let A=wA(e),t=es(e),n=t(A,A.neg(A.ONE)),s=t(A,n),r=t(A,A.neg(n)),i=(e+Yr)/As;return(a,o)=>{let h=a.pow(o,i),u=a.mul(h,n),l=a.mul(h,s),c=a.mul(h,r),f=a.eql(a.sqr(u),o),d=a.eql(a.sqr(l),o);h=a.cmov(h,u,f),u=a.cmov(c,l,d);let g=a.eql(a.sqr(u),o),m=a.cmov(h,u,g);return Oe(a,m,o),m}}function es(e){if(e<Wn)throw new Error("sqrt is not defined for small field");let A=e-$,t=0;for(;A%QA===AA;)A/=QA,t++;let n=QA,s=wA(e);for(;Vn(s,n)===1;)if(n++>1e3)throw new Error("Cannot find square root: probably non-prime P");if(t===1)return ts;let r=s.pow(n,A),i=(A+$)/QA;return function(o,h){if(o.is0(h))return h;if(Vn(o,h)!==1)throw new Error("Cannot find square root");let u=t,l=o.mul(o.ONE,r),c=o.pow(h,A),f=o.pow(h,i);for(;!o.eql(c,o.ONE);){if(o.is0(c))return o.ZERO;let d=1,g=o.sqr(c);for(;!o.eql(g,o.ONE);)if(d++,g=o.sqr(g),d===u)throw new Error("Cannot find square root");let m=$<<BigInt(u-d-1),p=o.pow(l,m);u=d,l=o.sqr(p),c=o.mul(c,l),f=o.mul(f,p)}return f}}function jr(e){return e%jn===Wn?ts:e%$n===Xn?Vr:e%As===qr?Wr(e):es(e)}var CA=(e,A)=>(N(e,A)&$)===$,Xr=["create","isValid","is0","neg","inv","sqrt","sqr","eql","add","sub","mul","pow","div","addN","subN","mulN","sqrN"];function ns(e){let A={ORDER:"bigint",MASK:"bigint",BYTES:"number",BITS:"number"},t=Xr.reduce((n,s)=>(n[s]="function",n),A);return zA(e,t),e}function $r(e,A,t){if(t<AA)throw new Error("invalid exponent, negatives unsupported");if(t===AA)return e.ONE;if(t===$)return A;let n=e.ONE,s=A;for(;t>AA;)t&$&&(n=e.mul(n,s)),s=e.sqr(s),t>>=$;return n}function Kt(e,A,t=!1){let n=new Array(A.length).fill(t?e.ZERO:void 0),s=A.reduce((i,a,o)=>e.is0(a)?i:(n[o]=i,e.mul(i,a)),e.ONE),r=e.inv(s);return A.reduceRight((i,a,o)=>e.is0(a)?i:(n[o]=e.mul(i,n[o]),e.mul(i,a)),r),n}function Vn(e,A){let t=(e.ORDER-$)/QA,n=e.pow(A,t),s=e.eql(n,e.ONE),r=e.eql(n,e.ZERO),i=e.eql(n,e.neg(e.ONE));if(!s&&!r&&!i)throw new Error("invalid Legendre symbol result");return s?1:r?0:-1}function ss(e,A){A!==void 0&&nt(A);let t=A!==void 0?A:e.toString(2).length,n=Math.ceil(t/8);return{nBitLength:t,nByteLength:n}}function wA(e,A,t=!1,n={}){if(e<=AA)throw new Error("invalid field: expected ORDER > 0, got "+e);let s,r,i=!1,a;if(typeof A=="object"&&A!=null){if(n.sqrt||t)throw new Error("cannot specify opts in two arguments");let c=A;c.BITS&&(s=c.BITS),c.sqrt&&(r=c.sqrt),typeof c.isLE=="boolean"&&(t=c.isLE),typeof c.modFromBytes=="boolean"&&(i=c.modFromBytes),a=c.allowedLengths}else typeof A=="number"&&(s=A),n.sqrt&&(r=n.sqrt);let{nBitLength:o,nByteLength:h}=ss(e,s);if(h>2048)throw new Error("invalid field: expected ORDER of <= 2048 bytes");let u,l=Object.freeze({ORDER:e,isLE:t,BITS:o,BYTES:h,MASK:ht(o),ZERO:AA,ONE:$,allowedLengths:a,create:c=>N(c,e),isValid:c=>{if(typeof c!="bigint")throw new Error("invalid field element: expected bigint, got "+typeof c);return AA<=c&&c<e},is0:c=>c===AA,isValidNot0:c=>!l.is0(c)&&l.isValid(c),isOdd:c=>(c&$)===$,neg:c=>N(-c,e),eql:(c,f)=>c===f,sqr:c=>N(c*c,e),add:(c,f)=>N(c+f,e),sub:(c,f)=>N(c-f,e),mul:(c,f)=>N(c*f,e),pow:(c,f)=>$r(l,c,f),div:(c,f)=>N(c*qn(f,e),e),sqrN:c=>c*c,addN:(c,f)=>c+f,subN:(c,f)=>c-f,mulN:(c,f)=>c*f,inv:c=>qn(c,e),sqrt:r||(c=>(u||(u=jr(e)),u(l,c))),toBytes:c=>t?Ht(c,h):Je(c,h),fromBytes:(c,f=!0)=>{if(a){if(!a.includes(c.length)||c.length>h)throw new Error("Field.fromBytes: expected "+a+" bytes, got "+c.length);let g=new Uint8Array(h);g.set(c,t?0:g.length-c.length),c=g}if(c.length!==h)throw new Error("Field.fromBytes: expected "+h+" bytes, got "+c.length);let d=t?rA(c):Gn(c);if(i&&(d=N(d,e)),!f&&!l.isValid(d))throw new Error("invalid field element: outside of range 0..ORDER");return d},invertBatch:c=>Kt(l,c),cmov:(c,f,d)=>d?f:c});return Object.freeze(l)}var Ft=BigInt(0),Qe=BigInt(1);function rs(e,A){let t=A.negate();return e?t:A}function lt(e,A){let t=Kt(e.Fp,A.map(n=>n.Z));return A.map((n,s)=>e.fromAffine(n.toAffine(t[s])))}function cs(e,A){if(!Number.isSafeInteger(e)||e<=0||e>A)throw new Error("invalid window size, expected [1.."+A+"], got W="+e)}function Le(e,A){cs(e,A);let t=Math.ceil(A/e)+1,n=2**(e-1),s=2**e,r=ht(e),i=BigInt(e);return{windows:t,windowSize:n,mask:r,maxNumber:s,shiftBy:i}}function is(e,A,t){let{windowSize:n,mask:s,maxNumber:r,shiftBy:i}=t,a=Number(e&s),o=e>>i;a>n&&(a-=r,o+=Qe);let h=A*n,u=h+Math.abs(a)-1,l=a===0,c=a<0,f=A%2!==0;return{nextN:o,offset:u,isZero:l,isNeg:c,isNegF:f,offsetF:h}}function Ai(e,A){if(!Array.isArray(e))throw new Error("array expected");e.forEach((t,n)=>{if(!(t instanceof A))throw new Error("invalid point at index "+n)})}function ti(e,A){if(!Array.isArray(e))throw new Error("array of scalars expected");e.forEach((t,n)=>{if(!A.isValid(t))throw new Error("invalid scalar at index "+n)})}var Ue=new WeakMap,hs=new WeakMap;function ze(e){return hs.get(e)||1}function os(e){if(e!==Ft)throw new Error("invalid wNAF")}var Gt=class{constructor(A,t){this.BASE=A.BASE,this.ZERO=A.ZERO,this.Fn=A.Fn,this.bits=t}_unsafeLadder(A,t,n=this.ZERO){let s=A;for(;t>Ft;)t&Qe&&(n=n.add(s)),s=s.double(),t>>=Qe;return n}precomputeWindow(A,t){let{windows:n,windowSize:s}=Le(t,this.bits),r=[],i=A,a=i;for(let o=0;o<n;o++){a=i,r.push(a);for(let h=1;h<s;h++)a=a.add(i),r.push(a);i=a.double()}return r}wNAF(A,t,n){if(!this.Fn.isValid(n))throw new Error("invalid scalar");let s=this.ZERO,r=this.BASE,i=Le(A,this.bits);for(let a=0;a<i.windows;a++){let{nextN:o,offset:h,isZero:u,isNeg:l,isNegF:c,offsetF:f}=is(n,a,i);n=o,u?r=r.add(rs(c,t[f])):s=s.add(rs(l,t[h]))}return os(n),{p:s,f:r}}wNAFUnsafe(A,t,n,s=this.ZERO){let r=Le(A,this.bits);for(let i=0;i<r.windows&&n!==Ft;i++){let{nextN:a,offset:o,isZero:h,isNeg:u}=is(n,i,r);if(n=a,!h){let l=t[o];s=s.add(u?l.negate():l)}}return os(n),s}getPrecomputes(A,t,n){let s=Ue.get(t);return s||(s=this.precomputeWindow(t,A),A!==1&&(typeof n=="function"&&(s=n(s)),Ue.set(t,s))),s}cached(A,t,n){let s=ze(A);return this.wNAF(s,this.getPrecomputes(s,A,n),t)}unsafe(A,t,n,s){let r=ze(A);return r===1?this._unsafeLadder(A,t,s):this.wNAFUnsafe(r,this.getPrecomputes(r,A,n),t,s)}createCache(A,t){cs(t,this.bits),hs.set(A,t),Ue.delete(A)}hasCache(A){return ze(A)!==1}};function Zt(e,A,t,n){Ai(t,e),ti(n,A);let s=t.length,r=n.length;if(s!==r)throw new Error("arrays of points and scalars must have equal length");let i=e.ZERO,a=Yn(BigInt(s)),o=1;a>12?o=a-3:a>4?o=a-2:a>0&&(o=2);let h=ht(o),u=new Array(Number(h)+1).fill(i),l=Math.floor((A.BITS-1)/o)*o,c=i;for(let f=l;f>=0;f-=o){u.fill(i);for(let g=0;g<r;g++){let m=n[g],p=Number(m>>BigInt(f)&h);u[p]=u[p].add(t[g])}let d=i;for(let g=u.length-1,m=i;g>0;g--)m=m.add(u[g]),d=d.add(m);if(c=c.add(d),f!==0)for(let g=0;g<o;g++)c=c.double()}return c}function as(e,A,t){if(A){if(A.ORDER!==e)throw new Error("Field.ORDER must match order: Fp == p, Fn == n");return ns(A),A}else return wA(e,{isLE:t})}function ls(e,A,t={},n){if(n===void 0&&(n=e==="edwards"),!A||typeof A!="object")throw new Error(`expected valid ${e} CURVE object`);for(let o of["p","n","h"]){let h=A[o];if(!(typeof h=="bigint"&&h>Ft))throw new Error(`CURVE.${o} must be positive bigint`)}let s=as(A.p,t.Fp,n),r=as(A.n,t.Fn,n),a=["Gx","Gy","a",e==="weierstrass"?"b":"d"];for(let o of a)if(!s.isValid(A[o]))throw new Error(`CURVE.${o} must be valid field element of CURVE.Fp`);return A=Object.freeze(Object.assign({},A)),{CURVE:A,Fp:s,Fn:r}}var vA=BigInt(0),G=BigInt(1),Ne=BigInt(2),ei=BigInt(8);function ni(e,A,t,n){let s=e.sqr(t),r=e.sqr(n),i=e.add(e.mul(A.a,s),r),a=e.add(e.ONE,e.mul(A.d,e.mul(s,r)));return e.eql(i,a)}function si(e,A={}){let t=ls("edwards",e,A,A.FpFnLE),{Fp:n,Fn:s}=t,r=t.CURVE,{h:i}=r;zA(A,{},{uvRatio:"function"});let a=Ne<<BigInt(s.BYTES*8)-G,o=m=>n.create(m),h=A.uvRatio||((m,p)=>{try{return{isValid:!0,value:n.sqrt(n.div(m,p))}}catch{return{isValid:!1,value:vA}}});if(!ni(n,r,r.Gx,r.Gy))throw new Error("bad curve params: generator point");function u(m,p,S=!1){let y=S?G:vA;return VA("coordinate "+m,p,y,a),p}function l(m){if(!(m instanceof d))throw new Error("ExtendedPoint expected")}let c=Re((m,p)=>{let{X:S,Y:y,Z:_}=m,J=m.is0();p==null&&(p=J?ei:n.inv(_));let D=o(S*p),B=o(y*p),I=n.mul(_,p);if(J)return{x:vA,y:G};if(I!==G)throw new Error("invZ was invalid");return{x:D,y:B}}),f=Re(m=>{let{a:p,d:S}=r;if(m.is0())throw new Error("bad point: ZERO");let{X:y,Y:_,Z:J,T:D}=m,B=o(y*y),I=o(_*_),M=o(J*J),C=o(M*M),k=o(B*p),T=o(M*o(k+I)),w=o(C+o(S*o(B*I)));if(T!==w)throw new Error("bad point: equation left != right (1)");let E=o(y*_),v=o(J*D);if(E!==v)throw new Error("bad point: equation left != right (2)");return!0});class d{constructor(p,S,y,_){this.X=u("x",p),this.Y=u("y",S),this.Z=u("z",y,!0),this.T=u("t",_),Object.freeze(this)}static CURVE(){return r}static fromAffine(p){if(p instanceof d)throw new Error("extended point not allowed");let{x:S,y}=p||{};return u("x",S),u("y",y),new d(S,y,G,o(S*y))}static fromBytes(p,S=!1){let y=n.BYTES,{a:_,d:J}=r;p=Be(ct(p,y,"point")),Nt(S,"zip215");let D=Be(p),B=p[y-1];D[y-1]=B&-129;let I=rA(D),M=S?a:n.ORDER;VA("point.y",I,vA,M);let C=o(I*I),k=o(C-G),T=o(J*C-_),{isValid:w,value:E}=h(k,T);if(!w)throw new Error("bad point: invalid y coordinate");let v=(E&G)===G,P=(B&128)!==0;if(!S&&E===vA&&P)throw new Error("bad point: x=0 and x_0=1");return P!==v&&(E=o(-E)),d.fromAffine({x:E,y:I})}static fromHex(p,S=!1){return d.fromBytes(X("point",p),S)}get x(){return this.toAffine().x}get y(){return this.toAffine().y}precompute(p=8,S=!0){return g.createCache(this,p),S||this.multiply(Ne),this}assertValidity(){f(this)}equals(p){l(p);let{X:S,Y:y,Z:_}=this,{X:J,Y:D,Z:B}=p,I=o(S*B),M=o(J*_),C=o(y*B),k=o(D*_);return I===M&&C===k}is0(){return this.equals(d.ZERO)}negate(){return new d(o(-this.X),this.Y,this.Z,o(-this.T))}double(){let{a:p}=r,{X:S,Y:y,Z:_}=this,J=o(S*S),D=o(y*y),B=o(Ne*o(_*_)),I=o(p*J),M=S+y,C=o(o(M*M)-J-D),k=I+D,T=k-B,w=I-D,E=o(C*T),v=o(k*w),P=o(C*w),R=o(T*k);return new d(E,v,R,P)}add(p){l(p);let{a:S,d:y}=r,{X:_,Y:J,Z:D,T:B}=this,{X:I,Y:M,Z:C,T:k}=p,T=o(_*I),w=o(J*M),E=o(B*y*k),v=o(D*C),P=o((_+J)*(I+M)-T-w),R=v-E,O=v+E,x=o(w-S*T),L=o(P*R),U=o(O*x),z=o(P*x),V=o(R*O);return new d(L,U,V,z)}subtract(p){return this.add(p.negate())}multiply(p){if(!s.isValidNot0(p))throw new Error("invalid scalar: expected 1 <= sc < curve.n");let{p:S,f:y}=g.cached(this,p,_=>lt(d,_));return lt(d,[S,y])[0]}multiplyUnsafe(p,S=d.ZERO){if(!s.isValid(p))throw new Error("invalid scalar: expected 0 <= sc < curve.n");return p===vA?d.ZERO:this.is0()||p===G?this:g.unsafe(this,p,y=>lt(d,y),S)}isSmallOrder(){return this.multiplyUnsafe(i).is0()}isTorsionFree(){return g.unsafe(this,r.n).is0()}toAffine(p){return c(this,p)}clearCofactor(){return i===G?this:this.multiplyUnsafe(i)}toBytes(){let{x:p,y:S}=this.toAffine(),y=n.toBytes(S);return y[y.length-1]|=p&G?128:0,y}toHex(){return RA(this.toBytes())}toString(){return`<Point ${this.is0()?"ZERO":this.toHex()}>`}get ex(){return this.X}get ey(){return this.Y}get ez(){return this.Z}get et(){return this.T}static normalizeZ(p){return lt(d,p)}static msm(p,S){return Zt(d,s,p,S)}_setWindowSize(p){this.precompute(p)}toRawBytes(){return this.toBytes()}}d.BASE=new d(r.Gx,r.Gy,G,o(r.Gx*r.Gy)),d.ZERO=new d(vA,G,G,vA),d.Fp=n,d.Fn=s;let g=new Gt(d,s.BITS);return d.BASE.precompute(8),d}var Yt=class{constructor(A){this.ep=A}static fromBytes(A){Pe()}static fromHex(A){Pe()}get x(){return this.toAffine().x}get y(){return this.toAffine().y}clearCofactor(){return this}assertValidity(){this.ep.assertValidity()}toAffine(A){return this.ep.toAffine(A)}toHex(){return RA(this.toBytes())}toString(){return this.toHex()}isTorsionFree(){return!0}isSmallOrder(){return!1}add(A){return this.assertSame(A),this.init(this.ep.add(A.ep))}subtract(A){return this.assertSame(A),this.init(this.ep.subtract(A.ep))}multiply(A){return this.init(this.ep.multiply(A))}multiplyUnsafe(A){return this.init(this.ep.multiplyUnsafe(A))}double(){return this.init(this.ep.double())}negate(){return this.init(this.ep.negate())}precompute(A,t){return this.init(this.ep.precompute(A,t))}toRawBytes(){return this.toBytes()}};function ri(e,A,t={}){if(typeof A!="function")throw new Error('"hash" function param is required');zA(t,{},{adjustScalarBytes:"function",randomBytes:"function",domain:"function",prehash:"function",mapToCurve:"function"});let{prehash:n}=t,{BASE:s,Fp:r,Fn:i}=e,a=t.randomBytes||rt,o=t.adjustScalarBytes||(M=>M),h=t.domain||((M,C,k)=>{if(Nt(k,"phflag"),C.length||k)throw new Error("Contexts/pre-hash are not supported");return M});function u(M){return i.create(rA(M))}function l(M){let C=y.secretKey;M=X("private key",M,C);let k=X("hashed private key",A(M),2*C),T=o(k.slice(0,C)),w=k.slice(C,2*C),E=u(T);return{head:T,prefix:w,scalar:E}}function c(M){let{head:C,prefix:k,scalar:T}=l(M),w=s.multiply(T),E=w.toBytes();return{head:C,prefix:k,scalar:T,point:w,pointBytes:E}}function f(M){return c(M).pointBytes}function d(M=Uint8Array.of(),...C){let k=qA(...C);return u(A(h(k,X("context",M),!!n)))}function g(M,C,k={}){M=X("message",M),n&&(M=n(M));let{prefix:T,scalar:w,pointBytes:E}=c(C),v=d(k.context,T,M),P=s.multiply(v).toBytes(),R=d(k.context,P,E,M),O=i.create(v+R*w);if(!i.isValid(O))throw new Error("sign failed: invalid s");let x=qA(P,i.toBytes(O));return ct(x,y.signature,"result")}let m={zip215:!0};function p(M,C,k,T=m){let{context:w,zip215:E}=T,v=y.signature;M=X("signature",M,v),C=X("message",C),k=X("publicKey",k,y.publicKey),E!==void 0&&Nt(E,"zip215"),n&&(C=n(C));let P=v/2,R=M.subarray(0,P),O=rA(M.subarray(P,v)),x,L,U;try{x=e.fromBytes(k,E),L=e.fromBytes(R,E),U=s.multiplyUnsafe(O)}catch{return!1}if(!E&&x.isSmallOrder())return!1;let z=d(w,L.toBytes(),x.toBytes(),C);return L.add(x.multiplyUnsafe(z)).subtract(U).clearCofactor().is0()}let S=r.BYTES,y={secretKey:S,publicKey:S,signature:2*S,seed:S};function _(M=a(y.seed)){return ct(M,y.seed,"seed")}function J(M){let C=I.randomSecretKey(M);return{secretKey:C,publicKey:f(C)}}function D(M){return PA(M)&&M.length===i.BYTES}function B(M,C){try{return!!e.fromBytes(M,C)}catch{return!1}}let I={getExtendedPublicKey:c,randomSecretKey:_,isValidSecretKey:D,isValidPublicKey:B,toMontgomery(M){let{y:C}=e.fromBytes(M),k=y.publicKey,T=k===32;if(!T&&k!==57)throw new Error("only defined for 25519 and 448");let w=T?r.div(G+C,G-C):r.div(C-G,C+G);return r.toBytes(w)},toMontgomerySecret(M){let C=y.secretKey;ct(M,C);let k=A(M.subarray(0,C));return o(k).subarray(0,C)},randomPrivateKey:_,precompute(M=8,C=e.BASE){return C.precompute(M,!1)}};return Object.freeze({keygen:J,getPublicKey:f,sign:g,verify:p,utils:I,Point:e,lengths:y})}function ii(e){let A={a:e.a,d:e.d,p:e.Fp.ORDER,n:e.n,h:e.h,Gx:e.Gx,Gy:e.Gy},t=e.Fp,n=wA(A.n,e.nBitLength,!0),s={Fp:t,Fn:n,uvRatio:e.uvRatio},r={randomBytes:e.randomBytes,adjustScalarBytes:e.adjustScalarBytes,domain:e.domain,prehash:e.prehash,mapToCurve:e.mapToCurve};return{CURVE:A,curveOpts:s,hash:e.hash,eddsaOpts:r}}function oi(e,A){let t=A.Point;return Object.assign({},A,{ExtendedPoint:t,CURVE:e,nBitLength:t.Fn.BITS,nByteLength:t.Fn.BYTES})}function us(e){let{CURVE:A,curveOpts:t,hash:n,eddsaOpts:s}=ii(e),r=si(A,t),i=ri(r,n,s);return oi(e,i)}var ut=BigInt(0),WA=BigInt(1),qt=BigInt(2);function ai(e){return zA(e,{adjustScalarBytes:"function",powPminus2:"function"}),Object.freeze({...e})}function ds(e){let A=ai(e),{P:t,type:n,adjustScalarBytes:s,powPminus2:r,randomBytes:i}=A,a=n==="x25519";if(!a&&n!=="x448")throw new Error("invalid type");let o=i||rt,h=a?255:448,u=a?32:56,l=BigInt(a?9:5),c=BigInt(a?121665:39081),f=a?qt**BigInt(254):qt**BigInt(447),d=a?BigInt(8)*qt**BigInt(251)-WA:BigInt(4)*qt**BigInt(445)-WA,g=f+d+WA,m=w=>N(w,t),p=S(l);function S(w){return Ht(m(w),u)}function y(w){let E=X("u coordinate",w,u);return a&&(E[31]&=127),m(rA(E))}function _(w){return rA(s(X("scalar",w,u)))}function J(w,E){let v=I(y(E),_(w));if(v===ut)throw new Error("invalid private or public key received");return S(v)}function D(w){return J(w,p)}function B(w,E,v){let P=m(w*(E-v));return E=m(E-P),v=m(v+P),{x_2:E,x_3:v}}function I(w,E){VA("u",w,ut,t),VA("scalar",E,f,g);let v=E,P=w,R=WA,O=ut,x=w,L=WA,U=ut;for(let V=BigInt(h-1);V>=ut;V--){let iA=v>>V&WA;U^=iA,{x_2:R,x_3:x}=B(U,R,x),{x_2:O,x_3:L}=B(U,O,L),U=iA;let oA=R+O,aA=m(oA*oA),cA=R-O,mA=m(cA*cA),gA=aA-mA,Er=x+L,br=x-L,Cn=m(br*oA),wn=m(Er*cA),kn=Cn+wn,_n=Cn-wn;x=m(kn*kn),L=m(P*m(_n*_n)),R=m(aA*mA),O=m(gA*(aA+m(c*gA)))}({x_2:R,x_3:x}=B(U,R,x)),{x_2:O,x_3:L}=B(U,O,L);let z=r(O);return m(R*z)}let M={secretKey:u,publicKey:u,seed:u},C=(w=o(u))=>(W(w,M.seed),w);function k(w){let E=C(w);return{secretKey:E,publicKey:D(E)}}return{keygen:k,getSharedSecret:(w,E)=>J(w,E),getPublicKey:w=>D(w),scalarMult:J,scalarMultBase:D,utils:{randomSecretKey:C,randomPrivateKey:C},GuBytes:p.slice(),lengths:M}}var ci=BigInt(0),_A=BigInt(1),fs=BigInt(2),hi=BigInt(3),li=BigInt(5),ui=BigInt(8),jA=BigInt("0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffed"),dt={p:jA,n:BigInt("0x1000000000000000000000000000000014def9dea2f79cd65812631a5cf5d3ed"),h:ui,a:BigInt("0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffec"),d:BigInt("0x52036cee2b6ffe738cc740797779e89800700a4d4141d8ab75eb4dca135978a3"),Gx:BigInt("0x216936d3cd6e53fec0a4e231fdd6dc5c692cc7609525a7b2c9562d608f25d51a"),Gy:BigInt("0x6666666666666666666666666666666666666666666666666666666666666658")};function gs(e){let A=BigInt(10),t=BigInt(20),n=BigInt(40),s=BigInt(80),r=jA,a=e*e%r*e%r,o=tA(a,fs,r)*a%r,h=tA(o,_A,r)*e%r,u=tA(h,li,r)*h%r,l=tA(u,A,r)*u%r,c=tA(l,t,r)*l%r,f=tA(c,n,r)*c%r,d=tA(f,s,r)*f%r,g=tA(d,s,r)*f%r,m=tA(g,A,r)*u%r;return{pow_p_5_8:tA(m,fs,r)*e%r,b2:a}}function ys(e){return e[0]&=248,e[31]&=127,e[31]|=64,e}var He=BigInt("19681161376707505956807079304988542015446066515923890162744021073123829784752");function Ge(e,A){let t=jA,n=N(A*A*A,t),s=N(n*n*A,t),r=gs(e*s).pow_p_5_8,i=N(e*n*r,t),a=N(A*i*i,t),o=i,h=N(i*He,t),u=a===e,l=a===N(-e,t),c=a===N(-e*He,t);return u&&(i=o),(l||c)&&(i=h),CA(i,t)&&(i=N(-i,t)),{isValid:u||l,value:i}}var kA=wA(dt.p,{isLE:!0}),di=wA(dt.n,{isLE:!0}),fi={...dt,Fp:kA,hash:UA,adjustScalarBytes:ys,uvRatio:Ge},NA=us(fi);var HA=(()=>{let e=kA.ORDER;return ds({P:e,type:"x25519",powPminus2:A=>{let{pow_p_5_8:t,b2:n}=gs(A);return N(tA(t,hi,e)*n,e)},adjustScalarBytes:ys})})();var Ke=He,pi=BigInt("25063068953384623474111414158702152701244531502492656460079210482610430750235"),mi=BigInt("54469307008909316920995813868745141605393597292927456921205312896311721017578"),gi=BigInt("1159843021668779879193775521855586647937357759715417654439879720876111806838"),yi=BigInt("40440834346308536858101042469323190826248399146238708352240133220865137265952"),ps=e=>Ge(_A,e),Si=BigInt("0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),Fe=e=>NA.Point.Fp.create(rA(e)&Si);function ms(e){let{d:A}=dt,t=jA,n=p=>kA.create(p),s=n(Ke*e*e),r=n((s+_A)*gi),i=BigInt(-1),a=n((i-A*s)*n(s+A)),{isValid:o,value:h}=Ge(r,a),u=n(h*e);CA(u,t)||(u=n(-u)),o||(h=u),o||(i=s);let l=n(i*(s-_A)*yi-a),c=h*h,f=n((h+h)*a),d=n(l*pi),g=n(_A-c),m=n(_A+c);return new NA.Point(n(f*m),n(g*d),n(d*m),n(f*g))}function Mi(e){W(e,64);let A=Fe(e.subarray(0,32)),t=ms(A),n=Fe(e.subarray(32,64)),s=ms(n);return new xA(t.add(s))}var xA=class e extends Yt{constructor(A){super(A)}static fromAffine(A){return new e(NA.Point.fromAffine(A))}assertSame(A){if(!(A instanceof e))throw new Error("RistrettoPoint expected")}init(A){return new e(A)}static hashToCurve(A){return Mi(X("ristrettoHash",A,64))}static fromBytes(A){W(A,32);let{a:t,d:n}=dt,s=jA,r=_=>kA.create(_),i=Fe(A);if(!Zn(kA.toBytes(i),A)||CA(i,s))throw new Error("invalid ristretto255 encoding 1");let a=r(i*i),o=r(_A+t*a),h=r(_A-t*a),u=r(o*o),l=r(h*h),c=r(t*n*u-l),{isValid:f,value:d}=ps(r(c*l)),g=r(d*h),m=r(d*g*c),p=r((i+i)*g);CA(p,s)&&(p=r(-p));let S=r(o*m),y=r(p*S);if(!f||CA(y,s)||S===ci)throw new Error("invalid ristretto255 encoding 2");return new e(new NA.Point(p,S,_A,y))}static fromHex(A){return e.fromBytes(X("ristrettoHex",A,32))}static msm(A,t){return Zt(e,NA.Point.Fn,A,t)}toBytes(){let{X:A,Y:t,Z:n,T:s}=this.ep,r=jA,i=m=>kA.create(m),a=i(i(n+t)*i(n-t)),o=i(A*t),h=i(o*o),{value:u}=ps(i(a*h)),l=i(u*a),c=i(u*o),f=i(l*c*s),d;if(CA(s*f,r)){let m=i(t*Ke),p=i(A*Ke);A=m,t=p,d=i(l*mi)}else d=c;CA(A*f,r)&&(t=i(-t));let g=i((n-t)*d);return CA(g,r)&&(g=i(-g)),kA.toBytes(g)}equals(A){this.assertSame(A);let{X:t,Y:n}=this.ep,{X:s,Y:r}=A.ep,i=h=>kA.create(h),a=i(t*r)===i(n*s),o=i(n*r)===i(t*s);return a||o}is0(){return this.equals(e.ZERO)}};xA.BASE=new xA(NA.Point.BASE);xA.ZERO=new xA(NA.Point.ZERO);xA.Fp=kA;xA.Fn=di;function Ss(e){return e instanceof Uint8Array||ArrayBuffer.isView(e)&&e.constructor.name==="Uint8Array"}function Wt(e){if(typeof e!="boolean")throw new Error(`boolean expected, not ${e}`)}function jt(e){if(!Number.isSafeInteger(e)||e<0)throw new Error("positive integer expected, got "+e)}function Q(e,...A){if(!Ss(e))throw new Error("Uint8Array expected");if(A.length>0&&!A.includes(e.length))throw new Error("Uint8Array expected of length "+A+", got length="+e.length)}function IA(e,A=!0){if(e.destroyed)throw new Error("Hash instance has been destroyed");if(A&&e.finished)throw new Error("Hash#digest() has already been called")}function ft(e,A){Q(e);let t=A.outputLen;if(e.length<t)throw new Error("digestInto() expects output buffer of length at least "+t)}function Ms(e){return new Uint8Array(e.buffer,e.byteOffset,e.byteLength)}function K(e){return new Uint32Array(e.buffer,e.byteOffset,Math.floor(e.byteLength/4))}function F(...e){for(let A=0;A<e.length;A++)e[A].fill(0)}function XA(e){return new DataView(e.buffer,e.byteOffset,e.byteLength)}var Ci=new Uint8Array(new Uint32Array([287454020]).buffer)[0]===68;function wi(e){if(typeof e!="string")throw new Error("string expected");return new Uint8Array(new TextEncoder().encode(e))}function lA(e){if(typeof e=="string")e=wi(e);else if(Ss(e))e=uA(e);else throw new Error("Uint8Array expected, got "+typeof e);return e}function Cs(e,A){if(A==null||typeof A!="object")throw new Error("options must be defined");return Object.assign(e,A)}function Xt(e,A){if(e.length!==A.length)return!1;let t=0;for(let n=0;n<e.length;n++)t|=e[n]^A[n];return t===0}var pt=(e,A)=>{function t(n,...s){if(Q(n),!Ci)throw new Error("Non little-endian hardware is not yet supported");if(e.nonceLength!==void 0){let u=s[0];if(!u)throw new Error("nonce / iv required");e.varSizeNonce?Q(u):Q(u,e.nonceLength)}let r=e.tagLength;r&&s[1]!==void 0&&Q(s[1]);let i=A(n,...s),a=(u,l)=>{if(l!==void 0){if(u!==2)throw new Error("cipher output not supported");Q(l)}},o=!1;return{encrypt(u,l){if(o)throw new Error("cannot encrypt() twice with same key + nonce");return o=!0,Q(u),a(i.encrypt.length,l),i.encrypt(u,l)},decrypt(u,l){if(Q(u),r&&u.length<r)throw new Error("invalid ciphertext length: smaller than tagLength="+r);return a(i.decrypt.length,l),i.decrypt(u,l)}}}return Object.assign(t,e),t};function mt(e,A,t=!0){if(A===void 0)return new Uint8Array(e);if(A.length!==e)throw new Error("invalid output length, expected "+e+", got: "+A.length);if(t&&!gt(A))throw new Error("invalid output, must be aligned");return A}function Vt(e,A,t,n){if(typeof e.setBigUint64=="function")return e.setBigUint64(A,t,n);let s=BigInt(32),r=BigInt(4294967295),i=Number(t>>s&r),a=Number(t&r),o=n?4:0,h=n?0:4;e.setUint32(A+o,i,n),e.setUint32(A+h,a,n)}function $t(e,A,t){Wt(t);let n=new Uint8Array(16),s=XA(n);return Vt(s,0,BigInt(A),t),Vt(s,8,BigInt(e),t),n}function gt(e){return e.byteOffset%4===0}function uA(e){return Uint8Array.from(e)}var ks=e=>Uint8Array.from(e.split("").map(A=>A.charCodeAt(0))),ki=ks("expand 16-byte k"),_i=ks("expand 32-byte k"),xi=K(ki),Ei=K(_i);function b(e,A){return e<<A|e>>>32-A}function Ze(e){return e.byteOffset%4===0}var Ae=64,bi=16,_s=2**32-1,ws=new Uint32Array;function Ti(e,A,t,n,s,r,i,a){let o=s.length,h=new Uint8Array(Ae),u=K(h),l=Ze(s)&&Ze(r),c=l?K(s):ws,f=l?K(r):ws;for(let d=0;d<o;i++){if(e(A,t,n,u,i,a),i>=_s)throw new Error("arx: counter overflow");let g=Math.min(Ae,o-d);if(l&&g===Ae){let m=d/4;if(d%4!==0)throw new Error("arx: invalid block position");for(let p=0,S;p<bi;p++)S=m+p,f[S]=c[S]^u[p];d+=Ae;continue}for(let m=0,p;m<g;m++)p=d+m,r[p]=s[p]^h[m];d+=g}}function Ye(e,A){let{allowShortKeys:t,extendNonceFn:n,counterLength:s,counterRight:r,rounds:i}=Cs({allowShortKeys:!1,counterLength:8,counterRight:!1,rounds:20},A);if(typeof e!="function")throw new Error("core must be a function");return jt(s),jt(i),Wt(r),Wt(t),(a,o,h,u,l=0)=>{Q(a),Q(o),Q(h);let c=h.length;if(u===void 0&&(u=new Uint8Array(c)),Q(u),jt(l),l<0||l>=_s)throw new Error("arx: counter overflow");if(u.length<c)throw new Error(`arx: output (${u.length}) is shorter than data (${c})`);let f=[],d=a.length,g,m;if(d===32)f.push(g=uA(a)),m=Ei;else if(d===16&&t)g=new Uint8Array(32),g.set(a),g.set(a,16),m=xi,f.push(g);else throw new Error(`arx: invalid 32-byte key, got length=${d}`);Ze(o)||f.push(o=uA(o));let p=K(g);if(n){if(o.length!==24)throw new Error("arx: extended nonce must be 24 bytes");n(m,p,K(o.subarray(0,16)),p),o=o.subarray(16)}let S=16-s;if(S!==o.length)throw new Error(`arx: nonce must be ${S} or 16 bytes`);if(S!==12){let _=new Uint8Array(12);_.set(o,r?0:12-o.length),o=_,f.push(o)}let y=K(o);return Ti(e,m,p,y,h,u,l,i),F(...f),u}}var Y=(e,A)=>e[A++]&255|(e[A++]&255)<<8,qe=class{constructor(A){this.blockLen=16,this.outputLen=16,this.buffer=new Uint8Array(16),this.r=new Uint16Array(10),this.h=new Uint16Array(10),this.pad=new Uint16Array(8),this.pos=0,this.finished=!1,A=lA(A),Q(A,32);let t=Y(A,0),n=Y(A,2),s=Y(A,4),r=Y(A,6),i=Y(A,8),a=Y(A,10),o=Y(A,12),h=Y(A,14);this.r[0]=t&8191,this.r[1]=(t>>>13|n<<3)&8191,this.r[2]=(n>>>10|s<<6)&7939,this.r[3]=(s>>>7|r<<9)&8191,this.r[4]=(r>>>4|i<<12)&255,this.r[5]=i>>>1&8190,this.r[6]=(i>>>14|a<<2)&8191,this.r[7]=(a>>>11|o<<5)&8065,this.r[8]=(o>>>8|h<<8)&8191,this.r[9]=h>>>5&127;for(let u=0;u<8;u++)this.pad[u]=Y(A,16+2*u)}process(A,t,n=!1){let s=n?0:2048,{h:r,r:i}=this,a=i[0],o=i[1],h=i[2],u=i[3],l=i[4],c=i[5],f=i[6],d=i[7],g=i[8],m=i[9],p=Y(A,t+0),S=Y(A,t+2),y=Y(A,t+4),_=Y(A,t+6),J=Y(A,t+8),D=Y(A,t+10),B=Y(A,t+12),I=Y(A,t+14),M=r[0]+(p&8191),C=r[1]+((p>>>13|S<<3)&8191),k=r[2]+((S>>>10|y<<6)&8191),T=r[3]+((y>>>7|_<<9)&8191),w=r[4]+((_>>>4|J<<12)&8191),E=r[5]+(J>>>1&8191),v=r[6]+((J>>>14|D<<2)&8191),P=r[7]+((D>>>11|B<<5)&8191),R=r[8]+((B>>>8|I<<8)&8191),O=r[9]+(I>>>5|s),x=0,L=x+M*a+C*(5*m)+k*(5*g)+T*(5*d)+w*(5*f);x=L>>>13,L&=8191,L+=E*(5*c)+v*(5*l)+P*(5*u)+R*(5*h)+O*(5*o),x+=L>>>13,L&=8191;let U=x+M*o+C*a+k*(5*m)+T*(5*g)+w*(5*d);x=U>>>13,U&=8191,U+=E*(5*f)+v*(5*c)+P*(5*l)+R*(5*u)+O*(5*h),x+=U>>>13,U&=8191;let z=x+M*h+C*o+k*a+T*(5*m)+w*(5*g);x=z>>>13,z&=8191,z+=E*(5*d)+v*(5*f)+P*(5*c)+R*(5*l)+O*(5*u),x+=z>>>13,z&=8191;let V=x+M*u+C*h+k*o+T*a+w*(5*m);x=V>>>13,V&=8191,V+=E*(5*g)+v*(5*d)+P*(5*f)+R*(5*c)+O*(5*l),x+=V>>>13,V&=8191;let iA=x+M*l+C*u+k*h+T*o+w*a;x=iA>>>13,iA&=8191,iA+=E*(5*m)+v*(5*g)+P*(5*d)+R*(5*f)+O*(5*c),x+=iA>>>13,iA&=8191;let oA=x+M*c+C*l+k*u+T*h+w*o;x=oA>>>13,oA&=8191,oA+=E*a+v*(5*m)+P*(5*g)+R*(5*d)+O*(5*f),x+=oA>>>13,oA&=8191;let aA=x+M*f+C*c+k*l+T*u+w*h;x=aA>>>13,aA&=8191,aA+=E*o+v*a+P*(5*m)+R*(5*g)+O*(5*d),x+=aA>>>13,aA&=8191;let cA=x+M*d+C*f+k*c+T*l+w*u;x=cA>>>13,cA&=8191,cA+=E*h+v*o+P*a+R*(5*m)+O*(5*g),x+=cA>>>13,cA&=8191;let mA=x+M*g+C*d+k*f+T*c+w*l;x=mA>>>13,mA&=8191,mA+=E*u+v*h+P*o+R*a+O*(5*m),x+=mA>>>13,mA&=8191;let gA=x+M*m+C*g+k*d+T*f+w*c;x=gA>>>13,gA&=8191,gA+=E*l+v*u+P*h+R*o+O*a,x+=gA>>>13,gA&=8191,x=(x<<2)+x|0,x=x+L|0,L=x&8191,x=x>>>13,U+=x,r[0]=L,r[1]=U,r[2]=z,r[3]=V,r[4]=iA,r[5]=oA,r[6]=aA,r[7]=cA,r[8]=mA,r[9]=gA}finalize(){let{h:A,pad:t}=this,n=new Uint16Array(10),s=A[1]>>>13;A[1]&=8191;for(let a=2;a<10;a++)A[a]+=s,s=A[a]>>>13,A[a]&=8191;A[0]+=s*5,s=A[0]>>>13,A[0]&=8191,A[1]+=s,s=A[1]>>>13,A[1]&=8191,A[2]+=s,n[0]=A[0]+5,s=n[0]>>>13,n[0]&=8191;for(let a=1;a<10;a++)n[a]=A[a]+s,s=n[a]>>>13,n[a]&=8191;n[9]-=8192;let r=(s^1)-1;for(let a=0;a<10;a++)n[a]&=r;r=~r;for(let a=0;a<10;a++)A[a]=A[a]&r|n[a];A[0]=(A[0]|A[1]<<13)&65535,A[1]=(A[1]>>>3|A[2]<<10)&65535,A[2]=(A[2]>>>6|A[3]<<7)&65535,A[3]=(A[3]>>>9|A[4]<<4)&65535,A[4]=(A[4]>>>12|A[5]<<1|A[6]<<14)&65535,A[5]=(A[6]>>>2|A[7]<<11)&65535,A[6]=(A[7]>>>5|A[8]<<8)&65535,A[7]=(A[8]>>>8|A[9]<<5)&65535;let i=A[0]+t[0];A[0]=i&65535;for(let a=1;a<8;a++)i=(A[a]+t[a]|0)+(i>>>16)|0,A[a]=i&65535;F(n)}update(A){IA(this),A=lA(A),Q(A);let{buffer:t,blockLen:n}=this,s=A.length;for(let r=0;r<s;){let i=Math.min(n-this.pos,s-r);if(i===n){for(;n<=s-r;r+=n)this.process(A,r);continue}t.set(A.subarray(r,r+i),this.pos),this.pos+=i,r+=i,this.pos===n&&(this.process(t,0,!1),this.pos=0)}return this}destroy(){F(this.h,this.r,this.buffer,this.pad)}digestInto(A){IA(this),ft(A,this),this.finished=!0;let{buffer:t,h:n}=this,{pos:s}=this;if(s){for(t[s++]=1;s<16;s++)t[s]=0;this.process(t,0,!0)}this.finalize();let r=0;for(let i=0;i<8;i++)A[r++]=n[i]>>>0,A[r++]=n[i]>>>8;return A}digest(){let{buffer:A,outputLen:t}=this;this.digestInto(A);let n=A.slice(0,t);return this.destroy(),n}};function Di(e){let A=(n,s)=>e(s).update(lA(n)).digest(),t=e(new Uint8Array(32));return A.outputLen=t.outputLen,A.blockLen=t.blockLen,A.create=n=>e(n),A}var xs=Di(e=>new qe(e));function Ts(e,A,t,n,s,r=20){let i=e[0],a=e[1],o=e[2],h=e[3],u=A[0],l=A[1],c=A[2],f=A[3],d=A[4],g=A[5],m=A[6],p=A[7],S=s,y=t[0],_=t[1],J=t[2],D=i,B=a,I=o,M=h,C=u,k=l,T=c,w=f,E=d,v=g,P=m,R=p,O=S,x=y,L=_,U=J;for(let V=0;V<r;V+=2)D=D+C|0,O=b(O^D,16),E=E+O|0,C=b(C^E,12),D=D+C|0,O=b(O^D,8),E=E+O|0,C=b(C^E,7),B=B+k|0,x=b(x^B,16),v=v+x|0,k=b(k^v,12),B=B+k|0,x=b(x^B,8),v=v+x|0,k=b(k^v,7),I=I+T|0,L=b(L^I,16),P=P+L|0,T=b(T^P,12),I=I+T|0,L=b(L^I,8),P=P+L|0,T=b(T^P,7),M=M+w|0,U=b(U^M,16),R=R+U|0,w=b(w^R,12),M=M+w|0,U=b(U^M,8),R=R+U|0,w=b(w^R,7),D=D+k|0,U=b(U^D,16),P=P+U|0,k=b(k^P,12),D=D+k|0,U=b(U^D,8),P=P+U|0,k=b(k^P,7),B=B+T|0,O=b(O^B,16),R=R+O|0,T=b(T^R,12),B=B+T|0,O=b(O^B,8),R=R+O|0,T=b(T^R,7),I=I+w|0,x=b(x^I,16),E=E+x|0,w=b(w^E,12),I=I+w|0,x=b(x^I,8),E=E+x|0,w=b(w^E,7),M=M+C|0,L=b(L^M,16),v=v+L|0,C=b(C^v,12),M=M+C|0,L=b(L^M,8),v=v+L|0,C=b(C^v,7);let z=0;n[z++]=i+D|0,n[z++]=a+B|0,n[z++]=o+I|0,n[z++]=h+M|0,n[z++]=u+C|0,n[z++]=l+k|0,n[z++]=c+T|0,n[z++]=f+w|0,n[z++]=d+E|0,n[z++]=g+v|0,n[z++]=m+P|0,n[z++]=p+R|0,n[z++]=S+O|0,n[z++]=y+x|0,n[z++]=_+L|0,n[z++]=J+U|0}function vi(e,A,t,n){let s=e[0],r=e[1],i=e[2],a=e[3],o=A[0],h=A[1],u=A[2],l=A[3],c=A[4],f=A[5],d=A[6],g=A[7],m=t[0],p=t[1],S=t[2],y=t[3];for(let J=0;J<20;J+=2)s=s+o|0,m=b(m^s,16),c=c+m|0,o=b(o^c,12),s=s+o|0,m=b(m^s,8),c=c+m|0,o=b(o^c,7),r=r+h|0,p=b(p^r,16),f=f+p|0,h=b(h^f,12),r=r+h|0,p=b(p^r,8),f=f+p|0,h=b(h^f,7),i=i+u|0,S=b(S^i,16),d=d+S|0,u=b(u^d,12),i=i+u|0,S=b(S^i,8),d=d+S|0,u=b(u^d,7),a=a+l|0,y=b(y^a,16),g=g+y|0,l=b(l^g,12),a=a+l|0,y=b(y^a,8),g=g+y|0,l=b(l^g,7),s=s+h|0,y=b(y^s,16),d=d+y|0,h=b(h^d,12),s=s+h|0,y=b(y^s,8),d=d+y|0,h=b(h^d,7),r=r+u|0,m=b(m^r,16),g=g+m|0,u=b(u^g,12),r=r+u|0,m=b(m^r,8),g=g+m|0,u=b(u^g,7),i=i+l|0,p=b(p^i,16),c=c+p|0,l=b(l^c,12),i=i+l|0,p=b(p^i,8),c=c+p|0,l=b(l^c,7),a=a+o|0,S=b(S^a,16),f=f+S|0,o=b(o^f,12),a=a+o|0,S=b(S^a,8),f=f+S|0,o=b(o^f,7);let _=0;n[_++]=s,n[_++]=r,n[_++]=i,n[_++]=a,n[_++]=m,n[_++]=p,n[_++]=S,n[_++]=y}var Ii=Ye(Ts,{counterRight:!1,counterLength:4,allowShortKeys:!1}),Ji=Ye(Ts,{counterRight:!1,counterLength:8,extendNonceFn:vi,allowShortKeys:!1});var Bi=new Uint8Array(16),Es=(e,A)=>{e.update(A);let t=A.length%16;t&&e.update(Bi.subarray(t))},Pi=new Uint8Array(32);function bs(e,A,t,n,s){let r=e(A,t,Pi),i=xs.create(r);s&&Es(i,s),Es(i,n);let a=$t(n.length,s?s.length:0,!0);i.update(a);let o=i.digest();return F(r,a),o}var Ds=e=>(A,t,n)=>({encrypt(r,i){let a=r.length;i=mt(a+16,i,!1),i.set(r);let o=i.subarray(0,-16);e(A,t,o,o,1);let h=bs(e,A,t,o,n);return i.set(h,a),F(h),i},decrypt(r,i){i=mt(r.length-16,i,!1);let a=r.subarray(0,-16),o=r.subarray(-16),h=bs(e,A,t,a,n);if(!Xt(o,h))throw new Error("invalid tag");return i.set(r.subarray(0,-16)),e(A,t,i,i,1),F(h),i}}),Ve=pt({blockSize:64,nonceLength:12,tagLength:16},Ds(Ii)),Na=pt({blockSize:64,nonceLength:24,tagLength:16},Ds(Ji));var EA=16,je=new Uint8Array(16),dA=K(je),Ri=225,Oi=(e,A,t,n)=>{let s=n&1;return{s3:t<<31|n>>>1,s2:A<<31|t>>>1,s1:e<<31|A>>>1,s0:e>>>1^Ri<<24&-(s&1)}},eA=e=>(e>>>0&255)<<24|(e>>>8&255)<<16|(e>>>16&255)<<8|e>>>24&255|0;function Li(e){e.reverse();let A=e[15]&1,t=0;for(let n=0;n<e.length;n++){let s=e[n];e[n]=s>>>1|t,t=(s&1)<<7}return e[0]^=-A&225,e}var Ui=e=>e>64*1024?8:e>1024?4:2,te=class{constructor(A,t){this.blockLen=EA,this.outputLen=EA,this.s0=0,this.s1=0,this.s2=0,this.s3=0,this.finished=!1,A=lA(A),Q(A,16);let n=XA(A),s=n.getUint32(0,!1),r=n.getUint32(4,!1),i=n.getUint32(8,!1),a=n.getUint32(12,!1),o=[];for(let d=0;d<128;d++)o.push({s0:eA(s),s1:eA(r),s2:eA(i),s3:eA(a)}),{s0:s,s1:r,s2:i,s3:a}=Oi(s,r,i,a);let h=Ui(t||1024);if(![1,2,4,8].includes(h))throw new Error("ghash: invalid window size, expected 2, 4 or 8");this.W=h;let l=128/h,c=this.windowSize=2**h,f=[];for(let d=0;d<l;d++)for(let g=0;g<c;g++){let m=0,p=0,S=0,y=0;for(let _=0;_<h;_++){if(!(g>>>h-_-1&1))continue;let{s0:D,s1:B,s2:I,s3:M}=o[h*d+_];m^=D,p^=B,S^=I,y^=M}f.push({s0:m,s1:p,s2:S,s3:y})}this.t=f}_updateBlock(A,t,n,s){A^=this.s0,t^=this.s1,n^=this.s2,s^=this.s3;let{W:r,t:i,windowSize:a}=this,o=0,h=0,u=0,l=0,c=(1<<r)-1,f=0;for(let d of[A,t,n,s])for(let g=0;g<4;g++){let m=d>>>8*g&255;for(let p=8/r-1;p>=0;p--){let S=m>>>r*p&c,{s0:y,s1:_,s2:J,s3:D}=i[f*a+S];o^=y,h^=_,u^=J,l^=D,f+=1}}this.s0=o,this.s1=h,this.s2=u,this.s3=l}update(A){IA(this),A=lA(A),Q(A);let t=K(A),n=Math.floor(A.length/EA),s=A.length%EA;for(let r=0;r<n;r++)this._updateBlock(t[r*4+0],t[r*4+1],t[r*4+2],t[r*4+3]);return s&&(je.set(A.subarray(n*EA)),this._updateBlock(dA[0],dA[1],dA[2],dA[3]),F(dA)),this}destroy(){let{t:A}=this;for(let t of A)t.s0=0,t.s1=0,t.s2=0,t.s3=0}digestInto(A){IA(this),ft(A,this),this.finished=!0;let{s0:t,s1:n,s2:s,s3:r}=this,i=K(A);return i[0]=t,i[1]=n,i[2]=s,i[3]=r,A}digest(){let A=new Uint8Array(EA);return this.digestInto(A),this.destroy(),A}},We=class extends te{constructor(A,t){A=lA(A),Q(A);let n=Li(uA(A));super(n,t),F(n)}update(A){A=lA(A),IA(this);let t=K(A),n=A.length%EA,s=Math.floor(A.length/EA);for(let r=0;r<s;r++)this._updateBlock(eA(t[r*4+3]),eA(t[r*4+2]),eA(t[r*4+1]),eA(t[r*4+0]));return n&&(je.set(A.subarray(s*EA)),this._updateBlock(eA(dA[3]),eA(dA[2]),eA(dA[1]),eA(dA[0])),F(dA)),this}digestInto(A){IA(this),ft(A,this),this.finished=!0;let{s0:t,s1:n,s2:s,s3:r}=this,i=K(A);return i[0]=t,i[1]=n,i[2]=s,i[3]=r,A.reverse()}};function vs(e){let A=(n,s)=>e(s,n.length).update(lA(n)).digest(),t=e(new Uint8Array(16),0);return A.outputLen=t.outputLen,A.blockLen=t.blockLen,A.create=(n,s)=>e(n,s),A}var Xe=vs((e,A)=>new te(e,A)),zi=vs((e,A)=>new We(e,A));var An=16,Qi=4,ee=new Uint8Array(An),Ni=283;function tn(e){return e<<1^Ni&-(e>>7)}function Is(e,A){let t=0;for(;A>0;A>>=1)t^=e&-(A&1),e=tn(e);return t}var Hi=(()=>{let e=new Uint8Array(256);for(let t=0,n=1;t<256;t++,n^=tn(n))e[t]=n;let A=new Uint8Array(256);A[0]=99;for(let t=0;t<255;t++){let n=e[255-t];n|=n<<8,A[e[t]]=(n^n>>4^n>>5^n>>6^n>>7^99)&255}return F(e),A})();var Ki=e=>e<<24|e>>>8,$e=e=>e<<8|e>>>24;function Fi(e,A){if(e.length!==256)throw new Error("Wrong sbox length");let t=new Uint32Array(256).map((h,u)=>A(e[u])),n=t.map($e),s=n.map($e),r=s.map($e),i=new Uint32Array(256*256),a=new Uint32Array(256*256),o=new Uint16Array(256*256);for(let h=0;h<256;h++)for(let u=0;u<256;u++){let l=h*256+u;i[l]=t[h]^n[u],a[l]=s[h]^r[u],o[l]=e[h]<<8|e[u]}return{sbox:e,sbox2:o,T0:t,T1:n,T2:s,T3:r,T01:i,T23:a}}var Bs=Fi(Hi,e=>Is(e,3)<<24|e<<16|e<<8|Is(e,2));var Gi=(()=>{let e=new Uint8Array(16);for(let A=0,t=1;A<16;A++,t=tn(t))e[A]=t;return e})();function Zi(e){Q(e);let A=e.length;if(![16,24,32].includes(A))throw new Error("aes: invalid key size, should be 16, 24 or 32, got "+A);let{sbox2:t}=Bs,n=[];gt(e)||n.push(e=uA(e));let s=K(e),r=s.length,i=o=>yt(t,o,o,o,o),a=new Uint32Array(A+28);a.set(s);for(let o=r;o<a.length;o++){let h=a[o-1];o%r===0?h=i(Ki(h))^Gi[o/r-1]:r>6&&o%r===4&&(h=i(h)),a[o]=a[o-r]^h}return F(...n),a}function ne(e,A,t,n,s,r){return e[t<<8&65280|n>>>8&255]^A[s>>>8&65280|r>>>24&255]}function yt(e,A,t,n,s){return e[A&255|t&65280]|e[n>>>16&255|s>>>16&65280]<<16}function Js(e,A,t,n,s){let{sbox2:r,T01:i,T23:a}=Bs,o=0;A^=e[o++],t^=e[o++],n^=e[o++],s^=e[o++];let h=e.length/4-2;for(let d=0;d<h;d++){let g=e[o++]^ne(i,a,A,t,n,s),m=e[o++]^ne(i,a,t,n,s,A),p=e[o++]^ne(i,a,n,s,A,t),S=e[o++]^ne(i,a,s,A,t,n);A=g,t=m,n=p,s=S}let u=e[o++]^yt(r,A,t,n,s),l=e[o++]^yt(r,t,n,s,A),c=e[o++]^yt(r,n,s,A,t),f=e[o++]^yt(r,s,A,t,n);return{s0:u,s1:l,s2:c,s3:f}}function se(e,A,t,n,s){Q(t,An),Q(n),s=mt(n.length,s);let r=t,i=K(r),a=XA(r),o=K(n),h=K(s),u=A?0:12,l=n.length,c=a.getUint32(u,A),{s0:f,s1:d,s2:g,s3:m}=Js(e,i[0],i[1],i[2],i[3]);for(let S=0;S+4<=o.length;S+=4)h[S+0]=o[S+0]^f,h[S+1]=o[S+1]^d,h[S+2]=o[S+2]^g,h[S+3]=o[S+3]^m,c=c+1>>>0,a.setUint32(u,c,A),{s0:f,s1:d,s2:g,s3:m}=Js(e,i[0],i[1],i[2],i[3]);let p=An*Math.floor(o.length/Qi);if(p<l){let S=new Uint32Array([f,d,g,m]),y=Ms(S);for(let _=p,J=0;_<l;_++,J++)s[_]=n[_]^y[J];F(S)}return s}function Yi(e,A,t,n,s){let r=s?s.length:0,i=e.create(t,n.length+r);s&&i.update(s);let a=$t(8*n.length,8*r,A);i.update(n),i.update(a);let o=i.digest();return F(a),o}var en=pt({blockSize:16,nonceLength:12,tagLength:16,varSizeNonce:!0},function(A,t,n){if(t.length<8)throw new Error("aes/gcm: invalid nonce length");let s=16;function r(a,o,h){let u=Yi(Xe,!1,a,h,n);for(let l=0;l<o.length;l++)u[l]^=o[l];return u}function i(){let a=Zi(A),o=ee.slice(),h=ee.slice();if(se(a,!1,h,h,o),t.length===12)h.set(t);else{let l=ee.slice(),c=XA(l);Vt(c,8,BigInt(t.length*8),!1);let f=Xe.create(o).update(t).update(l);f.digestInto(h),f.destroy()}let u=se(a,!1,h,ee);return{xk:a,authKey:o,counter:h,tagMask:u}}return{encrypt(a){let{xk:o,authKey:h,counter:u,tagMask:l}=i(),c=new Uint8Array(a.length+s),f=[o,h,u,l];gt(a)||f.push(a=uA(a)),se(o,!1,u,a,c.subarray(0,a.length));let d=r(h,l,c.subarray(0,c.length-s));return f.push(d),c.set(d,a.length),F(...f),c},decrypt(a){let{xk:o,authKey:h,counter:u,tagMask:l}=i(),c=[o,h,l,u];gt(a)||c.push(a=uA(a));let f=a.subarray(0,-s),d=a.subarray(-s),g=r(h,l,f);if(c.push(g),!Xt(g,d))throw new Error("aes/gcm: invalid ghash tag");let m=se(o,!1,u,f);return F(...c),m}}});var nn=new Uint8Array(12),zs=new DataView(nn.buffer);function Ps(e){return zs.setBigUint64(4,e,!0),nn}function Rs(e){return zs.setBigUint64(4,e,!1),nn}var Os=(e,A)=>HA.getSharedSecret(e,A),Ls=e=>HA.getPublicKey(e),Us=()=>{let e=HA.utils.randomSecretKey();return{privateKey:e,publicKey:HA.getPublicKey(e)}},$A={chacha:{name:"ChaChaPoly",dhLen:32,dh:Os,generateKeypair:Us,publicKey:Ls,hash:j,aeadEncrypt:(e,A,t,n)=>Ve(e,Ps(A),t).encrypt(n),aeadDecrypt:(e,A,t,n)=>Ve(e,Ps(A),t).decrypt(n)},aesgcm:{name:"AESGCM",dhLen:32,dh:Os,generateKeypair:Us,publicKey:Ls,hash:j,aeadEncrypt:(e,A,t,n)=>en(e,Rs(A),t).encrypt(n),aeadDecrypt:(e,A,t,n)=>en(e,Rs(A),t).decrypt(n)}},Qs={chacha:"25519_ChaChaPoly_SHA256",aesgcm:"25519_AESGCM_SHA256"};function H(e){let A="";for(let t=0;t<e.length;t++)A+=String.fromCharCode(e[t]);return btoa(A).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"")}function q(e){let A=e.replace(/-/g,"+").replace(/_/g,"/"),t=atob(A),n=new Uint8Array(t.length);for(let s=0;s<t.length;s++)n[s]=t.charCodeAt(s);return n}var Ns="sendspin-identity-sk",St=class e{constructor(A,t){this.privateKey=A,this.publicKey=t,this.clientId=H(t)}get keypair(){return{privateKey:this.privateKey,publicKey:this.publicKey}}static loadOrCreate(A){let t=$A.chacha;if(A){let s=A.getItem(Ns);if(s)try{let i=q(s);return new e(i,t.publicKey(i))}catch{console.warn("Sendspin: stored identity key is invalid, generating a new one")}let r=t.generateKeypair();return A.setItem(Ns,H(r.privateKey)),new e(r.privateKey,r.publicKey)}console.warn("Sendspin: no storage provided, using an ephemeral identity (client_id changes each session, pairing unavailable)");let n=t.generateKeypair();return new e(n.privateKey,n.publicKey)}};var Hs=new TextEncoder,re=j(Hs.encode("sendspin-sentinel-psk-v1")),sn=Hs.encode("sendspin-psk-id-v1");function KA(e){let A=new Uint8Array(sn.length+e.length);return A.set(sn,0),A.set(e,sn.length),H(j(A))}var cc=KA(re);function Ks(){return crypto.getRandomValues(new Uint8Array(32))}var rn="sendspin-psks",on="sendspin-pairing-psk",Mt=class{constructor(A){this.storage=A,this.entries=new Map,this.add({psk:re,pskId:KA(re),category:"sentinel"}),this.loadPersisted()}add(A){this.entries.set(A.pskId,A)}loadPersisted(){if(!this.storage)return;let A=this.storage.getItem(rn);if(A)try{let n=JSON.parse(A);for(let s of n){let r=q(s.psk);this.add({psk:r,pskId:KA(r),category:"long_term",serverId:s.serverId})}}catch{this.storage.setItem(rn,"[]")}let t=this.storage.getItem(on);if(t)try{let n=q(t);this.add({psk:n,pskId:KA(n),category:"pairing"})}catch{this.storage.setItem(on,"")}}persistLongTerm(){if(!this.storage)return;let A=[];for(let t of this.entries.values())t.category==="long_term"&&A.push({psk:H(t.psk),serverId:t.serverId});this.storage.setItem(rn,JSON.stringify(A))}lookup(A){return this.entries.get(A)??null}addLongTerm(A,t){let n={psk:A,pskId:KA(A),category:"long_term",serverId:t};return this.add(n),this.persistLongTerm(),n}removeByPskId(A){let t=this.entries.get(A);!t||t.category!=="long_term"||t.serverId===void 0||(this.entries.delete(A),this.persistLongTerm())}getOrCreatePairingPsk(){for(let A of this.entries.values())if(A.category==="pairing")return A.psk;return this.setPairingPsk(Ks())}rotatePairingPsk(){for(let[A,t]of this.entries)t.category==="pairing"&&this.entries.delete(A);return this.setPairingPsk(Ks())}setPairingPsk(A){return this.add({psk:A,pskId:KA(A),category:"pairing"}),this.storage?.setItem(on,H(A)),A}};var ie=class extends ZA{constructor(A,t){super(),this.finished=!1,this.destroyed=!1,vn(A);let n=st(t);if(this.iHash=A.create(),typeof this.iHash.update!="function")throw new Error("Expected instance of class which extends utils.Hash");this.blockLen=this.iHash.blockLen,this.outputLen=this.iHash.outputLen;let s=this.blockLen,r=new Uint8Array(s);r.set(n.length>s?A.create().update(n).digest():n);for(let i=0;i<r.length;i++)r[i]^=54;this.iHash.update(r),this.oHash=A.create();for(let i=0;i<r.length;i++)r[i]^=106;this.oHash.update(r),SA(r)}update(A){return YA(this),this.iHash.update(A),this}digestInto(A){YA(this),W(A,this.outputLen),this.finished=!0,this.iHash.digestInto(A),this.oHash.update(A),this.oHash.digestInto(A),this.destroy()}digest(){let A=new Uint8Array(this.oHash.outputLen);return this.digestInto(A),A}_cloneInto(A){A||(A=Object.create(Object.getPrototypeOf(this),{}));let{oHash:t,iHash:n,finished:s,destroyed:r,blockLen:i,outputLen:a}=this;return A=A,A.finished=s,A.destroyed=r,A.blockLen=i,A.outputLen=a,A.oHash=t._cloneInto(A.oHash),A.iHash=n._cloneInto(A.iHash),A}clone(){return this._cloneInto()}destroy(){this.destroyed=!0,this.oHash.destroy(),this.iHash.destroy()}},JA=(e,A,t)=>new ie(e,A).update(t).digest();JA.create=(e,A)=>new ie(e,A);var Fs=new Uint8Array(0),At=class{constructor(A){this.suite=A,this.k=null,this.n=0n}initializeKey(A){this.k=A,this.n=0n}hasKey(){return this.k!==null}encryptWithAd(A,t){if(this.k===null)return t;let n=this.suite.aeadEncrypt(this.k,this.n,A,t);return this.n+=1n,n}decryptWithAd(A,t){if(this.k===null)return t;let n=this.suite.aeadDecrypt(this.k,this.n,A,t);return this.n+=1n,n}};var Gs=32;function an(e,A,t){let n=JA(j,e,A),s=JA(j,n,Uint8Array.of(1)),r=JA(j,n,cn(s,Uint8Array.of(2)));if(t===2)return[s,r];let i=JA(j,n,cn(r,Uint8Array.of(3)));return[s,r,i]}function cn(...e){let A=e.reduce((s,r)=>s+r.length,0),t=new Uint8Array(A),n=0;for(let s of e)t.set(s,n),n+=s.length;return t}var oe=class{constructor(A){this.suite=A,this.cipher=new At(A)}initialize(A){let t=new TextEncoder().encode(A);if(t.length<=Gs){let n=new Uint8Array(Gs);n.set(t),this.h=n}else this.h=this.suite.hash(t);this.ck=this.h,this.cipher.initializeKey(null)}mixHash(A){this.h=this.suite.hash(cn(this.h,A))}mixKey(A){let[t,n]=an(this.ck,A,2);this.ck=t,this.cipher.initializeKey(n.slice(0,32))}mixKeyAndHash(A){let[t,n,s]=an(this.ck,A,3);this.ck=t,this.mixHash(n),this.cipher.initializeKey(s.slice(0,32))}encryptAndHash(A){let t=this.cipher.encryptWithAd(this.h,A);return this.mixHash(t),t}decryptAndHash(A){let t=this.cipher.decryptWithAd(this.h,A);return this.mixHash(A),t}split(){let[A,t]=an(this.ck,Fs,2),n=new At(this.suite),s=new At(this.suite);return n.initializeKey(A.slice(0,32)),s.initializeKey(t.slice(0,32)),[n,s]}};var ln=["e","es","ss"],un=["e","ee","se","psk"];function hn(e,A){let t=new Uint8Array(e.length+A.length);return t.set(e,0),t.set(A,e.length),t}var Ct=class{constructor(A){this.suite=A.suite,this.role=A.role,this.s=A.s,this.rs=A.rs,this.psk=A.psk,this.fixedEphemeral=A.fixedEphemeral,this.sym=new oe(A.suite),this.sym.initialize(`Noise_KKpsk2_25519_${A.suite.name}_SHA256`),this.sym.mixHash(A.prologue);let t=A.role==="initiator"?A.s.publicKey:A.rs,n=A.role==="responder"?A.s.publicKey:A.rs;this.sym.mixHash(t),this.sym.mixHash(n)}get handshakeHash(){return this.sym.h}setPsk(A){this.psk=A}dhToken(A){let t=this.role==="initiator";switch(A){case"ee":return this.suite.dh(this.e.privateKey,this.re);case"ss":return this.suite.dh(this.s.privateKey,this.rs);case"es":return t?this.suite.dh(this.e.privateKey,this.rs):this.suite.dh(this.s.privateKey,this.re);case"se":return t?this.suite.dh(this.s.privateKey,this.re):this.suite.dh(this.e.privateKey,this.rs)}}processTokenWrite(A,t){A==="e"?(this.e=this.fixedEphemeral??this.suite.generateKeypair(),this.sym.mixHash(this.e.publicKey),this.sym.mixKey(this.e.publicKey),t.buf=hn(t.buf,this.e.publicKey)):A==="s"?t.buf=hn(t.buf,this.sym.encryptAndHash(this.s.publicKey)):A==="psk"?this.sym.mixKeyAndHash(this.psk):this.sym.mixKey(this.dhToken(A))}processTokenRead(A,t){if(A==="e")this.re=t.buf.slice(0,this.suite.dhLen),t.buf=t.buf.slice(this.suite.dhLen),this.sym.mixHash(this.re),this.sym.mixKey(this.re);else if(A==="s"){let n=this.suite.dhLen+16;this.sym.decryptAndHash(t.buf.slice(0,n)),t.buf=t.buf.slice(n)}else A==="psk"?this.sym.mixKeyAndHash(this.psk):this.sym.mixKey(this.dhToken(A))}writeMessage(A,t){let n={buf:new Uint8Array(0)};for(let s of A)this.processTokenWrite(s,n);return n.buf=hn(n.buf,this.sym.encryptAndHash(t)),n.buf}readMessage(A,t){let n={buf:t};for(let s of A)this.processTokenRead(s,n);return this.sym.decryptAndHash(n.buf)}split(){return this.sym.split()}};var Zs=new Uint8Array(0),wt=class{constructor(A,t){let[n,s]=t;A==="initiator"?(this.sendCs=n,this.recvCs=s):(this.sendCs=s,this.recvCs=n)}encrypt(A){return this.sendCs.encryptWithAd(Zs,A)}decrypt(A){return this.recvCs.decryptWithAd(Zs,A)}};function Ys(e,A,t){if(e==="long_term"){if(A.has("pairing"))return A.size===1;for(let n of A)if(n!=="playback"&&n!=="management")return!1;return!0}return e==="pairing"?A.size===1&&A.has("pairing"):A.size===0||A.size===1&&A.has("pairing")?!0:A.size===1&&A.has("playback")?t:!1}function qs(e,A,t,n){if(!Ys(e,A,n))return!1;if(t){let s=new Set(A);if(s.add("playback"),!Ys(e,s,n))return!1}return!0}function Vs(e,A,t,n){let s=new Set(A),r=!!t&&t.length>0;return qs(e,s,r,n)?{ok:!0}:e==="sentinel"&&!n&&qs(e,s,r,!0)?{ok:!1,goodbye:"pairing_required"}:{ok:!1,goodbye:"unauthorized"}}var kt=new TextEncoder,ae=new TextDecoder,qi=3e4,Xs=65519,Vi=Xs+16,Ws=4*1024*1024;function js(e,A){let t=new Uint8Array(e.length+A.length);return t.set(e,0),t.set(A,e.length),t}var _t=class e{constructor(A,t,n){this.wsManager=A,this.deps=t,this.cb=n,this.state="idle",this.hs=null,this.session=null,this.matched=null,this.serverId="",this.rawClientInit=new Uint8Array(0),this.rawServerInit=new Uint8Array(0),this.timeout=null,this.frag=null,this.lastHandshakeHash=new Uint8Array(0),this.quiesced=!1,this.outboundQueue=[],this.seenActivate=!1,this.effectiveActiveRoles=void 0}get suite(){return $A[this.deps.suiteId]}get ready(){return this.state==="transport"}get handshakeInfo(){return this.matched?{trustLevel:this.matched.category==="long_term"?"user":"none",category:this.matched.category,serverId:this.serverId,entry:this.matched}:null}get handshakeHash(){return this.lastHandshakeHash}start(){this.resetSession();let A=JSON.stringify({type:"client/init",payload:{client_id:this.deps.identity.clientId,version:1,suite:Qs[this.deps.suiteId]}});this.rawClientInit=kt.encode(A),this.wsManager.sendText(A),this.state="await_server_init",this.armTimeout()}resetSession(){this.hs=null,this.session=null,this.matched=null,this.frag=null,this.serverId="",this.rawServerInit=new Uint8Array(0),this.quiesced=!1,this.outboundQueue=[],this.lastHandshakeHash=new Uint8Array(0),this.seenActivate=!1,this.effectiveActiveRoles=void 0}onSocketClosed(){this.clearTimeout(),this.resetSession(),this.state="idle"}close(){this.clearTimeout(),this.wsManager.disconnect()}handleRaw(A){if(this.state==="transport"){if(typeof A.data=="string")return this.fail();let t;try{let n=new Uint8Array(A.data);if(n.length>Vi)return this.fail();t=this.session.decrypt(n)}catch{return this.fail()}if(t.length<1)return this.fail();try{this.dispatchPlain(t)}catch(n){console.warn("Sendspin: dropped malformed transport message",n)}return}try{if(typeof A.data!="string")return this.fail();this.handleHandshakeText(A.data)}catch{this.fail()}}handleHandshakeText(A){let t=JSON.parse(A);if(this.state==="await_server_init"&&t.type==="server/init"){if(t.payload.version!==1)return this.fail();this.serverId=String(t.payload.server_id),this.rawServerInit=kt.encode(A),this.hs=new Ct({suite:this.suite,role:"responder",prologue:js(this.rawClientInit,this.rawServerInit),s:this.deps.identity.keypair,rs:q(this.serverId)}),this.state="await_noise1",this.armTimeout();return}if(this.state==="await_noise1"&&t.type==="noise/handshake"){this.processNoise1(q(String(t.payload.data)));return}this.fail()}processNoise1(A){let t=this.hs.readMessage(ln,A),{psk_id:n}=JSON.parse(ae.decode(t)),s=this.deps.pskStore.lookup(n);if(!s)return this.fail();if(s.category==="long_term"&&s.serverId!==void 0&&s.serverId!==this.serverId)return this.fail();this.hs.setPsk(s.psk);let r=this.hs.writeMessage(un,kt.encode("{}"));this.wsManager.sendText(JSON.stringify({type:"noise/handshake",payload:{data:H(r)}})),this.session=new wt("responder",this.hs.split()),this.matched=s,this.state="transport",this.clearTimeout(),this.lastHandshakeHash=this.hs.handshakeHash,this.cb.onHandshakeComplete(this.handshakeInfo)}dispatchPlain(A){let t=A[0];t===0?this.handleControl(JSON.parse(ae.decode(A.subarray(1)))):t===2||t===3?this.handleFragment(t,A.subarray(1)):this.cb.onBinaryMessage(A)}handleFragment(A,t){if(A===2&&this.frag===null){if(t.length<1)return this.fail();if(t[0]===2||t[0]===3)return this.fail();let i=t.subarray(1);this.frag={origType:t[0],parts:[i],size:i.length};return}if(A===2)return this.frag.parts.push(t),this.frag.size+=t.length,this.frag.size>Ws?(this.frag=null,this.fail()):void 0;if(this.frag===null)return this.fail();if(this.frag.parts.push(t),this.frag.size+=t.length,this.frag.size>Ws)return this.frag=null,this.fail();let n=this.frag.origType,s=new Uint8Array(this.frag.size+1);s[0]=n;let r=1;for(let i of this.frag.parts)s.set(i,r),r+=i.length;this.frag=null,n===0?this.handleControl(JSON.parse(ae.decode(s.subarray(1)))):this.cb.onBinaryMessage(s)}handleControl(A){if(A.type==="noise/handshake"){this.handleRehandshake(A);return}if(A.type==="server/activate"){this.handleActivate(A);return}if(A.type==="server/unpair"){this.handleUnpair();return}this.cb.onControlMessage(A)}handleRehandshake(A){let t=new Ct({suite:this.suite,role:"responder",prologue:this.lastHandshakeHash,s:this.deps.identity.keypair,rs:q(this.serverId)}),n=t.readMessage(ln,q(A.payload.data)),{psk_id:s}=JSON.parse(ae.decode(n)),r=this.deps.pskStore.lookup(s);if(!r)return this.fail();if(r.category==="long_term"&&r.serverId!==void 0&&r.serverId!==this.serverId)return this.fail();t.setPsk(r.psk);let i=t.writeMessage(un,kt.encode("{}"));this.quiesced=!0,this.armTimeout(),this.encryptSend({type:"noise/handshake",payload:{data:H(i)}}),this.session=new wt("responder",t.split()),this.matched=r,this.lastHandshakeHash=t.handshakeHash,this.seenActivate=!1,this.effectiveActiveRoles=void 0,this.cb.onHandshakeComplete(this.handshakeInfo)}handleActivate(A){let t=A.payload.active_roles;if(!this.seenActivate&&t===void 0){this.sendGoodbyeAndClose("unauthorized");return}t!==void 0&&(this.effectiveActiveRoles=t),this.seenActivate=!0;let n=Vs(this.matched.category,A.payload.activities,this.effectiveActiveRoles,this.deps.unpairedAccess);if(!n.ok){this.sendGoodbyeAndClose(n.goodbye);return}this.clearTimeout();let s=!A.payload.activities.includes("pairing")&&this.effectiveActiveRoles?.includes("controller@v1")?this.outboundQueue.filter(r=>r.type==="client/command"):[];this.quiesced=!1,this.outboundQueue=[],this.cb.onControlMessage(A);for(let r of s)this.encryptSend(r)}handleUnpair(){this.matched?.category==="long_term"&&(this.deps.pskStore.removeByPskId(this.matched.pskId),this.sendGoodbyeAndClose("unpaired"))}sendGoodbyeAndClose(A){try{this.encryptSend({type:"client/goodbye",payload:{reason:A}})}catch{}this.close()}sendControl(A){if(this.state!=="transport"||!this.session){console.warn("Sendspin: sendControl before transport ready");return}let t=A.type;if(this.quiesced&&t!==void 0&&e.QUIESCED_TYPES.has(t)){this.outboundQueue.push(A);return}this.encryptSend(A)}encryptSend(A){let t=kt.encode(JSON.stringify(A)),n=js(Uint8Array.of(0),t);if(n.length>Xs)throw new Error("Sendspin: control message exceeds single-frame limit");this.wsManager.sendBinary(this.session.encrypt(n))}armTimeout(){this.clearTimeout(),this.timeout=globalThis.setTimeout(()=>this.fail(),qi)}clearTimeout(){this.timeout!==null&&(clearTimeout(this.timeout),this.timeout=null)}fail(){this.clearTimeout(),this.wsManager.disconnect()}};_t.QUIESCED_TYPES=new Set(["client/command","client/time","client/state"]);var fA=2n**255n-19n,dn=486662n,Wi=2n,ce=32,he=32,nr=64,$s=pn("CPace255"),ji=pn("CPace255_ISK"),Xi=pn("CPaceMac"),$i=128,pA=class extends Error{};function pn(e){return new TextEncoder().encode(e)}function Et(...e){let A=new Uint8Array(e.reduce((n,s)=>n+s.length,0)),t=0;for(let n of e)A.set(n,t),t+=n.length;return A}function fn(e){let A=e.length,t=[];for(;t.push(A<128?A:A&127|128),A>>=7,A!==0;);return Et(new Uint8Array(t),e)}function xt(...e){return Et(...e.map(fn))}function Ao(e,A,t){let n=Math.max(0,$i-1-fn(e).length-fn($s).length);return xt($s,e,new Uint8Array(n),A,t)}function FA(e,A){let t=e%A;return t<0n?t+A:t}function sr(e,A,t){let n=1n,s=FA(e,t),r=A;for(;r>0n;)r&1n&&(n=n*s%t),s=s*s%t,r>>=1n;return n}function Ar(e,A){return sr(e,A-2n,A)}function to(e){let A=e.slice();A[A.length-1]&=127;let t=0n;for(let n=A.length-1;n>=0;n--)t=t<<8n|BigInt(A[n]);return t}function eo(e){let A=new Uint8Array(ce),t=e;for(let n=0;n<ce;n++)A[n]=Number(t&0xffn),t>>=8n;return A}function no(e){let A=FA(e,fA),t=FA(-dn*Ar(FA(1n+Wi*A*A,fA),fA),fA),n=sr(FA(t*t*t+dn*t*t+t,fA),(fA-1n)/2n,fA),s=FA(n*t-FA(1n-n,fA)*dn*Ar(2n,fA),fA);return eo(s)}function so(e,A,t){let n=UA(Ao(e,A,t)).slice(0,ce);return no(to(n))}function tr(e,A,t){let n;try{n=HA.scalarMult(e,A)}catch{throw new pA(`${t} encodes a low-order point`)}if(n.every(s=>s===0))throw new pA(`${t} encodes a low-order point`);return n}function er(e,A){if(e.length!==A.length)return!1;let t=0;for(let n=0;n<e.length;n++)t|=e[n]^A[n];return t===0}var bt=class e{constructor(A,t,n,s,r,i){this.role=A,this.sid=n,this.ada=s,this.adb=r,this.macKey=null,this.initiatorShare=null,this.responderShare=null,this.iskValue=null,this.scalar=t,this.publicShare=tr(t,i,"generator")}static start(A){let t=A.scalar??crypto.getRandomValues(new Uint8Array(ce)),n=so(A.prs,A.ci??new Uint8Array(0),A.sid);return new e(A.role,t,A.sid,A.ada??new Uint8Array(0),A.adb??new Uint8Array(0),n)}derive(A){if(!this.scalar)throw new pA("derive() may only be called once");let t=this.scalar;if(this.scalar=null,A.length!==he)throw new pA(`peer share must be ${he} bytes, got ${A.length}`);let n=tr(t,A,"peer share");this.role==="initiator"?(this.initiatorShare=this.publicShare,this.responderShare=A):(this.initiatorShare=A,this.responderShare=this.publicShare);let s=Et(xt(this.initiatorShare,this.ada),xt(this.responderShare,this.adb));this.iskValue=UA(Et(xt(ji,this.sid,n),s)),this.macKey=UA(Et(Xi,this.sid,this.iskValue))}get isk(){if(!this.iskValue)throw new pA("derive() must be called before reading the ISK");return this.iskValue}tag(){return this.mac(!0)}verify(A){let t=this.mac(!1);return er(t,this.mac(!0))?!1:er(A,t)}mac(A){if(!this.macKey||!this.initiatorShare||!this.responderShare)throw new pA("derive() must be called before confirmation tags");let t=A===(this.role==="initiator"),n=t?this.initiatorShare:this.responderShare,s=t?this.ada:this.adb;return JA(UA,this.macKey,xt(n,s))}};var Tt=new TextEncoder().encode("sendspin-pin-derive-v1"),mn=new TextEncoder().encode("sendspin-pair-commit-v1"),gn=32,rr=4,yn=12,ir=6,ro=8,io=new RegExp(`^[0-9]{${ro}}$`);function or(e){return io.test(e)}function ar(){return crypto.getRandomValues(new Uint8Array(gn))}function cr(e){let A=new Uint8Array(mn.length+e.length);return A.set(mn,0),A.set(e,mn.length),j(A)}function hr(e,A,t,n){let s=new Uint8Array(Tt.length+e.length+A.length+t.length);s.set(Tt,0),s.set(e,Tt.length),s.set(A,Tt.length+e.length),s.set(t,Tt.length+e.length+A.length);let r=j(s),i=0n;for(let o of r)i=i<<8n|BigInt(o);return(i%10n**BigInt(n)).toString().padStart(n,"0")}var ue=e=>new TextEncoder().encode(e);function oo(...e){let A=new Uint8Array(e.reduce((n,s)=>n+s.length,0)),t=0;for(let n of e)A.set(n,t),t+=n.length;return A}var ao="sendspin-pair-pake-v1",co=ue("sendspin-pair-psk-wrap-v1"),lr=ue("server"),ur=ue("client"),ho=12e4,lo=3e5,uo=10,fo=6,dr="sendspin-pair-failures",po=["dynamic_pin","static_pin"];function fr(e,A){return A?.length?{...e,locations:A}:e}function mo(e){if(!(!Array.isArray(e)||e.length===0))return e.every(A=>typeof A=="string"&&A!=="")?e:void 0}var le=class{constructor(A){if(this.deps=A,this.pendingPsk=null,this.phase="idle",this.method=null,this.cpace=null,this.nonceB=null,this.attemptTimer=null,this.windowTimer=null,this.windowOpen=!1,this.currentSid=null,this.pairingActivateCount=0,this.attemptIndex=0,this.pinLength=null,A.staticPin!==void 0&&!or(A.staticPin))throw new Error("staticPin must be exactly 8 decimal digits");this.minPinLength=Math.min(yn,Math.max(rr,A.minPinLength??ir)),!A.storage&&A.onPin&&console.warn("sendspin: dynamic PIN pairing is enabled without storage, so the failure counter will not persist across reboots."),this.failures=this.loadFailures()}descriptors(){let A=[fr({method:"pairing_psk"},this.deps.pairingPskLocations)];return this.deps.staticPin!==void 0&&A.push(fr({method:"static_pin"},this.deps.staticPinLocations)),this.deps.onPin&&A.push({method:"dynamic_pin",out_channels:this.deps.pinOutChannels??["display"],min_pin_length:this.minPinLength}),A}isDynamicPinEscalated(){return this.failures>=uo}openPairingWindow(){if(this.phase==="await-window"){this.startAttempt();return}this.windowOpen=!0,this.windowTimer&&clearTimeout(this.windowTimer),this.windowTimer=setTimeout(()=>this.closeWindow(),lo)}closeWindow(){this.windowOpen=!1,this.windowTimer&&clearTimeout(this.windowTimer),this.windowTimer=null}cancelPairing(){this.phase!=="idle"&&this.abort("user_cancelled")}onActivate(A,t){if(!A.includes("pairing"))return this.abandonAttempt("server_cancelled"),!1;this.abandonAttempt("superseded"),this.pairingActivateCount+=1,this.attemptIndex=this.pairingActivateCount;let s=t?.method,r=this.descriptors().map(a=>a.method),i=s==="pairing_psk"==(this.deps.matchedCategory()==="pairing");if(!s)return console.warn("sendspin: server/activate carried no pairing method, so the server is not speaking the current specification."),this.fail(),!0;if(!i||!r.includes(s))return this.abort("method_not_supported"),!0;if(this.method=s,s==="pairing_psk")return this.sendFinalize(),this.phase="await-finalize",this.armAttemptTimer(),this.deps.onEvent?.("started"),!0;if(s==="dynamic_pin"){let a=t.pin_length;if(typeof a!="number"||!Number.isInteger(a))return this.fail(),!0;if(a<this.minPinLength||a>yn)return this.abort("pin_length_unacceptable"),!0;this.pinLength=a,this.languages=mo(t.languages)}return this.isGestureGated()&&!this.windowOpen?(this.phase="await-window",this.deps.sendControl({type:"client/pair-pending",payload:{pairing_index:this.attemptIndex}}),this.deps.onEvent?.("pending"),!0):(this.startAttempt(),!0)}isGestureGated(){return this.method==="static_pin"?!0:this.method!=="dynamic_pin"?!1:this.isDynamicPinEscalated()||this.pinLength<fo}onPairInit(A){if(this.phase==="idle")return;if(this.phase!=="await-init"||this.method!=="dynamic_pin")return this.fail();let t=this.decode(A.nonce_A,gn);if(!t)return this.fail();let n=this.deps.handshakeHash(),s=hr(n,t,this.nonceB,this.pinLength);this.currentSid=this.sid(n,this.attemptIndex),this.cpace=bt.start({role:"responder",prs:new TextEncoder().encode(s),sid:this.currentSid,ada:lr,adb:ur}),this.phase="await-auth",this.deps.onPin?.(s,this.languages)}onPairAuth(A){if(this.phase==="idle")return;if(this.phase!=="await-auth"||!this.cpace)return this.fail();let t=this.decode(A.pake_msg_1,he);if(!t)return this.fail();this.deps.sendControl({type:"client/pair-auth",payload:{pake_msg_2:H(this.cpace.publicShare)}});try{this.cpace.derive(t)}catch(n){if(n instanceof pA)return this.fail();throw n}this.phase="await-confirm"}onPairConfirm(A){if(this.phase==="idle")return;if(this.phase!=="await-confirm"||!this.cpace)return this.fail();let t=this.decode(A.server_kc,nr);if(!t)return this.fail();if(!this.cpace.verify(t))return this.method==="dynamic_pin"&&this.recordFailure(),this.abort("pin_mismatch");this.method==="dynamic_pin"&&this.resetFailures();let n={client_kc:H(this.cpace.tag())};this.method==="dynamic_pin"&&(n.nonce_B=H(this.nonceB)),this.deps.sendControl({type:"client/pair-confirm",payload:n}),this.phase="await-finalize",this.sendFinalize()}onPairFinalize(){this.pendingPsk&&(this.deps.pskStore.addLongTerm(this.pendingPsk,this.deps.serverId()),this.clearAttempt(),this.deps.onEvent?.("finalized"))}onAbort(A){this.phase==="idle"&&!this.pendingPsk||(this.clearAttempt(),this.deps.onEvent?.("aborted",A))}reset(){this.clearAttempt(),this.pairingActivateCount=0,this.attemptIndex=0}startAttempt(){if(this.closeWindow(),this.armAttemptTimer(),this.deps.onEvent?.("started"),this.method==="dynamic_pin"){this.nonceB=ar(),this.phase="await-init",this.deps.sendControl({type:"client/pair-init",payload:{pairing_index:this.attemptIndex,commit_B:H(cr(this.nonceB))}});return}let A=this.deps.handshakeHash();this.currentSid=this.sid(A,this.attemptIndex),this.cpace=bt.start({role:"responder",prs:new TextEncoder().encode(this.deps.staticPin),sid:this.currentSid,ada:lr,adb:ur}),this.phase="await-auth",this.deps.sendControl({type:"client/pair-init",payload:{pairing_index:this.attemptIndex}})}sendFinalize(){let A=crypto.getRandomValues(new Uint8Array(32));if(this.pendingPsk=A,this.cpace&&this.currentSid){let t=j(oo(co,this.currentSid,this.cpace.isk)),n=this.deps.aeadSeal(t,A);this.deps.sendControl({type:"client/pair-finalize",payload:{wrapped_psk:H(n)}});return}this.deps.sendControl({type:"client/pair-finalize",payload:{long_term_psk:H(A)}})}sid(A,t){let n=ue(ao),s=new Uint8Array(n.length+A.length+4);return s.set(n,0),s.set(A,n.length),new DataView(s.buffer).setUint32(n.length+A.length,t,!1),s}armAttemptTimer(){this.attemptTimer=setTimeout(()=>this.abort("attempt_timeout"),ho)}abort(A){this.clearAttempt(),this.deps.sendControl({type:"pair/abort",payload:{reason:A}}),this.deps.onEvent?.("aborted",A),A==="concurrent_attempt"&&this.deps.close()}fail(){this.clearAttempt(),this.deps.close()}clearAttempt(){this.attemptTimer&&clearTimeout(this.attemptTimer),this.attemptTimer=null,this.method&&po.includes(this.method)&&this.deps.onPin?.(null),this.pendingPsk=null,this.phase="idle",this.method=null,this.cpace=null,this.currentSid=null,this.nonceB=null,this.pinLength=null,this.languages=void 0}abandonAttempt(A){this.phase==="idle"&&!this.pendingPsk||(this.clearAttempt(),this.deps.onEvent?.("aborted",A))}decode(A,t){if(typeof A!="string")return null;try{let n=q(A);return n.length===t?n:null}catch{return null}}loadFailures(){try{let A=this.deps.storage?.getItem(dr);return A?JSON.parse(A).dynamic_pin??0:0}catch{return 0}}saveFailures(){this.deps.storage?.setItem(dr,JSON.stringify({dynamic_pin:this.failures}))}recordFailure(){this.failures+=1,this.saveFailures()}resetFailures(){this.failures=0,this.saveFailures()}};var pr="ABCDEFGHIJKLMNOPQRSTUVWXYZ234567",de=32;function go(e){let A=0,t=0,n="";for(let s of e){for(t=t<<8|s,A+=8;A>=5;)n+=pr[t>>>A-5&31],A-=5;t&=(1<<A)-1}return A>0&&(n+=pr[t<<5-A&31]),n}function Sn(e,A){let t=q(e),n=q(A);if(t.length!==de)throw new Error(`clientId must decode to ${de} bytes`);if(n.length!==de)throw new Error(`pairingPsk must decode to ${de} bytes`);let s=new Uint8Array(t.length+n.length);return s.set(t),s.set(n,t.length),`SP:0${go(s).replace(/2/g,"9")}`}var Dt=class{constructor(A){this.handshakeInfo=null,A.codecs&&Jt(A.codecs),this.hasStorage=(A.storage??null)!==null,this.identity=St.loadOrCreate(A.storage??null);let t=A.clientName??`Sendspin JS Client (${this.identity.clientId.slice(0,6)})`;this.config={...A,clientName:t},this.delayStore=new Lt(A.storage??null);let n=this.delayStore.load(),s=A.syncDelay??n??A.defaultSyncDelay??0;this._syncDelayMs=nA(s),this.timeFilter=new et(0,1.1,2,1e-12),this.stateManager=new Rt(A.onStateChange),this.decoder=new tt(i=>this._onAudioData?.(i),()=>this.stateManager.streamGeneration),this.wsManager=new Ot(A.reconnect),this.pskStore=new Mt(A.storage??null);for(let i of A.longTermPsks??[])this.pskStore.addLongTerm(q(i.psk),i.serverId);this.hasStorage&&this.pskStore.getOrCreatePairingPsk(),this.transport=new _t(this.wsManager,{identity:this.identity,pskStore:this.pskStore,suiteId:A.suite??"chacha",unpairedAccess:A.unpairedAccess??!0},{onHandshakeComplete:i=>{let a=this.handshakeInfo!==null;this.handshakeInfo=i,this.pairing.reset(),this.protocolHandler.resetActivation(a)},onControlMessage:i=>this.routeControl(i),onBinaryMessage:i=>this.handleBinaryMessage(i.buffer)}),this.pairing=new le({sendControl:i=>this.transport.sendControl(i),close:()=>this.transport.close(),pskStore:this.pskStore,serverId:()=>this.handshakeInfo?.serverId??"",matchedCategory:()=>this.handshakeInfo?.category??"sentinel",handshakeHash:()=>this.transport.handshakeHash,aeadSeal:(i,a)=>$A[A.suite??"chacha"].aeadEncrypt(i,0n,new Uint8Array(0),a),storage:A.storage??null,onPin:A.onPairingPin??null,pinOutChannels:A.pinOutChannels,minPinLength:A.minPinLength,staticPin:A.staticPin,staticPinLocations:A.staticPinLocations,pairingPskLocations:A.pairingPskLocations,onEvent:(i,a)=>this.config.onPairing?.(i,a)});let r={trustLevel:()=>this.handshakeInfo?.trustLevel??"none",pairMethods:()=>this.hasStorage?this.pairing.descriptors():[],unpairedAccess:A.unpairedAccess??!0};this.protocolHandler=new Pt(this.transport,r,this,this.stateManager,this.timeFilter,{clientName:t,productName:A.productName,codecs:A.codecs,bufferCapacity:A.bufferCapacity,requiredLeadTimeMs:A.requiredLeadTimeMs,minBufferMs:A.minBufferMs,useHardwareVolume:A.useHardwareVolume,onVolumeCommand:A.onVolumeCommand,onDelayCommand:A.onDelayCommand,getExternalVolume:A.getExternalVolume})}routeControl(A){if(A.type==="server/activate"){let t=A.payload??{};t.activities?.includes("pairing")&&this.protocolHandler.suspendForPairing(),this.pairing.onActivate(t.activities??[],t.pairing)||this.protocolHandler.handleServerMessage(A);return}if(A.type==="server/pair-init")return this.pairing.onPairInit(A.payload??{});if(A.type==="server/pair-auth")return this.pairing.onPairAuth(A.payload??{});if(A.type==="server/pair-confirm")return this.pairing.onPairConfirm(A.payload??{});if(A.type==="server/pair-finalize")return this.pairing.onPairFinalize();if(A.type==="pair/abort")return this.pairing.onAbort((A.payload??{}).reason??"");this.protocolHandler.handleServerMessage(A)}onTransportClose(){this.transport.onSocketClosed(),this.handshakeInfo=null,this.protocolHandler.stopTimeSync(),this.protocolHandler.resetActivation(),this.pairing.reset(),this.stateManager.clearStateUpdateInterval(),console.log("Sendspin: Connection closed"),this._onConnectionClose?.()}handleBinaryMessage(A){let t=this.stateManager.currentStreamFormat;if(!t){console.warn("Sendspin: Received audio chunk but no stream format set");return}let n=this.stateManager.streamGeneration;this.decoder.handleBinaryMessage(A,t,n)}handleStreamStart(A,t){t||this.decoder.clearState(),this._onStreamStart?.(A,t)}handleStreamClear(){this.decoder.clearState(),this._onStreamClear?.()}handleStreamEnd(){this.decoder.clearState(),this._onStreamEnd?.()}handleVolumeUpdate(){this._onVolumeUpdate?.()}applyDelay(A){this._syncDelayMs=nA(A),this.delayStore.save(this._syncDelayMs),this._onSyncDelayChange?.(this._syncDelayMs)}handleSyncDelayChange(A){this.applyDelay(A)}getSyncDelayMs(){return this._syncDelayMs}set onAudioData(A){this._onAudioData=A}set onStreamStart(A){this._onStreamStart=A}set onStreamClear(A){this._onStreamClear=A}set onStreamEnd(A){this._onStreamEnd=A}set onVolumeUpdate(A){this._onVolumeUpdate=A}set onSyncDelayChange(A){this._onSyncDelayChange=A}set onConnectionOpen(A){this._onConnectionOpen=A}set onConnectionClose(A){this._onConnectionClose=A}async connect(){let A=()=>{this._onConnectionOpen?.(),this.transport.start()},t=r=>{this.transport.handleRaw(r)},n=r=>{console.error("Sendspin: WebSocket error",r)},s=()=>this.onTransportClose();if(this.config.webSocket)await this.wsManager.adopt(this.config.webSocket,A,t,n,s);else{if(!this.config.baseUrl)throw new Error("SendspinCore requires either baseUrl or webSocket to be provided.");let r=new URL(this.config.baseUrl,typeof window<"u"?window.location.href:void 0),i=r.protocol==="https:"?"wss:":"ws:",a=r.pathname.replace(/\/$/,""),o=a.endsWith("/sendspin")?`${i}//${r.host}${a}`:`${i}//${r.host}${a}/sendspin`;await this.wsManager.connect(o,A,t,n,s)}}resetPlaybackState(){this.stateManager.isPlaying=!1,this.stateManager.currentStreamFormat=null}disconnect(A="restart"){this.transport.ready&&this.protocolHandler.sendGoodbye(A),this.protocolHandler.stopTimeSync(),this.stateManager.clearAllIntervals(),this.wsManager.disconnect(),this.decoder.close(),this.timeFilter.reset(),this.stateManager.reset()}setVolume(A){this.stateManager.volume=A,this._onVolumeUpdate?.(),this.protocolHandler.sendStateUpdate()}setMuted(A){this.stateManager.muted=A,this._onVolumeUpdate?.(),this.protocolHandler.sendStateUpdate()}setSyncDelay(A){this.applyDelay(A),this.protocolHandler.sendStateUpdate()}setRequiredLeadTimeMs(A){this.protocolHandler.setRequiredLeadTimeMs(A)}setMinBufferMs(A){this.protocolHandler.setMinBufferMs(A)}sendCommand(A,t){let n=this.stateManager.serverState.controller?.supported_commands;if(n&&!n.includes(A))throw new Error(`Command '${A}' is not supported by the server. Supported commands: ${n.join(", ")}`);this.protocolHandler.sendCommand(A,t)}get isPlaying(){return this.stateManager.isPlaying}get volume(){return this.stateManager.volume}get muted(){return this.stateManager.muted}get playerState(){return this.stateManager.playerState}get currentFormat(){return this.stateManager.currentStreamFormat}get isConnected(){return this.wsManager.isConnected()}get clientId(){return this.identity.clientId}get pairingPsk(){return this.hasStorage?H(this.pskStore.getOrCreatePairingPsk()):null}get pairingToken(){let A=this.pairingPsk;return A?Sn(this.clientId,A):null}rotatePairingPsk(){return this.hasStorage?(this.pskStore.rotatePairingPsk(),this.pairingPsk):null}openPairingWindow(){this.pairing.openPairingWindow()}cancelPairing(){this.pairing.cancelPairing()}isDynamicPinEscalated(){return this.pairing.isDynamicPinEscalated()}get timeSyncInfo(){return{synced:this.timeFilter.is_synchronized,offset:Math.round(this.timeFilter.offset/1e3),error:Math.round(this.timeFilter.error/1e3)}}getCurrentServerTimeUs(){return this.timeFilter.computeServerTime(Math.floor(performance.now()*1e3))}get trackProgress(){let A=this.stateManager.serverState.metadata;if(!A?.progress||A.timestamp===void 0)return null;let n=this.getCurrentServerTimeUs()-A.timestamp,s=A.progress.track_progress+n*A.progress.playback_speed/1e6,r=A.progress.track_duration;return{positionMs:r===0?Math.max(0,s):Math.max(0,Math.min(s,r)),durationMs:r,playbackSpeed:A.progress.playback_speed/1e3}}get _stateManager(){return this.stateManager}get _timeFilter(){return this.timeFilter}};var fe=class{constructor(){this.activeSource="estimated",this._pendingCutover=!1,this._lastRejectReason=null,this._timestampPromotionDisabled=!1,this.lastSample=null,this.goodSamples=0,this.badSamples=0,this.goodSinceMs=null,this.estimateAudioTimeSec=null,this.estimateAtMs=null}get active(){return this.activeSource}get pendingCutover(){return this._pendingCutover}set pendingCutover(A){this._pendingCutover=A}get lastRejectReason(){return this._lastRejectReason}get timestampGoodSamples(){return this.goodSamples}get timestampPromotionDisabled(){return this._timestampPromotionDisabled}disableTimestampPromotion(){this._timestampPromotionDisabled=!0}setActive(A){return this.activeSource===A?!1:(this.activeSource=A,this._pendingCutover=A==="timestamp",this._pendingCutover&&this._onPromotion?.(),this._pendingCutover)}onPromotion(A){this._onPromotion=A}reset(){this.activeSource="estimated",this._pendingCutover=!1,this.lastSample=null,this.goodSamples=0,this._lastRejectReason=null,this.badSamples=0,this.goodSinceMs=null,this.estimateAudioTimeSec=null,this.estimateAtMs=null}demote(A){this.reset(),this._lastRejectReason=A}rejectSample(A,t=!1){if(this.lastSample=null,this.goodSamples=0,this.goodSinceMs=null,this._lastRejectReason=A,this.activeSource!=="timestamp"){this.badSamples=0;return}this.badSamples+=1,(t||this.badSamples>=2)&&this.demote(A)}getEstimatedTime(A,t){if(this.estimateAudioTimeSec===null)this.estimateAudioTimeSec=A,this.estimateAtMs=t;else if(this.estimateAtMs!==null){let n=Math.max(0,(t-this.estimateAtMs)/1e3),s=this.estimateAudioTimeSec+n;this.estimateAtMs=t;let r=A-s;if(Math.abs(r)>.5)this.estimateAudioTimeSec=A;else{let i=Math.max(-.002,Math.min(.002,r)),a=Math.max(this.estimateAudioTimeSec,s+i);this.estimateAudioTimeSec=Math.min(a,A+.1)}}return this.estimateAudioTimeSec??A}getTimestampDerivedTime(A,t,n){if(this._timestampPromotionDisabled)return(this.activeSource!=="estimated"||this.lastSample!==null||this.goodSamples!==0||this._lastRejectReason!==null)&&this.reset(),null;let s=t.getOutputTimestamp;if(typeof s!="function")return this.activeSource==="timestamp"&&this.demote("getOutputTimestamp unavailable"),null;try{let r=s.call(t),i=performance.now(),a=i-r.performanceTime;if(a<-5)return this.rejectSample(`performanceTime in future (${a.toFixed(1)}ms)`,!0),null;let o=Math.max(0,a),h=r.contextTime+o/1e3+n,u={contextTimeSec:r.contextTime,performanceTimeMs:r.performanceTime,nowMs:i,predictedAudioTimeSec:h,rawAudioTimeSec:A};if(o>250)return this.rejectSample(`stale timestamp (${o.toFixed(1)}ms old)`,!0),null;let l=h-A;if(Math.abs(l)>.25)return this.rejectSample(`timestamp/raw divergence ${Math.abs(l*1e3).toFixed(1)}ms`,!0),null;let c=this.lastSample;if(c){let f=r.performanceTime-c.performanceTimeMs;if(f<0)return this.rejectSample(`performanceTime moved backward (${f.toFixed(1)}ms)`,!0),null;if(h<c.predictedAudioTimeSec-.005)return this.rejectSample(`predicted audio time moved backward ${((c.predictedAudioTimeSec-h)*1e3).toFixed(1)}ms`,!0),null;let d=c.predictedAudioTimeSec-c.rawAudioTimeSec;if(Math.abs(l-d)>.05)return this.rejectSample(`timestamp/raw divergence drift ${Math.abs((l-d)*1e3).toFixed(1)}ms`),null;if(f>=40){let g=f/1e3,m=(r.contextTime-c.contextTimeSec)/g,p=(h-c.predictedAudioTimeSec)/g;if(m<.95||m>1.05)return this.rejectSample(`context slope ${m.toFixed(3)} out of range`),null;if(p<.95||p>1.05)return this.rejectSample(`predicted slope ${p.toFixed(3)} out of range`),null}}return this.lastSample=u,this.badSamples=0,this.goodSinceMs===null&&(this.goodSinceMs=i),this.goodSamples+=1,this.activeSource!=="timestamp"&&this.goodSamples>=6&&this.goodSinceMs!==null&&i-this.goodSinceMs>=750&&(this.setActive("timestamp"),this._lastRejectReason=null),h}catch(r){let i=r instanceof Error?`getOutputTimestamp failed: ${r.message}`:`getOutputTimestamp failed: ${String(r)}`;return this.rejectSample(i,!0),null}}getTimingSnapshot(A,t=0){let n=performance.now(),s=n*1e3;if(!A)return{audioContextTimeSec:0,audioContextRawTimeSec:0,nowMs:n,nowUs:s};let r=A.currentTime,i=this.getEstimatedTime(r,n),a=this.getTimestampDerivedTime(r,A,t),o=this.activeSource==="timestamp"&&a!==null?a:i;return Number.isFinite(o)||(o=r),{audioContextTimeSec:o,audioContextRawTimeSec:r,nowMs:n,nowUs:s}}};var pe=class{get minScheduleTimeSec(){return this._minScheduleTimeSec}setMinScheduleTime(A){this._minScheduleTimeSec=A}clearMinScheduleTime(){this._minScheduleTimeSec=null}constructor(A){this.onCheck=A,this.interval=null,this.breachStartedAtMs=null,this.lastRecorrectionAtMs=-1/0,this.prevRawSyncErrorMs=null,this.pendingJumpSign=null,this.pendingJumpAtMs=null,this.transientStartedAtMs=null,this._hardResyncGraceUntilMs=null,this._lastHardResyncAtMs=-1/0,this._minScheduleTimeSec=null}start(){this.interval===null&&(this.interval=globalThis.setInterval(()=>this.onCheck(),250))}stop(){this.interval!==null&&(clearInterval(this.interval),this.interval=null),this.resetCheckState(),this.lastRecorrectionAtMs=-1/0}clearBreachState(){this.breachStartedAtMs=null,this.pendingJumpSign=null,this.pendingJumpAtMs=null,this.transientStartedAtMs=null}resetCheckState(){this.clearBreachState(),this.prevRawSyncErrorMs=null}clearHardResyncCooldown(){this._hardResyncGraceUntilMs=null,this._lastHardResyncAtMs=-1/0}armStartupGrace(A,t){if(t){this._hardResyncGraceUntilMs=null;return}this._hardResyncGraceUntilMs===null&&(this._hardResyncGraceUntilMs=A+1e3)}canUseHardResync(A,t){if(t)this._hardResyncGraceUntilMs=null;else if(this._hardResyncGraceUntilMs!==null&&A<this._hardResyncGraceUntilMs)return!1;return A-this._lastHardResyncAtMs>=500}noteHardResync(A){this._lastHardResyncAtMs=A}markRecorrection(A){this.lastRecorrectionAtMs=A}shouldIgnoreTransientJump(A,t){let n=this.prevRawSyncErrorMs;if(this.prevRawSyncErrorMs=A,n===null)return this.pendingJumpSign=null,this.pendingJumpAtMs=null,!1;let s=A-n,r=Math.sign(s);if(!(Math.abs(s)>=25))return this.pendingJumpSign=null,this.pendingJumpAtMs=null,!1;let a=this.pendingJumpSign===r&&this.pendingJumpAtMs!==null&&t-this.pendingJumpAtMs<=1e3;return this.pendingJumpSign=r,this.pendingJumpAtMs=t,!a}shouldRecorrect(A,t,n){let s=this.shouldIgnoreTransientJump(t,n);if(A<30)return this.clearBreachState(),!1;if(s){if(this.transientStartedAtMs===null&&(this.transientStartedAtMs=n),n-this.transientStartedAtMs<400)return this.breachStartedAtMs=null,!1;this.breachStartedAtMs===null&&(this.breachStartedAtMs=this.transientStartedAtMs)}else this.transientStartedAtMs=null;return this.breachStartedAtMs===null?(this.breachStartedAtMs=n,!1):!(n-this.breachStartedAtMs<400||n-this.lastRecorrectionAtMs<1500)}fullReset(){this.stop(),this._hardResyncGraceUntilMs=null,this._lastHardResyncAtMs=-1/0,this._minScheduleTimeSec=null}},mr=.3;var gr="sendspin-output-latency-us";function yr(e,A){return typeof e=="number"&&Number.isFinite(e)&&e>=0?e:A}var me=class{constructor(A){this.storage=A,this.smoothedOutputLatencyUs=null,this.lastLatencyPersistAtMs=null,this.loadPersisted()}loadPersisted(){if(this.storage)try{let A=this.storage.getItem(gr);if(A){let t=parseFloat(A);!isNaN(t)&&t>=0&&(this.smoothedOutputLatencyUs=t)}}catch{}}persist(){if(!(!this.storage||this.smoothedOutputLatencyUs===null))try{this.storage.setItem(gr,this.smoothedOutputLatencyUs.toString())}catch{}}getRawUs(A){if(!A)return 0;let t=yr(A.baseLatency,0),n=yr(A.outputLatency,.04);return(t+n)*1e6}getSmoothedUs(A){let t=this.getRawUs(A);if(t<=0&&this.smoothedOutputLatencyUs!==null)return this.smoothedOutputLatencyUs;this.smoothedOutputLatencyUs===null?this.smoothedOutputLatencyUs=t:this.smoothedOutputLatencyUs=.01*t+(1-.01)*this.smoothedOutputLatencyUs;let n=typeof performance<"u"?performance.now():Date.now();return(this.lastLatencyPersistAtMs===null||n-this.lastLatencyPersistAtMs>=1e4)&&(this.persist(),this.lastLatencyPersistAtMs=n),this.smoothedOutputLatencyUs}reset(){this.smoothedOutputLatencyUs=null}};function Sr(e=typeof navigator>"u"?void 0:navigator){if(!e)return 0;let{userAgent:A}=e;return/iPad|iPhone|iPod/i.test(A)||e.platform==="MacIntel"&&(e.maxTouchPoints??0)>1||/Macintosh/i.test(A)&&/AppleWebKit/i.test(A)&&/Safari/i.test(A)&&!/Chrome|Chromium|Edg|OPR|Firefox/i.test(A)?100:0}var GA=8,yo=1,So=Math.min(1,2*yo/GA),Mn=new Float32Array(GA);for(let e=0;e<GA;e++)Mn[e]=(GA-e)/(GA+1)*So;var Mr=.003,ge=.005,Cr=.05,Mo=20,Co=8,wo=4,ko=1.5,_o=2,xo=8,Eo=.5,bo=.1,To=5,Do=.015;function vo(e){return Math.pow(e/100,1.5)}var wr={sync:{resyncAboveMs:200,rate2AboveMs:35,rate1AboveMs:8,samplesBelowMs:8,deadbandBelowMs:1,enableRecorrectionMonitor:!0,immediateDelayCutover:!0},quality:{resyncAboveMs:35,rate2AboveMs:1/0,rate1AboveMs:1/0,samplesBelowMs:35,deadbandBelowMs:1,enableRecorrectionMonitor:!1,immediateDelayCutover:!1},"quality-local":{resyncAboveMs:600,rate2AboveMs:1/0,rate1AboveMs:1/0,samplesBelowMs:0,deadbandBelowMs:5,enableRecorrectionMonitor:!1,immediateDelayCutover:!1}},vt=class{constructor(A){this.audioContext=null,this.gainNode=null,this.streamDestination=null,this.audioBufferQueue=[],this.scheduledSources=[],this.nextPlaybackTime=0,this.nextScheduleTime=0,this.lastScheduledServerTime=0,this.currentSyncErrorMs=0,this.smoothedSyncErrorMs=0,this.resyncCount=0,this.currentPlaybackRate=1,this.currentCorrectionMethod="none",this.lastSamplesAdjusted=0,this._correctionMode="sync",this._lastStatusLogMs=0,this._intervalResyncCount=0,this.scheduleTimeout=null,this.refillTimeout=null,this.queueProcessScheduled=!1,this.clockSource=new fe,this.stateManager=A.stateManager,this.timeFilter=A.timeFilter,this.outputMode=A.outputMode??"direct",this.audioElement=A.audioElement,this.isAndroid=A.isAndroid??!1,this.isCastRuntime=A.isCastRuntime??!1,this.ownsAudioElement=A.ownsAudioElement??!1,this.silentAudioSrc=A.silentAudioSrc,this.syncDelayMs=nA(A.syncDelayMs??0),this.useHardwareVolume=A.useHardwareVolume??!1,this._correctionMode=A.correctionMode??"sync",this.useOutputLatencyCompensation=A.useOutputLatencyCompensation??!0,this.unreportedOutputLatencySec=this.useOutputLatencyCompensation?Sr()/1e3:0,this.correctionThresholds={...wr};let t=A.correctionThresholds;if(t)for(let n of Object.keys(t)){let s=t[n];s&&(this.correctionThresholds[n]={...wr[n],...s})}this.latencyTracker=new me(A.storage??null),this.isCastRuntime&&this.clockSource.disableTimestampPromotion(),this.clockSource.onPromotion(()=>{(this.audioBufferQueue.length>0||this.scheduledSources.length>0)&&this.scheduleQueueProcessing()}),this.recorrectionMonitor=new pe(()=>this.checkRecorrection())}get correctionMode(){return this._correctionMode}setCorrectionMode(A){this._correctionMode=A,this.correctionThresholds[A].enableRecorrectionMonitor?this.recorrectionMonitor.start():this.recorrectionMonitor.stop()}get usesRecorrectionMonitor(){return this.correctionThresholds[this._correctionMode].enableRecorrectionMonitor}get usesImmediateDelayCutover(){return this.correctionThresholds[this._correctionMode].immediateDelayCutover}measurePlayoutLatencySec(){return this.latencyTracker.getSmoothedUs(this.audioContext)/1e6}getTargetScheduledHorizonSec(){if(this.isCastRuntime)return ko;let A=this.timeFilter.error/1e3;return A<_o?Mo:A<=xo?Co:wo}getScheduledAheadSec(A){let t=this.nextScheduleTime;for(let n of this.scheduledSources)n.endTime>t&&(t=n.endTime);return t<=0?0:Math.max(0,t-A)}resetScheduledPlaybackState(A){this.nextPlaybackTime=0,this.nextScheduleTime=0,this.lastScheduledServerTime=0,this.recorrectionMonitor.clearMinScheduleTime(),this.recorrectionMonitor.clearHardResyncCooldown(),this.clockSource.pendingCutover=!1,this.recorrectionMonitor.resetCheckState(),this.resetSyncErrorEma(),this.currentSyncErrorMs=0,this.currentPlaybackRate=1,this.currentCorrectionMethod="none",this.lastSamplesAdjusted=0,this._lastStatusLogMs=0,this._intervalResyncCount=0}pruneExpiredScheduledSources(A){this.scheduledSources.length!==0&&(this.scheduledSources=this.scheduledSources.filter(t=>t.endTime>A),this.scheduledSources.length===0&&this.resetScheduledPlaybackState("no scheduled audio ahead"))}performGuardedCutover(A,t={}){if(!this.audioContext)return;let n=t.incrementResyncCount??!1,s=t.markCooldown??!0,r=performance.now(),i=this.audioContext.currentTime+mr;n&&(this.resyncCount++,this._intervalResyncCount++),this.resetSyncErrorEma(),this.currentCorrectionMethod="resync",this.lastSamplesAdjusted=0,this.currentPlaybackRate=1;let a=this.cutScheduledSources(i);this.recorrectionMonitor.setMinScheduleTime(Math.max(i,a.keptTailEndTimeSec)),this.nextPlaybackTime=0,this.nextScheduleTime=0,this.lastScheduledServerTime=0,this.recorrectionMonitor.resetCheckState(),s&&this.recorrectionMonitor.markRecorrection(r),this.recorrectionMonitor.noteHardResync(r),this.processAudioQueue()}checkRecorrection(){if(!this.usesRecorrectionMonitor){this.recorrectionMonitor.resetCheckState();return}if(!this.audioContext||this.audioContext.state!=="running"){this.recorrectionMonitor.resetCheckState();return}if(!this.stateManager.isPlaying||this.nextPlaybackTime===0||this.lastScheduledServerTime===0){this.recorrectionMonitor.resetCheckState();return}let A=this.measurePlayoutLatencySec(),{audioContextTimeSec:t,audioContextRawTimeSec:n,nowMs:s,nowUs:r}=this.clockSource.getTimingSnapshot(this.audioContext,A);if(this.pruneExpiredScheduledSources(n),this.getScheduledAheadSec(n)<=0){this.recorrectionMonitor.resetCheckState(),this.audioBufferQueue.length>0&&this.processAudioQueue();return}let i=this.useOutputLatencyCompensation?A:0,a=this.computeTargetPlaybackTime(this.lastScheduledServerTime,t,r,i),o=(this.nextPlaybackTime-a)*1e3,h=this.applySyncErrorEma(o);this.recorrectionMonitor.shouldRecorrect(Math.abs(h),o,s)&&this.performGuardedCutover("recorrection",{incrementResyncCount:!0,markCooldown:!0})}getSyncDelayMs(){return this.syncDelayMs}setSyncDelay(A){let t=nA(A),n=t-this.syncDelayMs;this.syncDelayMs=t,!(n===0||!this.usesImmediateDelayCutover)&&(!this.audioContext||this.audioContext.state!=="running"||this.stateManager.isPlaying&&(this.scheduledSources.length===0&&this.audioBufferQueue.length===0&&this.nextPlaybackTime===0||this.performGuardedCutover("delay-change",{incrementResyncCount:!1,markCooldown:!0})))}get syncInfo(){return{clockDriftPercent:this.timeFilter.drift*100,syncErrorMs:this.currentSyncErrorMs,resyncCount:this.resyncCount,outputLatencyMs:this.latencyTracker.getRawUs(this.audioContext)/1e3+this.unreportedOutputLatencySec*1e3,playbackRate:this.currentPlaybackRate,correctionMethod:this.currentCorrectionMethod,samplesAdjusted:this.lastSamplesAdjusted,correctionMode:this._correctionMode}}emitStatusLog(A){if(this._lastStatusLogMs!==0&&A-this._lastStatusLogMs<1e4)return;this._lastStatusLogMs=A;let t;switch(this.currentCorrectionMethod){case"rate":t=`rate@${this.currentPlaybackRate}`;break;case"samples":t=`samples:${this.lastSamplesAdjusted}`;break;default:t=this.currentCorrectionMethod}let n=this.audioBufferQueue.length+this.scheduledSources.length,s=this.audioContext?this.getScheduledAheadSec(this.audioContext.currentTime):0,r;this.clockSource.timestampPromotionDisabled?r="estimated(cast-disabled)":this.clockSource.active==="timestamp"?r=`timestamp(good:${this.clockSource.timestampGoodSamples})`:this.clockSource.lastRejectReason?r=`estimated(reject:"${this.clockSource.lastRejectReason}")`:r="estimated";let i=this.timeFilter.is_synchronized?`synced(err=${(this.timeFilter.error/1e3).toFixed(1)}ms,drift=${this.timeFilter.drift.toFixed(3)},n=${this.timeFilter.count})`:`pending(n=${this.timeFilter.count})`,a=this.latencyTracker.getSmoothedUs(this.audioContext),o=Math.round(a/1e3+this.unreportedOutputLatencySec*1e3);console.log(`Sendspin: sync=${this.smoothedSyncErrorMs>=0?"+":""}${this.smoothedSyncErrorMs.toFixed(1)}ms corr=${t} q=${n}/${s.toFixed(1)}s resyncs=${this._intervalResyncCount} clock=${r} tf=${i} lat=${o}ms mode=${this._correctionMode} ctx=${this.audioContext?.state??"null"} gen=${this.stateManager.streamGeneration}`),this._intervalResyncCount=0}applySyncErrorEma(A){return this.currentSyncErrorMs=A,this.smoothedSyncErrorMs=Cr*A+(1-Cr)*this.smoothedSyncErrorMs,this.smoothedSyncErrorMs}resetSyncErrorEma(){this.smoothedSyncErrorMs=0}copyBuffer(A){if(!this.audioContext)return A;let t=this.audioContext.createBuffer(A.numberOfChannels,A.length,A.sampleRate);for(let n=0;n<A.numberOfChannels;n++)t.getChannelData(n).set(A.getChannelData(n));return t}adjustBufferSamples(A,t){if(!this.audioContext||t===0||A.length<2)return this.copyBuffer(A);let n=A.numberOfChannels,s=A.length,r=A.sampleRate;try{if(t>0){let i=this.audioContext.createBuffer(n,s+1,r);for(let a=0;a<n;a++){let o=A.getChannelData(a),h=i.getChannelData(a);h[0]=o[0];let u=(o[0]+o[1])/2;h[1]=u,h.set(o.subarray(1),2);for(let l=0;l<GA;l++){let c=2+l;if(c>=h.length)break;let f=Mn[l];h[c]=h[c]*(1-f)+u*f}}return i}else{let i=this.audioContext.createBuffer(n,s-1,r);for(let a=0;a<n;a++){let o=A.getChannelData(a),h=i.getChannelData(a);h.set(o.subarray(0,s-2));let u=(o[s-2]+o[s-1])/2;h[s-2]=u;for(let l=0;l<GA;l++){let c=s-3-l;if(c<0)break;let f=Mn[l];h[c]=h[c]*(1-f)+u*f}}return i}}catch(i){return console.error("Sendspin: adjustBufferSamples error:",i),A}}initAudioContext(){if(this.audioContext)return;this.outputMode==="media-element"&&this.ownsAudioElement&&(this.audioElement=document.createElement("audio"),this.audioElement.style.display="none",document.body.appendChild(this.audioElement)),navigator.audioSession&&(navigator.audioSession.type="playback");let A=this.stateManager.currentStreamFormat?.sample_rate||48e3;this.audioContext=new AudioContext({sampleRate:A}),this.gainNode=this.audioContext.createGain();let t=this.audioElement;if(this.outputMode==="direct")this.gainNode.connect(this.audioContext.destination);else{if(!t)throw new Error("Media-element output requires an audio element.");this.isAndroid&&this.silentAudioSrc?(this.gainNode.connect(this.audioContext.destination),t.src=this.silentAudioSrc,t.loop=!0,t.muted=!1,t.volume=1,t.play().catch(n=>{console.warn("Sendspin: Audio autoplay blocked:",n)})):(this.streamDestination=this.audioContext.createMediaStreamDestination(),this.gainNode.connect(this.streamDestination),t.srcObject=this.streamDestination.stream,t.volume=1,t.play().catch(n=>{console.warn("Sendspin: Audio autoplay blocked:",n)}))}this.updateVolume(),this.usesRecorrectionMonitor&&this.recorrectionMonitor.start()}async resumeAudioContext(){this.audioContext&&this.audioContext.state==="suspended"&&(await this.audioContext.resume(),console.log("Sendspin: AudioContext resumed"),this.audioBufferQueue.length>0&&this.scheduleQueueProcessing(),this.usesRecorrectionMonitor&&this.recorrectionMonitor.start())}cutScheduledSources(A){if(!this.audioContext)return{requeuedCount:0,cutCount:0,keptTailEndTimeSec:0};let t=Math.max(A,this.audioContext.currentTime),n=0,s=0,r=0;return this.scheduledSources=this.scheduledSources.filter(i=>{if(i.startTime<t)return r=Math.max(r,i.endTime),!0;try{i.source.onended=null,i.source.stop(t)}catch{}return this.audioBufferQueue.push({buffer:i.buffer,serverTime:i.serverTime,generation:i.generation}),n++,s++,!1}),n>0&&this.audioBufferQueue.sort((i,a)=>i.serverTime-a.serverTime),{requeuedCount:n,cutCount:s,keptTailEndTimeSec:r}}updateVolume(){if(!this.gainNode)return;if(this.useHardwareVolume){this.gainNode.gain.value=1;return}let A=this.stateManager.muted?0:vo(this.stateManager.volume);this.audioContext?this.gainNode.gain.setTargetAtTime(A,this.audioContext.currentTime,Do):this.gainNode.gain.value=A}measureBufferedPlaybackRunwaySec(){if(!this.audioContext)return 0;let A=this.audioContext.currentTime;this.pruneExpiredScheduledSources(A);let t=this.getScheduledAheadSec(A),n=this.audioBufferQueue.reduce((s,r)=>s+r.buffer.duration,0);return Math.max(0,t+n)}cancelScheduledRefill(){this.refillTimeout!==null&&(clearTimeout(this.refillTimeout),this.refillTimeout=null)}getScheduledRefillThresholdSec(A){return Math.max(bo,Math.min(To,A*Eo))}scheduleQueueRefill(A){if(this.cancelScheduledRefill(),!this.audioContext||this.audioContext.state!=="running"||!this.stateManager.isPlaying||this.audioBufferQueue.length===0)return;let t=this.audioContext.currentTime;this.pruneExpiredScheduledSources(t);let n=this.getScheduledAheadSec(t),s=this.getScheduledRefillThresholdSec(A);if(n<=s){this.scheduleQueueProcessing();return}let r=(n-s)*1e3,i=()=>{this.refillTimeout=null,!(!this.audioContext||this.audioContext.state!=="running"||!this.stateManager.isPlaying||this.audioBufferQueue.length===0)&&this.scheduleQueueProcessing()};if(typeof globalThis.setTimeout=="function"){this.refillTimeout=globalThis.setTimeout(i,r);return}if(this.refillTimeout=null,typeof globalThis.queueMicrotask=="function"){globalThis.queueMicrotask(i);return}Promise.resolve().then(i)}scheduleQueueProcessing(){if(this.cancelScheduledRefill(),this.queueProcessScheduled)return;if(this.queueProcessScheduled=!0,typeof globalThis.setTimeout=="function"){this.scheduleTimeout=globalThis.setTimeout(()=>{this.scheduleTimeout=null,this.queueProcessScheduled=!1,this.processAudioQueue()},15);return}let A=()=>{this.queueProcessScheduled=!1,this.processAudioQueue()};typeof globalThis.queueMicrotask=="function"?globalThis.queueMicrotask(A):Promise.resolve().then(A)}handleDecodedChunk(A){if(!this.audioContext||!this.gainNode){console.warn("Sendspin: Received audio chunk but no audio context");return}if(A.generation!==this.stateManager.streamGeneration)return;let t=A.samples.length,n=A.samples[0].length,s=this.audioContext.createBuffer(t,n,A.sampleRate);for(let r=0;r<t;r++)s.getChannelData(r).set(A.samples[r]);this.audioBufferQueue.push({buffer:s,serverTime:A.serverTimeUs,generation:A.generation}),this.scheduleQueueProcessing()}processAudioQueue(){if(this.cancelScheduledRefill(),!this.audioContext||!this.gainNode||this.audioContext.state!=="running")return;let A=this.stateManager.streamGeneration;if(this.audioBufferQueue=this.audioBufferQueue.filter(u=>u.generation===A),this.audioBufferQueue.sort((u,l)=>u.serverTime-l.serverTime),!this.timeFilter.is_synchronized)return;let t=this.measurePlayoutLatencySec(),{audioContextTimeSec:n,audioContextRawTimeSec:s,nowMs:r,nowUs:i}=this.clockSource.getTimingSnapshot(this.audioContext,t);this.pruneExpiredScheduledSources(s);let a=this.useOutputLatencyCompensation?t:0,o=this.syncDelayMs/1e3+this.unreportedOutputLatencySec,h=this.getTargetScheduledHorizonSec();if(this.usesRecorrectionMonitor&&this.recorrectionMonitor.start(),this.clockSource.pendingCutover&&(this.clockSource.pendingCutover=!1,this.scheduledSources.length>0||this.nextPlaybackTime!==0||this.lastScheduledServerTime!==0)){this.performGuardedCutover("delay-change",{incrementResyncCount:!1,markCooldown:!1});return}for(;this.audioBufferQueue.length>0;){let u=this.getScheduledAheadSec(s);if(this.nextPlaybackTime>0&&u>=h)break;let l=this.audioBufferQueue.shift(),c,f,d,g=this.computeTargetPlaybackTime(l.serverTime,n,i,a),m=this.clockSource.active==="timestamp";if(this.nextPlaybackTime===0||this.lastScheduledServerTime===0){this.recorrectionMonitor.armStartupGrace(r,m),c=g,f=c-o;let D=this.recorrectionMonitor.minScheduleTimeSec;if(D!==null){if(f+l.buffer.duration<=D)continue;f=Math.max(f,D),c=f+o}this.recorrectionMonitor.clearMinScheduleTime(),d=1}else{let B=(l.serverTime-this.lastScheduledServerTime)/1e6;if(Math.abs(B)<.1){let M=(this.nextPlaybackTime-g)*1e3,C=this.applySyncErrorEma(M),k=this.correctionThresholds[this._correctionMode],T=this.recorrectionMonitor.canUseHardResync(r,m);if(Math.abs(C)>k.resyncAboveMs&&T)this.recorrectionMonitor.noteHardResync(r),this.resyncCount++,this._intervalResyncCount++,this.resetSyncErrorEma(),this.cutScheduledSources(g-o),c=g,f=c-o,d=1,this.currentCorrectionMethod="resync",this.lastSamplesAdjusted=0;else if(Math.abs(C)>k.resyncAboveMs)c=this.nextPlaybackTime,f=this.nextScheduleTime,d=Number.isFinite(k.rate2AboveMs)?C>0?1+ge:1-ge:1,this.currentCorrectionMethod=d===1?"none":"rate",this.lastSamplesAdjusted=0;else if(Math.abs(C)<k.deadbandBelowMs)c=this.nextPlaybackTime,f=this.nextScheduleTime,d=1,this.currentCorrectionMethod="none",this.lastSamplesAdjusted=0;else if(Math.abs(C)<=k.samplesBelowMs){c=this.nextPlaybackTime,f=this.nextScheduleTime,d=1;let w=C>0?-1:1;l.buffer=this.adjustBufferSamples(l.buffer,w),this.currentCorrectionMethod="samples",this.lastSamplesAdjusted=w}else{c=this.nextPlaybackTime,f=this.nextScheduleTime;let w=Math.abs(C);C>0?d=w>=k.rate2AboveMs?1+ge:w>=k.rate1AboveMs?1+Mr:1:d=w>=k.rate2AboveMs?1-ge:w>=k.rate1AboveMs?1-Mr:1,this.currentCorrectionMethod=d===1?"none":"rate",this.lastSamplesAdjusted=0}}else this.recorrectionMonitor.canUseHardResync(r,m)&&(this.recorrectionMonitor.noteHardResync(r),this.resyncCount++,this._intervalResyncCount++,this.cutScheduledSources(g-o)),c=g,f=c-o,d=1,this.currentCorrectionMethod="resync",this.lastSamplesAdjusted=0}if(this.currentPlaybackRate=d,c<s){this.nextPlaybackTime=0,this.nextScheduleTime=0,this.lastScheduledServerTime=0;continue}let p=Math.max(f,s),S=p+(c-f),y=this.audioContext.createBufferSource();y.buffer=l.buffer,y.playbackRate.value=d,y.connect(this.gainNode),y.start(p);let _=l.buffer.duration/d;this.nextPlaybackTime=S+_,this.nextScheduleTime=p+_,this.lastScheduledServerTime=l.serverTime+l.buffer.duration*1e6;let J={source:y,startTime:p,endTime:p+_,buffer:l.buffer,serverTime:l.serverTime,generation:l.generation};this.scheduledSources.push(J),y.onended=()=>{let D=this.scheduledSources.indexOf(J);D>-1&&this.scheduledSources.splice(D,1),this.scheduledSources.length===0&&(this.resetScheduledPlaybackState("all scheduled audio ended"),this.audioBufferQueue.length>0&&this.processAudioQueue())}}this.scheduleQueueRefill(h),this.emitStatusLog(r)}computeTargetPlaybackTime(A,t,n,s){let i=(this.timeFilter.computeClientTime(A)-n)/1e6;return t+i-s}startAudioElement(){this.outputMode==="media-element"&&this.audioElement?.paused&&this.audioElement.play().catch(A=>{console.warn("Sendspin: Failed to start audio element:",A)})}stopAudioElement(){this.outputMode==="media-element"&&this.audioElement&&!this.audioElement.paused&&this.audioElement.pause()}clearBuffers(){this.recorrectionMonitor.fullReset(),this.cancelScheduledRefill(),this.scheduledSources.forEach(A=>{try{A.source.stop()}catch{}}),this.scheduledSources=[],this.audioBufferQueue=[],this.scheduleTimeout!==null&&(clearTimeout(this.scheduleTimeout),this.scheduleTimeout=null),this.queueProcessScheduled=!1,this.stateManager.resetStreamAnchors(),this.resetScheduledPlaybackState(),this.resyncCount=0,this.latencyTracker.reset(),this.clockSource.reset()}close(){this.clearBuffers(),this.audioContext&&(this.audioContext.close(),this.audioContext=null),this.gainNode=null,this.streamDestination=null,this.outputMode==="media-element"&&this.audioElement&&(this.audioElement.pause(),this.audioElement.srcObject=null,this.audioElement.loop=!1,this.audioElement.removeAttribute("src"),this.audioElement.load(),this.ownsAudioElement&&(this.audioElement.remove(),this.audioElement=void 0))}getAudioContext(){return this.audioContext}};var kr="data:audio/flac;base64,ZkxhQwAAACICQAJAAAAMAADIAfQBcAAHkwCKnZ7FLvzY30lWx+3k6wJCBAAALAwAAABMYXZmNjEuNy4xMDABAAAAFAAAAGVuY29kZXI9TGF2ZjYxLjcuMTAwgQAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA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kkkkkkmSSSSSTJJJJJMkkkkySSSTJJJJMkkkk/+/+//f/7//9////////////z///z//8///P//n//+SSSSSSSSSSSSQkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkmSSSSSSSSSSSSSSST////+BVP//gkDBPnQAAAAOc/VEAP/////9//////////////////z////////+f/////////////////////////////////3///////////////////////////gAhn//gkDBTyQP///+c/y0Af/////5//////////////////////////////////v/////////////////////////////////P////////////////////+T8L/+CQMFfVAAAAA5z9xQB////////////3//////////////////////////////////+f///////////////////////////////////////////////gm0f/4JAwW/EAAAADnP9JAH///////7///////////////////////////////////////////////n///////////////////////////////////////+BEl//gkDBf7AAAAABAL//gkDBjWAAAAADVc//gkDBnRAAAAAEw0//gkDBrYAAAAAMeM//gkDBvfAAAAAL7k//gkDBzKAAAAAFD5//gkDB3NAAAAACmR//gkDB7EAAAAAKIp//gkDB/DAAAAANtB//gkDCB+AAAAAMWl//gkDCF5AAAAALzN//gkDCJwAAAAADd1//gkDCN3AAAAAE4d//gkDCRiAAAAAKAA//gkDCVlAAAAANlo//gkDCZsAAAAAFLQ//gkDCdrAAAAACu4//gkDChGAAAAAA7v//gkDClBAAAAAHeH//gkDCpIAAAAAPw///gkDCtPAAAAAIVX//gkDCxaAAAAAGtK//gkDC1dAAAAABIi//gkDC5UAAAAAJma//gkDC9TAAAAAODy//gkDDAOAAAAANM0//gkDDEJAAAAAKpc//gkDDIAAAAAACHk//gkDDMHAAAAAFiM//gkDDQSAAAAALaR//gkDDUVAAAAAM/5//gkDDYcAAAAAERB//gkDDcbAAAAAD0p//gkDDg2AAAAABh+//gkDDkxAAAAAGEW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";var _r;(function(e){e.CLIENT_HELLO="client/hello",e.SERVER_HELLO="server/hello",e.CLIENT_TIME="client/time",e.SERVER_TIME="server/time",e.CLIENT_STATE="client/state",e.SERVER_STATE="server/state",e.CLIENT_COMMAND="client/command",e.CLIENT_GOODBYE="client/goodbye",e.SERVER_COMMAND="server/command",e.STREAM_START="stream/start",e.STREAM_CLEAR="stream/clear",e.STREAM_REQUEST_FORMAT="stream/request-format",e.STREAM_END="stream/end",e.GROUP_UPDATE="group/update",e.CLIENT_INIT="client/init",e.SERVER_INIT="server/init",e.NOISE_HANDSHAKE="noise/handshake",e.SERVER_ACTIVATE="server/activate",e.CLIENT_PAIR_PENDING="client/pair-pending",e.CLIENT_PAIR_INIT="client/pair-init",e.SERVER_PAIR_INIT="server/pair-init",e.SERVER_PAIR_AUTH="server/pair-auth",e.CLIENT_PAIR_AUTH="client/pair-auth",e.SERVER_PAIR_CONFIRM="server/pair-confirm",e.CLIENT_PAIR_CONFIRM="client/pair-confirm",e.CLIENT_PAIR_FINALIZE="client/pair-finalize",e.SERVER_PAIR_FINALIZE="server/pair-finalize",e.PAIR_ABORT="pair/abort",e.SERVER_UNPAIR="server/unpair"})(_r||(_r={}));function xr(){return typeof navigator>"u"?!1:/Android/i.test(navigator.userAgent)}function Io(){return typeof navigator>"u"?!1:/iPad|iPhone|iPod/.test(navigator.userAgent)||navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1}function Jo(){return xr()||Io()}function Bo(){return typeof navigator>"u"?!1:/CrKey/i.test(navigator.userAgent)}var Po=250,ye=class{constructor(A){this.ownsAudioElement=!1,this.disconnectPlaybackResetTimeout=null,this.suppressDisconnectPlaybackReset=!1;let t=xr(),n=Bo(),s=Jo(),r=A.audioElement||s?"media-element":"direct";if(this.ownsAudioElement=r==="media-element"&&!A.audioElement,this.ownsAudioElement&&typeof document>"u")throw new Error("SendspinPlayer requires a DOM document to use media-element output without a provided audioElement.");let i=null;A.storage!==void 0?i=A.storage:typeof localStorage<"u"&&(i=localStorage),this.core=new Dt({baseUrl:A.baseUrl,clientName:A.clientName,productName:A.productName,webSocket:A.webSocket,codecs:A.codecs,bufferCapacity:A.bufferCapacity,syncDelay:A.syncDelay,defaultSyncDelay:A.defaultSyncDelay,storage:i,requiredLeadTimeMs:A.requiredLeadTimeMs,minBufferMs:A.minBufferMs,useHardwareVolume:A.useHardwareVolume,onVolumeCommand:A.onVolumeCommand,onDelayCommand:A.onDelayCommand,getExternalVolume:A.getExternalVolume,reconnect:A.reconnect,onStateChange:A.onStateChange,onPairing:A.onPairing,onPairingPin:A.onPairingPin,pinOutChannels:A.pinOutChannels,minPinLength:A.minPinLength,staticPin:A.staticPin,staticPinLocations:A.staticPinLocations,pairingPskLocations:A.pairingPskLocations,suite:A.suite,unpairedAccess:A.unpairedAccess,longTermPsks:A.longTermPsks});let a=this.core.getSyncDelayMs();this.scheduler=new vt({stateManager:this.core._stateManager,timeFilter:this.core._timeFilter,outputMode:r,audioElement:A.audioElement,isAndroid:t,isCastRuntime:n,ownsAudioElement:this.ownsAudioElement,silentAudioSrc:t?kr:void 0,syncDelayMs:a,useHardwareVolume:A.useHardwareVolume??!1,correctionMode:A.correctionMode??"sync",storage:i,useOutputLatencyCompensation:A.useOutputLatencyCompensation??!0,correctionThresholds:A.correctionThresholds}),this.core.onAudioData=o=>{this.scheduler.handleDecodedChunk(o)},this.core.onStreamStart=(o,h)=>{this.scheduler.initAudioContext(),this.scheduler.resumeAudioContext().catch(u=>{console.warn("Sendspin: Failed to resume AudioContext:",u)}),h||this.scheduler.clearBuffers(),this.scheduler.startAudioElement()},this.core.onStreamClear=()=>{this.scheduler.clearBuffers()},this.core.onStreamEnd=()=>{this.scheduler.clearBuffers(),this.scheduler.stopAudioElement()},this.core.onVolumeUpdate=()=>{this.scheduler.updateVolume()},this.core.onSyncDelayChange=o=>{this.scheduler.setSyncDelay(o)},this.core.onConnectionOpen=()=>{this.cancelPendingDisconnectPlaybackReset()},this.core.onConnectionClose=()=>{this.suppressDisconnectPlaybackReset||this.scheduleDisconnectPlaybackReset()}}cancelPendingDisconnectPlaybackReset(){this.disconnectPlaybackResetTimeout!==null&&(clearTimeout(this.disconnectPlaybackResetTimeout),this.disconnectPlaybackResetTimeout=null)}resetPlaybackStateAfterDisconnect(){this.disconnectPlaybackResetTimeout=null,!this.core.isConnected&&(this.scheduler.clearBuffers(),this.core.resetPlaybackState(),this.scheduler.stopAudioElement(),typeof navigator<"u"&&navigator.mediaSession&&(navigator.mediaSession.playbackState="paused"))}scheduleDisconnectPlaybackReset(){this.cancelPendingDisconnectPlaybackReset();let A=this.scheduler.measureBufferedPlaybackRunwaySec();if(A<=0){this.resetPlaybackStateAfterDisconnect();return}this.disconnectPlaybackResetTimeout=setTimeout(()=>{this.resetPlaybackStateAfterDisconnect()},A*1e3+Po)}async unlock(){this.scheduler.initAudioContext(),await this.scheduler.resumeAudioContext()}async connect(){return this.suppressDisconnectPlaybackReset=!1,this.core.connect()}disconnect(A="restart"){this.cancelPendingDisconnectPlaybackReset(),this.suppressDisconnectPlaybackReset=!0,this.core.disconnect(A),this.scheduler.close(),typeof navigator<"u"&&navigator.mediaSession&&(navigator.mediaSession.playbackState="none",navigator.mediaSession.metadata=null)}setVolume(A){this.core.setVolume(A)}setMuted(A){this.core.setMuted(A)}setSyncDelay(A){this.core.setSyncDelay(A)}setRequiredLeadTimeMs(A){this.core.setRequiredLeadTimeMs(A)}setMinBufferMs(A){this.core.setMinBufferMs(A)}setCorrectionMode(A){this.scheduler.setCorrectionMode(A)}sendCommand(A,t){this.core.sendCommand(A,t)}get isPlaying(){return this.core.isPlaying}get volume(){return this.core.volume}get muted(){return this.core.muted}get playerState(){return this.core.playerState}get currentFormat(){return this.core.currentFormat}get isConnected(){return this.core.isConnected}get clientId(){return this.core.clientId}get pairingPsk(){return this.core.pairingPsk}get pairingToken(){return this.core.pairingToken}rotatePairingPsk(){return this.core.rotatePairingPsk()}openPairingWindow(){this.core.openPairingWindow()}cancelPairing(){this.core.cancelPairing()}isDynamicPinEscalated(){return this.core.isDynamicPinEscalated()}get correctionMode(){return this.scheduler.correctionMode}get timeSyncInfo(){return this.core.timeSyncInfo}getCurrentServerTimeUs(){return this.core.getCurrentServerTimeUs()}get trackProgress(){return this.core.trackProgress}get syncInfo(){return this.scheduler.syncInfo}};return Br(Ro);})();
+  window.__crowaiSendspinLib = __CrowSendspinLib;
+  return __CrowSendspinLib;
+}
