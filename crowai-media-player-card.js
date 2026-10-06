@@ -708,6 +708,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   }
 
   set hass(hass) {
+    // Keep the working spinner on for as long as a job (e.g. a vibe) is still running.
+    if ((this._busyJobs || 0) > 0) this.shadowRoot?.getElementById('cardOuter')?.classList.add('crow-busy');
+    if (this._loadingFrom) setTimeout(() => this._checkLoadingToast(), 0);
     this._hass = hass;
 
     // ── Sendspin "this device" player ────────────────────────────────────
@@ -1150,8 +1153,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             this._queueRefreshDebounce = setTimeout(() => this._showQueuePanel(this._queuePanelDirection), 800);
           }
         }
-        // Dismiss the "Starting playback…" loading toast now that MA is playing
-        this._hideLoadingToast();
+        // "Starting playback…" goes once the new music has really started
+        this._checkLoadingToast();
         // Also clear mood loading flag if this entity was the mood target
         if (this._moodLoadingEntity === this._entity) {
           this._moodLoadingEntity = null;
@@ -2868,6 +2871,19 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         .size-toggle-abs:active, .size-toggle-abs.pressed { background: rgba(0,0,0,0.6); }
         .size-toggle-abs.spinning svg { transform: rotate(360deg); }
         .size-toggle-abs.spin-loop svg { animation: ma-spin 0.7s linear infinite; }
+        /* Remote close btn — mirrors the resize btn, top-left of the remote overlay */
+        .remote-close-btn {
+          position: absolute; top: 12px; left: 12px; z-index: 3;
+          background: var(--crow-overlay-btn-bg, rgba(255,255,255,0.08));
+          border: 1px solid var(--crow-overlay-btn-border, rgba(255,255,255,0.16));
+          backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+          border-radius: 50%; width: 32px; height: 32px; padding: 0; cursor: pointer;
+          display: flex; align-items: center; justify-content: center;
+          -webkit-tap-highlight-color: transparent; transition: background 0.2s ease, transform 0.15s ease;
+        }
+        .remote-close-btn svg { width: 16px; height: 16px; fill: rgba(255,255,255,0.9); filter: drop-shadow(0 1px 2px rgba(0,0,0,0.7)); }
+        .remote-close-btn:active { background: rgba(0,0,0,0.6); transform: scale(0.9); }
+        #cardOuter.mode-compact .remote-close-btn { display: none; }
 
         .art-wrapper { width: 100%; aspect-ratio: 1; background: linear-gradient(135deg, rgba(40,40,45,0.8), rgba(28,28,30,0.9)); display: flex; align-items: center; justify-content: center; overflow: hidden; cursor: pointer; position: relative; -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; touch-action: pan-y; }
         /* Glass catch-light over the artwork — the same soft corner sheen used on the
@@ -3782,7 +3798,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         .queue-dropdown-menu .qd-sep { height: 6px; background: rgba(0,0,0,0.18); border-bottom: 0.5px solid rgba(255,255,255,0.08); }
         .queue-dropdown-menu .qd-off { display: none !important; }
         .queue-dropdown-item .qd-count { margin-left: auto; font-size: 13px; color: var(--crow-panel-icon-dim,rgba(255,255,255,0.4)); }
-        .queue-dropdown-item .qd-chev { width: 16px; height: 16px; flex-shrink: 0; fill: var(--crow-panel-icon-dim,rgba(255,255,255,0.35)); }
+        .queue-dropdown-item .qd-chev { margin-left: auto; width: 16px; height: 16px; flex-shrink: 0; fill: var(--crow-panel-icon-dim,rgba(255,255,255,0.35)); }
         .queue-dropdown-item.qd-back .queue-dropdown-label { color: rgba(0,122,255,1); font-weight: 600; }
         .queue-dropdown-item.qd-back .queue-dropdown-icon { fill: rgba(0,122,255,1); }
         .queue-dropdown-item {
@@ -4073,6 +4089,81 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         }
         .info-track-play-hint svg { width: 14px; height: 14px; fill: var(--accent); display: block; }
         .info-track.ma-clickable:hover .info-track-play-hint { opacity: 1; }
+
+        /* ─── Mac-style alert (centred glass dialog over the panel) ─── */
+        .crow-mac-backdrop {
+          position: absolute; inset: 0; z-index: 60;
+          background: rgba(0,0,0,0.32);
+          backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+          display: flex; align-items: center; justify-content: center;
+          padding: 20px; border-radius: inherit;
+          opacity: 0; transition: opacity 0.18s ease;
+        }
+        .crow-mac-backdrop.visible { opacity: 1; }
+        .crow-mac-dialog {
+          width: min(290px, 100%);
+          background: var(--crow-mac-bg, rgba(40,40,46,0.82));
+          backdrop-filter: blur(28px) saturate(1.6); -webkit-backdrop-filter: blur(28px) saturate(1.6);
+          border: 0.5px solid var(--crow-mac-border, rgba(255,255,255,0.14));
+          border-radius: 14px;
+          box-shadow: 0 18px 50px rgba(0,0,0,0.45), 0 2px 8px rgba(0,0,0,0.25);
+          text-align: center; overflow: hidden;
+          transform: scale(1.06); transition: transform 0.2s cubic-bezier(.2,.9,.3,1.2);
+          font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
+        }
+        .crow-mac-backdrop.visible .crow-mac-dialog { transform: scale(1); }
+        .crow-mac-icon { width: 44px; height: 44px; margin: 20px auto 8px; border-radius: 11px;
+          display: flex; align-items: center; justify-content: center; }
+        .crow-mac-icon svg { width: 26px; height: 26px; fill: #fff; }
+        .crow-mac-title { font-size: 15px; font-weight: 700; padding: 0 20px; line-height: 1.3; }
+        .crow-mac-msg { font-size: 12.5px; line-height: 1.5; padding: 6px 20px 18px; }
+        .crow-mac-btns { display: flex; border-top: 0.5px solid var(--crow-mac-border, rgba(255,255,255,0.14)); }
+        .crow-mac-btns button {
+          flex: 1; padding: 12px 8px; background: transparent; border: none; margin: 0;
+          font-size: 14.5px; font-family: inherit; cursor: pointer; border-radius: 0;
+          -webkit-tap-highlight-color: transparent; transition: background 0.12s ease;
+        }
+        .crow-mac-btns button + button { border-left: 0.5px solid var(--crow-mac-border, rgba(255,255,255,0.14)); }
+        .crow-mac-btns button:active { background: rgba(128,128,128,0.18); }
+        .crow-mac-ok { color: #0A84FF; font-weight: 600; }
+        /* ─── iOS-style alert (centred glass card, stacked pill buttons) ─── */
+        .crow-ios-backdrop {
+          position: absolute; inset: 0; z-index: 60;
+          background: rgba(0,0,0,0); transition: background 0.22s ease;
+          display: flex; align-items: center; justify-content: center;
+          padding: 20px; border-radius: inherit;
+        }
+        .crow-ios-backdrop.visible { background: rgba(0,0,0,0.42); }
+        .crow-ios-alert {
+          width: min(320px, 100%);
+          background: var(--crow-ios-bg, rgba(48,48,52,0.78));
+          backdrop-filter: blur(34px) saturate(1.8); -webkit-backdrop-filter: blur(34px) saturate(1.8);
+          border: 0.5px solid var(--crow-ios-edge, rgba(255,255,255,0.12));
+          border-radius: 34px;
+          box-shadow: 0 24px 60px rgba(0,0,0,0.45), inset 0 1px 0 var(--crow-ios-shine, rgba(255,255,255,0.08));
+          padding: 26px 18px 18px;
+          opacity: 0; transform: scale(1.08);
+          transition: opacity 0.2s ease, transform 0.28s cubic-bezier(.2,.9,.3,1.15);
+          font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
+          text-align: left;
+        }
+        .crow-ios-backdrop.visible .crow-ios-alert { opacity: 1; transform: scale(1); }
+        .crow-ios-title { font-size: 17px; font-weight: 700; line-height: 1.3; padding: 0 8px; }
+        .crow-ios-msg { font-size: 15px; line-height: 1.42; margin-top: 6px; padding: 0 8px; }
+        .crow-ios-btns { display: flex; flex-direction: column; gap: 9px; margin-top: 22px; }
+        .crow-ios-btns button {
+          width: 100%; padding: 14px 16px; margin: 0;
+          border: none; border-radius: 999px !important;
+          font-size: 17px; font-weight: 600; font-family: inherit; cursor: pointer;
+          -webkit-tap-highlight-color: transparent;
+          transition: transform 0.12s ease, filter 0.12s ease;
+        }
+        .crow-ios-btns button:active { transform: scale(0.97); filter: brightness(1.15); }
+        .crow-ios-btns .crow-ios-cancel { background: var(--crow-ios-pill, rgba(255,255,255,0.12)); }
+        .crow-ios-btns .crow-ios-ok { background: #4AA8F5; color: #fff; }
+
+        .crow-ext-link { cursor: pointer; -webkit-tap-highlight-color: transparent; border-radius: 10px; transition: opacity 0.15s ease; }
+        .crow-ext-link:active { opacity: 0.6; }
 
         /* ─── Track confirm overlay (inside infoPopup) ─── */
         .track-confirm {
@@ -4857,6 +4948,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           <!-- Remote overlay — inside art-wrapper so it covers artwork area only -->
           <div class="remote-overlay hidden" id="remoteOverlay">
             <div class="remote-blur-bg" id="remoteBlurBg"></div>
+            <!-- Close remote → back to artwork (top-left; resize btn owns top-right) -->
+            <button class="remote-close-btn" id="remoteCloseBtn" title="Close remote" aria-label="Close remote">
+              <svg viewBox="0 0 24 24"><path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/></svg>
+            </button>
             <div class="remote-panel">
 
               <!-- Touchpad — Apple Remote app style rounded rectangle -->
@@ -5185,14 +5280,41 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       if (_isVideoMedia() && artEl.contains(e.target)) {
         e.preventDefault();
         e.stopImmediatePropagation();
+        // stopImmediatePropagation here means artEl's own capture listener
+        // never sees this pointerdown — kick off the remote long-press directly.
+        if (e.type === 'pointerdown') _remoteLongPressStart(e);
       }
     };
     cardOuter.addEventListener('contextmenu', _blockVideoLongPress, { capture: true });
     cardOuter.addEventListener('pointerdown', _blockVideoLongPress, { capture: true });
+    // Long-press → Apple TV remote. Replaces the old remote button. Applies to
+    // video, or to an Apple TV with nothing showing (no artwork). Music keeps
+    // its lyrics long-press. While the remote is open, a long-press on any
+    // empty part of it (not a control) closes it again.
+    const _remoteLongPressStart = (e) => {
+      if (!this._isAppleTV) return;
+      _artLongPressed = false;
+      clearTimeout(_artLongPressTimer);
+      if (r.getElementById('maPopup')?.classList.contains('visible')) return;
+      if (r.getElementById('infoPopup')?.classList.contains('visible')) return;
+      if (this._remoteMode && e.target.closest('button, input, select, textarea, [role="button"], .clickpad-wrap, .r-apps-dropdown')) return;
+      _artLongPressTimer = setTimeout(() => {
+        _artLongPressed = true;
+        try { navigator.vibrate?.(10); } catch (_) {}
+        const co = r.getElementById('cardOuter');
+        if (co.classList.contains('mode-compact')) {
+          co.classList.remove('mode-compact');
+          if (!this._remoteMode) requestAnimationFrame(() => this._toggleRemote());
+        } else {
+          this._toggleRemote();
+        }
+      }, 500);
+    };
     const artLongPressStart = (e) => {
       if (e.target.closest('#liveStationBadge')) return;
       _artLongPressed = false;
-      if (_isVideoMedia()) return;
+      if (_isVideoMedia()) return; // handled by _remoteLongPressStart via the capture blocker
+      if (this._isAppleTV && (this._remoteMode || !_hasArt())) { _remoteLongPressStart(e); return; }
       // Don't fire if library browser or info popup is open — touch events bleed through
       if (r.getElementById('maPopup')?.classList.contains('visible')) return;
       if (r.getElementById('infoPopup')?.classList.contains('visible')) return;
@@ -5617,7 +5739,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         if (isMa) items.push({ id: 'qm_queue', label: 'Queue', icon: SVG.queue, active: false });
 
         // AI Search — MA only
-        if (this._aiEnabled() && (isMa || hasMA)) items.push({ id: 'qm_ai_search', label: 'Search', icon: '<svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>', active: false });
+        // Search — the library's normal Music Assistant search, keyboard ready
+        if (isMa || hasMA) items.push({ id: 'qm_search', label: 'Search', icon: '<svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>', active: false });
+        if (this._aiEnabled() && (isMa || hasMA)) items.push({ id: 'qm_ai_search', label: 'AI Search', icon: '<svg viewBox="0 0 24 24"><path d="M17 22V20H20V17H22V20.5C22 20.89 21.84 21.24 21.54 21.54C21.24 21.84 20.89 22 20.5 22H17M7 22H3.5C3.11 22 2.76 21.84 2.46 21.54C2.16 21.24 2 20.89 2 20.5V17H4V20H7V22M17 2H20.5C20.89 2 21.24 2.16 21.54 2.46C21.84 2.76 22 3.11 22 3.5V7H20V4H17V2M7 2V4H4V7H2V3.5C2 3.11 2.16 2.76 2.46 2.46C2.76 2.16 3.11 2 3.5 2H7M10.5 6C13 6 15 8 15 10.5C15 11.38 14.75 12.2 14.31 12.9L17.57 16.16L16.16 17.57L12.9 14.31C12.2 14.75 11.38 15 10.5 15C8 15 6 13 6 10.5C6 8 8 6 10.5 6M10.5 8C9.12 8 8 9.12 8 10.5C8 11.88 9.12 13 10.5 13C11.88 13 13 11.88 13 10.5C13 9.12 11.88 8 10.5 8Z"/></svg>', active: false });
 
         // Library — always available. Several of its tabs (Movies & TV,
         // Radio, Podcasts, Audiobooks) never needed MA in the first place,
@@ -5626,7 +5750,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         const _qmMediaType = this._detectMediaType(state);
         const _qmIsVideo = _qmMediaType === 'tv' || _qmMediaType === 'movie';
         items.push({ id: 'qm_library', label: 'Library', icon: SVG.library, active: false });
-        if (this._aiEnabled() && (isMa || hasMA)) items.push({ id: 'qm_mood', label: 'Vibe', icon: '<svg viewBox="0 0 24 24"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>', active: false });
+        if (isMa || hasMA) items.push({ id: 'qm_mood', label: 'Vibe', icon: '<svg viewBox="0 0 24 24"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>', active: false });
 
         // AI Mood — MA only
 
@@ -5648,9 +5772,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         const _qmType  = state?.attributes?.media_content_type || '';
         if ((isMa || hasMA) && isPlaying && !isStream && _qmAlbum && (_qmType === 'music' || _qmType === 'track' || _qmType === '')) {
           if (isMa) items.push({ id: 'qm_play_album', label: 'Add Album', icon: '<svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/></svg>', active: false });
-        if (this._aiEnabled() && isPlaying && ((isMa || hasMA) || _qmIsVideo)) items.push({ id: 'qm_ai_recs', label: 'Recommendations', icon: '<svg viewBox="0 0 24 24"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>', active: false });
-        if (this._aiEnabled() && isPlaying && _qmIsVideo) items.push({ id: 'qm_mood_video', label: 'Mood Match', icon: '<svg viewBox="0 0 24 24"><path d="M12 2A10 10 0 1 0 22 12 10 10 0 0 0 12 2M12 20A8 8 0 1 1 20 12 8 8 0 0 1 12 20M17 11.5A1.5 1.5 0 1 1 15.5 10 1.5 1.5 0 0 1 17 11.5M8.5 10A1.5 1.5 0 1 1 7 11.5 1.5 1.5 0 0 1 8.5 10M12 17.5C9.67 17.5 7.69 16.04 6.89 14H17.11C16.31 16.04 14.33 17.5 12 17.5Z"/></svg>', active: false, _qmVideoTitle: attrs?.media_series_title || attrs?.media_title || '' });
-        if (this._aiEnabled() && isPlaying && _qmIsVideo) items.push({ id: 'qm_trivia', label: 'Trivia', icon: '<svg viewBox="0 0 24 24"><path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"/></svg>', active: false, _qmVideoTitle: attrs?.media_series_title || attrs?.media_title || '' });
+        if (this._aiEnabled() && isPlaying && ((isMa || hasMA) || _qmIsVideo)) items.push({ id: 'qm_ai_recs', label: 'AI Recommendations', icon: '<svg viewBox="0 0 24 24"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>', active: false });
+        if (this._aiEnabled() && isPlaying && _qmIsVideo) items.push({ id: 'qm_mood_video', label: 'AI Mood Match', icon: '<svg viewBox="0 0 24 24"><path d="M12 2A10 10 0 1 0 22 12 10 10 0 0 0 12 2M12 20A8 8 0 1 1 20 12 8 8 0 0 1 12 20M17 11.5A1.5 1.5 0 1 1 15.5 10 1.5 1.5 0 0 1 17 11.5M8.5 10A1.5 1.5 0 1 1 7 11.5 1.5 1.5 0 0 1 8.5 10M12 17.5C9.67 17.5 7.69 16.04 6.89 14H17.11C16.31 16.04 14.33 17.5 12 17.5Z"/></svg>', active: false, _qmVideoTitle: attrs?.media_series_title || attrs?.media_title || '' });
+        if (this._aiEnabled() && isPlaying && _qmIsVideo) items.push({ id: 'qm_trivia', label: 'AI Trivia', icon: '<svg viewBox="0 0 24 24"><path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"/></svg>', active: false, _qmVideoTitle: attrs?.media_series_title || attrs?.media_title || '' });
         }
 
         // Listening Recap — MA only, manual trigger, works off local play-history log.
@@ -5779,11 +5903,15 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         };
         // Top level, in sections: find & browse · discover & build · what's
         // playing now · recaps and sharing.
+        // Vibe leads the discover section because it's always shown on a Music
+        // Assistant speaker; the AI items behind it come and go. Radio Mode is a
+        // toggle, so it sits after the one-tap actions. More Info is the footer.
         const QM_ORDER = [
-          'qm_ai_search', 'qm_library', 'qm_queue', '|',
-          'qm_mood', 'qm_ai_recs', 'qm_artist_radio', 'qm_radio', '@addq', '|',
-          'qm_lyrics', 'qm_info', 'qm_pin', 'qm_mood_video', 'qm_trivia', 'qm_remote', 'qm_soundtrack', '|',
-          '@recaps', '@share',
+          'qm_queue', 'qm_search', 'qm_ai_search', 'qm_library', '|',
+          'qm_mood', 'qm_ai_recs', 'qm_artist_radio', '@addq', 'qm_radio', '|',
+          'qm_lyrics', 'qm_pin', 'qm_mood_video', 'qm_trivia', 'qm_remote', 'qm_soundtrack', '|',
+          '@recaps', '@share', '|',
+          'qm_info',
         ];
         const _byId = new Map(items.map(it => [it.id, it]));
         const _used = new Set();
@@ -5835,7 +5963,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           row.innerHTML =
             `<span style="width:18px;height:18px;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;"><svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:rgba(255,255,255,0.45)">${entry.group.icon}</svg></span>` +
             `<span style="flex:1;"></span>` +
-            `<span style="font-size:13px;color:rgba(255,255,255,0.4);margin-left:auto;">${entry.kids.length}</span>` +
+
             `<svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:rgba(255,255,255,0.35);flex-shrink:0;"><path d="M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z"/></svg>`;
           row.querySelectorAll('span')[1].textContent = entry.group.label;
           row.setAttribute('aria-haspopup', 'menu');
@@ -5915,6 +6043,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             else if (item.id === 'qm_library')      { expand().then(() => item._needsMA ? this._switchToMAAndRun(() => this._openMABrowser()) : this._openMABrowser()); }
             else if (item.id === 'qm_mood')         { expand().then(() => { this._queuePanelDirection = null; this._showAIMoodQueue(); }); }
             else if (item.id === 'qm_ai_recs')      { expand().then(() => { const _rMT = this._detectMediaType(this._hass?.states[this._entity]); (_rMT === 'tv' || _rMT === 'movie') ? this._showAIRecommendations() : _runMA(() => this._showAIRecommendations()); }); }
+            else if (item.id === 'qm_search')       { expand().then(() => _runMA(() => this._openLibrarySearch())); }
             else if (item.id === 'qm_ai_search')    { expand().then(() => _runMA(() => this._showAISearchPanel())); }
             else if (item.id === 'qm_ai_recap')        { expand().then(() => _runMA(() => this._showAIRecap())); }
             else if (item.id === 'qm_watch_recap')     { expand().then(() => this._showWatchRecap()); }
@@ -5943,6 +6072,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
                   const _rmUri    = _rmState?.attributes?.media_content_id;
                   const _rmTarget = this._resolveMATargetEntity() || this._entity;
                   if (_rmUri) {
+                    this._showToast('Radio mode on \u2014 restarting from current track\u2026', 3000);
                     this._hass.connection.sendMessagePromise({
                       type: 'call_service', domain: 'music_assistant', service: 'play_media',
                       service_data: { entity_id: _rmTarget, media_id: _rmUri,
@@ -5965,6 +6095,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
                   } else {
                     this._showToast('Radio mode on — play a track to start.', 3000);
                   }
+                } else {
+                  this._showToast('Radio mode off', 2500);
                 }
               });
             }
@@ -5997,7 +6129,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             popup.appendChild(_backRow(entry.group.label));
             popup.appendChild(_sepEl());
             // Inside a group the shared words are dropped ("Add Songs from Same Year" → "Same Year").
-            const SHORT = { qm_add_similar: 'Similar Songs', qm_add_same_genre: 'Same Genre', qm_add_same_year: 'Same Year', qm_add_same_genre_year: 'Same Genre & Year', qm_play_album: 'This Album' };
+            const SHORT = { qm_add_similar: 'AI Similar Songs', qm_add_same_genre: 'AI Same Genre', qm_add_same_year: 'AI Same Year', qm_add_same_genre_year: 'AI Same Genre & Year', qm_play_album: 'This Album' };
             entry.kids.forEach(it => popup.appendChild(_makeBtn(SHORT[it.id] ? { ...it, label: SHORT[it.id] } : it)));
           } else {
             _clean(_top).forEach(x => popup.appendChild(x.sep ? _sepEl() : x.group ? _groupRow(x) : _makeBtn(x)));
@@ -6305,6 +6437,72 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     addPressEffect(remoteBtn);
 
     r.getElementById('remoteOverlay').onclick = (e) => e.stopPropagation();
+
+    // ✕ button → back to the artwork
+    const _remoteCloseBtn = r.getElementById('remoteCloseBtn');
+    if (_remoteCloseBtn) {
+      _remoteCloseBtn.onclick = (e) => {
+        e.stopPropagation();
+        if (this._remoteMode) this._toggleRemote();
+      };
+    }
+
+    // Swipe down on the remote → back to the artwork. Touch events rather than
+    // pointer events on purpose: for video, cardOuter's capture-phase blocker
+    // swallows pointerdown before it reaches the overlay. Swipes starting on
+    // the clickpad or the scrollable apps list are left alone, and upward /
+    // sideways drags never preventDefault, so the dashboard still scrolls.
+    {
+      const overlay = r.getElementById('remoteOverlay');
+      const panel = overlay?.querySelector('.remote-panel');
+      let sx = 0, sy = 0, dy = 0, tracking = false, dragging = false;
+      const reset = (animate) => {
+        if (!panel) return;
+        panel.style.transition = animate ? 'transform 0.22s ease, opacity 0.22s ease' : '';
+        panel.style.transform = '';
+        panel.style.opacity = '';
+        if (animate) setTimeout(() => { panel.style.transition = ''; }, 240);
+      };
+      overlay?.addEventListener('touchstart', (e) => {
+        tracking = false; dragging = false; dy = 0;
+        if (!this._remoteMode || e.touches.length !== 1) return;
+        if (e.target.closest('.clickpad-wrap, .r-apps-dropdown, .remote-close-btn')) return;
+        sx = e.touches[0].clientX; sy = e.touches[0].clientY;
+        tracking = true;
+      }, { passive: true });
+      overlay?.addEventListener('touchmove', (e) => {
+        if (!tracking) return;
+        const dx = e.touches[0].clientX - sx;
+        dy = e.touches[0].clientY - sy;
+        if (!dragging) {
+          if (Math.abs(dy) < 10 && Math.abs(dx) < 10) return;
+          // Only claim clearly-downward drags; anything else is the page's.
+          if (dy <= 0 || Math.abs(dx) > Math.abs(dy)) { tracking = false; return; }
+          dragging = true;
+        }
+        e.preventDefault();
+        if (panel) {
+          const d = Math.max(0, dy);
+          panel.style.transition = '';
+          panel.style.transform = `translateY(${d * 0.6}px)`;
+          panel.style.opacity = String(Math.max(0.35, 1 - d / 300));
+        }
+      }, { passive: false });
+      const end = () => {
+        if (!tracking) return;
+        tracking = false;
+        if (!dragging) return;
+        dragging = false;
+        if (dy > 80) {
+          reset(false);
+          if (this._remoteMode) this._toggleRemote();
+        } else {
+          reset(true);
+        }
+      };
+      overlay?.addEventListener('touchend', end, { passive: true });
+      overlay?.addEventListener('touchcancel', () => { tracking = dragging = false; reset(true); }, { passive: true });
+    }
 
     const rCmd = (id, fn) => {
       const el = r.getElementById(id);
@@ -6716,13 +6914,24 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           });
         }
 
+        // Search — the library's normal Music Assistant search
+        if (isMa || hasMA) {
+          items.push({
+            id: 'qmSearch',
+            _needsMA: !isMa && hasMA,
+            icon: '<svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>',
+            label: 'Search',
+            extraClass: ''
+          });
+        }
+
         // AI Search — MA only
         if (isMa || hasMA) {
           items.push({
             id: 'qmAISearch',
             _needsMA: !isMa && hasMA,
-            icon: '<svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>',
-            label: 'Search',
+            icon: '<svg viewBox="0 0 24 24"><path d="M17 22V20H20V17H22V20.5C22 20.89 21.84 21.24 21.54 21.54C21.24 21.84 20.89 22 20.5 22H17M7 22H3.5C3.11 22 2.76 21.84 2.46 21.54C2.16 21.24 2 20.89 2 20.5V17H4V20H7V22M17 2H20.5C20.89 2 21.24 2.16 21.54 2.46C21.84 2.76 22 3.11 22 3.5V7H20V4H17V2M7 2V4H4V7H2V3.5C2 3.11 2.16 2.76 2.46 2.46C2.76 2.16 3.11 2 3.5 2H7M10.5 6C13 6 15 8 15 10.5C15 11.38 14.75 12.2 14.31 12.9L17.57 16.16L16.16 17.57L12.9 14.31C12.2 14.75 11.38 15 10.5 15C8 15 6 13 6 10.5C6 8 8 6 10.5 6M10.5 8C9.12 8 8 9.12 8 10.5C8 11.88 9.12 13 10.5 13C11.88 13 13 11.88 13 10.5C13 9.12 11.88 8 10.5 8Z"/></svg>',
+            label: 'AI Search',
             extraClass: ''
           });
         }
@@ -6733,7 +6942,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             id: 'qmAIRecs',
             _needsMA: !isMa && hasMA,
             icon: '<svg viewBox="0 0 24 24"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>',
-            label: 'Recommendations',
+            label: 'AI Recommendations',
             extraClass: ''
           });
         }
@@ -7011,6 +7220,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         });
 
         // ── AI Search ──
+        menu.querySelector('#qmSearch')?.addEventListener('pointerup', (ev) => { ev.preventDefault(); ev.stopPropagation(); if (!_menuReady()) return;
+          closeMenu();
+          // No delay here: the keyboard can only come up straight from the tap.
+          const _qs = () => { this._closeInfoPopup(); this._openLibrarySearch(); };
+          items.find(i => i.id === 'qmSearch')?._needsMA ? this._switchToMAAndRun(_qs) : _qs();
+        });
+
         menu.querySelector('#qmAISearch')?.addEventListener('pointerup', (ev) => { ev.preventDefault(); ev.stopPropagation(); if (!_menuReady()) return;
           closeMenu();
           const _qSearch = () => this._showAISearchPanel();
@@ -7036,6 +7252,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
             if (newVal) {
               if (uri) {
+                this._showToast('Radio mode on \u2014 restarting from current track\u2026', 3000);
                 this._hass.connection.sendMessagePromise({
                   type: 'call_service', domain: 'music_assistant', service: 'play_media',
                   service_data: { entity_id: targetEntity, media_id: uri,
@@ -7058,6 +7275,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
                 this._showToast('Radio mode on \u2014 play a track to start.', 3000);
               }
             }
+          } else {
+            this._showToast('Radio mode off', 2500);
           }
           // Show friendly notification overlay
           this._updateRadioIndicator(); this._updateLiveStationBadge(); this._updatePodcastBadge(); this._updateAudiobookBadge();
@@ -7229,6 +7448,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
               await this._hass.callService('media_player', 'clear_playlist', { entity_id: this._entity });
             } catch (err) {
               console.error('[Queue clear]', err);
+              this._showToast('\u26a0\ufe0f Couldn\u2019t clear the queue \u2014 check Music Assistant.', 4000);
             }
             // Also stop playback — clear_playlist only empties the upcoming
             // queue, the current track keeps playing with no artwork shown.
@@ -7666,14 +7886,20 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     r.getElementById('cardOuter').classList.toggle('ma-entity', isMa && !isAppleTV);
     // show_ma_library_button: true = show button on all speakers, false = hide for all
     const _showLibBtn = this._config?.show_ma_library_button !== false;
-    r.getElementById('cardOuter').classList.toggle('force-ma-btn', !isMa && !isAppleTV && _showLibBtn);
+    // Apple TVs used to be excluded because the remote button lived in this
+    // same controls-bar slot. That button is gone (long-press opens the remote
+    // now), so Apple TVs get the library button like every other speaker.
+    r.getElementById('cardOuter').classList.toggle('force-ma-btn', !isMa && _showLibBtn);
     r.getElementById('cardOuter').classList.toggle('hide-ma-lib-btn', !_showLibBtn);
     const _btnMABrowse = r.getElementById('btnMABrowse');
     if (_btnMABrowse) _btnMABrowse.style.display = _showLibBtn ? '' : 'none';
     const _btnMABrowseControls = r.getElementById('btnMABrowseControls');
     if (_btnMABrowseControls) _btnMABrowseControls.style.display = _showLibBtn ? '' : 'none';
     cardOuter.classList.toggle('no-remote', !isAppleTV);
-    cardOuter.classList.toggle('remote-btn-hidden', this._config?.show_remote_button === false);
+    // The on-card remote button has been retired — long-press the artwork on
+    // an Apple TV (video or idle) opens the remote instead. The element itself
+    // stays in the DOM so _toggleRemote's active-state styling keeps working.
+    cardOuter.classList.add('remote-btn-hidden');
     this._isAppleTV = isAppleTV;
     if (!isAppleTV && this._remoteMode) this._toggleRemote();
     this._checkAppleTVKeyboard(isAppleTV);
@@ -9225,6 +9451,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     this._maQueueEventDebounce = setTimeout(() => {
       this._maQueueEventDebounce = null;
       if (this._queueReorderMode || this._queueReordering) return;
+      this._queueDataCache = null;   // the queue changed — always fetch it fresh
       this._showQueuePanel(this._queuePanelDirection);
     }, 200);
   }
@@ -9682,6 +9909,46 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   //  MUSIC ASSISTANT
   // ══════════════════════════════════════════════
 
+  // "Search" in the menus: opens the library straight onto its all-music
+  // search box (artists, albums, songs and playlists together — the normal
+  // Music Assistant search), focused so you can type at once. Back returns
+  // to the library's categories. Called directly from the menu tap, since
+  // iPhone only brings up the keyboard from a tap.
+  _openLibrarySearch() {
+    this._maSavedSearch = null;          // open on a clean search, not the last one
+    this._openMABrowser();
+    const r = this.shadowRoot;
+    if (!r) return null;
+    const iosView = r.getElementById('maIosView');
+    const maContent = r.getElementById('maContent');
+    const searchRow = r.querySelector('.ma-search-row');
+    const backBtn = r.getElementById('maBackBtn');
+    const input = r.getElementById('maSearchInput');
+    // No category selected = search everything.
+    this._maCurrentTab = null;
+    this._maInSearchResults = false;
+    r.querySelectorAll('.ma-tab').forEach(t => t.classList.remove('active'));
+    r.getElementById('maTabs')?.style.setProperty('display', 'none');
+    r.getElementById('maIosSearchBar')?.classList.add('hidden');
+    if (iosView) iosView.classList.add('hidden');
+    if (maContent) {
+      maContent.style.display = '';
+      maContent.innerHTML = `<div style="padding:28px 16px;text-align:center;color:${this._pt('dim')};font-size:13px;line-height:1.5;">Search your music \u2014 artists, albums, songs and playlists.</div>`;
+    }
+    if (searchRow) searchRow.style.display = '';
+    if (backBtn) backBtn.classList.remove('hidden');
+    if (!this._maBrowserNavStack) this._maBrowserNavStack = [];
+    this._maBrowserNavStack.push({ tab: '__ios_root__', searchQuery: null, inSearchResults: false });
+    if (input) {
+      input.value = '';
+      r.getElementById('maSearchClear')?.classList.add('hidden');
+      try { input.focus({ preventScroll: true }); } catch (_) {}
+      // The library can finish setting itself up a moment later: focus again then.
+      setTimeout(() => { if (r.activeElement !== input && r.getElementById('maPopup')?.classList.contains('visible')) { try { input.focus({ preventScroll: true }); } catch (_) {} } }, 350);
+    }
+    return input;
+  }
+
   _openMABrowser() {
     // Don't open the library during an announcement
     if (this._announceActive) return;
@@ -10117,6 +10384,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           self._pillPulse(20000);
           let successCount = 0;
           if (action === 'replace') {
+            (typeof self?._showLoadingToast === 'function' ? self : this)._showLoadingToast('Starting playback\u2026');
             const [first, ...rest] = entries;
             try {
               await self._hass.connection.sendMessagePromise({
@@ -10151,7 +10419,11 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           clearTimeout(self._maBatchLoadingTimer);
           self._pillPulse(0);
           const _spkName = self._entityDisplayName(_barTarget);
-          if (action !== 'replace') {
+          if (successCount === 0 && action !== 'replace') {
+
+            self._showToast('\u26a0\ufe0f Couldn\u2019t add to queue \u2014 check Music Assistant.', 4000);
+
+          } else if (action !== 'replace') {
             const label = action === 'next' ? 'Playing next' : 'Added to queue';
             self._showToast(`${label} — ${successCount} track${successCount === 1 ? '' : 's'} on ${_spkName}`, 3000);
           }
@@ -11524,7 +11796,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
     const heading = document.createElement('div');
     heading.style.cssText = 'font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.6px;padding:10px 4px 6px;';
-    heading.textContent = '📍 Pinned Stations';
+    heading.textContent = 'Pinned Stations';
     section.appendChild(heading);
 
     starred.forEach(st => {
@@ -13027,7 +13299,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     section.id = 'mt-starred-section';
     const heading = document.createElement('div');
     heading.style.cssText = 'font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.6px;padding:10px 4px 6px;';
-    heading.textContent = '📍 Pinned Movies & TV';
+    heading.textContent = 'Pinned Movies & TV';
     section.appendChild(heading);
     starred.forEach(item => section.appendChild(this._mtMakeRow(item, true)));
     const divider = document.createElement('div');
@@ -13114,7 +13386,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     section.id = 'pc-starred-section';
     const heading = document.createElement('div');
     heading.style.cssText = 'font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.6px;padding:10px 4px 6px;';
-    heading.textContent = '📍 Pinned Podcasts';
+    heading.textContent = 'Pinned Podcasts';
     section.appendChild(heading);
     starred.forEach(pod => section.appendChild(this._pcMakeRow(pod, true)));
     const divider = document.createElement('div');
@@ -13303,6 +13575,14 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // Fetch and parse RSS feed — returns array of { title, url, date, duration, description }
   async _pcFetchEpisodes(feedUrl, limit) {
     limit = limit || 5;
+    const _epKey = feedUrl + '|' + limit;
+    const _epCached = this._aiLocalGet('pcEpisodes', _epKey);
+    if (Array.isArray(_epCached) && _epCached.length) return _epCached;
+    const _eps = await this._pcFetchEpisodesFresh(feedUrl, limit);
+    if (_eps.length) this._aiLocalSet('pcEpisodes', _epKey, _eps, { ttlDays: 1 / 24, max: 60 });
+    return _eps;
+  }
+  async _pcFetchEpisodesFresh(feedUrl, limit) {
     const { text } = await this._pcFetchFeedText(feedUrl);
     const parser = new DOMParser();
     const doc    = parser.parseFromString(text, 'text/xml');
@@ -13517,7 +13797,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       const bioCacheKey = 'pcbio|' + (pod.collectionId || pod.collectionName || '').toString().toLowerCase();
       const _bioEl = content.querySelector('#pc-ai-bio');
       if (!this._rbTagCache) this._rbTagCache = new Map();
-      let cachedBio = this._rbTagCache.get(bioCacheKey) || this._aiSessionGet('pcBio', bioCacheKey);
+      let cachedBio = this._rbTagCache.get(bioCacheKey) || this._aiLocalGet('pcBio', bioCacheKey) || this._aiSessionGet('pcBio', bioCacheKey);
       if (cachedBio) {
         if (_bioEl && _bioEl.isConnected) _bioEl.innerHTML = '<div style="font-size:12px;color:' + _pt('dim') + ';line-height:1.6;">' + cachedBio + '</div>';
       } else {
@@ -13526,7 +13806,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           const genreCtx = pod.primaryGenreName ? ' in the ' + pod.primaryGenreName + ' genre' : '';
           const raw = await this._aiConverseQuiet('In 2 sentences, describe the podcast "' + (pod.collectionName || '') + '" by ' + (pod.artistName || 'unknown') + genreCtx + '. Be factual and concise.');
           this._rbTagCache.set(bioCacheKey, raw || '');
-          if (raw) this._aiSessionSet('pcBio', bioCacheKey, raw);
+          if (raw) { this._aiSessionSet('pcBio', bioCacheKey, raw); this._aiLocalSet('pcBio', bioCacheKey, raw, { ttlDays: 30, max: 200 }); }
           if (_bioEl && _bioEl.isConnected) _bioEl.innerHTML = raw ? '<div style="font-size:12px;color:' + _pt('dim') + ';line-height:1.6;">' + raw + '</div>' : '';
         } else if (_bioEl && _bioEl.isConnected) {
           _bioEl.innerHTML = '';
@@ -15955,7 +16235,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // AI bio — lazy loaded
     const bioCacheKey = 'rbbio|' + (st.name || '').toLowerCase();
     const _bioEl = content.querySelector('#rb-ai-bio');
-    let cachedBio = this._rbTagCache?.get(bioCacheKey) || this._aiSessionGet('rbBio', bioCacheKey);
+    let cachedBio = this._rbTagCache?.get(bioCacheKey) || this._aiLocalGet('rbBio', bioCacheKey) || this._aiSessionGet('rbBio', bioCacheKey);
     if (cachedBio) {
       if (_bioEl) _bioEl.innerHTML = '<div style="font-size:12px;color:' + _pt('dim') + ';line-height:1.6;">' + cachedBio + '</div>';
     } else {
@@ -15967,7 +16247,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           const bioProm = await this._aiConverseQuiet('In 2 sentences, describe the radio station "' + (st.name || '') + '"' + countryCtx + (tagCtx ? ' known for ' + tagCtx : '') + '. Be factual and concise — if you don\'t know this specific station, describe it based on its genre tags only.');
           if (!this._rbTagCache) this._rbTagCache = new Map();
           this._rbTagCache.set(bioCacheKey, bioProm || '');
-          if (bioProm) this._aiSessionSet('rbBio', bioCacheKey, bioProm);
+          if (bioProm) { this._aiSessionSet('rbBio', bioCacheKey, bioProm); this._aiLocalSet('rbBio', bioCacheKey, bioProm, { ttlDays: 30, max: 200 }); }
           if (_bioEl && _bioEl.isConnected) {
             _bioEl.innerHTML = bioProm ? '<div style="font-size:12px;color:' + _pt('dim') + ';line-height:1.6;">' + bioProm + '</div>' : '';
           }
@@ -16465,7 +16745,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         content.innerHTML = '';
         const errDiv = document.createElement('div');
         errDiv.style.cssText = 'margin:16px 4px;background:rgba(255,165,0,0.1);border:1px solid rgba(255,165,0,0.3);border-radius:12px;padding:14px;';
-        errDiv.innerHTML = '<div style="font-size:13px;font-weight:600;color:rgba(255,165,0,0.9);margin-bottom:6px;">No AI Found</div><div style="font-size:12px;color:rgba(255,255,255,0.6);line-height:1.5;">Add a conversation agent via <strong style="color:#63b3ed">Settings → Voice Assistants</strong>.</div>';
+        errDiv.innerHTML = '<div style="font-size:13px;font-weight:600;color:rgba(255,165,0,0.9);margin-bottom:6px;">No AI Found</div><div style="font-size:12px;color:rgba(255,255,255,0.6);line-height:1.5;">Add an AI integration (for example Google Generative AI) via <strong style="color:#63b3ed">Settings → Devices &amp; Services</strong>, then choose it in the card settings.</div>';
         const closeBtn = document.createElement('button');
         closeBtn.textContent = 'Go back';
         closeBtn.style.cssText = 'margin-top:12px;padding:6px 14px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:8px;color:#fff;font-size:12px;font-family:inherit;cursor:pointer;';
@@ -16662,6 +16942,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         self._pillPulse(20000);
         let successCount = 0;
         if (action === 'replace') {
+            (typeof self?._showLoadingToast === 'function' ? self : this)._showLoadingToast('Starting playback\u2026');
           const [first, ...rest] = items;
           try {
             await self._hass.connection.sendMessagePromise({
@@ -16696,7 +16977,11 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         clearTimeout(self._maBatchLoadingTimer);
         self._pillPulse(0);
         const _spkName = self._entityDisplayName(_barTarget);
-        if (action !== 'replace') {
+        if (successCount === 0 && action !== 'replace') {
+
+          self._showToast('\u26a0\ufe0f Couldn\u2019t add to queue \u2014 check Music Assistant.', 4000);
+
+        } else if (action !== 'replace') {
           const label = action === 'next' ? 'Playing next' : 'Added to queue';
           self._showToast(`${label} — ${successCount} ${_label} on ${_spkName}`, 3000);
         }
@@ -16745,6 +17030,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         this._closeEnqueueMenu?.();
         const targetEntity = this._maEntityIds?.has(this._entity) ? this._entity : (this._getValidMASpeakers(true)[0] || null);
         if (!targetEntity) { this._showToast('Music Assistant required'); return; }
+        if (mode === 'replace' || mode === 'play') this._showLoadingToast('Starting playback\u2026');
         try {
           await this._hass.connection.sendMessagePromise({
             type: 'call_service', domain: 'music_assistant', service: 'play_media',
@@ -16864,6 +17150,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   }
 
   async _searchAndPlayTrackViaMA(trackTitle, artistName, targetEntityId, enqueueMode = 'replace') {
+    if (enqueueMode === 'replace' || enqueueMode === 'play') this._showLoadingToast('Starting playback\u2026');
     this._pillPulse(8000); // Pulse while searching + playing
     const r = this.shadowRoot;
     const body = r.getElementById('trackConfirmBody');
@@ -16977,8 +17264,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const r = this.shadowRoot;
     const state = this._hass?.states[this._entity];
     if (!state) return;
-    // Songs are still being added: don't show a half-built queue.
-    if ((this._busyJobs || 0) > 0) {
+    // Songs are still being added: don't show a half-built queue — unless the
+    // job builds it live (vibes), in which case the queue fills in as it grows.
+    if (this._queueGated()) {
       if (this._queuePanelOpen()) { this._syncQueueBuilding(); return; }
       if (_userInitiated) {
         this._queueWaiting = true;
@@ -17072,6 +17360,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
               return_response: true
             });
             const raw = mqRes?.response?.[this._entity] || mqRes?.response || [];
+            // A real (but empty) answer replaces anything shown from the cache;
+            // get_queue below then has the final say.
+            if (Array.isArray(raw) && !raw.length) queueItems = [];
             if (Array.isArray(raw) && raw.length) {
               // Detect which item is currently playing.
               // Strategy 1: explicit active/state flag on the item
@@ -18294,6 +18585,11 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         }, ms);
       }, 1200);
       self._announceActive = true;
+      {
+        const _annNames = targets.map(eid => self._entityDisplayName ? self._entityDisplayName(eid) : (self._hass?.states[eid]?.attributes?.friendly_name || eid));
+        const _annList = _annNames.length <= 2 ? _annNames.join(' and ') : `${_annNames.slice(0, 2).join(', ')} and ${_annNames.length - 2} more`;
+        self._showToast(`Announcing on ${_annList}\u2026`, 3000);
+      }
       // Blur the textarea to dismiss the iOS keyboard before the panel closes
       annOverlay.querySelector('#ann-text')?.blur();
       
@@ -19310,19 +19606,40 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       return entry.data;
     } catch(_) { return null; }
   }
-  _aiLocalSet(cacheName, key, value) {
+  // opts.ttlDays: how long the entry lives (default 30 days; fractions allowed).
+  // opts.max: how many entries this cache keeps before pruning the oldest (default 100).
+  _aiLocalSet(cacheName, key, value, opts) {
     try {
       const store = JSON.parse(localStorage.getItem('crow_ai_local_' + cacheName) || '{}');
-      // Prune oldest entries if store exceeds 100 keys to avoid unbounded growth
+      // Prune oldest entries if store exceeds its cap to avoid unbounded growth
+      const max = opts?.max || 100;
       const keys = Object.keys(store);
-      if (keys.length >= 100) {
-        const oldest = keys.sort((a, b) => (store[a].ts || 0) - (store[b].ts || 0)).slice(0, 20);
+      if (keys.length >= max) {
+        const oldest = keys.sort((a, b) => (store[a].ts || 0) - (store[b].ts || 0)).slice(0, Math.max(1, Math.ceil(max / 5)));
         oldest.forEach(k => delete store[k]);
       }
-      store[key] = { data: value, ts: Date.now() };
+      store[key] = Object.assign({ data: value, ts: Date.now() }, opts?.ttlDays ? { ttl: opts.ttlDays } : {});
       localStorage.setItem('crow_ai_local_' + cacheName, JSON.stringify(store));
       this._haStorageSaveAI(cacheName);
     } catch(_) {}
+  }
+
+  // Read through memory → localStorage (survives dashboard and app reloads,
+  // and is mirrored to HA when persistent storage is on) → sessionStorage.
+  // Whatever is found is put back into the in-memory map.
+  _aiCachedRead(map, cacheName, key) {
+    if (map?.has(key)) return map.get(key);
+    let v = this._aiLocalGet(cacheName, key);
+    if (v == null) v = this._aiSessionGet(cacheName, key);
+    if (v == null) return undefined;
+    map?.set(key, v);
+    return v;
+  }
+  // Writes to memory, localStorage (with TTL) and sessionStorage together.
+  _aiCachedWrite(map, cacheName, key, value, opts) {
+    map?.set(key, value);
+    this._aiLocalSet(cacheName, key, value, opts);
+    this._aiSessionSet(cacheName, key, value);
   }
 
   _aiSessionGet(cacheName, key) {
@@ -19433,9 +19750,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       </svg>
       <div style="font-size:16px;font-weight:700;color:${this._pt("text")};letter-spacing:-0.3px;">No AI Found</div>
       <div style="font-size:13px;color:${this._pt("dim")};line-height:1.55;max-width:260px;">
-        Looks like there's no conversation agent set up in Home Assistant yet. You can add one via
-        <strong style="color:#63b3ed">Settings → Voice Assistants</strong> — options include
-        Home Assistant's built-in AI, Ollama, OpenAI, or Google Generative AI.
+        Looks like there's no AI agent set up in Home Assistant yet. Add an AI integration via
+        <strong style="color:#63b3ed">Settings → Devices &amp; Services</strong> — Google Generative AI
+        is recommended; OpenAI, Ollama and others may also work.
       </div>
       <div style="font-size:11px;color:${this._pt("dim")};line-height:1.5;max-width:240px;margin-top:4px;">
         Once you have an agent, enable AI features in the Crow card's visual editor under <em>AI Features</em>.
@@ -20235,7 +20552,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     this._queuePanelDirection = null;
     this._activeInfoPanelKind = 'recap';
     r.getElementById('queueMenuBtn')?.classList.remove('hidden');
-    if (titleEl) titleEl.textContent = '📊 Music Recap';
+    if (titleEl) titleEl.textContent = 'Music Recap';
 
     if (!this._aiPanelGeneration) this._aiPanelGeneration = 0;
     const _myGen = ++this._aiPanelGeneration;
@@ -20513,7 +20830,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     this._queuePanelDirection = null;
     this._activeInfoPanelKind = 'watchRecap';
     r.getElementById('queueMenuBtn')?.classList.remove('hidden');
-    if (titleEl) titleEl.textContent = '🎬 Video Recap';
+    if (titleEl) titleEl.textContent = 'Video Recap';
 
     if (!this._aiPanelGeneration) this._aiPanelGeneration = 0;
     const _myGen = ++this._aiPanelGeneration;
@@ -21421,6 +21738,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (!albumName || !artistName) return null;
     if (!this._aiAlbumTracksCache) this._aiAlbumTracksCache = new Map();
     const cacheKey = (albumName + '|' + artistName).toLowerCase();
+    this._aiCachedRead(this._aiAlbumTracksCache, 'albumTracks', cacheKey);
     if (this._aiAlbumTracksCache.has(cacheKey)) {
       const existing = this._aiAlbumTracksCache.get(cacheKey);
       return existing?.empty ? false : true;
@@ -21444,7 +21762,7 @@ Include ALL tracks. Use null for unknown fields.`;
       const tracks = Array.isArray(parsed.tracks) ? parsed.tracks : (Array.isArray(parsed) ? parsed : []);
       const meta = Array.isArray(parsed) ? {} : { year: parsed.year || null, label: parsed.label || null, genre: parsed.genre || [], vibe: parsed.vibe || null, fact: parsed.fact || null };
       if (tracks.length) {
-        this._aiAlbumTracksCache.set(cacheKey, { tracks, meta });
+        this._aiCachedWrite(this._aiAlbumTracksCache, 'albumTracks', cacheKey, { tracks, meta }, { ttlDays: 30, max: 150 });
         return true;
       }
       this._aiAlbumTracksCache.set(cacheKey, { tracks: [], meta: {}, empty: true });
@@ -21966,6 +22284,13 @@ Include ALL tracks. Use null for unknown fields.`;
         <div style="font-size:12px;color:${this._pt("dim")};">Asking AI…</div>
       </div>`;
 
+    // Always start a newly opened track at the top. infoContent is the scroll
+    // container and is reused between panels, so without this, tapping a row
+    // deep in a Discogs tracklist re-rendered the new panel (often the SAME
+    // release/tracklist) at the old scroll offset — it looked like nothing
+    // happened, and the row now under the finger was the panel's own track.
+    content.scrollTop = 0;
+
     // Wire action bar immediately — identical target-resolution/play logic
     // to the one used once the full AI response is in (see below); duplicated
     // here rather than shared because this shell gets fully replaced once
@@ -21984,6 +22309,7 @@ Include ALL tracks. Use null for unknown fields.`;
         btn.addEventListener('click', async () => {
           const action = btn.dataset.action;
           if (!_qBarAllMA.length) { this._showToast('Music Assistant required'); return; }
+          if (action === 'replace') this._showLoadingToast('Starting playback\u2026');
           if (action === 'replace' && context.queueItemId) {
             const _target = context.queueEntity || this._entity;
             const _hasMoveNext = !!(this._hass?.services?.mass_queue?.move_queue_item_next);
@@ -22106,7 +22432,7 @@ Include ALL tracks. Use null for unknown fields.`;
     // before the switch was turned off are deliberately ignored too, so the
     // panel behaves consistently rather than showing AI data for some
     // tracks and Discogs for others.
-    const _aiOff = !this._aiEnabled();
+    let _aiOff = !this._aiEnabled();
 
     // ── Info panel priority ── when the user has flipped this to "Discogs
     // First" in the editor, try Discogs before AI is ever consulted: no
@@ -22143,16 +22469,9 @@ Include ALL tracks. Use null for unknown fields.`;
     if (!_aiOff && !_earlyDiscogsData) {
       const hasAI = await this._aiCheckAvailable();
       if (_stale()) return;
-      if (!hasAI) {
-        r?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
-        const _noAiEl = content.querySelector('#ai-track-details-loading');
-        const _noAiHtml = `<div style="padding:12px 4px;text-align:center;">
-          <div style="font-size:14px;font-weight:600;color:${this._pt("text")};margin-bottom:8px;">No AI Found</div>
-          <div style="font-size:12px;color:${this._pt("dim")};line-height:1.5;">Add a conversation agent via <strong style="color:#63b3ed">Settings → Voice Assistants</strong>.</div>
-        </div>`;
-        if (_noAiEl) _noAiEl.outerHTML = _noAiHtml; else content.innerHTML = _noAiHtml;
-        return;
-      }
+      // No AI agent available: use the same Discogs → library details route
+      // as when AI is switched off, rather than a "No AI Found" dead end.
+      if (!hasAI) _aiOff = true;
     }
 
     const cacheKey = ('trackinfo3|' + artistName + '|' + trackTitle).toLowerCase();
@@ -22181,8 +22500,10 @@ Include ALL tracks. Use null for unknown fields.`;
 
       const prompt = `You are a music encyclopedia. For the track "${trackTitle}" by "${queryArtist}", provide a JSON object (no markdown, raw JSON only):\n{\n  \"year\": \"release year\",\n  \"chart\": \"highest chart position e.g. UK #1 or US #4 Billboard Hot 100, or null if truly unknown\",\n  \"reception\": \"one short phrase e.g. 4x Platinum or Critically acclaimed or GRAMMY winner, null only if no notable reception\",\n  \"album\": \"album name\",\n  \"label\": \"record label\",\n  \"genre\": [\"genre1\",\"genre2\"],\n  \"duration\": \"duration e.g. 3:42\",\n  \"fact\": \"One fascinating fact in 1-2 sentences. If this track does not exist or you are not confident, set this to null.\",\n  \"vibe\": \"3-word vibe e.g. Euphoric indie anthem\",\n  \"members\": [\"Member Name 1\",\"Member Name 2\"],\n  \"similar\": [{\"title\":\"Track\",\"artist\":\"Artist\"},{\"title\":\"Track\",\"artist\":\"Artist\"}],\n  \"found\": true\n}\\nFor similar: list exactly 10 similar tracks in that array, varied across artists, not just 2-3. For members: list the band members (2-6 names). If the artist is a solo performer, set members to [\"${queryArtist}\"] (just their own name as a single-element array). IMPORTANT: If you cannot find reliable information about this specific track, set \"found\" to false and all other fields to null. Do NOT invent or hallucinate details. Respond with ONLY the JSON.`;
       try {
+        // Quiet: if the AI can't help, the panel falls back to Discogs
+        // instead, so there's nothing to warn about.
         const resp = await this._aiProcess({
-          type: 'conversation/process', text: prompt,
+          type: 'conversation/process', text: prompt, _crowSilent: true,
           agent_id: agentId, language: navigator.language || 'en'
         });
         if (_stale()) return;
@@ -22219,8 +22540,10 @@ Include ALL tracks. Use null for unknown fields.`;
         }
       } catch(e) {
         if (_stale()) return;
-        // Show a minimal panel with just the title/artist rather than a hard error
-        data = { album: null, year: null, label: null, duration: null, vibe: null, fact: null, similar: [] };
+        // The AI couldn't help (limit reached, timed out, unreadable answer…):
+        // take the same route as "not found" so Discogs is tried next, then
+        // the library details. Not cached, so the AI is asked again next time.
+        data = { album: null, year: null, label: null, duration: null, vibe: null, fact: null, similar: [], _notFound: true, _aiFailed: true };
       }
     }
 
@@ -22323,6 +22646,19 @@ Include ALL tracks. Use null for unknown fields.`;
         if (_stale()) return;
         if (_discogsResult === 'rate_limited') {
           _discogsRateLimited = true;
+          // The original card's full-panel warning: a friendly "slow down"
+          // message with a Close button that counts down and closes the panel
+          // after 10 seconds — the same 10 seconds the card waits before
+          // asking Discogs again.
+          content.innerHTML = this._psAutoClose(
+            this._psWarning('Slow down a little!', 'You\u2019ve been looking up a lot of albums. Give it a moment and tap the artwork again.'),
+            null, 10000, 'discogsRlBtn', 'discogsRlRing');
+          // Only close if this warning is still what's showing (not if
+          // something else was opened in the meantime).
+          this._psAutoCloseStart(this.shadowRoot, null, () => {
+            if (this.shadowRoot?.getElementById('discogsRlBtn')?.isConnected) this._closeInfoPopup();
+          }, 10000, 'discogsRlBtn', 'discogsRlRing');
+          return;
         } else if (_discogsResult) {
           _discogsData = this._discogsResultToAIData(_discogsResult, _fb.album, _fmtDur(_fb.duration), trackTitle, artistName);
         }
@@ -22442,6 +22778,7 @@ Include ALL tracks. Use null for unknown fields.`;
         btn.addEventListener('click', async () => {
           const _act = btn.dataset.action;
           const _enq = _act === 'replace' ? 'replace' : _act === 'next' ? 'next' : 'add';
+          if (_enq === 'replace') this._showLoadingToast('Starting playback\u2026');
           try {
             await this._hass.connection.sendMessagePromise({
               type: 'call_service', domain: 'music_assistant', service: 'play_media',
@@ -22500,7 +22837,7 @@ Include ALL tracks. Use null for unknown fields.`;
 
     // Reflect the actual data source in the header — Discogs-sourced data
     // (AI found nothing) gets its own label rather than claiming to be AI.
-    if (titleEl) titleEl.textContent = data._fromDiscogs ? '💿 Discogs Info' : 'Info';
+    if (titleEl) titleEl.textContent = data._fromDiscogs ? 'Discogs Info' : 'Info';
 
     const metaRows = [
       data.album    && ['Album',   data.album],
@@ -22551,10 +22888,30 @@ Include ALL tracks. Use null for unknown fields.`;
     // Discogs' own tracklist title, either of which would silently break
     // the "which row is currently playing" match below.
     const currentTrackTitle = trackTitle || this._hass?.states[this._entity]?.attributes?.media_title || '';
+    // Resolve to at most ONE row. The old per-row test was a bidirectional
+    // substring match, so short titles ("Love" vs "Love Song") or titles that
+    // normalised to '' (non-Latin, punctuation-only — ''.includes() is always
+    // true) flagged several or ALL rows as current. Exact match wins; the
+    // fuzzy fallback only applies when it's unambiguous.
+    const _discogsCurrentIdx = (() => {
+      const list = data._discogsTracklist || [];
+      const norm = (s) => (s || '').toLowerCase()
+        .replace(/\s*[\(\[][^\)\]]*(remaster|version|edit|mix|live|mono|stereo|demo)[^\)\]]*[\)\]]/g, '')
+        .replace(/\s+-\s+.*(remaster|version|edit|mix|live).*$/g, '')
+        .replace(/[^\p{L}\p{N}]/gu, '');
+      const cur = norm(currentTrackTitle);
+      if (!cur) return -1;
+      const exact = list.findIndex(t => norm(t.title) === cur);
+      if (exact !== -1) return exact;
+      const fuzzy = list
+        .map((t, i) => ({ i, n: norm(t.title) }))
+        .filter(x => x.n.length >= 3 && (cur.includes(x.n) || x.n.includes(cur)));
+      return fuzzy.length === 1 ? fuzzy[0].i : -1;
+    })();
     const discogsTracklistHtml = (data._discogsTracklist || []).length ? `
       <div style="margin-top:14px;">
-        <div style="font-size:10px;font-weight:700;color:${this._pt("dim")};letter-spacing:0.5px;text-transform:uppercase;margin-bottom:6px;">Tracklist <span style="font-size:9px;color:rgba(99,179,237,0.8);font-weight:400;letter-spacing:0.3px;">• Discogs</span></div>
-        ${data._discogsRating ? `<div style="display:flex;align-items:center;gap:4px;margin-bottom:8px;flex-wrap:wrap;">
+        <div style="font-size:10px;font-weight:700;color:${this._pt("dim")};letter-spacing:0.5px;text-transform:uppercase;margin-bottom:6px;">Tracklist <span${data._discogsUrl ? ` class="crow-ext-link" role="button" data-site="discogs" data-url="${String(data._discogsUrl).replace(/"/g, '&quot;')}" data-name="${String(data.album || trackTitle || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;')}"` : ''} style="font-size:9px;color:rgba(99,179,237,0.8);font-weight:400;letter-spacing:0.3px;${data._discogsUrl ? 'padding:6px 8px;margin:-6px -8px;border-radius:8px;' : ''}">• Discogs</span></div>
+        ${data._discogsRating ? `<div${data._discogsUrl ? ` class="crow-ext-link" role="button" data-site="discogs" data-url="${String(data._discogsUrl).replace(/"/g, '&quot;')}" data-name="${String(data.album || data._discogsTitle || trackTitle || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;')}"` : ''} style="display:flex;align-items:center;gap:4px;margin-bottom:8px;flex-wrap:wrap;width:fit-content;">
           ${Array.from({ length: 5 }, (_, i) => {
             const fill = Math.min(1, Math.max(0, data._discogsRating.average - i));
             const pct  = Math.round(fill * 100);
@@ -22572,15 +22929,13 @@ Include ALL tracks. Use null for unknown fields.`;
         </div>` : ''}
         <div id="discogs-track-list">
           ${data._discogsTracklist.map((t, i) => {
-            const normStr = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-            const isPlaying = currentTrackTitle && t.title &&
-              (normStr(t.title) === normStr(currentTrackTitle) || normStr(currentTrackTitle).includes(normStr(t.title)) || normStr(t.title).includes(normStr(currentTrackTitle)));
+            const isPlaying = i === _discogsCurrentIdx;
             const artInner = artUrl
               ? `<img src="${artUrl}" alt="" style="width:100%;height:100%;object-fit:cover;display:block;" onerror="this.style.display='none'">`
               : `<svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:#63b3ed;opacity:0.7"><path d="M12,3V13.55C11.41,13.21 10.73,13 10,13C7.79,13 6,14.79 6,17C6,19.21 7.79,21 10,21C12.21,21 14,19.21 14,17V7H18V3H12Z"/></svg>`;
             return `<div class="discogs-track-wrap" style="position:relative;overflow:hidden;border-radius:10px;margin-bottom:4px;">
               <div class="discogs-track-row" data-idx="${i}" data-track-title="${(t.title || '').replace(/"/g, '&quot;')}" data-track-artist="${(artistName || '').replace(/"/g, '&quot;')}" data-is-playing="${isPlaying ? '1' : ''}"
-                style="display:flex;align-items:center;gap:10px;padding:9px 10px;background:${this._pt("bg")};cursor:pointer;will-change:transform;">
+                style="display:flex;align-items:center;gap:10px;padding:9px 10px;background:${isPlaying ? 'rgba(99,179,237,0.12)' : this._pt("bg")};${isPlaying ? 'box-shadow:inset 3px 0 0 #63b3ed;' : ''}cursor:pointer;will-change:transform;">
                 <div class="discogs-track-art" style="width:36px;height:36px;border-radius:6px;background:rgba(99,179,237,0.1);border:1px solid rgba(99,179,237,0.18);display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden;">${artInner}</div>
                 <div style="flex:1;min-width:0;">
                   <div style="font-size:13px;font-weight:600;color:${this._pt("text")};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t.title || ''}</div>
@@ -22690,6 +23045,9 @@ Include ALL tracks. Use null for unknown fields.`;
     // Wire genre tag clicks
     this._wireGenreTagClicks(content);
 
+    // Discogs community rating → "Visit Discogs?" alert
+    this._wireExtLinks(content);
+
     // Wire Discogs-sourced tracklist rows (only present when data._fromDiscogs) —
     // same card layout, row glow, and interactions as the AI panel's own
     // "Similar Tracks" list: tap opens AI Info for that specific track,
@@ -22717,7 +23075,9 @@ Include ALL tracks. Use null for unknown fields.`;
       row.addEventListener('click', () => {
         if (lpFired) { lpFired = false; return; }
         if (row.dataset.isPlaying) {
-          this._showToast('This is the currently selected song', 2000);
+          // This row IS the track this panel is about — its info is at the
+          // top of the panel, so take the user there rather than toasting.
+          try { content.scrollTo({ top: 0, behavior: 'smooth' }); } catch (_) { content.scrollTop = 0; }
           return;
         }
         const t = row.dataset.trackTitle, a = row.dataset.trackArtist;
@@ -22882,7 +23242,7 @@ Include ALL tracks. Use null for unknown fields.`;
         // Save current content so the back button can restore it
         const _savedContent = content.innerHTML;
         const _savedTitle   = titleEl?.textContent || 'Info';
-        if (titleEl) titleEl.textContent = '💿 Album';
+        if (titleEl) titleEl.textContent = 'Album';
         this._showAIAlbumTracks(content, albumName, albumArtist, artUrl, () => {
           // Back callback — restore AI Info panel
           r?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
@@ -23732,6 +24092,7 @@ Include ALL tracks. Use null for unknown fields.`;
 
         let successCount = 0;
         if (action === 'replace') {
+            (typeof self?._showLoadingToast === 'function' ? self : this)._showLoadingToast('Starting playback\u2026');
           const [first, ...rest] = recs;
           try {
             await this._hass.connection.sendMessagePromise({
@@ -23794,6 +24155,7 @@ Include ALL tracks. Use null for unknown fields.`;
         if (_overlay && _isQueueOpen) _overlay.style.display = 'flex';
         let successCount = 0;
         if (action === 'replace') {
+            (typeof self?._showLoadingToast === 'function' ? self : this)._showLoadingToast('Starting playback\u2026');
           const [first, ...rest] = recs;
           try { await this._hass.connection.sendMessagePromise({ type: 'call_service', domain: 'music_assistant', service: 'play_media', service_data: { entity_id: _recsBarTarget, media_id: `${first.title} ${first.artist}`, media_type: 'track', enqueue: 'replace' } }); successCount++; } catch(_) {}
           for (const rec of rest) { try { await this._hass.connection.sendMessagePromise({ type: 'call_service', domain: 'music_assistant', service: 'play_media', service_data: { entity_id: _recsBarTarget, media_id: `${rec.title} ${rec.artist}`, media_type: 'track', enqueue: 'add' } }); successCount++; } catch(_) {} }
@@ -24019,10 +24381,7 @@ Include ALL tracks. Use null for unknown fields.`;
     if (!this._aiAlbumTracksCache) this._aiAlbumTracksCache = new Map();
     const _albumCacheKey = (albumName + '|' + artistName).toLowerCase();
     // Hydrate from sessionStorage if not in memory
-    if (!this._aiAlbumTracksCache.has(_albumCacheKey)) {
-      const persisted = this._aiSessionGet('albumTracks', _albumCacheKey);
-      if (persisted) this._aiAlbumTracksCache.set(_albumCacheKey, persisted);
-    }
+    this._aiCachedRead(this._aiAlbumTracksCache, 'albumTracks', _albumCacheKey);
     const _cachedEntry = this._aiAlbumTracksCache.get(_albumCacheKey);
     let tracks = Array.isArray(_cachedEntry) ? _cachedEntry : (_cachedEntry?.tracks || []);
     let albumMeta = Array.isArray(_cachedEntry) ? {} : (_cachedEntry?.meta || {});
@@ -24062,8 +24421,7 @@ Include ALL tracks. Use null for unknown fields.`;
         albumMeta = { year: parsed.year || null, label: parsed.label || null, genre: parsed.genre || [], vibe: parsed.vibe || null, fact: parsed.fact || null };
       }
       if (!tracks.length) throw new Error('Empty track list');
-      this._aiAlbumTracksCache.set(_albumCacheKey, { tracks, meta: albumMeta });
-      this._aiSessionSet('albumTracks', _albumCacheKey, { tracks, meta: albumMeta });
+      this._aiCachedWrite(this._aiAlbumTracksCache, 'albumTracks', _albumCacheKey, { tracks, meta: albumMeta }, { ttlDays: 30, max: 150 });
     } catch(e) {
       if (_albumStale()) return;
       this._aiAlbumTracksCache.set(_albumCacheKey, { tracks: [], meta: {}, empty: true });
@@ -24260,17 +24618,14 @@ Include ALL tracks. Use null for unknown fields.`;
     clearTimeout(this._maBatchLoadingTimer);
     this._maBatchLoadingTimer = setTimeout(() => { this._maBatchLoading = false; }, 30000);
     this._pillPulse(30000);
-    this._showToast('Finding album tracks…', 4000);
+    this._showLoadingToast('Starting the album\u2026');
 
     // Fetch tracklist — uses cache if available, otherwise calls AI
     if (!this._aiAlbumTracksCache) this._aiAlbumTracksCache = new Map();
     const _cacheKey = (album + '|' + artist).toLowerCase();
     let tracks = [];
     // Check sessionStorage before falling through to AI call
-    if (!this._aiAlbumTracksCache.has(_cacheKey)) {
-      const _p = this._aiSessionGet('albumTracks', _cacheKey);
-      if (_p) this._aiAlbumTracksCache.set(_cacheKey, _p);
-    }
+    this._aiCachedRead(this._aiAlbumTracksCache, 'albumTracks', _cacheKey);
     const cached = this._aiAlbumTracksCache.get(_cacheKey);
     if (cached) {
       tracks = Array.isArray(cached) ? cached : (cached.tracks || []);
@@ -24293,7 +24648,7 @@ Include ALL tracks. Use null for unknown fields.`;
         if (s === -1 || e2 <= s) throw new Error('No track list');
         tracks = JSON.parse(stripped.slice(s, e2 + 1));
         if (Array.isArray(tracks) && tracks.length) {
-          this._aiAlbumTracksCache.set(_cacheKey, { tracks, meta: {} });
+          this._aiCachedWrite(this._aiAlbumTracksCache, 'albumTracks', _cacheKey, { tracks, meta: {} }, { ttlDays: 30, max: 150 });
         }
       } catch(e) {
         this._maBatchLoading = false;
@@ -25462,62 +25817,75 @@ Include ALL tracks. Use null for unknown fields.`;
       'M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67V7zM16 11c-.55 0-1 .16-1.41.42L12 13.5l-2.59-2.08C8.99 11.16 8.46 11 8 11c-1.1 0-2 .9-2 2s.9 2 2 2l4 3 4-3c1.1 0 2-.9 2-2s-.9-2-2-2z',
     ];
 
-    // Build mood grid into a DOM element using glass card style
+    // Vibes as a list, in the same style as the library's categories: a
+    // coloured rounded-square icon and the name, grouped under headings.
+    // With Row Glow on in the editor, rows get the same colour glow the
+    // library rows use.
     const buildMoodGrid = () => {
       const wrap = document.createElement('div');
+      const glowOn = this._config?.row_glow === true;
       categories.forEach(cat => {
         const sec = document.createElement('div');
-        sec.style.cssText = 'margin-bottom:20px;';
+        sec.style.cssText = 'margin-bottom:14px;';
         const catLabel = document.createElement('div');
-        catLabel.style.cssText = `font-size:11px;font-weight:700;color:${this._pt("dim")};letter-spacing:0.8px;text-transform:uppercase;margin-bottom:8px;padding-left:2px;`;
+        catLabel.style.cssText = `font-size:11px;font-weight:700;color:${this._pt("dim")};letter-spacing:0.8px;text-transform:uppercase;padding:10px 16px 4px;`;
         catLabel.dataset.catLabel = cat.label;
         catLabel.textContent = cat.label;
-        const grid = document.createElement('div');
-        grid.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);gap:6px;';
+        const list = document.createElement('div');
+        list.className = 'ma-ios-categories';
+        list.style.padding = '0';
         cat.indices.forEach(i => {
           const m = moods[i];
-          const btn = document.createElement('button');
-          btn.className = 'ai-mood-btn';
-          btn.dataset.idx = String(i);
-          const _mColorRgb = m.color.startsWith('#') ? m.color : m.color;
-          btn.style.cssText = [
-            'display:flex','flex-direction:column','align-items:center','justify-content:center',
-            'gap:5px','padding:10px 4px 9px',
-            `background:linear-gradient(160deg,${m.color}18,${m.color}0a)`,
-            `border:1px solid ${m.color}35`,
-            'border-radius:14px','cursor:pointer','font-family:inherit',
-            '-webkit-tap-highlight-color:transparent',
-            'min-height:66px','position:relative','overflow:hidden',
-          ].join(';');
-          // Coloured glow dot at top
-          const glow = document.createElement('div');
-          glow.style.cssText = 'position:absolute;top:-10px;left:50%;transform:translateX(-50%);width:40px;height:20px;border-radius:50%;background:' + m.color + ';opacity:0.25;filter:blur(8px);pointer-events:none;';
-          // SVG icon
-          const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
-          svg.setAttribute('viewBox','0 0 24 24');
-          svg.style.cssText = 'width:20px;height:20px;fill:' + m.color + ';flex-shrink:0;';
-          const path = document.createElementNS('http://www.w3.org/2000/svg','path');
+          const hex = (m.color && m.color[0] === '#' && m.color.length === 7) ? m.color : '#007AFF';
+          const row = document.createElement('div');
+          row.className = 'ma-ios-cat-row ai-mood-btn';
+          row.dataset.idx = String(i);
+          row.setAttribute('role', 'button');
+          const icon = document.createElement('div');
+          icon.className = 'ma-ios-cat-icon';
+          icon.style.background = hex;
+          const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+          svg.setAttribute('viewBox', '0 0 24 24');
+          svg.style.fill = '#fff';
+          const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
           path.setAttribute('d', moodSvg[i] || 'M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z');
           svg.appendChild(path);
-          // Label
-          const lbl2 = document.createElement('div');
-          lbl2.style.cssText = `font-size:9.5px;font-weight:600;color:${this._pt("text")};text-align:center;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;width:100%;padding:0 3px;`;
-          lbl2.textContent = m.label;
-          btn.appendChild(glow);
-          btn.appendChild(svg);
-          btn.appendChild(lbl2);
-          grid.appendChild(btn);
+          icon.appendChild(svg);
+          const lbl = document.createElement('span');
+          lbl.className = 'ma-ios-cat-label';
+          lbl.textContent = m.label;
+          // No › — a vibe plays straight away rather than opening another screen.
+          row.appendChild(icon); row.appendChild(lbl);
+          if (glowOn) {
+            row.style.background   = `linear-gradient(90deg, ${hex}20 0%, transparent 60%)`;
+            row.style.boxShadow    = `inset 0 0 0 1px ${hex}25`;
+            row.style.borderRadius = '12px';
+            row.style.marginBottom = '4px';
+            row.style.borderBottom = 'none';
+          }
+          list.appendChild(row);
         });
         sec.appendChild(catLabel);
-        sec.appendChild(grid);
+        sec.appendChild(list);
         wrap.appendChild(sec);
       });
       return wrap;
     };
 
+    // Vibes respond to the touch itself — finger down and up on the same row
+    // without scrolling — not to the browser's click. iPhone can send an
+    // extra click a moment after a tap, landing on whatever has just appeared
+    // under the finger: that used to pick a vibe the instant the list opened.
+    // The card's library click guard also no longer swallows real taps here.
     const wireMoodBtns = container => {
       container.querySelectorAll('.ai-mood-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
+        let sx = 0, sy = 0, moved = false, downAt = 0;
+        btn.setAttribute('tabindex', '0');
+        btn.addEventListener('pointerdown', (e) => { sx = e.clientX; sy = e.clientY; moved = false; downAt = Date.now(); }, { passive: true });
+        btn.addEventListener('pointermove', (e) => { if (Math.abs(e.clientY - sy) > 8 || Math.abs(e.clientX - sx) > 8) moved = true; }, { passive: true });
+        btn.addEventListener('pointercancel', () => { downAt = 0; });
+        btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); });   // extra clicks: ignored
+        const choose = () => {
           const m = moods[parseInt(btn.dataset.idx)];
           const _ms = m.maSearch || m.query;
           const _seeds = Array.isArray(_ms) ? _ms : [_ms];
@@ -25525,14 +25893,33 @@ Include ALL tracks. Use null for unknown fields.`;
           const _primarySeed = Array.isArray(_seeds) ? _seeds[0] : _seeds;
           self._setOptimisticMedia(m.label, _primarySeed);
           doMood(_seeds, m.label, m.query || '');
+        };
+        btn.addEventListener('pointerup', (e) => {
+          const pressed = downAt; downAt = 0;
+          if (!pressed || moved) return;                                     // a scroll, or a release with no press here
+          if (Date.now() - (overlayRef.openedAt || 0) < 450) return;         // the tap that opened the list
+          e.preventDefault(); e.stopPropagation();
+          choose();
         });
+        btn.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); choose(); } });
       });
     };
 
     const overlayRef = { el: null }; // allows playMoodOnSpeaker to remove overlay even when called before overlay is created
-    const playMoodOnSpeaker = async (seeds, label, targetEntity, moodQuery) => {
+    const _playMoodInner = async (seeds, label, targetEntity, moodQuery, run = {}) => {
       overlayRef.el?.remove();
       maPopup.classList.remove('visible');
+
+      // Straight back to the player screen. The tap that picked the vibe lands on
+      // the artwork once the list disappears, and a single tap on the artwork opens
+      // the AI Info panel — so cancel any pending art tap and block new ones for a
+      // moment (same guard the other "start playing" actions use), and make sure no
+      // info panel is left open behind the list.
+      if (self._artTapTimer) { clearTimeout(self._artTapTimer); self._artTapTimer = null; }
+      self._suppressArtTap = true;
+      clearTimeout(self._suppressArtTapTimer);
+      self._suppressArtTapTimer = setTimeout(() => { self._suppressArtTap = false; }, 1500);
+      try { self._closeInfoPopup(); } catch (_) {}
 
       // Resolve MA entity
       let maEntity = targetEntity;
@@ -25545,6 +25932,7 @@ Include ALL tracks. Use null for unknown fields.`;
       // Debounce — cancel any previous in-flight mood request
       const _playId = Symbol();
       self._moodPlayPending = _playId;
+      run.id = _playId;
       const _stale = () => self._moodPlayPending !== _playId;
 
       self._showLoadingToast('Starting ' + label + '…');
@@ -25556,6 +25944,386 @@ Include ALL tracks. Use null for unknown fields.`;
       // seeds is always an array of artist names
       const seedArtists = Array.isArray(seeds) ? seeds : [seeds];
       const primarySeed = seedArtists[0];
+
+      // ── FAST START — the first song plays now, the queue builds behind it ──
+      // Music Assistant's radio_mode is slow: it has to build a whole queue of
+      // similar tracks before anything plays (minutes on a streaming provider),
+      // and 'replace' means nothing else plays until it's done. So a vibe never
+      // leads with radio any more. Instead: one quick track search per seed
+      // artist, all at once, and the FIRST track back is played straight away
+      // (enqueue 'replace', no radio). Every other track found is then added in
+      // one batch, and radio / playlists only EXTEND the queue afterwards
+      // (enqueue 'add') — they can no longer wipe or delay what's playing.
+      // If the fast start can't play anything, the original radio paths below
+      // run exactly as before.
+      const _fT0 = Date.now();
+      // Timing for each phase, printed as one console.info line when the vibe finishes.
+      const _tm = {};
+      const _mark = k => { if (_tm[k] == null) _tm[k] = Date.now() - _fT0; };
+      const _fDecade = (moodQuery && moodQuery.split('|')[0].match(/\b(19[5-9]0s|20[012]0s)\b/i)?.[0]) || '';
+      const _fNoPipe = !moodQuery || (!moodQuery.includes('|') && !/\b(19[5-9]0s|20[012]0s)\b/i.test(moodQuery));
+      const _fGenre = !_fNoPipe && !_fDecade && !!moodQuery;
+      // Tracks taken from each seed artist (few artists → more from each).
+      const _fCap = _fNoPipe ? Math.max(2, Math.ceil(20 / seedArtists.length)) : 3;
+      const _fNorm = s => (s || '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]/g, '');
+      const _fArtistOf = t => (t?.artists?.[0]?.name || t?.artist?.name || (typeof t?.artist === 'string' ? t.artist : '') || '');
+      const _fKey = t => _fNorm(t?.name || t?.title) + '|' + _fNorm(_fArtistOf(t));
+      const _fShuffle = arr => { for (let i = arr.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [arr[i], arr[j]] = [arr[j], arr[i]]; } return arr; };
+      // Only what's needed to queue a track and de-duplicate it — keeps the cache small.
+      const _fSlim = t => {
+        const uri = t?.uri || t?.media_content_id || null;
+        if (!uri) return null;
+        const artist = t?.artists?.[0]?.name || t?.artist?.name || t?.media_artist || (typeof t?.artist === 'string' ? t.artist : '') || '';
+        return { uri, name: t?.name || t?.media_title || t?.title || '', artists: artist ? [{ name: artist }] : [] };
+      };
+      const _fSeen = new Set();            // URIs + title/artist keys this vibe has already queued
+      const _perSeed = new Map();          // seed → tracks found for it
+      let _fastOk = false, _claimed = false;
+      const _fastCid = self._maConfigEntryId || await self._getMAConfigEntryId().catch(() => null);
+
+      const _fSleep = ms => new Promise(res => setTimeout(res, ms));
+      // Nothing may hang forever: every Music Assistant call gets a time limit.
+      const _fTimed = (promise, ms) => Promise.race([promise, new Promise((_, rej) => setTimeout(() => rej(new Error('timed out')), ms))]);
+
+      // ── Track-pool cache ──────────────────────────────────────────────────
+      // What a vibe's searches found is kept for 24 hours, so playing the same
+      // vibe again skips searching entirely (each play still shuffles it fresh).
+      const _POOL_LS = 'crow_vibe_pool_v1', _POOL_TTL = 24 * 3600 * 1000;
+      const _poolKey = [label, seedArtists.join(','), moodQuery || ''].join('|').toLowerCase();
+      const _poolRead = () => { try { return JSON.parse(localStorage.getItem(_POOL_LS) || '{}') || {}; } catch (_) { return {}; } };
+      const _poolWrite = (all) => {
+        try {
+          const now = Date.now();
+          const keep = Object.entries(all).filter(([, v]) => v && now - v.ts < _POOL_TTL)
+            .sort((a, b) => b[1].ts - a[1].ts).slice(0, 30);
+          localStorage.setItem(_POOL_LS, JSON.stringify(Object.fromEntries(keep)));
+        } catch (_) {}
+      };
+      const _poolDrop = () => { const all = _poolRead(); delete all[_poolKey]; _poolWrite(all); };
+      let _cached = (() => {
+        const e = _poolRead()[_poolKey];
+        return (e && Date.now() - e.ts < _POOL_TTL && e.seeds && Object.values(e.seeds).some(l => l?.length)) ? e : null;
+      })();
+
+      // ── Seed search: your library first, streaming services only if needed ──
+      // Library tracks come back as library:// URIs, which Music Assistant queues
+      // straight from its own database instead of looking each one up online.
+      const _fSearchRaw = async (q, libraryOnly, limit) => {
+        try {
+          const r = await _fTimed(self._hass.connection.sendMessagePromise({
+            type: 'call_service', domain: 'music_assistant', service: 'search',
+            service_data: Object.assign({ config_entry_id: _fastCid, name: q, media_type: 'track', limit }, libraryOnly ? { library_only: true } : {}),
+            return_response: true
+          }), 20000);
+          return (r?.response?.tracks || []).filter(t => t?.uri);
+        } catch (_) { return []; }
+      };
+      const _fSearch = async (seed) => {
+        const want = _fNorm(seed);
+        const mineOf = list => list.filter(t => { const a = _fNorm(_fArtistOf(t)); return a && (a.includes(want) || want.includes(a)); });
+        const limit = Math.max(8, _fCap + 4);
+        let lib = [];
+        if (!_fDecade) {                   // "Artist 1980s" never matches a library search
+          lib = mineOf(await _fSearchRaw(seed, true, limit));
+          if (lib.length >= _fCap) return lib;
+        }
+        const prov = await _fSearchRaw(seed + (_fDecade ? ' ' + _fDecade : ''), false, limit);
+        const seen = new Set(lib.map(t => t.uri));
+        const merged = [...lib, ...mineOf(prov).filter(t => !seen.has(t.uri))];
+        return merged.length ? merged : prov.slice(0, 2);
+      };
+
+      const _fastPlay = async (track) => {
+        try {
+          await _fTimed(self._hass.connection.sendMessagePromise({
+            type: 'call_service', domain: 'music_assistant', service: 'play_media',
+            service_data: { entity_id: maEntity, media_id: track.uri, media_type: 'track', enqueue: 'replace' }
+          }), 30000);
+          _fastOk = true;
+          _mark('firstPlay');
+          _fSeen.add(track.uri.toLowerCase()); _fSeen.add(_fKey(track));
+          if (_stale()) return;
+          self._maBatchLoading = false;
+          clearTimeout(self._maBatchLoadingTimer);
+          // The spinner stays on (the whole vibe is a busy job) until the queue is built.
+          self._showToast('\u{1F3B6} Adding more songs to your queue\u2026', 3500);
+        } catch (_) { _claimed = false; }   // let another seed's result try instead
+      };
+
+      let _fBaseline = null;               // queue length right after the first song started
+      let _fAttempted = 0;                 // add calls made
+      let _fTimedOut = 0;                  // batches Music Assistant was still working on at the time limit
+      const _fSent = [];                   // tracks Music Assistant accepted for the queue
+
+      // How many songs Music Assistant says are in this speaker's queue (null = can't tell).
+      const _fQueueCount = async () => {
+        try {
+          if (self._hass?.services?.mass_queue?.get_queue_items) {
+            const r = await _fTimed(self._hass.connection.sendMessagePromise({
+              type: 'call_service', domain: 'mass_queue', service: 'get_queue_items',
+              service_data: { entity: maEntity, limit_before: 5, limit_after: 9999 },
+              return_response: true
+            }), 6000);
+            const raw = r?.response?.[maEntity] || r?.response;
+            if (Array.isArray(raw)) return raw.length;
+          }
+        } catch (_) {}
+        try {
+          const r = await _fTimed(self._hass.connection.sendMessagePromise({
+            type: 'call_service', domain: 'music_assistant', service: 'get_queue',
+            service_data: { entity_id: maEntity }, return_response: true
+          }), 6000);
+          const q = r?.response?.[maEntity] || r?.response;
+          if (q && typeof q.items === 'number') return q.items;
+        } catch (_) {}
+        return null;
+      };
+
+      // Music Assistant runs play actions on a queue one at a time, so an 'add'
+      // sent now simply waits until the 'replace' above has finished. A short wait
+      // for the speaker to report 'playing' is kept as a guard for older builds.
+      const _fSettle = async () => {
+        for (let i = 0; i < 8; i++) {
+          if (_stale()) return;
+          if (self._hass?.states?.[maEntity]?.state === 'playing') break;
+          await _fSleep(250);
+        }
+        if (_stale()) return;
+        _fBaseline = await _fQueueCount();
+      };
+
+      // Adds a list of URIs in one call. Only if Home Assistant rejects the list
+      // itself (an older version) are they sent one at a time — remembered for
+      // next time. A call that is merely slow is NOT resent: Music Assistant is
+      // still adding those songs, and resending them doubled the work and the songs.
+      const _fAddBatch = async (uris, mediaType) => {
+        if (!uris.length || _stale()) return 0;
+        const _call = (id, ms) => _fTimed(self._hass.connection.sendMessagePromise({
+          type: 'call_service', domain: 'music_assistant', service: 'play_media',
+          service_data: Object.assign({ entity_id: maEntity, media_id: id, enqueue: 'add' }, mediaType ? { media_type: mediaType } : {})
+        }), ms);
+        _fAttempted++;
+        if (!self._maListAddUnsupported) {
+          const t = Date.now();
+          try {
+            await _call(uris, 90000);
+            console.debug('[crowai] vibe "' + label + '": added ' + uris.length + ' ' + (mediaType || 'item') + '(s) in ' + (Date.now() - t) + 'ms');
+            return uris.length;
+          } catch (_e) {
+            const msg = String(_e?.message || _e?.code || _e || '');
+            if (/timed out/i.test(msg)) {
+              _fTimedOut++;
+              console.warn('[crowai] vibe "' + label + '": Music Assistant is still adding ' + uris.length + ' songs — not resending');
+              return uris.length;
+            }
+            const listRejected = _e?.code === 'invalid_format' || /expected str|not a valid value|invalid_format/i.test(msg);
+            if (!listRejected) { console.warn('[crowai] vibe "' + label + '": could not add batch', _e); return 0; }
+            self._maListAddUnsupported = true;
+            console.warn('[crowai] vibe "' + label + '": this Home Assistant only takes one song per call — adding one at a time');
+          }
+        }
+        let ok = 0;
+        for (const id of uris) {
+          if (_stale()) break;
+          try { await _call(id, 20000); ok++; }
+          catch (_e) { console.warn('[crowai] vibe "' + label + '": could not add ' + id, _e); }
+        }
+        return ok;
+      };
+      // Tracks go in small batches: five straight away so the queue has real songs
+      // within seconds, then the rest in chunks that each finish well within the limit.
+      const _fAdd = async (tracks) => {
+        const chunks = [];
+        if (tracks.length) chunks.push(tracks.slice(0, 5));
+        for (let i = 5; i < tracks.length; i += 15) chunks.push(tracks.slice(i, i + 15));
+        for (const c of chunks) {
+          if (_stale()) return;
+          const n = await _fAddBatch(c.map(t => t.uri), 'track');
+          if (n) _fSent.push(...c.slice(0, n));
+          if (!_tm.firstBatch) _mark('firstBatch');
+        }
+      };
+
+      // Runs once everything has been added. The message only ever reports what
+      // Music Assistant's queue really holds — never what the card sent.
+      const _fFinish = async () => {
+        if (_stale() || !_fastOk) return;
+        let n = await _fQueueCount();
+        // The queue is read separately from the add, so give it a moment to catch up
+        // (longer if a batch was still being added when its call timed out).
+        const tries = _fTimedOut ? 15 : 4;
+        for (let i = 0; i < tries && _fAttempted > 0 && n !== null && (_fBaseline === null ? n <= 1 : n <= _fBaseline); i++) {
+          await _fSleep(_fTimedOut ? 1000 : 400);
+          if (_stale()) return;
+          n = await _fQueueCount();
+        }
+        if (_stale()) return;
+        _mark('done');
+        console.info('[crowai] vibe "' + label + '" timings (ms): ' +
+          ['search', 'firstPlay', 'firstBatch', 'seedTracks', 'playlists', 'done'].map(k => k + '=' + (_tm[k] ?? '-')).join(' ') +
+          ' | queue=' + (n ?? '?') + (_cached ? ' | from cache' : '') + (_fTimedOut ? ' | timeouts=' + _fTimedOut : ''));
+        // Any open queue shows the finished list straight away.
+        self._queueDataCache = null;
+        const grew = n !== null && n > (_fBaseline ?? 1);
+        if (grew) {
+          self._showToast(`\u2713 Your queue is ready \u2014 ${n} songs lined up`, 3500);
+        } else if (n === null && _fSent.length) {
+          self._showToast(`\u2713 ${label} is playing \u2014 more songs are queued`, 3500);
+        } else if (_fAttempted > 0) {
+          self._showToast(`\u26a0\ufe0f ${label} is playing, but the rest of the queue didn\u2019t load. Try the vibe once more.`, 6000);
+        } else {
+          self._showToast(`\u2713 ${label} is playing`, 3000);
+        }
+      };
+
+      // Everything found for the seeds, up to `cap` per artist, shuffled, minus what's
+      // already queued. All seeds were searched in the one round above.
+      const _fAddPool = async (cap) => {
+        const pool = [];
+        _perSeed.forEach(list => _fShuffle([...list]).slice(0, cap).forEach(t => pool.push(t)));
+        _fShuffle(pool);
+        const perArtist = new Map();
+        const batch = pool.filter(t => {
+          const u = t.uri.toLowerCase(), k = _fKey(t);
+          if (_fSeen.has(u) || _fSeen.has(k)) return false;
+          const a = _fNorm(_fArtistOf(t));
+          if (a) { const c = perArtist.get(a) || 0; if (c >= cap) return false; perArtist.set(a, c + 1); }
+          _fSeen.add(u); _fSeen.add(k);
+          return true;
+        });
+        await _fAdd(batch);
+      };
+
+      // Radio, but only ever ADDED behind what's already playing (legacy fallback only).
+      const _fRadioExtend = async (list) => {
+        for (const seed of list) {
+          if (_stale()) return;
+          await self._hass.connection.sendMessagePromise({
+            type: 'call_service', domain: 'music_assistant', service: 'play_media',
+            service_data: { entity_id: maEntity, media_id: self._moodArtistUriCache?.get(seed) || seed, media_type: 'artist', enqueue: 'add', radio_mode: true }
+          }).catch(() => {});
+        }
+      };
+
+      // ── Genre / social vibes: a capped pick from matching playlists & albums ──
+      // Adding a whole playlist makes Music Assistant fetch every track in it
+      // (sometimes hundreds) first, so instead up to 8 random tracks are taken from
+      // each of the best three. Started straight away, alongside the seed searches.
+      const _fCompPick = async () => {
+        const qs = moodQuery.split('|').map(q => q.trim()).filter(Boolean).slice(0, 3);
+        const found = await Promise.all(qs.map(q => Promise.all(['playlist', 'album'].map(mt =>
+          _fTimed(self._hass.connection.sendMessagePromise({
+            type: 'call_service', domain: 'music_assistant', service: 'search',
+            service_data: { config_entry_id: _fastCid, name: q, media_type: mt, limit: mt === 'playlist' ? 3 : 2 },
+            return_response: true
+          }), 20000).then(r => (r?.response?.[mt + 's'] || []).map(i => Object.assign({ media_type: mt }, i))).catch(() => [])
+        ))));
+        const seen = new Set();
+        const items = found.flat(2).filter(i => i?.uri && !seen.has(i.uri) && seen.add(i.uri)).slice(0, 3);
+        if (!items.length) return [];
+        const mqs = self._hass?.services?.mass_queue || {};
+        const mqCid = (mqs.get_playlist_tracks || mqs.get_album_tracks) ? await self._getMassQueueConfigEntry().catch(() => null) : null;
+        // Without mass_queue the tracks can't be listed — fall back to one whole collection.
+        if (!mqCid) return { whole: items.slice(0, 1) };
+        const _extract = (res) => {
+          const r = res?.response;
+          if (Array.isArray(r)) return r;
+          if (Array.isArray(r?.items)) return r.items;
+          if (Array.isArray(r?.tracks)) return r.tracks;
+          if (r && typeof r === 'object') return Object.values(r).find(v => Array.isArray(v)) || [];
+          return [];
+        };
+        const lists = await Promise.all(items.map(async item => {
+          const isPl = item.media_type === 'playlist' || /\/playlist\//i.test(item.uri);
+          const svc = isPl ? 'get_playlist_tracks' : 'get_album_tracks';
+          if (!mqs[svc]) return [];
+          try {
+            const r = await _fTimed(self._hass.connection.sendMessagePromise({
+              type: 'call_service', domain: 'mass_queue', service: svc,
+              service_data: { uri: item.uri, config_entry_id: mqCid }, return_response: true
+            }), 20000);
+            return _extract(r).map(_fSlim).filter(Boolean);
+          } catch (_) { return []; }
+        }));
+        const picked = lists.map(l => _fShuffle([...l]).slice(0, 8)).flat();
+        return picked.length ? picked : { whole: items.slice(0, 1) };
+      };
+
+      if (_fastCid) {
+        // 1. A cached pool: play from it at once, no searching.
+        if (_cached) {
+          seedArtists.forEach(s => _perSeed.set(s, (_cached.seeds[s] || []).filter(t => t?.uri)));
+          const all = [..._perSeed.values()].flat();
+          _mark('search');
+          if (all.length) { _claimed = true; await _fastPlay(all[Math.floor(Math.random() * all.length)]); }
+          if (!_fastOk) {                  // the cached songs didn't play — search afresh
+            console.debug('[crowai] vibe "' + label + '": cached pool failed — searching again');
+            _poolDrop(); _cached = null; _perSeed.clear(); _claimed = false;
+          }
+        }
+        // 2. Otherwise one round of searches for every seed, all at once. The first
+        //    seed back with a track starts playing; the rest finish behind it.
+        var _compP = _fGenre ? (_cached && _cached.comp ? Promise.resolve(_cached.comp) : _fCompPick().catch(() => [])) : null;
+        if (!_cached) {
+          const _plays = [];
+          await Promise.all(seedArtists.map(async seed => {
+            const tracks = await _fSearch(seed);
+            _perSeed.set(seed, tracks);
+            if (_claimed || _stale() || !tracks.length) return;
+            _claimed = true;
+            _plays.push(_fastPlay(tracks[Math.floor(Math.random() * tracks.length)]));
+          }));
+          _mark('search');
+          if (_plays.length) await Promise.all(_plays);
+        }
+      }
+      if (_stale()) return;
+      if (_fastOk) {
+        run.finish = _fFinish;
+        await _fSettle();
+        if (_stale()) return;
+
+        await _fAddPool(_fGenre || _fDecade ? 3 : _fCap);
+        _mark('seedTracks');
+        if (_stale()) return;
+
+        let _comp = null;
+        if (_fGenre) {
+          _comp = await _compP;
+          if (_stale()) return;
+          if (Array.isArray(_comp) && _comp.length) {
+            const fresh = _fShuffle(_comp.filter(t => {
+              const u = t.uri.toLowerCase(), k = _fKey(t);
+              if (_fSeen.has(u) || _fSeen.has(k)) return false;
+              _fSeen.add(u); _fSeen.add(k); return true;
+            }));
+            await _fAdd(fresh);
+          } else if (_comp?.whole?.length) {
+            for (const item of _comp.whole) {
+              if (_stale()) return;
+              await _fAddBatch([item.uri], item.media_type || (/\/playlist\//i.test(item.uri) ? 'playlist' : 'album'));
+            }
+          }
+          _mark('playlists');
+        }
+
+        // Remember what was found (fresh searches only) for the next 24 hours.
+        if (!_cached) {
+          const seeds = {};
+          _perSeed.forEach((list, s) => { seeds[s] = list.map(_fSlim).filter(Boolean).slice(0, 25); });
+          if (Object.values(seeds).some(l => l.length)) {
+            const all = _poolRead();
+            all[_poolKey] = { ts: Date.now(), seeds, comp: Array.isArray(_comp) ? _comp.slice(0, 40) : null };
+            _poolWrite(all);
+          }
+        }
+        // No radio top-up: in current Music Assistant, adding a radio to a queue turns
+        // it into a dynamic mix that throws away the songs just added. Music Assistant's
+        // own Autoplay setting refills a normal queue near its end instead.
+        return;
+      } else {
+        console.debug('[crowai] vibe "' + label + '": fast start found nothing to play — falling back to radio');
+      }
 
       // ── No-pipe path: fire radio instantly, then silently upgrade with a track ──
       // Strategy: start playing artist radio immediately (< 1s feedback), then run
@@ -25664,7 +26432,7 @@ Include ALL tracks. Use null for unknown fields.`;
       // ── Pipe/decade mood: fire artist radio BEFORE awaiting config entry ────
       // This guarantees something plays in < 1s regardless of MA search latency.
       const _isDecadeMood = moodQuery && /\b(19[5-9]0s|20[012]0s)\b/i.test(moodQuery.split('|')[0]);
-      if (!_isDecadeMood) {
+      if (!_isDecadeMood && !_fastOk) {
         self._hass.connection.sendMessagePromise({
           type: 'call_service', domain: 'music_assistant', service: 'play_media',
           service_data: { entity_id: maEntity,
@@ -25738,15 +26506,27 @@ Include ALL tracks. Use null for unknown fields.`;
             if (!_compilations.length) {
               // No compilations found in library — extend radio with all seeds and exit
               // Radio already fired above, so just add remaining seeds
-              (async () => {
-                for (const _seed of seedArtists.slice(1)) {
-                  if (_stale()) return;
-                  await self._hass.connection.sendMessagePromise({
-                    type: 'call_service', domain: 'music_assistant', service: 'play_media',
-                    service_data: { entity_id: maEntity, media_id: self._moodArtistUriCache?.get(_seed) || _seed, media_type: 'artist', enqueue: 'add', radio_mode: true }
-                  }).catch(() => {});
-                }
-              })();
+              if (!_fastOk) (async () => { await _fRadioExtend(seedArtists.slice(1)); })();   // (fast start already queued seeds + radio)
+              return;
+            }
+
+            if (_fastOk) {
+              // get_library only sees items saved in the Music Assistant library, so a
+              // playlist or album found on a streaming provider gave nothing. Adding
+              // by URI lets Music Assistant resolve it itself.
+              // Grouped by type, one call per group.
+              const _byType = new Map();
+              for (const item of _compilations.slice(0, 3)) {
+                if (!item.uri) continue;
+                const _mt = item.media_type || (/\/playlist\//i.test(item.uri) ? 'playlist' : 'album');
+                if (!_byType.has(_mt)) _byType.set(_mt, []);
+                _byType.get(_mt).push(item.uri);
+              }
+              for (const [_mt, _uris] of _byType) {
+                if (_stale()) return;
+                await _fAddBatch(_uris, _mt);
+              }
+              self._pillPulse(500);
               return;
             }
 
@@ -26151,6 +26931,7 @@ Include ALL tracks. Use null for unknown fields.`;
         clearTimeout(self._maBatchLoadingTimer);
       } catch(_e) {
         if (_stale()) return;
+        if (_fastOk) { console.warn('[crowai] vibe "' + label + '": extra playlists/albums failed', _e); return; }   // first song is playing; the final message covers the rest
         self._hideLoadingToast();
         self._pillPulse(0);
         self._maBatchLoading = false;
@@ -26159,6 +26940,41 @@ Include ALL tracks. Use null for unknown fields.`;
       }
     };
 
+
+    // A vibe runs as one "busy" job: the spinner in the mini artwork and the
+    // pulsing speaker pill stay on until the queue has really been built, and the
+    // queue can't be opened half-built meanwhile (it says "Still adding your
+    // songs" instead). The friendly "ready" message is shown at the very end.
+    const playMoodOnSpeaker = (seeds, label, targetEntity, moodQuery) =>
+      self._busyJob(async () => {
+        const run = { finish: null, id: null };
+        // A vibe builds its queue in a couple of quick batches, so the queue can be
+        // opened while it runs and simply fills in live (queue_updated events).
+        self._liveQueueJobs = (self._liveQueueJobs || 0) + 1;
+        self._syncQueueBuilding();
+        // However slow Music Assistant is, the spinner is never left on for more than
+        // 75 seconds: after that this vibe stops adding and reports what it managed.
+        const _deadline = setTimeout(() => {
+          if (run.id && self._moodPlayPending === run.id) {
+            console.warn('[crowai] vibe "' + label + '": taking too long — stopping');
+            self._moodPlayPending = null;
+            self._showToast('\u2713 ' + label + ' is playing \u2014 the rest of the queue is still loading in the background', 4000);
+          }
+        }, 75000);
+        try {
+          const _work = (async () => {
+            await _playMoodInner(seeds, label, targetEntity, moodQuery, run);
+            if (run.finish) await run.finish();
+          })();
+          await Promise.race([_work, new Promise(res => { run.release = res; setTimeout(res, 76000); })]);
+        } catch (_e) {
+          console.warn('[crowai] vibe "' + label + '": stopped early', _e);
+          self._hideLoadingToast();
+        } finally {
+          clearTimeout(_deadline);
+          self._liveQueueJobs = Math.max(0, (self._liveQueueJobs || 1) - 1);
+        }
+      }, 90000);
 
     const doMood = (seeds, label, query) => {
       const _playFn = eid => playMoodOnSpeaker(seeds, label, eid, query);
@@ -26195,8 +27011,11 @@ Include ALL tracks. Use null for unknown fields.`;
     maPopup.querySelector('#crow-ai-mood-overlay')?.remove();
     const overlay = document.createElement('div');
     overlayRef.el = overlay;
+    overlayRef.openedAt = Date.now();
     overlay.id = 'crow-ai-mood-overlay';
-    overlay.style.cssText = 'position:absolute;inset:0;z-index:35;background:var(--crow-panel-bg, #13131a);display:flex;flex-direction:column;border-radius:24px;overflow:hidden;-webkit-mask-image:-webkit-radial-gradient(white,black);';
+    // Sits below the library's own header (retitled "Vibe", with its one
+    // close button) so there's no second title or × showing through.
+    overlay.style.cssText = 'position:absolute;left:0;right:0;bottom:0;top:0;z-index:35;background:var(--crow-panel-bg, #13131a);display:flex;flex-direction:column;border-radius:0 0 24px 24px;overflow:hidden;';
 
     const header = document.createElement('div');
     header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:18px 18px 14px;flex-shrink:0;';
@@ -26242,13 +27061,35 @@ Include ALL tracks. Use null for unknown fields.`;
     const grid = buildMoodGrid();
     while (grid.firstChild) scrollDiv.appendChild(grid.firstChild);
 
-    overlay.appendChild(header);
     overlay.appendChild(searchWrap);
     overlay.appendChild(scrollDiv);
     maPopup.appendChild(overlay);
     maPopup.classList.add('visible');
+    scrollDiv.style.padding = '0 8px 20px';
+    searchWrap.style.paddingTop = '4px';
 
-    closeBtn.addEventListener('click', () => { overlay.remove(); maPopup.classList.remove('visible'); });
+    // Borrow the library header: "Vibe" + its close button. Put things back
+    // when the Vibe screen goes away (closed, or the library reopened).
+    const _maHeader = maPopup.querySelector('.ma-header');
+    const _maTitle  = maPopup.querySelector('#maTitle');
+    const _maClose  = maPopup.querySelector('#maClose');
+    const _prevTitle = _maTitle ? _maTitle.textContent : null;
+    const _hidden = [];
+    if (_maHeader) {
+      overlay.style.top = (_maHeader.offsetTop + _maHeader.offsetHeight) + 'px';
+      // Hide anything else in the header (back button, view toggle…) while Vibe shows.
+      [..._maHeader.querySelectorAll('button')].forEach(b => { if (b !== _maClose && b.style.display !== 'none') { _hidden.push([b, b.style.display]); b.style.display = 'none'; } });
+    }
+    if (_maTitle) _maTitle.textContent = 'Vibe';
+    const _restoreHeader = () => {
+      if (_maTitle && _prevTitle != null) _maTitle.textContent = _prevTitle;
+      _hidden.forEach(([b, d]) => { b.style.display = d; });
+    };
+    const _closeVibe = () => { _restoreHeader(); overlay.remove(); };
+    if (_maClose) _maClose.addEventListener('click', _closeVibe, { once: true });
+    // Also restore if something else removes the overlay.
+    new MutationObserver((_, obs) => { if (!overlay.isConnected) { _restoreHeader(); obs.disconnect(); } }).observe(maPopup, { childList: true });
+    closeBtn.addEventListener('click', () => { _closeVibe(); maPopup.classList.remove('visible'); });
     wireMoodBtns(scrollDiv);
 
     // Option C: Pre-warm artist URIs while user browses the mood grid
@@ -26450,7 +27291,7 @@ Include ALL tracks. Use null for unknown fields.`;
     this._infoPopupOpenedAt = Date.now();
     const _rbo = r.getElementById('queueMenuBtn');
     if (_rbo) _rbo.classList.add('hidden');
-    if (titleEl) titleEl.textContent = '🎸 Similar Artists';
+    if (titleEl) titleEl.textContent = 'Similar Artists';
 
     if (!this._aiPanelGeneration) this._aiPanelGeneration = 0;
     this._aiPanelGeneration++;
@@ -26638,7 +27479,7 @@ Include ALL tracks. Use null for unknown fields.`;
     if (_rbo) _rbo.classList.add('hidden');
     const _qsrSearch = r.getElementById('queueSearchRow');
     if (_qsrSearch) _qsrSearch.classList.add('hidden');
-    if (titleEl) titleEl.textContent = '🔍 AI Search';
+    if (titleEl) titleEl.textContent = 'AI Search';
 
     if (!this._aiPanelGeneration) this._aiPanelGeneration = 0;
     this._aiPanelGeneration++;
@@ -26912,6 +27753,7 @@ Include ALL tracks. Use null for unknown fields.`;
           self._pillPulse(20000);
           let successCount = 0;
           if (action === 'replace') {
+            (typeof self?._showLoadingToast === 'function' ? self : this)._showLoadingToast('Starting playback\u2026');
             const [first, ...rest] = results;
             try {
               await self._hass.connection.sendMessagePromise({
@@ -26947,7 +27789,11 @@ Include ALL tracks. Use null for unknown fields.`;
           clearTimeout(self._maBatchLoadingTimer);
           self._pillPulse(0);
           const _spkName = self._entityDisplayName(_srchBarTarget);
-          if (action !== 'replace') {
+          if (successCount === 0 && action !== 'replace') {
+
+            self._showToast('\u26a0\ufe0f Couldn\u2019t add to queue \u2014 check Music Assistant.', 4000);
+
+          } else if (action !== 'replace') {
             const label = action === 'next' ? 'Playing next' : 'Added to queue';
             self._showToast(`${label} — ${successCount} track${successCount !== 1 ? 's' : ''} on ${_spkName}`, 3000);
           }
@@ -27553,7 +28399,7 @@ Include ALL tracks. Use null for unknown fields.`;
         title: detail.title || r.title,
         year: (detail.release_date || r.release_date || '').split('-')[0] || '',
         genres: genres.length ? genres : (r.genre_ids || []).map(id => _movieGenreMap[id]).filter(Boolean),
-        rating: detail.vote_average ? detail.vote_average.toFixed(1) : '',
+        rating: detail.vote_average ? detail.vote_average.toFixed(1) : '', votes: detail.vote_count || 0,
         overview: detail.overview || r.overview || '',
         cast: (credits?.cast || []).slice(0, 15).map(c => c.name),
         director,
@@ -27584,7 +28430,7 @@ Include ALL tracks. Use null for unknown fields.`;
         title: detail.name || r.name,
         year: (detail.first_air_date || r.first_air_date || '').split('-')[0] || '',
         genres: genres.length ? genres : (r.genre_ids || []).map(id => _tvGenreMap[id]).filter(Boolean),
-        rating: detail.vote_average ? detail.vote_average.toFixed(1) : '',
+        rating: detail.vote_average ? detail.vote_average.toFixed(1) : '', votes: detail.vote_count || 0,
         overview: detail.overview || r.overview || '',
         cast: castSorted.slice(0, 15).map(c => c.name),
         seasons: (detail.seasons || []).filter(s => s.season_number > 0).length || detail.number_of_seasons || 0,
@@ -27844,8 +28690,9 @@ Include ALL tracks. Use null for unknown fields.`;
       const prompt = 'You are a movie and TV encyclopedia. Use the full breadth of your training knowledge, including recent releases — do not assume you only know about older titles. I need information about "' + cleanTitle + '". CRITICAL: You MUST use your training knowledge to answer this. Do NOT say you cannot access the internet. ' + _exactInstruction + ' Return as a raw JSON array. Start with [ end with ]. Include up to 15 cast members, a "fun_fact" string with one genuinely interesting or surprising fact, and a "similar" array of 10 similar titles. Movie: [{"type":"movie","title":"Heat","year":"1995","genres":["Crime"],"rating":"8.3","overview":"...","cast":["Al Pacino"],"director":"Michael Mann","status":"Released","vibe":"Intense","fun_fact":"Al Pacino and Robert De Niro share only one scene together.","similar":[{"title":"Michael Mann\'s Collateral","year":"2004","type":"movie"},{"title":"Heat 2","year":"2022","type":"movie"}]}] TV: [{"type":"tv","title":"Doctor Who","year":"2005","genres":["Sci-Fi"],"rating":"8.6","overview":"...","cast":["David Tennant"],"seasons":14,"status":"Continuing","vibe":"Epic","fun_fact":"The show originally ran from 1963 to 1989 before being revived in 2005.","similar":[{"title":"Torchwood","year":"2006","type":"tv"},{"title":"The Sarah Jane Adventures","year":"2007","type":"tv"}]}] If truly unknown return [].' ;
 
       try {
+        // Quiet when TMDB can step in if the AI can't help.
         const resp = await this._aiProcess({
-          type: 'conversation/process', text: prompt,
+          type: 'conversation/process', text: prompt, _crowSilent: _tmdbKeyPresent,
           agent_id: agentId, language: navigator.language || 'en'
         });
         const raw = resp?.response?.speech?.plain?.speech || '';
@@ -28216,7 +29063,7 @@ Include ALL tracks. Use null for unknown fields.`;
     // (✨ AI Info vs 💿 Discogs Info): shows which source this result came
     // from so it's never ambiguous when both are configured.
     const _videoTitleEl = this.shadowRoot?.getElementById('infoPopupTitle');
-    if (_videoTitleEl) _videoTitleEl.textContent = data._fromTmdb ? '🎬 TMDB Info' : 'Info';
+    if (_videoTitleEl) _videoTitleEl.textContent = data._fromTmdb ? 'TMDB Info' : 'Info';
 
     // Opened from Watch History and the lookup says this is a TV show —
     // fix any entries for that title that were logged as a movie (some
@@ -28232,7 +29079,10 @@ Include ALL tracks. Use null for unknown fields.`;
     const _seasonsCount = data.type === 'tv' && data.seasons ? data.seasons : 0;
     const metaItems = [data.year, data.status].filter(Boolean);
     // Seasons rendered as a separate tappable button if available — see #tv-seasons-btn below
-    const ratingHtml = data.rating ? `<div style="display:inline-flex;align-items:center;gap:6px;margin:4px 0;"><svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:#FFD60A"><path d="M12,17.27L18.18,21L16.54,13.97L22,9.24L14.81,8.62L12,2L9.19,8.62L2,9.24L7.46,13.97L5.82,21L12,17.27Z"/></svg><span style="font-size:13px;font-weight:600;color:#FFD60A">${data.rating}</span><span style="font-size:11px;color:${this._pt("dim")}">/ 10</span></div>` : '';
+    const ratingHtml = this._ratingRingHtml(data.rating, data.votes, {
+      site: 'tmdb', name: data.title || '',
+      url: data._tmdbUrl || (data.title ? 'https://www.themoviedb.org/search?query=' + encodeURIComponent(data.title) : ''),
+    });
     const _directorKnownEmpty = (() => {
       if (!data.director) return false;
       const _bioCacheKey = ('bio|' + data.director).toLowerCase();
@@ -28281,15 +29131,16 @@ Include ALL tracks. Use null for unknown fields.`;
         <div class="info-hero-meta">
           <div class="info-hero-title">${data.title || ''}</div>
           ${metaItems.length ? `<div class="info-hero-sub">${metaItems.join(' · ')}</div>` : ''}
-          ${_seasonsCount ? `<button id="tv-seasons-btn" style="align-self:flex-start;display:inline-flex;align-items:center;gap:5px;background:rgba(99,179,237,0.1);border:1px solid rgba(99,179,237,0.25);border-radius:20px;padding:3px 9px;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;margin-bottom:2px;"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:#63b3ed;flex-shrink:0"><path d="M21,3H3C1.89,3 1,3.89 1,5V17A2,2 0 0,0 3,19H8V21H16V19H21A2,2 0 0,0 23,17V5C23,3.89 22.1,3 21,3M21,17H3V5H21V17Z"/></svg><span style="font-size:11px;color:#63b3ed;font-weight:600;">${_seasonsCount} season${_seasonsCount !== 1 ? 's' : ''}</span><svg viewBox="0 0 24 24" style="width:9px;height:9px;fill:#63b3ed;opacity:0.6"><path d="M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z"/></svg></button>` : ''}
+          ${(_seasonsCount || ratingHtml) ? `<div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;margin-top:2px;">
+          ${_seasonsCount ? `<button id="tv-seasons-btn" style="display:inline-flex;align-items:center;gap:5px;background:rgba(99,179,237,0.1);border:1px solid rgba(99,179,237,0.25);border-radius:20px;padding:3px 9px;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;margin-bottom:2px;"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:#63b3ed;flex-shrink:0"><path d="M21,3H3C1.89,3 1,3.89 1,5V17A2,2 0 0,0 3,19H8V21H16V19H21A2,2 0 0,0 23,17V5C23,3.89 22.1,3 21,3M21,17H3V5H21V17Z"/></svg><span style="font-size:11px;color:#63b3ed;font-weight:600;">${_seasonsCount} season${_seasonsCount !== 1 ? 's' : ''}</span><svg viewBox="0 0 24 24" style="width:9px;height:9px;fill:#63b3ed;opacity:0.6"><path d="M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z"/></svg></button>` : ''}
           ${ratingHtml}
+          </div>` : ''}
           ${directorHtml}
         </div>
       </div>
       ${data.overview ? `<div class="info-section-label">Overview</div><div class="info-overview">${data.overview}</div>` : ''}
       ${genreTags ? `<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:8px;">${genreTags}</div>` : ''}
       ${(data.fun_fact || data.fact) ? `<div style="margin:10px 0;padding:10px 12px;background:rgba(99,179,237,0.07);border:1px solid rgba(99,179,237,0.14);border-radius:10px;"><div style="font-size:10px;font-weight:700;color:rgba(99,179,237,0.6);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:4px">Fun Fact</div><div style="font-size:12px;color:${this._pt("text")};line-height:1.5">${data.fun_fact || data.fact}</div></div>` : ''}
-      ${(data._fromTmdb && data._tmdbUrl) ? `<a class="info-ext-link" href="${data._tmdbUrl}" target="_blank" rel="noopener" style="margin:8px 0;"><svg viewBox="0 0 24 24"><path d="M11,9H13V7H11M12,20C7.59,20 4,16.41 4,12C4,7.59 7.59,4 12,4C16.41,4 20,7.59 20,12C20,16.41 16.41,20 12,20M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M11,17H13V11H11V17Z"/></svg>View on TMDB</a>` : ''}
       <div id="content-warning-section"></div>
       ${(this._aiEnabled() && !data._fromTmdb) ? `
       <div id="action-row" style="display:flex;gap:8px;margin:12px 0 8px;">
@@ -28615,10 +29466,14 @@ Include ALL tracks. Use null for unknown fields.`;
       });
     };
 
+    // Cached actors load immediately. Only names that still need a network
+    // lookup are staggered — previously every actor waited idx × 700ms even
+    // when fully cached, so the 10th photo couldn't appear before ~6.3s.
+    let _uncachedN = 0;
     (data.cast || []).slice(0, 10).forEach((name, idx) => {
-      // Stagger initial fetches so we don't hammer Wikipedia with many
-      // simultaneous requests — retries are handled by _fetchWikipediaThumbWithRetry.
-      setTimeout(() => _fetchCastPhotoWithRetry(name, idx), idx * 700);
+      const _known = this._castPhotoCache.has(name) || this._wikiThumbUrlCache?.has(name);
+      const delay = _known ? 0 : (_uncachedN++) * 250;
+      setTimeout(() => _fetchCastPhotoWithRetry(name, idx), delay);
     });
 
     // Wire cast item clicks → bio panel
@@ -28629,6 +29484,9 @@ Include ALL tracks. Use null for unknown fields.`;
         self._showCastBio(content, item.dataset.castName, data.title || '', artUrl);
       });
     });
+
+    // User score ring → "Visit TMDB?" alert
+    this._wireExtLinks(content);
 
     // Wire director link → bio panel
     const directorLink = content.querySelector('#video-director-link');
@@ -29257,7 +30115,7 @@ Include ALL tracks. Use null for unknown fields.`;
     // Fetch episodes from AI
     if (!this._tvEpisodesCache) this._tvEpisodesCache = new Map();
     const cacheKey = `${showTitle.toLowerCase()}|s${seasonNum}|v2`; // v2 = includes tease field
-    let episodes = this._tvEpisodesCache.get(cacheKey);
+    let episodes = this._aiCachedRead(this._tvEpisodesCache, 'tvEpisodes', cacheKey);
     if (!episodes) {
       try {
         const prompt = `List all episodes of Season ${seasonNum} of "${showTitle}". Reply ONLY with a JSON array — no markdown:\n[{"ep":1,"title":"Episode Title","airdate":"YYYY-MM-DD","tease":"Under 10 words, spoiler-free teaser"}]\nKeep teases intriguing but spoiler-free — no plot reveals.`;
@@ -29268,8 +30126,14 @@ Include ALL tracks. Use null for unknown fields.`;
         const start = raw.indexOf('['), end = raw.lastIndexOf(']');
         if (start !== -1 && end > start) episodes = JSON.parse(raw.slice(start, end + 1));
         if (episodes?.length) {
-          this._tvEpisodesCache.set(cacheKey, episodes);
-          this._aiSessionSet('tvEpisodes', cacheKey, episodes);
+          // A season that's still airing (an episode in the last 60 days or yet to
+          // air) is refreshed after 2 days; a finished season keeps for 30.
+          const _now = Date.now();
+          const _airing = episodes.some(e => {
+            const t = Date.parse(e?.airdate || '');
+            return !isNaN(t) && t > _now - 60 * 864e5;
+          });
+          this._aiCachedWrite(this._tvEpisodesCache, 'tvEpisodes', cacheKey, episodes, { ttlDays: _airing ? 2 : 30, max: 150 });
         }
       } catch(e) {}
     }
@@ -29391,12 +30255,11 @@ Include ALL tracks. Use null for unknown fields.`;
       if (!isLoading) self._wireEpisodeActionRow(content, ep, showTitle, seasonNum);
     };
 
-    _render(null, true);
-
-    // Fetch richer episode detail from AI
+    // Fetch richer episode detail from AI (cached ones render straight away)
     if (!this._tvEpDetailCache) this._tvEpDetailCache = new Map();
     const cacheKey = `${showTitle.toLowerCase()}|s${seasonNum}e${ep.ep}`;
-    let detail = this._tvEpDetailCache.get(cacheKey);
+    let detail = this._aiCachedRead(this._tvEpDetailCache, 'tvEpDetail', cacheKey);
+    if (!detail) _render(null, true);
     if (!detail) {
       try {
         const prompt = `Give details for S${seasonNum}E${ep.ep} "${ep.title || ''}" of the TV series "${showTitle}". Reply ONLY with JSON — no markdown: {"overview":"2-3 sentence synopsis","director":"Name","writer":"Name","rating":"8.1","fun_fact":"One interesting behind-the-scenes fact"}`;
@@ -29406,10 +30269,7 @@ Include ALL tracks. Use null for unknown fields.`;
         const raw = resp?.response?.speech?.plain?.speech || '';
         const start = raw.indexOf('{'), end = raw.lastIndexOf('}');
         if (start !== -1 && end > start) detail = JSON.parse(raw.slice(start, end + 1));
-        if (detail) {
-          this._tvEpDetailCache.set(cacheKey, detail);
-          this._aiSessionSet('tvEpDetail', cacheKey, detail);
-        }
+        if (detail) this._aiCachedWrite(this._tvEpDetailCache, 'tvEpDetail', cacheKey, detail, { ttlDays: 30, max: 400 });
       } catch(e) {}
     }
     _render(detail, false);
@@ -29493,7 +30353,7 @@ Include ALL tracks. Use null for unknown fields.`;
         triviaPanel.style.display = 'block';
         const cacheKey = ('eptrivia|' + showTitle + '|s' + seasonNum + 'e' + ep.ep).toLowerCase();
         if (!this._aiEpTriviaCache) this._aiEpTriviaCache = new Map();
-        let questions = this._aiEpTriviaCache.get(cacheKey) || this._aiSessionGet('epTrivia', cacheKey);
+        let questions = this._aiCachedRead(this._aiEpTriviaCache, 'epTrivia', cacheKey);
         if (!questions) {
           triviaPanel.innerHTML = `<div style="display:flex;align-items:center;gap:7px;padding:10px 12px;background:${_bg};border:1px solid ${_border};border-radius:12px;opacity:0.6;"><div style="width:12px;height:12px;border:1.5px solid rgba(99,179,237,0.3);border-top-color:#63b3ed;border-radius:50%;animation:ma-spin 0.8s linear infinite;"></div><span style="font-size:11px;color:${_dim};">Generating trivia…</span></div>`;
           const hasAI = await this._aiCheckAvailable();
@@ -29505,8 +30365,7 @@ Include ALL tracks. Use null for unknown fields.`;
           try {
             const i1 = raw.indexOf('['), i2 = raw.lastIndexOf(']');
             questions = JSON.parse(i1 !== -1 ? raw.slice(i1, i2+1) : raw);
-            this._aiEpTriviaCache.set(cacheKey, questions);
-            this._aiSessionSet('epTrivia', cacheKey, questions);
+            this._aiCachedWrite(this._aiEpTriviaCache, 'epTrivia', cacheKey, questions, { ttlDays: 30, max: 200 });
           } catch(e) { triviaPanel.innerHTML = ''; return; }
         }
         if (!triviaPanel.isConnected) return;
@@ -30185,7 +31044,7 @@ Include ALL tracks. Use null for unknown fields.`;
         self._albumPillTapped.add((albumName + '|' + albumArtist).toLowerCase());
         const _savedContent2 = content.innerHTML;
         const _savedTitle2   = titleEl2?.textContent || 'Info';
-        if (titleEl2) titleEl2.textContent = '💿 Album';
+        if (titleEl2) titleEl2.textContent = 'Album';
         self._showAIAlbumTracks(content, albumName, albumArtist, artUrl, () => {
           r2?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
           content.innerHTML = _savedContent2;
@@ -30525,8 +31384,11 @@ Include ALL tracks. Use null for unknown fields.`;
       if (!this._wikiThumbUrlCache) this._wikiThumbUrlCache = new Map();
       const now = Date.now();
       const maxAge = 30 * 24 * 60 * 60 * 1000; // 30 days
+      const missMaxAge = 7 * 24 * 60 * 60 * 1000; // 7 days for confirmed misses
       for (const [name, entry] of Object.entries(stored)) {
-        if (!entry?.url || (now - (entry.ts || 0)) > maxAge) continue;
+        if (!entry?.url) continue;
+        const age = now - (entry.ts || 0);
+        if (age > (entry.url === '__none__' ? missMaxAge : maxAge)) continue;
         this._wikiThumbUrlCache.set(name, entry.url);
       }
     } catch(e) {}
@@ -30544,8 +31406,12 @@ Include ALL tracks. Use null for unknown fields.`;
         for (const [k, v] of Object.entries(existing)) out[k] = v;
       } catch(_) {}
       for (const [name, url] of this._wikiThumbUrlCache.entries()) {
-        if (url === '__none__') continue; // don't persist "no result" — retry on next session
-        out[name] = { url, ts: now };
+        // Confirmed misses ARE persisted now (with a shorter 7-day TTL on
+        // load) — previously every miss re-ran summary → search → summary
+        // each session. Keep an existing entry's timestamp so the TTL isn't
+        // refreshed just because the cache was re-saved.
+        const prev = out[name];
+        out[name] = { url, ts: (prev && prev.url === url && prev.ts) ? prev.ts : now };
       }
       // Evict oldest if over cap
       const entries = Object.entries(out);
@@ -30561,14 +31427,38 @@ Include ALL tracks. Use null for unknown fields.`;
     } catch(e) {}
   }
 
+  // Persistent store for Wikipedia photo bytes. Cache API needs a secure
+  // context (https / Nabu Casa) — on plain-http local access it's simply
+  // unavailable and we fall back to the network every session as before.
+  async _wikiImageCache() {
+    if (this._wikiImgCachePromise === undefined) {
+      this._wikiImgCachePromise = (async () => {
+        try {
+          if (!window.caches || !window.isSecureContext) return null;
+          return await window.caches.open('crowai-wiki-img-v1');
+        } catch (_) { return null; }
+      })();
+    }
+    return this._wikiImgCachePromise;
+  }
+
   async _fetchWikipediaThumb(name, validateIsMedia) {
     if (!name) return null;
-    // Serialize Wikipedia requests through a queue to avoid overwhelming the API
-    if (!this._wikiQueue) {
-      this._wikiQueue = Promise.resolve();
+    // Bounded concurrency (3 at a time) rather than a strict one-at-a-time
+    // queue. The old serial queue meant a single slow miss (summary 404 →
+    // search → second summary → image) held up every other photo behind it,
+    // including ones that were already cached and needed no network at all.
+    const MAX = 3;
+    if (this._wikiActive == null) { this._wikiActive = 0; this._wikiWaiters = []; }
+    if (this._wikiActive >= MAX) await new Promise(res => this._wikiWaiters.push(res));
+    this._wikiActive++;
+    try {
+      return await this._fetchWikipediaThumbDirect(name, validateIsMedia);
+    } finally {
+      this._wikiActive--;
+      const next = this._wikiWaiters.shift();
+      if (next) next();
     }
-    const result = await (this._wikiQueue = this._wikiQueue.then(() => this._fetchWikipediaThumbDirect(name, validateIsMedia)));
-    return result;
   }
 
   async _fetchWikipediaThumbDirect(name, validateIsMedia) {
@@ -30688,7 +31578,22 @@ Include ALL tracks. Use null for unknown fields.`;
 
       // Step 2: fetch the image bytes via JS (not subject to img-src CSP) and
       // convert to a blob URL so <img src="blob:..."> works inside HA's webview
-      const imgResp = await fetch(remoteUrl);
+      // The blob cache above is memory-only, so it's empty every time the HA
+      // frontend reloads — and previously that meant re-downloading every
+      // photo each session even though its URL was cached. Keep the bytes in
+      // the Cache API (persistent, survives reloads) and only hit Wikimedia's
+      // CDN on a genuine first sighting.
+      let imgResp = null;
+      const _imgCache = await this._wikiImageCache();
+      if (_imgCache) {
+        try { imgResp = await _imgCache.match(remoteUrl); } catch (_) { imgResp = null; }
+      }
+      if (!imgResp) {
+        imgResp = await fetch(remoteUrl);
+        if (imgResp.ok && _imgCache) {
+          try { await _imgCache.put(remoteUrl, imgResp.clone()); } catch (_) { /* quota etc — non-fatal */ }
+        }
+      }
       if (!imgResp.ok) { console.warn('[CrowAI] Wikipedia image fetch failed', imgResp.status, name); return null; }
       const blob = await imgResp.blob();
       const blobUrl = URL.createObjectURL(blob);
@@ -31803,14 +32708,14 @@ Include ALL tracks. Use null for unknown fields.`;
 
     const GROUPS = {
       addq:  { label: 'Add to Queue', icon: ICON.addq, ids: ['qmAddSimilar', 'qmAddSameGenre', 'qmAddSameYear', 'qmAddSameGenreYear', 'qmPlayAlbum'],
-               short: { qmAddSimilar: 'Similar Songs', qmAddSameGenre: 'Same Genre', qmAddSameYear: 'Same Year', qmAddSameGenreYear: 'Same Genre & Year', qmPlayAlbum: 'This Album' } },
+               short: { qmAddSimilar: 'AI Similar Songs', qmAddSameGenre: 'AI Same Genre', qmAddSameYear: 'AI Same Year', qmAddSameGenreYear: 'AI Same Genre & Year', qmPlayAlbum: 'This Album' } },
       share: { label: 'Share & Announce', icon: ICON.share, ids: ['qmAnnounce', 'qmSendMsg'], short: {} },
     };
-    // Sections: this queue · find & browse · discover & build · share · clear.
+    // Sections: find & browse · this queue · discover & build · share · clear.
     const ORDER = [
+      'qmSearch', 'qmAISearch', 'qmLibrary', '|',
       'qmReorder', 'qmJumpCurrent', 'qmPinTrack', 'qmSaveQueue', 'qmTransfer', '|',
-      'qmAISearch', 'qmLibrary', '|',
-      'qmMood', 'qmAIRecs', 'qmArtistRadio', 'qmRadioMode', '@addq', '|',
+      'qmMood', 'qmAIRecs', 'qmArtistRadio', '@addq', 'qmRadioMode', '|',
       '@share', '|',
       'qmClear',
     ];
@@ -31829,7 +32734,7 @@ Include ALL tracks. Use null for unknown fields.`;
         row.className = 'queue-dropdown-item qd-group';
         row.setAttribute('role', 'button');
         row.setAttribute('aria-haspopup', 'menu');
-        row.innerHTML = `${SVG_NS(g.icon)}<span class="queue-dropdown-label"></span><span class="qd-count">${kids.length}</span><svg class="qd-chev" viewBox="0 0 24 24">${ICON.chev}</svg>`;
+        row.innerHTML = `${SVG_NS(g.icon)}<span class="queue-dropdown-label"></span><svg class="qd-chev" viewBox="0 0 24 24">${ICON.chev}</svg>`;
         row.querySelector('.queue-dropdown-label').textContent = g.label;
         kids.forEach(k => { const lab = k.querySelector('.queue-dropdown-label'); if (lab && g.short[k.id]) lab.textContent = g.short[k.id]; });
         row._qdGroup = { g, kids };
@@ -31883,6 +32788,176 @@ Include ALL tracks. Use null for unknown fields.`;
     topEls.forEach(el => { if (el._qdGroup) tap(el, () => showGroup(el._qdGroup)); });
   }
 
+  // ── Mac-style alert ─────────────────────────────────────────────────────
+  // A centred glass dialog over the open panel (or the card), with a split
+  // Cancel / action footer like macOS and iOS alerts. Resolves true when the
+  // action button is tapped; Cancel, the backdrop or Escape resolve false.
+  _macConfirm({ title, message, confirmLabel = 'OK', cancelLabel = 'Cancel', iconPath = '', iconColour = '#0A84FF' } = {}) {
+    return new Promise(resolve => {
+      const r = this.shadowRoot;
+      const popup = r?.getElementById('infoPopup');
+      const host = (popup && popup.classList.contains('visible')) ? popup : (r?.getElementById('cardOuter') || popup);
+      if (!host) { resolve(false); return; }
+      host.querySelector('.crow-mac-backdrop')?.remove();
+      const esc = t => String(t ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+      const isLight = !!this._panelIsLight;
+      const back = document.createElement('div');
+      back.className = 'crow-mac-backdrop';
+      back.style.setProperty('--crow-mac-bg', isLight ? 'rgba(246,246,248,0.86)' : 'rgba(40,40,46,0.82)');
+      back.style.setProperty('--crow-mac-border', isLight ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.14)');
+      back.innerHTML =
+        '<div class="crow-mac-dialog" role="alertdialog" aria-modal="true">' +
+          (iconPath ? '<div class="crow-mac-icon" style="background:' + iconColour + ';"><svg viewBox="0 0 24 24"><path d="' + iconPath + '"/></svg></div>' : '<div style="height:20px"></div>') +
+          '<div class="crow-mac-title" style="color:' + this._pt('text') + ';">' + esc(title) + '</div>' +
+          (message ? '<div class="crow-mac-msg" style="color:' + this._pt('dim') + ';">' + esc(message) + '</div>' : '<div style="height:16px"></div>') +
+          '<div class="crow-mac-btns">' +
+            '<button class="crow-mac-cancel" style="color:' + this._pt('text') + ';">' + esc(cancelLabel) + '</button>' +
+            '<button class="crow-mac-ok">' + esc(confirmLabel) + '</button>' +
+          '</div>' +
+        '</div>';
+      host.appendChild(back);
+      requestAnimationFrame(() => back.classList.add('visible'));
+      let done = false;
+      const finish = (ok) => {
+        if (done) return; done = true;
+        document.removeEventListener('keydown', onKey, true);
+        back.classList.remove('visible');
+        setTimeout(() => back.remove(), 180);
+        resolve(ok);
+      };
+      const onKey = (e) => {
+        if (e.key === 'Escape') { e.stopPropagation(); finish(false); }
+        else if (e.key === 'Enter') { e.stopPropagation(); finish(true); }
+      };
+      document.addEventListener('keydown', onKey, true);
+      back.addEventListener('click', (e) => { e.stopPropagation(); if (e.target === back) finish(false); });
+      back.querySelector('.crow-mac-cancel').addEventListener('click', (e) => { e.stopPropagation(); finish(false); });
+      back.querySelector('.crow-mac-ok').addEventListener('click', (e) => { e.stopPropagation(); finish(true); });
+    });
+  }
+
+  // ── iOS-style confirmation ──────────────────────────────────────────────
+  // The current iPhone alert: a centred, rounded glass card with a bold title,
+  // a short message, and full-width pill buttons stacked underneath — Cancel in
+  // grey, the action in blue at the bottom. Resolves true for the action;
+  // Cancel, a tap outside or Escape resolve false.
+  _iosConfirm({ title, message, confirmLabel = 'OK', cancelLabel = 'Cancel' } = {}) {
+    return new Promise(resolve => {
+      const r = this.shadowRoot;
+      const popup = r?.getElementById('infoPopup');
+      const host = (popup && popup.classList.contains('visible')) ? popup : (r?.getElementById('cardOuter') || popup);
+      if (!host) { resolve(false); return; }
+      host.querySelector('.crow-ios-backdrop')?.remove();
+      const esc = t => String(t ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+      const light = !!this._panelIsLight;
+      const text = light ? '#000000' : '#ffffff';
+      const dim  = light ? 'rgba(60,60,67,0.62)' : 'rgba(235,235,245,0.62)';
+      const back = document.createElement('div');
+      back.className = 'crow-ios-backdrop';
+      back.style.setProperty('--crow-ios-bg',    light ? 'rgba(250,250,252,0.86)' : 'rgba(48,48,52,0.78)');
+      back.style.setProperty('--crow-ios-edge',  light ? 'rgba(0,0,0,0.08)'      : 'rgba(255,255,255,0.12)');
+      back.style.setProperty('--crow-ios-shine', light ? 'rgba(255,255,255,0.7)'  : 'rgba(255,255,255,0.08)');
+      back.style.setProperty('--crow-ios-pill',  light ? 'rgba(120,120,128,0.16)' : 'rgba(255,255,255,0.12)');
+      back.innerHTML =
+        '<div class="crow-ios-alert" role="alertdialog" aria-modal="true">' +
+          (title ? '<div class="crow-ios-title" style="color:' + text + ';">' + esc(title) + '</div>' : '') +
+          (message ? '<div class="crow-ios-msg" style="color:' + dim + ';">' + esc(message) + '</div>' : '') +
+          '<div class="crow-ios-btns">' +
+            '<button class="crow-ios-cancel" style="color:' + text + ';">' + esc(cancelLabel) + '</button>' +
+            '<button class="crow-ios-ok">' + esc(confirmLabel) + '</button>' +
+          '</div>' +
+        '</div>';
+      host.appendChild(back);
+      requestAnimationFrame(() => requestAnimationFrame(() => back.classList.add('visible')));
+      let done = false;
+      const finish = (ok) => {
+        if (done) return; done = true;
+        document.removeEventListener('keydown', onKey, true);
+        back.classList.remove('visible');
+        setTimeout(() => back.remove(), 240);
+        resolve(ok);
+      };
+      const onKey = (e) => {
+        if (e.key === 'Escape') { e.stopPropagation(); finish(false); }
+        else if (e.key === 'Enter') { e.stopPropagation(); finish(true); }
+      };
+      document.addEventListener('keydown', onKey, true);
+      back.addEventListener('click', (e) => { e.stopPropagation(); if (e.target === back) finish(false); });
+      back.querySelector('.crow-ios-cancel').addEventListener('click', (e) => { e.stopPropagation(); finish(false); });
+      back.querySelector('.crow-ios-ok').addEventListener('click', (e) => { e.stopPropagation(); finish(true); });
+    });
+  }
+
+  // Friendly "leave for another site?" check before opening an external page.
+  async _confirmVisit(site, url, name) {
+    if (!url) return;
+    const what = name ? '\u201c' + name + '\u201d' : 'this';
+    const sites = {
+      discogs: {
+        title: 'Visit Discogs?',
+        message: 'See the full community ratings, reviews and release details for ' + what + '. It opens in your browser, and this panel will be right here when you come back.',
+        confirmLabel: 'Open in Discogs', iconColour: '#333333',
+        iconPath: 'M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,16.5A4.5,4.5 0 0,1 7.5,12A4.5,4.5 0 0,1 12,7.5A4.5,4.5 0 0,1 16.5,12A4.5,4.5 0 0,1 12,16.5M12,11A1,1 0 0,0 11,12A1,1 0 0,0 12,13A1,1 0 0,0 13,12A1,1 0 0,0 12,11Z',
+      },
+      tmdb: {
+        title: 'Visit TMDB?',
+        message: 'See every user score and review for ' + what + ' on The Movie Database. It opens in your browser, and this panel will be right here when you come back.',
+        confirmLabel: 'Open in TMDB', iconColour: '#01B4E4',
+        iconPath: 'M18,4L20,8H17L15,4H13L15,8H12L10,4H8L10,8H7L5,4H4A2,2 0 0,0 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V4H18Z',
+      },
+    };
+    const cfg = sites[site] || { title: 'Open this page?', message: 'It opens in your browser, and this panel will be right here when you come back.', confirmLabel: 'Open' };
+    const ok = await this._iosConfirm({ title: cfg.title, message: cfg.message, confirmLabel: cfg.confirmLabel, cancelLabel: 'Not Now' });
+    if (ok) window.open(url, '_blank', 'noopener');
+  }
+
+  // Wires every .crow-ext-link inside a freshly rendered panel.
+  _wireExtLinks(root) {
+    root?.querySelectorAll('.crow-ext-link').forEach(el => {
+      if (el._crowExtWired) return;
+      el._crowExtWired = true;
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this._confirmVisit(el.dataset.site, el.dataset.url, el.dataset.name);
+      });
+    });
+  }
+
+  // ── Rating ring (movies & TV) ─────────────────────────────────────────────
+  // The original card's user-score ring: the score out of 100 inside a
+  // coloured ring — green from 70, gold from 50, muted red below — with the
+  // number of votes beside it when TMDB supplied one. Accepts "7.8",
+  // "7.8/10" or "78%".
+  _ratingRingHtml(rating, votes, link) {
+    if (rating == null || rating === '') return '';
+    const raw = String(rating);
+    const n = parseFloat(raw.replace(',', '.'));
+    if (!isFinite(n) || n <= 0) return '';
+    const pct = Math.max(0, Math.min(100, Math.round(/%/.test(raw) || n > 10 ? n : n * 10)));
+    const colour = pct >= 70 ? '#A8D64B' : pct >= 50 ? '#C8B420' : '#C0504A';
+    // Compact ring (34px) so it sits on the same line as the seasons pill.
+    const r = 14, circ = 2 * Math.PI * r, dash = (pct / 100) * circ;
+    const v = parseInt(String(votes || '').replace(/[^0-9]/g, ''), 10) || 0;
+    const votesLabel = v ? (v >= 1000 ? `${Math.round(v / 1000)}k votes` : `${v} vote${v === 1 ? '' : 's'}`) : '';
+    const _attr = t => String(t ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+    const linkAttrs = link?.url
+      ? ` class="info-rating crow-ext-link" role="button" data-site="${_attr(link.site)}" data-url="${_attr(link.url)}" data-name="${_attr(link.name)}"`
+      : ` class="info-rating"`;
+    return `<div${linkAttrs} style="margin:0;gap:8px;">
+      <div class="info-rating-ring" style="width:34px;height:34px;">
+        <svg viewBox="0 0 34 34" style="width:34px;height:34px;">
+          <circle class="info-rating-ring-bg" cx="17" cy="17" r="${r}" style="stroke-width:3;"/>
+          <circle class="info-rating-ring-arc" cx="17" cy="17" r="${r}" stroke="${colour}" style="stroke-width:3;" stroke-dasharray="${dash.toFixed(2)} ${(circ - dash).toFixed(2)}"/>
+        </svg>
+        <div class="info-rating-ring-label"><span class="info-rating-ring-pct" style="font-size:11.5px;color:${this._pt('text')}">${pct}</span></div>
+      </div>
+      <div class="info-rating-meta">
+        <span class="info-rating-val" style="color:${this._pt('text')}">User Score</span>
+        <span class="info-rating-count" style="color:${this._pt('dim')}">${pct} out of 100${votesLabel ? ` \u00b7 ${votesLabel}` : ''}</span>
+      </div>
+    </div>`;
+  }
+
   // ── Working indicator ──────────────────────────────────────────────────────
   // One "busy" state drives both the spinner inside the mini artwork and the
   // pulsing speaker pill. It's a class on the card itself, so it survives the
@@ -31895,10 +32970,10 @@ Include ALL tracks. Use null for unknown fields.`;
     this.shadowRoot?.getElementById('cardOuter')?.classList.toggle('crow-busy', on);
     this._ssApplyPillStatus();
   }
-  async _busyJob(fn) {
+  async _busyJob(fn, capMs = 60000) {
     this._busyJobs = (this._busyJobs || 0) + 1;
     clearTimeout(this._busyCapTimer);
-    this._busyCapTimer = setTimeout(() => { this._busyJobs = 0; this._pulseUntil = 0; this._applyBusy(); this._busyEnded(); }, 60000);
+    this._busyCapTimer = setTimeout(() => { this._busyJobs = 0; this._pulseUntil = 0; this._applyBusy(); this._busyEnded(); }, capMs);
     this._applyBusy();
     this._syncQueueBuilding();
     try { return await fn(); }
@@ -31917,10 +32992,14 @@ Include ALL tracks. Use null for unknown fields.`;
     const popup = this.shadowRoot?.getElementById('infoPopup');
     return !!(popup?.classList.contains('visible') && this._activeInfoPanelKind === 'queue');
   }
+  // True while a busy job is running that doesn't build the queue live.
+  _queueGated() {
+    return (this._busyJobs || 0) > (this._liveQueueJobs || 0);
+  }
   _syncQueueBuilding() {
     const ov = this.shadowRoot?.getElementById('queueBuildingOverlay');
     if (!ov) return;
-    ov.style.setProperty('display', (this._busyJobs || 0) > 0 && this._queuePanelOpen() ? 'flex' : 'none');
+    ov.style.setProperty('display', this._queueGated() && this._queuePanelOpen() ? 'flex' : 'none');
   }
   _busyEnded() {
     clearTimeout(this._busyCapTimer);
@@ -32160,6 +33239,7 @@ Include ALL tracks. Use null for unknown fields.`;
   // ourselves and show a friendly toast instead. Returns the underlying promise in case a
   // caller wants to chain off a successful call.
   _playMediaDirect(entityId, contentId, contentType, friendlyName) {
+    this._showLoadingToast('Starting playback\u2026');
     return this._hass.callService('media_player', 'play_media', {
       entity_id: entityId, media_content_id: contentId, media_content_type: contentType
     }).catch((err) => {
@@ -32185,10 +33265,41 @@ Include ALL tracks. Use null for unknown fields.`;
     if (this._toastTimer) clearTimeout(this._toastTimer);
     textEl.textContent = message;
     toast.classList.add('loading', 'visible');
-    // Safety fallback — dismiss after 10 s if the entity never transitions to playing
+    // Remember what was playing, so the message stays until the new music
+    // has really started (not just until its details arrive), and pulse the
+    // speaker pill / mini-artwork spinner meanwhile.
+    const _st = this._hass?.states?.[this._entity];
+    this._loadingFrom = { at: Date.now(), key: this._loadingKey(_st), state: _st?.state };
+    this._loadingPulse = true;
+    this._pillPulse(20000);
+    // Safety fallback — dismiss after 20 s if the start can't be confirmed
     this._toastTimer = setTimeout(() => {
       this._hideLoadingToast();
-    }, 10000);
+    }, 20000);
+  }
+
+  _loadingKey(st) {
+    const a = st?.attributes || {};
+    return [a.media_title, a.media_artist, a.media_content_id].map(x => x || '').join('|');
+  }
+
+  // Called on every Home Assistant update while "Starting playback…" shows:
+  // it goes once the speaker is playing something new (or was stopped and is
+  // now playing), and its position has started moving.
+  _checkLoadingToast() {
+    const from = this._loadingFrom;
+    if (!from) return;
+    const toast = this.shadowRoot?.getElementById('crowToast');
+    if (!toast?.classList.contains('loading')) { this._loadingFrom = null; return; }
+    const st = this._hass?.states?.[this._entity];
+    if (!st || st.state !== 'playing') return;
+    const changed = this._loadingKey(st) !== from.key || from.state !== 'playing';
+    if (!changed) return;
+    const a = st.attributes || {};
+    const moving = (Number(a.media_position) || 0) >= 1 ||
+      (a.media_position_updated_at && Date.parse(a.media_position_updated_at) > from.at + 1500) ||
+      !a.media_duration;                                  // radio / live streams have no position
+    if (moving || Date.now() - from.at > 6000) this._hideLoadingToast(true);
   }
 
   _hideLoadingToast() {
@@ -32197,6 +33308,8 @@ Include ALL tracks. Use null for unknown fields.`;
     if (!toast.classList.contains('loading')) return; // only clear our loading toast
     if (this._toastTimer) { clearTimeout(this._toastTimer); this._toastTimer = null; }
     toast.classList.remove('loading', 'visible');
+    this._loadingFrom = null;
+    if (this._loadingPulse) { this._loadingPulse = false; this._pillPulse(0); }
   }
 
   /**
@@ -32345,6 +33458,7 @@ Include ALL tracks. Use null for unknown fields.`;
   // (group_members) are the authoritative source of truth.
   async _playMAItemToMultiple(item, tab, entityIds) {
     if (!entityIds?.length) return;
+    this._showLoadingToast('Starting playback\u2026');
     const uri        = item.uri || item.media_content_id;
     const mediaType  = item.media_type || tab;
     const primary    = entityIds[0];
@@ -32976,6 +34090,7 @@ Include ALL tracks. Use null for unknown fields.`;
           entity_id: eid, volume_level: sourceVol
         }).catch(() => {});
       });
+    this._showToast(`Volume synced to ${Math.round(sourceVol * 100)}%`, 1800);
   }
 
   _showAddSpeakerPicker(addable, currentMembers) {
@@ -33586,6 +34701,7 @@ Include ALL tracks. Use null for unknown fields.`;
   }
 
   async _playAlbumViaMAToast(albumTitle, artistName, targetEntityId, enqueueMode) {
+    if (enqueueMode === 'replace' || enqueueMode === 'play') this._showLoadingToast('Starting playback\u2026');
     if (enqueueMode === 'replace') {
       this._maBatchLoading = true;
       clearTimeout(this._maBatchLoadingTimer);
@@ -33788,6 +34904,7 @@ Include ALL tracks. Use null for unknown fields.`;
   }
 
   async _playTrackViaMAToast(trackTitle, artistName, targetEntityId, enqueueMode) {
+    if (enqueueMode === 'replace' || enqueueMode === 'play') this._showLoadingToast('Starting playback\u2026');
     // Re-resolve the MA target entity at call time (not at menu-build time) so
     // we always send to a valid MA entity even on non-MA speakers (HomePod etc.)
     // Mirrors the inline resolution in _playMAItemEnqueue.
@@ -34473,6 +35590,7 @@ Include ALL tracks. Use null for unknown fields.`;
         if (!_menuReady()) return;
         var mode = el.dataset.mode;
         self._closeEnqueueMenu();
+        if (mode === 'play' || mode === 'replace') self._showLoadingToast('Starting playback\u2026');
 
         if (mode === 'reorder') {
           self._toggleQueueReorder();
@@ -34670,6 +35788,7 @@ Include ALL tracks. Use null for unknown fields.`;
           }
         } catch(err) {
           console.error('[Queue enqueue]', err);
+          self._showToast('\u26a0\ufe0f Couldn\u2019t update the queue \u2014 check Music Assistant.', 4000);
         }
       });
     });
@@ -35433,13 +36552,6 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                 </div>
                 <div class="toggle-item" style="align-items:flex-start;gap:12px;">
                   <div style="flex:1;">
-                    <div class="toggle-label">Show Remote Button</div>
-                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Shows the Apple TV-style remote control button on supported entities.</div>
-                  </div>
-                  <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="show_remote_button" checked><span class="toggle-track"></span></label>
-                </div>
-                <div class="toggle-item" style="align-items:flex-start;gap:12px;">
-                  <div style="flex:1;">
                     <div class="toggle-label">Apple TV Keyboard Panel</div>
                     <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Automatically shows a text input when an Apple TV's on-screen keyboard becomes active, so you can type on your phone instead of using the remote's letter-by-letter entry.</div>
                   </div>
@@ -35623,7 +36735,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                 </div>
                 <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.07);">
                   <div>
-                    <div style="font-size:13px;font-weight:500;margin-bottom:2px;">AI Vibe History</div>
+                    <div style="font-size:13px;font-weight:500;margin-bottom:2px;">Vibe History</div>
                     <div style="font-size:11px;color:#888;margin-bottom:2px;line-height:1.4;">Recently suggested artists per mood, kept for 30 days.</div>
                     <span style="font-size:12px;color:#888;" id="mood-history-status">Calculating…</span>
                   </div>
@@ -35895,7 +37007,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
             <div class="toggle-item" style="align-items:flex-start;gap:12px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid rgba(255,255,255,0.07);">
               <div style="flex:1;">
                 <div class="toggle-label">Enable AI Features</div>
-                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Master switch for all AI features — AI Search, Vibe, Recommendations, AI Artist Radio, Add Similar Songs, Add Songs from Same Year, Add Songs from Same Genre, Song Intro, Trivia, Mood Match, and AI-generated summaries. Off: the info panel uses Discogs data instead, and everything else in the card works as normal. Requires a conversation agent (e.g. Google Gemini) when on.</div>
+                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Master switch for all AI features — AI Search, Recommendations, AI Artist Radio, Add Similar Songs, Add Songs from Same Year, Add Songs from Same Genre, Song Intro, Trivia, Mood Match, and AI-generated summaries. Off: the info panel uses Discogs data instead, and everything else in the card works as normal. Requires a conversation agent (e.g. Google Gemini) when on.</div>
               </div>
               <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="ai_features_enabled"><span class="toggle-track"></span></label>
             </div>
@@ -35982,9 +37094,9 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
           </div>
         </div>
 
-        <!-- AI Vibe Artist Seeds -->
-        <div class="ai-dep">
-          <div class="section-title">AI Vibe Artist Seeds</div>
+        <!-- Vibe Artist Seeds (Music Assistant only — works with AI off) -->
+        <div>
+          <div class="section-title">Vibe Artist Seeds</div>
           <div class="card-block" style="padding:12px;">
 
             <!-- ── AI Mood Prompts ─────────────────────────────────────── -->
@@ -35995,7 +37107,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                     <svg viewBox="0 0 24 24" style="width:15px;height:15px;fill:rgba(99,179,237,0.9);"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
                   </div>
                   <div>
-                    <div style="font-size:14px;font-weight:600;color:var(--primary-text-color, #111);">AI Vibe Artist Seeds</div>
+                    <div style="font-size:14px;font-weight:600;color:var(--primary-text-color, #111);">Vibe Artist Seeds</div>
                     <div style="font-size:11px;color:#888;margin-top:1px;">Radio fallback seeds · Decade moods use UK chart playlists first</div>
                   </div>
                 </div>
@@ -36802,7 +37914,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       updateRbCacheStatus();
     };
 
-    // ── AI Vibe History cache ────────────────────────────────────────────
+    // ── Vibe History cache ────────────────────────────────────────────
     // ── AI Session Cache controls ─────────────────────────────────────────
     const aiSessionCacheStatus   = root.getElementById('ai-session-cache-status');
     const aiSessionCacheClearBtn = root.getElementById('ai-session-cache-clear-btn');
@@ -37061,8 +38173,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       showYoutubeBtnEl.onchange = (e) => this._updateConfig('show_youtube_button', e.target.checked);
     }
     // Master AI Features switch — also dims every AI-dependent control in
-    // the editor (.ai-dep: agent picker, agent note, Song Intro, AI Vibe
-    // Artist Seeds) while off, so it's immediately clear those settings
+    // the editor (.ai-dep: agent picker, agent note, Song Intro) while off, so it's immediately clear those settings
     // have no effect until AI is enabled. Dimmed rather than hidden so
     // users can still see what enabling AI would unlock.
     const _applyAiDepState = (on) => {
@@ -37151,7 +38262,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       remoteArtBlurEl.onchange = (e) => this._updateConfig('remote_art_blur', e.target.checked);
     }
 
-    // ── AI Vibe Artist Seeds ───────────────────────────────────────────────
+    // ── Vibe Artist Seeds ───────────────────────────────────────────────
     // ── Appearance & Behaviour collapsible ───────────────────────────────────
     const _appearanceHeader  = root.getElementById('appearanceHeader');
     const _appearanceBody    = root.getElementById('appearanceBody');
@@ -37896,7 +39007,7 @@ if (!window.customCards.some(card => card.type === "crowai-media-player-card")) 
 // ═══════════════════════════════════════════════════════════════════════════
 function __crowaiLoadSendspinLib() {
   if (window.__crowaiSendspinLib) return window.__crowaiSendspinLib;
-console.info('%c CROWAI MEDIA PLAYER CARD %c build 2026-10-04 connect status ', 'background:#007AFF;color:#fff;font-weight:700;border-radius:3px 0 0 3px;padding:2px 4px', 'background:#333;color:#fff;border-radius:0 3px 3px 0;padding:2px 4px');
+console.info('%c CROWAI MEDIA PLAYER CARD %c build 2026-10-05 ios alert ', 'background:#007AFF;color:#fff;font-weight:700;border-radius:3px 0 0 3px;padding:2px 4px', 'background:#333;color:#fff;border-radius:0 3px 3px 0;padding:2px 4px');
 var __CrowSendspinLib=(()=>{var Se=Object.defineProperty;var Tr=Object.getOwnPropertyDescriptor;var Dr=Object.getOwnPropertyNames;var vr=Object.prototype.hasOwnProperty;var Ir=(e,A,t)=>()=>{if(t)throw t[0];try{return e&&(A=e(e=0)),A}catch(n){throw t=[n],n}};var xn=(e,A)=>{for(var t in A)Se(e,t,{get:A[t],enumerable:!0})},Jr=(e,A,t,n)=>{if(A&&typeof A=="object"||typeof A=="function")for(let s of Dr(A))!vr.call(e,s)&&s!==t&&Se(e,s,{get:()=>A[s],enumerable:!(n=Tr(A,s))||n.enumerable});return e};var Br=e=>Jr(Se({},"__esModule",{value:!0}),e);var Me={};xn(Me,{default:()=>Pr});var Pr,Ce=Ir(()=>{Pr={};throw new Error("[CrowAI] opus-encdec fallback not bundled")});var Ro={};xn(Ro,{SendspinPlayer:()=>ye});var tt=class{constructor(A,t){this.webCodecsDecoder=null,this.webCodecsDecoderReady=null,this.webCodecsFormat=null,this.useNativeOpus=!0,this.nativeDecoderQueue=[],this.opusDecoder=null,this.opusDecoderModule=null,this.opusDecoderReady=null,this.flacDecodingContext=null,this.flacDecodingContextSampleRate=0,this.flacDecodingContextChannels=0,this.onDecodedChunk=A,this.currentGeneration=t}async handleBinaryMessage(A,t,n){if(new Uint8Array(A)[0]===4){let r=new DataView(A,1,8),i=Number(r.getBigInt64(0,!1)),a=A.slice(9);if(t.codec==="opus"&&this.useNativeOpus&&(await this.initWebCodecsDecoder(t),this.useNativeOpus&&this.webCodecsDecoder&&this.queueToNativeOpusDecoder(a,i,n)))return;try{let o=await this.decode(a,t);o&&n===this.currentGeneration()&&this.onDecodedChunk({samples:o.samples,sampleRate:o.sampleRate,serverTimeUs:i,generation:n})}catch(o){console.error("Sendspin: Failed to decode audio buffer:",o)}}}async decode(A,t){return t.codec==="opus"?this.decodeOpusWithEncdec(A,t):t.codec==="flac"?this.decodeFLAC(A,t):t.codec==="pcm"?this.decodePCM(A,t):null}decodePCM(A,t){let n=t.bit_depth??16;if(n!==16&&n!==24&&n!==32)return console.warn(`Sendspin: unsupported PCM bit_depth ${n}`),null;let s=n/8,r=new DataView(A),i=A.byteLength/(s*t.channels),a=[];for(let o=0;o<t.channels;o++)a.push(new Float32Array(i));for(let o=0;o<t.channels;o++){let h=a[o];for(let u=0;u<i;u++){let l=(u*t.channels+o)*s,c=0;if(n===16)c=r.getInt16(l,!0)/32768;else if(n===24){let f=r.getUint8(l),d=r.getUint8(l+1),m=r.getUint8(l+2)<<16|d<<8|f;m&8388608&&(m|=4278190080),c=m/8388608}else n===32&&(c=r.getInt32(l,!0)/2147483648);h[u]=c}}return{samples:a,sampleRate:t.sample_rate}}getFlacDecodingContext(A,t){return(!this.flacDecodingContext||this.flacDecodingContextSampleRate!==A||this.flacDecodingContextChannels!==t)&&(this.flacDecodingContext=new OfflineAudioContext(t,1,A),this.flacDecodingContextSampleRate=A,this.flacDecodingContextChannels=t),this.flacDecodingContext}async decodeFLAC(A,t){try{let n=A;if(t.codec_header){let a=Uint8Array.from(atob(t.codec_header),h=>h.charCodeAt(0)),o=new Uint8Array(a.length+A.byteLength);o.set(a,0),o.set(new Uint8Array(A),a.length),n=o.buffer}let r=await this.getFlacDecodingContext(t.sample_rate,t.channels).decodeAudioData(n),i=[];for(let a=0;a<r.numberOfChannels;a++)i.push(new Float32Array(r.getChannelData(a)));return{samples:i,sampleRate:r.sampleRate}}catch(n){return console.error("Error decoding FLAC data:",n),null}}async initWebCodecsDecoder(A){let t=()=>{if(!this.webCodecsDecoder)return!1;let n=!!this.webCodecsFormat&&this.webCodecsFormat.sample_rate===A.sample_rate&&this.webCodecsFormat.channels===A.channels;if(this.webCodecsDecoder.state==="configured"&&n)return!0;if(this.webCodecsDecoder.state==="closed")return!1;try{return this.webCodecsDecoder.configure({codec:"opus",sampleRate:A.sample_rate,numberOfChannels:A.channels}),this.webCodecsFormat=A,!0}catch{return!1}};if(!t()){if(this.webCodecsDecoderReady){if(await this.webCodecsDecoderReady,t())return;try{this.webCodecsDecoder?.close()}catch{}this.webCodecsDecoder=null,this.webCodecsDecoderReady=null,this.webCodecsFormat=null}if(this.webCodecsDecoderReady){await this.webCodecsDecoderReady;return}this.webCodecsDecoderReady=this.createWebCodecsDecoder(A),await this.webCodecsDecoderReady}}async createWebCodecsDecoder(A){if(typeof AudioDecoder>"u"){this.useNativeOpus=!1;return}try{if(!(await AudioDecoder.isConfigSupported({codec:"opus",sampleRate:A.sample_rate,numberOfChannels:A.channels})).supported){console.log("[NativeOpus] WebCodecs Opus not supported, will use fallback"),this.useNativeOpus=!1;return}this.webCodecsDecoder=new AudioDecoder({output:n=>this.handleAudioData(n),error:n=>{console.error("[NativeOpus] WebCodecs decoder error:",n)}}),this.webCodecsDecoder.configure({codec:"opus",sampleRate:A.sample_rate,numberOfChannels:A.channels}),this.webCodecsFormat=A,console.log(`[NativeOpus] Using WebCodecs AudioDecoder: ${A.sample_rate}Hz, ${A.channels}ch`)}catch(t){console.warn("[NativeOpus] WebCodecs init failed, will use fallback:",t),this.useNativeOpus=!1}}handleAudioData(A){try{let t=Number(A.timestamp),n=this.nativeDecoderQueue.shift();if(!n){console.warn(`[NativeOpus] Dropping frame with empty decode queue (out ts=${t})`),A.close();return}let{serverTimeUs:s,generation:r}=n,i=this.webCodecsFormat;if(!i){A.close();return}if(r!==this.currentGeneration()){console.warn(`[NativeOpus] Dropping old-stream frame (ts=${s}, gen=${r} != current=${this.currentGeneration()})`),A.close();return}let a=A.numberOfChannels,o=A.numberOfFrames,h=A.format,u=[];for(let l=0;l<a;l++)u.push(new Float32Array(o));if(h==="f32-planar")for(let l=0;l<a;l++)A.copyTo(u[l],{planeIndex:l});else if(h==="s16-planar"){let l=new Int16Array(o);for(let c=0;c<a;c++){A.copyTo(l,{planeIndex:c});let f=u[c];for(let d=0;d<o;d++)f[d]=l[d]/32768}}else if(h==="f32"){let l=new Float32Array(o*a);A.copyTo(l,{planeIndex:0});for(let c=0;c<a;c++){let f=u[c];for(let d=0;d<o;d++)f[d]=l[d*a+c]}}else if(h==="s16"){let l=new Int16Array(o*a);A.copyTo(l,{planeIndex:0});for(let c=0;c<a;c++){let f=u[c];for(let d=0;d<o;d++)f[d]=l[d*a+c]/32768}}else{console.warn(`[NativeOpus] Unsupported AudioData format: ${h}`),A.close();return}A.close(),this.onDecodedChunk({samples:u,sampleRate:i.sample_rate,serverTimeUs:s,generation:r})}catch(t){console.error("[NativeOpus] Error in output callback:",t),A.close()}}queueToNativeOpusDecoder(A,t,n){if(!this.webCodecsDecoder||this.webCodecsDecoder.state!=="configured")return!1;try{this.nativeDecoderQueue.push({serverTimeUs:t,generation:n});let s=new EncodedAudioChunk({type:"key",timestamp:t,data:A});return this.webCodecsDecoder.decode(s),!0}catch(s){return this.nativeDecoderQueue.length>0&&this.nativeDecoderQueue.pop(),console.error("[NativeOpus] WebCodecs queue error:",s),!1}}resolveOpusDecoderModule(A){let t=A?.default,n=A?.["module.exports"],s=t??n??A;if(!s||typeof s!="object")throw new Error("[Opus] Invalid libopus decoder module export");return s}resolveOggOpusDecoderClass(A){let t=A?.default,n=A?.["module.exports"],s=t??n??A,r=s?.OggOpusDecoder??s;if(typeof r!="function")throw new Error("[Opus] OggOpusDecoder class export not found");return r}async waitForOpusReady(A){if(!A.isReady){if(Object.isExtensible(A)){await new Promise(t=>{A.onready=()=>t()});return}for(;!A.isReady;)await new Promise(t=>setTimeout(t,20))}}async initOpusEncdecDecoder(A){if(this.opusDecoderReady){await this.opusDecoderReady;return}this.opusDecoderReady=(async()=>{console.log("[Opus] Initializing decoder (opus-encdec)...");let[t,n]=await Promise.all([Promise.resolve().then(()=>(Ce(),Me)),Promise.resolve().then(()=>(Ce(),Me))]);this.opusDecoderModule=this.resolveOpusDecoderModule(t);let s=this.resolveOggOpusDecoderClass(n);await this.waitForOpusReady(this.opusDecoderModule),this.opusDecoder=new s({rawOpus:!0,decoderSampleRate:A.sample_rate,outputBufferSampleRate:A.sample_rate,numberOfChannels:A.channels},this.opusDecoderModule),await this.waitForOpusReady(this.opusDecoder),console.log("[Opus] Decoder ready")})(),await this.opusDecoderReady}async decodeOpusWithEncdec(A,t){try{await this.initOpusEncdecDecoder(t);let n=new Uint8Array(A),s=[];if(this.opusDecoder.decodeRaw(n,o=>{s.push(new Float32Array(o))}),s.length===0)return console.warn("[Opus] Fallback decoder produced no samples"),null;let r=s[0],i=r.length/t.channels,a=[];for(let o=0;o<t.channels;o++){let h=new Float32Array(i);for(let u=0;u<i;u++)h[u]=r[u*t.channels+o];a.push(h)}return{samples:a,sampleRate:t.sample_rate}}catch(n){return console.error("[Opus] Decode error:",n),null}}clearState(){this.nativeDecoderQueue=[];try{this.webCodecsDecoder?.close()}catch{}this.webCodecsDecoder=null,this.webCodecsDecoderReady=null,this.webCodecsFormat=null}close(){this.clearState(),this.opusDecoder&&(this.opusDecoder=null,this.opusDecoderModule=null,this.opusDecoderReady=null),this.useNativeOpus=!0,this.flacDecodingContext=null,this.flacDecodingContextSampleRate=0,this.flacDecodingContextChannels=0}};var It=class{constructor(A,t,n){this.sender=A,this.stateManager=t,this.timeFilter=n,this.timeSyncBurstActive=!1,this.timeSyncBurstSentCount=0,this.timeSyncInFlightClientTransmitted=null,this.timeSyncInFlightTimeout=null,this.timeSyncBurstSamples=[]}startAndSchedule(){this.stop(),this.startTimeSyncBurstIfIdle(),this.scheduleNextTimeSyncBurstTick()}scheduleNextTimeSyncBurstTick(){let A=globalThis.setTimeout(()=>{this.startTimeSyncBurstIfIdle(),this.scheduleNextTimeSyncBurstTick()},1e4);this.stateManager.setTimeSyncInterval(A)}startTimeSyncBurstIfIdle(){this.timeSyncBurstActive||(this.timeSyncBurstActive=!0,this.timeSyncBurstSentCount=0,this.timeSyncBurstSamples=[],this.timeSyncInFlightClientTransmitted=null,this.sendNextTimeSyncBurstProbe())}sendNextTimeSyncBurstProbe(){if(!this.timeSyncBurstActive||this.timeSyncInFlightClientTransmitted!==null)return;if(this.timeSyncBurstSentCount>=8){this.finalizeTimeSyncBurst();return}let A=this.sendTimeSync();this.timeSyncBurstSentCount+=1,this.timeSyncInFlightClientTransmitted=A,this.armTimeSyncProbeTimeout(A)}armTimeSyncProbeTimeout(A){this.clearTimeSyncProbeTimeout(),this.timeSyncInFlightTimeout=globalThis.setTimeout(()=>{this.handleTimeSyncProbeTimeout(A)},2e3)}clearTimeSyncProbeTimeout(){this.timeSyncInFlightTimeout!==null&&(clearTimeout(this.timeSyncInFlightTimeout),this.timeSyncInFlightTimeout=null)}handleTimeSyncProbeTimeout(A){!this.timeSyncBurstActive||this.timeSyncInFlightClientTransmitted!==A||(console.warn("Sendspin: Time sync probe timed out, aborting current burst"),this.abortTimeSyncBurst())}finalizeTimeSyncBurst(){this.clearTimeSyncProbeTimeout();let A=this.selectTimeSyncBurstCandidate();A&&this.timeFilter.update(A.measurement,A.maxError,A.t4),this.timeSyncBurstActive=!1,this.timeSyncBurstSentCount=0,this.timeSyncInFlightClientTransmitted=null,this.timeSyncBurstSamples=[]}selectTimeSyncBurstCandidate(){if(this.timeSyncBurstSamples.length===0)return null;let t=[...[...this.timeSyncBurstSamples].sort((n,s)=>n.rttTerm-s.rttTerm).slice(0,Math.min(3,this.timeSyncBurstSamples.length))].sort((n,s)=>n.measurement-s.measurement);return t[Math.floor(t.length/2)]}abortTimeSyncBurst(){this.clearTimeSyncProbeTimeout(),this.timeSyncBurstActive=!1,this.timeSyncBurstSentCount=0,this.timeSyncInFlightClientTransmitted=null,this.timeSyncBurstSamples=[]}stop(){this.stateManager.clearTimeSyncInterval(),this.abortTimeSyncBurst()}handleServerTime(A){if(!this.timeSyncBurstActive||this.timeSyncInFlightClientTransmitted===null)return;let t=A.payload.client_transmitted;if(t!==this.timeSyncInFlightClientTransmitted){console.warn("Sendspin: Ignoring out-of-order time response",t,this.timeSyncInFlightClientTransmitted);return}let n=Math.floor(performance.now()*1e3),s=A.payload.server_received,r=A.payload.server_transmitted,i=(s-t+(r-n))/2,a=Math.max(0,n-t-(r-s)),o=Math.max(1e3,a/2);if(this.timeSyncBurstSamples.push({measurement:i,maxError:o,t4:n,rttTerm:a}),this.clearTimeSyncProbeTimeout(),this.timeSyncInFlightClientTransmitted=null,this.timeSyncBurstSentCount>=8){this.finalizeTimeSyncBurst();return}this.sendNextTimeSyncBurstProbe()}sendTimeSync(A=Math.floor(performance.now()*1e3)){let t={type:"client/time",payload:{client_transmitted:A}};return this.sender.sendControl(t),A}};function Rr(){let e=typeof navigator<"u"?navigator.userAgent:"",A=/^((?!chrome|android).)*safari/i.test(e),t=/firefox/i.test(e),n=typeof AudioDecoder<"u";return n||(typeof window<"u"&&!window.isSecureContext?console.warn("[Opus] Running in insecure context, falling back to FLAC/PCM"):console.warn("[Opus] Native decoder not available, falling back to FLAC/PCM")),A?new Set(["pcm","opus"]):t?new Set(["pcm","flac"]):n?new Set(["pcm","opus","flac"]):new Set(["pcm","flac"])}function Jt(e){let A=Rr(),t=[];for(let n of e)A.has(n)&&(n==="opus"?t.push({codec:"opus",sample_rate:48e3,channels:2,bit_depth:16}):(t.push({codec:n,sample_rate:48e3,channels:2,bit_depth:16}),t.push({codec:n,sample_rate:44100,channels:2,bit_depth:16})));if(t.length===0)throw new Error(`No supported codecs: requested [${e.join(", ")}], browser supports [${[...A].join(", ")}]`);return t}function Or(e){let A=e.sample_rate*e.channels*Math.ceil(e.bit_depth/8);switch(e.codec){case"opus":return 64e3;case"flac":return A*1.02;default:return A}}function En(e){let A=Math.max(...e.map(Or));return Math.ceil(A*30)}function nA(e){return isFinite(e)?Math.max(0,Math.min(5e3,Math.round(e))):0}var bn=5e3,Lr=250,Ur=250;function Bt(e,A){if(!isFinite(e)||e<0)throw new RangeError(`${A} must be a non-negative finite number`)}var Pt=class{constructor(A,t,n,s,r,i={}){this.sender=A,this.helloContext=t,this.streamHandler=n,this.stateManager=s,this.timeFilter=r,this.activated=!1,this.activeRoles=null,this.pairingSuspended=!1,this.lastSentPlayer=null,this.clientName=i.clientName??"Sendspin Player",this.productName=i.productName,this.codecs=i.codecs??["opus","flac","pcm"],this.bufferCapacity=i.bufferCapacity,this.requiredLeadTimeMs=i.requiredLeadTimeMs??Lr,Bt(this.requiredLeadTimeMs,"requiredLeadTimeMs"),this.minBufferMs=i.minBufferMs??Ur,Bt(this.minBufferMs,"minBufferMs"),this.useHardwareVolume=i.useHardwareVolume??!1,this.onVolumeCommand=i.onVolumeCommand,this.onDelayCommand=i.onDelayCommand,this.getExternalVolume=i.getExternalVolume,this.timeSyncManager=new It(A,s,r)}handleServerMessage(A){switch(A.type){case"server/hello":this.handleServerHello();break;case"server/activate":this.handleServerActivate(A);break;case"server/time":this.timeSyncManager.handleServerTime(A);break;case"stream/start":this.handleStreamStart(A);break;case"stream/clear":this.handleStreamClear(A);break;case"stream/end":this.handleStreamEnd(A);break;case"server/command":this.handleServerCommand(A);break;case"server/state":this.stateManager.updateServerState(A.payload);break;case"group/update":this.stateManager.updateGroupState(A.payload);break}}handleServerHello(){console.log("Sendspin: Connected to server"),this.sendClientHello()}handleServerActivate(A){this.pairingSuspended=!1;let t=!1;if(A.payload.active_roles!==void 0){let s=new Set(A.payload.active_roles);t=this.activeRoles===null||s.size!==this.activeRoles.size||[...s].some(r=>!this.activeRoles.has(r)),this.activeRoles=s}if(this.activated){t&&this.sendStateUpdate();return}this.activated=!0,this.sendStateUpdate(),this.timeSyncManager.startAndSchedule();let n=globalThis.setInterval(()=>this.sendStateUpdate(),bn);this.stateManager.setStateUpdateInterval(n)}restartStateUpdateInterval(){let A=globalThis.setInterval(()=>this.sendStateUpdate(),bn);this.stateManager.setStateUpdateInterval(A)}stopTimeSync(){this.timeSyncManager.stop()}suspendForPairing(){this.pairingSuspended=!0,this.activated=!1,this.activeRoles=new Set,this.timeSyncManager.stop(),this.stateManager.clearStateUpdateInterval()}resetActivation(A=!1){this.pairingSuspended=!1,this.activated=!1,A||(this.activeRoles=null),this.timeSyncManager.stop(),this.stateManager.clearStateUpdateInterval()}handleStreamStart(A){let t=this.stateManager.currentStreamFormat!==null;this.stateManager.currentStreamFormat=A.payload.player,console.log(t?"Sendspin: Stream format updated":"Sendspin: Stream started",this.stateManager.currentStreamFormat),console.log(`Sendspin: Codec=${this.stateManager.currentStreamFormat.codec.toUpperCase()}, SampleRate=${this.stateManager.currentStreamFormat.sample_rate}Hz, Channels=${this.stateManager.currentStreamFormat.channels}, BitDepth=${this.stateManager.currentStreamFormat.bit_depth}bit`),this.streamHandler.handleStreamStart(this.stateManager.currentStreamFormat,t),this.stateManager.isPlaying=!0,typeof navigator<"u"&&navigator.mediaSession&&(navigator.mediaSession.playbackState="playing")}handleStreamClear(A){let t=A.payload.roles;(!t||t.includes("player"))&&(console.log("Sendspin: Stream clear (seek)"),this.streamHandler.handleStreamClear())}handleStreamEnd(A){let t=A.payload?.roles;(!t||t.includes("player"))&&(console.log("Sendspin: Stream ended"),this.streamHandler.handleStreamEnd(),this.stateManager.currentStreamFormat=null,this.stateManager.isPlaying=!1,typeof navigator<"u"&&navigator.mediaSession&&(navigator.mediaSession.playbackState="paused"),this.sendStateUpdate())}handleServerCommand(A){let t=A.payload.player;if(t){switch(t.command){case"volume":t.volume!==void 0&&(this.stateManager.volume=t.volume,this.streamHandler.handleVolumeUpdate(),this.useHardwareVolume&&this.onVolumeCommand&&this.onVolumeCommand(t.volume,this.stateManager.muted));break;case"mute":t.mute!==void 0&&(this.stateManager.muted=t.mute,this.streamHandler.handleVolumeUpdate(),this.useHardwareVolume&&this.onVolumeCommand&&this.onVolumeCommand(this.stateManager.volume,t.mute));break;case"set_static_delay":{let n=t.static_delay_ms;if(typeof n=="number"&&isFinite(n)){let s=nA(n);this.streamHandler.handleSyncDelayChange(s),this.onDelayCommand?.(s)}break}}this.restartStateUpdateInterval(),this.sendStateUpdate(!0)}}sendClientHello(){let A=Jt(this.codecs),t={type:"client/hello",payload:{name:this.clientName,supported_roles:["player@v1","controller@v1","metadata@v1"],trust_level:this.helloContext.trustLevel(),supported_pair_methods:this.helloContext.pairMethods(),unpaired_access:{enabled:this.helloContext.unpairedAccess},device_info:{product_name:this.productName,manufacturer:typeof navigator<"u"&&navigator.vendor||"Unknown",software_version:typeof navigator<"u"&&navigator.userAgent||"Unknown"},"player@v1_support":{supported_formats:A,buffer_capacity:this.bufferCapacity??En(A),supported_commands:["volume","mute"]}}};this.lastSentPlayer=null,this.sender.sendControl(t)}setRequiredLeadTimeMs(A){Bt(A,"requiredLeadTimeMs"),this.requiredLeadTimeMs=A,this.sendStateUpdate()}setMinBufferMs(A){Bt(A,"minBufferMs"),this.minBufferMs=A,this.sendStateUpdate()}sendStateUpdate(A=!1){if(this.pairingSuspended)return;let t=this.stateManager.volume,n=this.stateManager.muted;if(!A&&this.useHardwareVolume&&this.getExternalVolume){let o=this.getExternalVolume();t=o.volume,n=o.muted}let s=this.streamHandler.getSyncDelayMs(),r=nA(s),i={available:!0};if(this.activeRoles===null||this.activeRoles.has("player@v1")){let o={volume:t,muted:n,static_delay_ms:r,required_lead_time_ms:this.requiredLeadTimeMs,min_buffer_ms:this.minBufferMs},h=this.lastSentPlayer;if(h===null)i.player={...o,supported_commands:["set_static_delay"]};else{let u={};o.static_delay_ms!==h.static_delay_ms&&(u.static_delay_ms=o.static_delay_ms),o.volume!==h.volume&&(u.volume=o.volume),o.muted!==h.muted&&(u.muted=o.muted),o.required_lead_time_ms!==h.required_lead_time_ms&&(u.required_lead_time_ms=o.required_lead_time_ms),o.min_buffer_ms!==h.min_buffer_ms&&(u.min_buffer_ms=o.min_buffer_ms),i.player=u}this.lastSentPlayer=o}let a={type:"client/state",payload:i};this.sender.sendControl(a)}sendGoodbye(A){this.sender.sendControl({type:"client/goodbye",payload:{reason:A}})}sendCommand(A,t){this.pairingSuspended||!this.activeRoles?.has("controller@v1")||this.sender.sendControl({type:"client/command",payload:{controller:{command:A,...t}}})}};function we(e,A){let t={...e};for(let n of Object.keys(A)){let s=A[n];if(s===null)delete t[n];else if(s!==void 0){let r=t[n];typeof s=="object"&&!Array.isArray(s)&&typeof r=="object"&&r!==null&&!Array.isArray(r)?t[n]=we(r,s):t[n]=s}}return t}var Rt=class{constructor(A){this._volume=100,this._muted=!1,this._playerState="synchronized",this._isPlaying=!1,this._currentStreamFormat=null,this._streamStartServerTime=0,this._streamStartAudioTime=0,this._streamGeneration=0,this._serverState={},this._groupState={},this.timeSyncInterval=null,this.stateUpdateInterval=null,this.onStateChangeCallback=A}get volume(){return this._volume}set volume(A){this._volume=Math.max(0,Math.min(100,A)),this.notifyStateChange()}get muted(){return this._muted}set muted(A){this._muted=A,this.notifyStateChange()}get playerState(){return this._playerState}set playerState(A){this._playerState=A,this.notifyStateChange()}get isPlaying(){return this._isPlaying}set isPlaying(A){this._isPlaying=A,this.notifyStateChange()}get currentStreamFormat(){return this._currentStreamFormat}set currentStreamFormat(A){this._currentStreamFormat=A}get streamStartServerTime(){return this._streamStartServerTime}set streamStartServerTime(A){this._streamStartServerTime=A}get streamStartAudioTime(){return this._streamStartAudioTime}set streamStartAudioTime(A){this._streamStartAudioTime=A}resetStreamAnchors(){this._streamStartServerTime=0,this._streamStartAudioTime=0,this._streamGeneration++}get streamGeneration(){return this._streamGeneration}setTimeSyncInterval(A){this.clearTimeSyncInterval(),this.timeSyncInterval=A}clearTimeSyncInterval(){this.timeSyncInterval!==null&&(clearTimeout(this.timeSyncInterval),this.timeSyncInterval=null)}setStateUpdateInterval(A){this.clearStateUpdateInterval(),this.stateUpdateInterval=A}clearStateUpdateInterval(){this.stateUpdateInterval!==null&&(clearInterval(this.stateUpdateInterval),this.stateUpdateInterval=null)}clearAllIntervals(){this.clearTimeSyncInterval(),this.clearStateUpdateInterval()}reset(){this._volume=100,this._muted=!1,this._playerState="synchronized",this._isPlaying=!1,this._currentStreamFormat=null,this._streamStartServerTime=0,this._streamStartAudioTime=0,this._serverState={},this._groupState={},this.clearAllIntervals()}notifyStateChange(){this.onStateChangeCallback&&this.onStateChangeCallback({isPlaying:this._isPlaying,volume:this._volume,muted:this._muted,playerState:this._playerState,serverState:this._serverState,groupState:this._groupState})}updateServerState(A){this._serverState=we(this._serverState,A),this.notifyStateChange()}updateGroupState(A){this._groupState=we(this._groupState,A),this.notifyStateChange()}get serverState(){return this._serverState}get groupState(){return this._groupState}};var Ot=class{constructor(A){this.ws=null,this.reconnectTimeout=null,this.shouldReconnect=!1,this.isReconnecting=!1,this.reconnectAttempt=0,this.baseDelayMs=Math.max(0,A?.baseDelayMs??1e3),this.maxDelayMs=Math.max(this.baseDelayMs,A?.maxDelayMs??15e3),this.maxAttempts=A?.maxAttempts===void 0?1/0:Math.max(0,A.maxAttempts),this.onReconnecting=A?.onReconnecting,this.onReconnected=A?.onReconnected,this.onExhausted=A?.onExhausted}adopt(A,t,n,s,r){if(A.readyState!==WebSocket.OPEN&&A.readyState!==WebSocket.CONNECTING)throw new Error(`Sendspin: Cannot adopt WebSocket in readyState ${A.readyState} (must be OPEN or CONNECTING)`);if(this.onOpenHandler=t,this.onMessageHandler=n,this.onErrorHandler=s,this.onCloseHandler=r,this.ws){let i=this.ws;i.onopen=null,i.onmessage=null,i.onerror=null,i.onclose=null,i.close(),this.ws=null}return this.ws=A,this.ws.binaryType="arraybuffer",this.shouldReconnect=!1,this.clearReconnectState(),this.ws.onmessage=i=>{this.onMessageHandler&&this.onMessageHandler(i)},this.ws.onerror=i=>{console.error("Sendspin: WebSocket error",i),this.onErrorHandler&&this.onErrorHandler(i)},this.ws.onclose=()=>{console.log("Sendspin: WebSocket disconnected"),this.onCloseHandler&&this.onCloseHandler()},new Promise((i,a)=>{let o=()=>{this.onOpenHandler&&this.onOpenHandler(),i()};if(A.readyState===WebSocket.OPEN){console.log("Sendspin: Adopted open WebSocket"),o();return}let h=this.ws.onclose;this.ws.onopen=()=>{console.log("Sendspin: Adopted WebSocket connected"),o()},this.ws.onclose=u=>{h&&h.call(this.ws,u),a(new Error("Sendspin: Adopted WebSocket closed before opening"))}})}async connect(A,t,n,s,r){if(this.onOpenHandler=t,this.onMessageHandler=n,this.onErrorHandler=s,this.onCloseHandler=r,this.shouldReconnect=!1,this.clearReconnectState(),this.ws){let i=this.ws;i.onopen=null,i.onmessage=null,i.onerror=null,i.onclose=null,i.close(),this.ws=null}return this.openSocket(A)}openSocket(A){return new Promise((t,n)=>{try{console.log("Sendspin: Connecting to",A),this.ws=new WebSocket(A),this.ws.binaryType="arraybuffer",this.shouldReconnect=!0;let s=!1;this.ws.onopen=()=>{console.log("Sendspin: WebSocket connected"),s=!0;let r=this.isReconnecting;this.isReconnecting=!1,this.reconnectAttempt=0,this.onOpenHandler&&this.onOpenHandler(),r&&this.onReconnected?.(),t()},this.ws.onmessage=r=>{this.onMessageHandler&&this.onMessageHandler(r)},this.ws.onerror=r=>{console.error("Sendspin: WebSocket error",r),this.onErrorHandler&&this.onErrorHandler(r),n(r)},this.ws.onclose=()=>{console.log("Sendspin: WebSocket disconnected"),s&&this.onCloseHandler&&this.onCloseHandler(),this.shouldReconnect&&this.scheduleReconnect(A)}}catch(s){console.error("Sendspin: Failed to connect",s),n(s)}})}getReconnectDelayMs(A){let t=this.baseDelayMs*2**(A-1);return Math.min(t,this.maxDelayMs)}scheduleReconnect(A){this.reconnectTimeout!==null&&(clearTimeout(this.reconnectTimeout),this.reconnectTimeout=null);let t=this.reconnectAttempt+1;if(t>this.maxAttempts){console.warn(`Sendspin: Reconnect exhausted after ${this.maxAttempts} attempt(s)`),this.shouldReconnect=!1,this.isReconnecting=!1,this.reconnectAttempt=0,this.onExhausted?.();return}this.reconnectAttempt=t,this.isReconnecting=!0;let n=this.getReconnectDelayMs(t);this.reconnectTimeout=globalThis.setTimeout(()=>{this.reconnectTimeout=null,this.shouldReconnect&&(this.onReconnecting?.(t),console.log(`Sendspin: Attempting to reconnect (attempt ${t}${this.maxAttempts===1/0?"":`/${this.maxAttempts}`})...`),this.openSocket(A).catch(s=>{console.error("Sendspin: Reconnection failed",s)}))},n)}clearReconnectState(){this.reconnectTimeout!==null&&(clearTimeout(this.reconnectTimeout),this.reconnectTimeout=null),this.isReconnecting=!1,this.reconnectAttempt=0}disconnect(){this.shouldReconnect=!1,this.clearReconnectState(),this.ws&&(this.ws.close(),this.ws=null)}sendText(A){this.ws&&this.ws.readyState===WebSocket.OPEN?this.ws.send(A):console.warn("Sendspin: Cannot send text, WebSocket not connected")}sendBinary(A){this.ws&&this.ws.readyState===WebSocket.OPEN?this.ws.send(A):console.warn("Sendspin: Cannot send binary, WebSocket not connected")}isConnected(){return this.ws!==null&&this.ws.readyState===WebSocket.OPEN}getReadyState(){return this.ws?this.ws.readyState:WebSocket.CLOSED}};var et=class{constructor(A=.01,t=1.1,n=2,s=0){this._last_update=0,this._count=0,this._measurements_processed=0,this._offset=0,this._drift=0,this._offset_covariance=1/0,this._offset_drift_covariance=0,this._drift_covariance=0,this._use_drift=!1,this._offset_process_variance=A*A,this._drift_process_variance=s*s,this._forget_variance_factor=t*t,this._drift_significance_threshold_squared=n*n,this._current_time_element=this._createDefaultTimeElement()}_createDefaultTimeElement(){return{last_update:0,offset:0,drift:0}}update(A,t,n){if(n<=this._last_update)return;let s=n-this._last_update;this._last_update=n,this._measurements_processed+=1;let r=t,i=r*r;if(this._count<=0){this._count+=1,this._offset=A,this._offset_covariance=i,this._drift=0,this._current_time_element={last_update:this._last_update,offset:this._offset,drift:this._drift},this._use_drift=!1;return}if(this._count===1){this._count+=1,this._drift=(A-this._offset)/s,this._offset=A,this._drift_covariance=(this._offset_covariance+i)/(s*s),this._offset_covariance=i,this._current_time_element={last_update:this._last_update,offset:this._offset,drift:this._drift},this._use_drift=!1;return}let a=this._offset+this._drift*s,o=s*s,h=s*this._drift_process_variance,u=this._drift_covariance+h,c=this._offset_drift_covariance+this._drift_covariance*s+0,f=s*this._offset_process_variance,d=this._offset_covariance+2*this._offset_drift_covariance*s+this._drift_covariance*o+f,g=A-a,m=t*2;this._count<100?this._count+=1:Math.abs(g)>m&&(u*=this._forget_variance_factor,c*=this._forget_variance_factor,d*=this._forget_variance_factor);let p=1/(d+i),S=d*p,y=c*p;this._offset=a+S*g,this._drift+=y*g,this._drift_covariance=u-y*c,this._offset_drift_covariance=c-y*d,this._offset_covariance=d-S*d;let _=this._drift*this._drift;this._use_drift=_>this._drift_significance_threshold_squared*this._drift_covariance,this._current_time_element={last_update:this._last_update,offset:this._offset,drift:this._drift}}computeServerTime(A){let t=A-this._current_time_element.last_update,n=this._use_drift?this._current_time_element.drift:0,s=Math.round(this._current_time_element.offset+n*t);return A+s}computeClientTime(A){let t=this._use_drift?this._current_time_element.drift:0;return Math.round((A-this._current_time_element.offset+t*this._current_time_element.last_update)/(1+t))}reset(){this._count=0,this._measurements_processed=0,this._last_update=0,this._offset=0,this._drift=0,this._offset_covariance=1/0,this._offset_drift_covariance=0,this._drift_covariance=0,this._use_drift=!1,this._current_time_element=this._createDefaultTimeElement()}get count(){return this._measurements_processed}get is_synchronized(){return this._count>=1&&isFinite(this._offset_covariance)}get error(){return Math.round(Math.sqrt(this._offset_covariance))}get covariance(){return Math.round(this._offset_covariance)}get offset(){return this._offset}get drift(){return this._drift}};var Tn="sendspin-static-delay-ms-v2",Lt=class{constructor(A){this.storage=A}load(){if(!this.storage)return null;try{let A=this.storage.getItem(Tn);if(A===null)return null;let t=parseFloat(A);return isNaN(t)?null:nA(t)}catch{return null}}save(A){if(this.storage)try{this.storage.setItem(Tn,A.toString())}catch{}}};var BA=typeof globalThis=="object"&&"crypto"in globalThis?globalThis.crypto:void 0;function PA(e){return e instanceof Uint8Array||ArrayBuffer.isView(e)&&e.constructor.name==="Uint8Array"}function nt(e){if(!Number.isSafeInteger(e)||e<0)throw new Error("positive integer expected, got "+e)}function W(e,...A){if(!PA(e))throw new Error("Uint8Array expected");if(A.length>0&&!A.includes(e.length))throw new Error("Uint8Array expected of length "+A+", got length="+e.length)}function vn(e){if(typeof e!="function"||typeof e.create!="function")throw new Error("Hash should be wrapped by utils.createHasher");nt(e.outputLen),nt(e.blockLen)}function YA(e,A=!0){if(e.destroyed)throw new Error("Hash instance has been destroyed");if(A&&e.finished)throw new Error("Hash#digest() has already been called")}function In(e,A){W(e);let t=A.outputLen;if(e.length<t)throw new Error("digestInto() expects output buffer of length at least "+t)}function SA(...e){for(let A=0;A<e.length;A++)e[A].fill(0)}function Ut(e){return new DataView(e.buffer,e.byteOffset,e.byteLength)}function sA(e,A){return e<<32-A|e>>>A}var Jn=typeof Uint8Array.from([]).toHex=="function"&&typeof Uint8Array.fromHex=="function",zr=Array.from({length:256},(e,A)=>A.toString(16).padStart(2,"0"));function RA(e){if(W(e),Jn)return e.toHex();let A="";for(let t=0;t<e.length;t++)A+=zr[e[t]];return A}var yA={_0:48,_9:57,A:65,F:70,a:97,f:102};function Dn(e){if(e>=yA._0&&e<=yA._9)return e-yA._0;if(e>=yA.A&&e<=yA.F)return e-(yA.A-10);if(e>=yA.a&&e<=yA.f)return e-(yA.a-10)}function zt(e){if(typeof e!="string")throw new Error("hex string expected, got "+typeof e);if(Jn)return Uint8Array.fromHex(e);let A=e.length,t=A/2;if(A%2)throw new Error("hex string expected, got unpadded hex of length "+A);let n=new Uint8Array(t);for(let s=0,r=0;s<t;s++,r+=2){let i=Dn(e.charCodeAt(r)),a=Dn(e.charCodeAt(r+1));if(i===void 0||a===void 0){let o=e[r]+e[r+1];throw new Error('hex string expected, got non-hex character "'+o+'" at index '+r)}n[s]=i*16+a}return n}function ke(e){if(typeof e!="string")throw new Error("string expected");return new Uint8Array(new TextEncoder().encode(e))}function st(e){return typeof e=="string"&&(e=ke(e)),W(e),e}function qA(...e){let A=0;for(let n=0;n<e.length;n++){let s=e[n];W(s),A+=s.length}let t=new Uint8Array(A);for(let n=0,s=0;n<e.length;n++){let r=e[n];t.set(r,s),s+=r.length}return t}var ZA=class{};function _e(e){let A=n=>e().update(st(n)).digest(),t=e();return A.outputLen=t.outputLen,A.blockLen=t.blockLen,A.create=()=>e(),A}function rt(e=32){if(BA&&typeof BA.getRandomValues=="function")return BA.getRandomValues(new Uint8Array(e));if(BA&&typeof BA.randomBytes=="function")return Uint8Array.from(BA.randomBytes(e));throw new Error("crypto.getRandomValues must be defined")}function Qr(e,A,t,n){if(typeof e.setBigUint64=="function")return e.setBigUint64(A,t,n);let s=BigInt(32),r=BigInt(4294967295),i=Number(t>>s&r),a=Number(t&r),o=n?4:0,h=n?0:4;e.setUint32(A+o,i,n),e.setUint32(A+h,a,n)}function Bn(e,A,t){return e&A^~e&t}function Pn(e,A,t){return e&A^e&t^A&t}var it=class extends ZA{constructor(A,t,n,s){super(),this.finished=!1,this.length=0,this.pos=0,this.destroyed=!1,this.blockLen=A,this.outputLen=t,this.padOffset=n,this.isLE=s,this.buffer=new Uint8Array(A),this.view=Ut(this.buffer)}update(A){YA(this),A=st(A),W(A);let{view:t,buffer:n,blockLen:s}=this,r=A.length;for(let i=0;i<r;){let a=Math.min(s-this.pos,r-i);if(a===s){let o=Ut(A);for(;s<=r-i;i+=s)this.process(o,i);continue}n.set(A.subarray(i,i+a),this.pos),this.pos+=a,i+=a,this.pos===s&&(this.process(t,0),this.pos=0)}return this.length+=A.length,this.roundClean(),this}digestInto(A){YA(this),In(A,this),this.finished=!0;let{buffer:t,view:n,blockLen:s,isLE:r}=this,{pos:i}=this;t[i++]=128,SA(this.buffer.subarray(i)),this.padOffset>s-i&&(this.process(n,0),i=0);for(let l=i;l<s;l++)t[l]=0;Qr(n,s-8,BigInt(this.length*8),r),this.process(n,0);let a=Ut(A),o=this.outputLen;if(o%4)throw new Error("_sha2: outputLen should be aligned to 32bit");let h=o/4,u=this.get();if(h>u.length)throw new Error("_sha2: outputLen bigger than state");for(let l=0;l<h;l++)a.setUint32(4*l,u[l],r)}digest(){let{buffer:A,outputLen:t}=this;this.digestInto(A);let n=A.slice(0,t);return this.destroy(),n}_cloneInto(A){A||(A=new this.constructor),A.set(...this.get());let{blockLen:t,buffer:n,length:s,finished:r,destroyed:i,pos:a}=this;return A.destroyed=i,A.finished=r,A.length=s,A.pos=a,s%t&&A.buffer.set(n),A}clone(){return this._cloneInto()}},MA=Uint32Array.from([1779033703,3144134277,1013904242,2773480762,1359893119,2600822924,528734635,1541459225]);var Z=Uint32Array.from([1779033703,4089235720,3144134277,2227873595,1013904242,4271175723,2773480762,1595750129,1359893119,2917565137,2600822924,725511199,528734635,4215389547,1541459225,327033209]);var Qt=BigInt(4294967295),Rn=BigInt(32);function Nr(e,A=!1){return A?{h:Number(e&Qt),l:Number(e>>Rn&Qt)}:{h:Number(e>>Rn&Qt)|0,l:Number(e&Qt)|0}}function On(e,A=!1){let t=e.length,n=new Uint32Array(t),s=new Uint32Array(t);for(let r=0;r<t;r++){let{h:i,l:a}=Nr(e[r],A);[n[r],s[r]]=[i,a]}return[n,s]}var xe=(e,A,t)=>e>>>t,Ee=(e,A,t)=>e<<32-t|A>>>t,OA=(e,A,t)=>e>>>t|A<<32-t,LA=(e,A,t)=>e<<32-t|A>>>t,ot=(e,A,t)=>e<<64-t|A>>>t-32,at=(e,A,t)=>e>>>t-32|A<<64-t;function hA(e,A,t,n){let s=(A>>>0)+(n>>>0);return{h:e+t+(s/2**32|0)|0,l:s|0}}var Ln=(e,A,t)=>(e>>>0)+(A>>>0)+(t>>>0),Un=(e,A,t,n)=>A+t+n+(e/2**32|0)|0,zn=(e,A,t,n)=>(e>>>0)+(A>>>0)+(t>>>0)+(n>>>0),Qn=(e,A,t,n,s)=>A+t+n+s+(e/2**32|0)|0,Nn=(e,A,t,n,s)=>(e>>>0)+(A>>>0)+(t>>>0)+(n>>>0)+(s>>>0),Hn=(e,A,t,n,s,r)=>A+t+n+s+r+(e/2**32|0)|0;var Kr=Uint32Array.from([1116352408,1899447441,3049323471,3921009573,961987163,1508970993,2453635748,2870763221,3624381080,310598401,607225278,1426881987,1925078388,2162078206,2614888103,3248222580,3835390401,4022224774,264347078,604807628,770255983,1249150122,1555081692,1996064986,2554220882,2821834349,2952996808,3210313671,3336571891,3584528711,113926993,338241895,666307205,773529912,1294757372,1396182291,1695183700,1986661051,2177026350,2456956037,2730485921,2820302411,3259730800,3345764771,3516065817,3600352804,4094571909,275423344,430227734,506948616,659060556,883997877,958139571,1322822218,1537002063,1747873779,1955562222,2024104815,2227730452,2361852424,2428436474,2756734187,3204031479,3329325298]),bA=new Uint32Array(64),be=class extends it{constructor(A=32){super(64,A,8,!1),this.A=MA[0]|0,this.B=MA[1]|0,this.C=MA[2]|0,this.D=MA[3]|0,this.E=MA[4]|0,this.F=MA[5]|0,this.G=MA[6]|0,this.H=MA[7]|0}get(){let{A,B:t,C:n,D:s,E:r,F:i,G:a,H:o}=this;return[A,t,n,s,r,i,a,o]}set(A,t,n,s,r,i,a,o){this.A=A|0,this.B=t|0,this.C=n|0,this.D=s|0,this.E=r|0,this.F=i|0,this.G=a|0,this.H=o|0}process(A,t){for(let l=0;l<16;l++,t+=4)bA[l]=A.getUint32(t,!1);for(let l=16;l<64;l++){let c=bA[l-15],f=bA[l-2],d=sA(c,7)^sA(c,18)^c>>>3,g=sA(f,17)^sA(f,19)^f>>>10;bA[l]=g+bA[l-7]+d+bA[l-16]|0}let{A:n,B:s,C:r,D:i,E:a,F:o,G:h,H:u}=this;for(let l=0;l<64;l++){let c=sA(a,6)^sA(a,11)^sA(a,25),f=u+c+Bn(a,o,h)+Kr[l]+bA[l]|0,g=(sA(n,2)^sA(n,13)^sA(n,22))+Pn(n,s,r)|0;u=h,h=o,o=a,a=i+f|0,i=r,r=s,s=n,n=f+g|0}n=n+this.A|0,s=s+this.B|0,r=r+this.C|0,i=i+this.D|0,a=a+this.E|0,o=o+this.F|0,h=h+this.G|0,u=u+this.H|0,this.set(n,s,r,i,a,o,h,u)}roundClean(){SA(bA)}destroy(){this.set(0,0,0,0,0,0,0,0),SA(this.buffer)}};var Kn=On(["0x428a2f98d728ae22","0x7137449123ef65cd","0xb5c0fbcfec4d3b2f","0xe9b5dba58189dbbc","0x3956c25bf348b538","0x59f111f1b605d019","0x923f82a4af194f9b","0xab1c5ed5da6d8118","0xd807aa98a3030242","0x12835b0145706fbe","0x243185be4ee4b28c","0x550c7dc3d5ffb4e2","0x72be5d74f27b896f","0x80deb1fe3b1696b1","0x9bdc06a725c71235","0xc19bf174cf692694","0xe49b69c19ef14ad2","0xefbe4786384f25e3","0x0fc19dc68b8cd5b5","0x240ca1cc77ac9c65","0x2de92c6f592b0275","0x4a7484aa6ea6e483","0x5cb0a9dcbd41fbd4","0x76f988da831153b5","0x983e5152ee66dfab","0xa831c66d2db43210","0xb00327c898fb213f","0xbf597fc7beef0ee4","0xc6e00bf33da88fc2","0xd5a79147930aa725","0x06ca6351e003826f","0x142929670a0e6e70","0x27b70a8546d22ffc","0x2e1b21385c26c926","0x4d2c6dfc5ac42aed","0x53380d139d95b3df","0x650a73548baf63de","0x766a0abb3c77b2a8","0x81c2c92e47edaee6","0x92722c851482353b","0xa2bfe8a14cf10364","0xa81a664bbc423001","0xc24b8b70d0f89791","0xc76c51a30654be30","0xd192e819d6ef5218","0xd69906245565a910","0xf40e35855771202a","0x106aa07032bbd1b8","0x19a4c116b8d2d0c8","0x1e376c085141ab53","0x2748774cdf8eeb99","0x34b0bcb5e19b48a8","0x391c0cb3c5c95a63","0x4ed8aa4ae3418acb","0x5b9cca4f7763e373","0x682e6ff3d6b2b8a3","0x748f82ee5defb2fc","0x78a5636f43172f60","0x84c87814a1f0ab72","0x8cc702081a6439ec","0x90befffa23631e28","0xa4506cebde82bde9","0xbef9a3f7b2c67915","0xc67178f2e372532b","0xca273eceea26619c","0xd186b8c721c0c207","0xeada7dd6cde0eb1e","0xf57d4f7fee6ed178","0x06f067aa72176fba","0x0a637dc5a2c898a6","0x113f9804bef90dae","0x1b710b35131c471b","0x28db77f523047d84","0x32caab7b40c72493","0x3c9ebe0a15c9bebc","0x431d67c49c100d4c","0x4cc5d4becb3e42b6","0x597f299cfc657e2a","0x5fcb6fab3ad6faec","0x6c44198c4a475817"].map(e=>BigInt(e))),Fr=Kn[0],Gr=Kn[1],TA=new Uint32Array(80),DA=new Uint32Array(80),Te=class extends it{constructor(A=64){super(128,A,16,!1),this.Ah=Z[0]|0,this.Al=Z[1]|0,this.Bh=Z[2]|0,this.Bl=Z[3]|0,this.Ch=Z[4]|0,this.Cl=Z[5]|0,this.Dh=Z[6]|0,this.Dl=Z[7]|0,this.Eh=Z[8]|0,this.El=Z[9]|0,this.Fh=Z[10]|0,this.Fl=Z[11]|0,this.Gh=Z[12]|0,this.Gl=Z[13]|0,this.Hh=Z[14]|0,this.Hl=Z[15]|0}get(){let{Ah:A,Al:t,Bh:n,Bl:s,Ch:r,Cl:i,Dh:a,Dl:o,Eh:h,El:u,Fh:l,Fl:c,Gh:f,Gl:d,Hh:g,Hl:m}=this;return[A,t,n,s,r,i,a,o,h,u,l,c,f,d,g,m]}set(A,t,n,s,r,i,a,o,h,u,l,c,f,d,g,m){this.Ah=A|0,this.Al=t|0,this.Bh=n|0,this.Bl=s|0,this.Ch=r|0,this.Cl=i|0,this.Dh=a|0,this.Dl=o|0,this.Eh=h|0,this.El=u|0,this.Fh=l|0,this.Fl=c|0,this.Gh=f|0,this.Gl=d|0,this.Hh=g|0,this.Hl=m|0}process(A,t){for(let y=0;y<16;y++,t+=4)TA[y]=A.getUint32(t),DA[y]=A.getUint32(t+=4);for(let y=16;y<80;y++){let _=TA[y-15]|0,J=DA[y-15]|0,D=OA(_,J,1)^OA(_,J,8)^xe(_,J,7),B=LA(_,J,1)^LA(_,J,8)^Ee(_,J,7),I=TA[y-2]|0,M=DA[y-2]|0,C=OA(I,M,19)^ot(I,M,61)^xe(I,M,6),k=LA(I,M,19)^at(I,M,61)^Ee(I,M,6),T=zn(B,k,DA[y-7],DA[y-16]),w=Qn(T,D,C,TA[y-7],TA[y-16]);TA[y]=w|0,DA[y]=T|0}let{Ah:n,Al:s,Bh:r,Bl:i,Ch:a,Cl:o,Dh:h,Dl:u,Eh:l,El:c,Fh:f,Fl:d,Gh:g,Gl:m,Hh:p,Hl:S}=this;for(let y=0;y<80;y++){let _=OA(l,c,14)^OA(l,c,18)^ot(l,c,41),J=LA(l,c,14)^LA(l,c,18)^at(l,c,41),D=l&f^~l&g,B=c&d^~c&m,I=Nn(S,J,B,Gr[y],DA[y]),M=Hn(I,p,_,D,Fr[y],TA[y]),C=I|0,k=OA(n,s,28)^ot(n,s,34)^ot(n,s,39),T=LA(n,s,28)^at(n,s,34)^at(n,s,39),w=n&r^n&a^r&a,E=s&i^s&o^i&o;p=g|0,S=m|0,g=f|0,m=d|0,f=l|0,d=c|0,{h:l,l:c}=hA(h|0,u|0,M|0,C|0),h=a|0,u=o|0,a=r|0,o=i|0,r=n|0,i=s|0;let v=Ln(C,T,E);n=Un(v,M,k,w),s=v|0}({h:n,l:s}=hA(this.Ah|0,this.Al|0,n|0,s|0)),{h:r,l:i}=hA(this.Bh|0,this.Bl|0,r|0,i|0),{h:a,l:o}=hA(this.Ch|0,this.Cl|0,a|0,o|0),{h,l:u}=hA(this.Dh|0,this.Dl|0,h|0,u|0),{h:l,l:c}=hA(this.Eh|0,this.El|0,l|0,c|0),{h:f,l:d}=hA(this.Fh|0,this.Fl|0,f|0,d|0),{h:g,l:m}=hA(this.Gh|0,this.Gl|0,g|0,m|0),{h:p,l:S}=hA(this.Hh|0,this.Hl|0,p|0,S|0),this.set(n,s,r,i,a,o,h,u,l,c,f,d,g,m,p,S)}roundClean(){SA(TA,DA)}destroy(){SA(this.buffer),this.set(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)}};var j=_e(()=>new be);var UA=_e(()=>new Te);var Ie=BigInt(0),ve=BigInt(1);function Nt(e,A=""){if(typeof e!="boolean"){let t=A&&`"${A}"`;throw new Error(t+"expected boolean, got type="+typeof e)}return e}function ct(e,A,t=""){let n=PA(e),s=e?.length,r=A!==void 0;if(!n||r&&s!==A){let i=t&&`"${t}" `,a=r?` of length ${A}`:"",o=n?`length=${s}`:`type=${typeof e}`;throw new Error(i+"expected Uint8Array"+a+", got "+o)}return e}function Fn(e){if(typeof e!="string")throw new Error("hex string expected, got "+typeof e);return e===""?Ie:BigInt("0x"+e)}function Gn(e){return Fn(RA(e))}function rA(e){return W(e),Fn(RA(Uint8Array.from(e).reverse()))}function Je(e,A){return zt(e.toString(16).padStart(A*2,"0"))}function Ht(e,A){return Je(e,A).reverse()}function X(e,A,t){let n;if(typeof A=="string")try{n=zt(A)}catch(r){throw new Error(e+" must be hex string or Uint8Array, cause: "+r)}else if(PA(A))n=Uint8Array.from(A);else throw new Error(e+" must be hex string or Uint8Array");let s=n.length;if(typeof t=="number"&&s!==t)throw new Error(e+" of length "+t+" expected, got "+s);return n}function Zn(e,A){if(e.length!==A.length)return!1;let t=0;for(let n=0;n<e.length;n++)t|=e[n]^A[n];return t===0}function Be(e){return Uint8Array.from(e)}var De=e=>typeof e=="bigint"&&Ie<=e;function Zr(e,A,t){return De(e)&&De(A)&&De(t)&&A<=e&&e<t}function VA(e,A,t,n){if(!Zr(A,t,n))throw new Error("expected valid "+e+": "+t+" <= n < "+n+", got "+A)}function Yn(e){let A;for(A=0;e>Ie;e>>=ve,A+=1);return A}var ht=e=>(ve<<BigInt(e))-ve;function zA(e,A,t={}){if(!e||typeof e!="object")throw new Error("expected valid options object");function n(s,r,i){let a=e[s];if(i&&a===void 0)return;let o=typeof a;if(o!==r||a===null)throw new Error(`param "${s}" is invalid: expected ${r}, got ${o}`)}Object.entries(A).forEach(([s,r])=>n(s,r,!1)),Object.entries(t).forEach(([s,r])=>n(s,r,!0))}var Pe=()=>{throw new Error("not implemented")};function Re(e){let A=new WeakMap;return(t,...n)=>{let s=A.get(t);if(s!==void 0)return s;let r=e(t,...n);return A.set(t,r),r}}var AA=BigInt(0),$=BigInt(1),QA=BigInt(2),Wn=BigInt(3),jn=BigInt(4),Xn=BigInt(5),Yr=BigInt(7),$n=BigInt(8),qr=BigInt(9),As=BigInt(16);function N(e,A){let t=e%A;return t>=AA?t:A+t}function tA(e,A,t){let n=e;for(;A-- >AA;)n*=n,n%=t;return n}function qn(e,A){if(e===AA)throw new Error("invert: expected non-zero number");if(A<=AA)throw new Error("invert: expected positive modulus, got "+A);let t=N(e,A),n=A,s=AA,r=$,i=$,a=AA;for(;t!==AA;){let h=n/t,u=n%t,l=s-i*h,c=r-a*h;n=t,t=u,s=i,r=a,i=l,a=c}if(n!==$)throw new Error("invert: does not exist");return N(s,A)}function Oe(e,A,t){if(!e.eql(e.sqr(A),t))throw new Error("Cannot find square root")}function ts(e,A){let t=(e.ORDER+$)/jn,n=e.pow(A,t);return Oe(e,n,A),n}function Vr(e,A){let t=(e.ORDER-Xn)/$n,n=e.mul(A,QA),s=e.pow(n,t),r=e.mul(A,s),i=e.mul(e.mul(r,QA),s),a=e.mul(r,e.sub(i,e.ONE));return Oe(e,a,A),a}function Wr(e){let A=wA(e),t=es(e),n=t(A,A.neg(A.ONE)),s=t(A,n),r=t(A,A.neg(n)),i=(e+Yr)/As;return(a,o)=>{let h=a.pow(o,i),u=a.mul(h,n),l=a.mul(h,s),c=a.mul(h,r),f=a.eql(a.sqr(u),o),d=a.eql(a.sqr(l),o);h=a.cmov(h,u,f),u=a.cmov(c,l,d);let g=a.eql(a.sqr(u),o),m=a.cmov(h,u,g);return Oe(a,m,o),m}}function es(e){if(e<Wn)throw new Error("sqrt is not defined for small field");let A=e-$,t=0;for(;A%QA===AA;)A/=QA,t++;let n=QA,s=wA(e);for(;Vn(s,n)===1;)if(n++>1e3)throw new Error("Cannot find square root: probably non-prime P");if(t===1)return ts;let r=s.pow(n,A),i=(A+$)/QA;return function(o,h){if(o.is0(h))return h;if(Vn(o,h)!==1)throw new Error("Cannot find square root");let u=t,l=o.mul(o.ONE,r),c=o.pow(h,A),f=o.pow(h,i);for(;!o.eql(c,o.ONE);){if(o.is0(c))return o.ZERO;let d=1,g=o.sqr(c);for(;!o.eql(g,o.ONE);)if(d++,g=o.sqr(g),d===u)throw new Error("Cannot find square root");let m=$<<BigInt(u-d-1),p=o.pow(l,m);u=d,l=o.sqr(p),c=o.mul(c,l),f=o.mul(f,p)}return f}}function jr(e){return e%jn===Wn?ts:e%$n===Xn?Vr:e%As===qr?Wr(e):es(e)}var CA=(e,A)=>(N(e,A)&$)===$,Xr=["create","isValid","is0","neg","inv","sqrt","sqr","eql","add","sub","mul","pow","div","addN","subN","mulN","sqrN"];function ns(e){let A={ORDER:"bigint",MASK:"bigint",BYTES:"number",BITS:"number"},t=Xr.reduce((n,s)=>(n[s]="function",n),A);return zA(e,t),e}function $r(e,A,t){if(t<AA)throw new Error("invalid exponent, negatives unsupported");if(t===AA)return e.ONE;if(t===$)return A;let n=e.ONE,s=A;for(;t>AA;)t&$&&(n=e.mul(n,s)),s=e.sqr(s),t>>=$;return n}function Kt(e,A,t=!1){let n=new Array(A.length).fill(t?e.ZERO:void 0),s=A.reduce((i,a,o)=>e.is0(a)?i:(n[o]=i,e.mul(i,a)),e.ONE),r=e.inv(s);return A.reduceRight((i,a,o)=>e.is0(a)?i:(n[o]=e.mul(i,n[o]),e.mul(i,a)),r),n}function Vn(e,A){let t=(e.ORDER-$)/QA,n=e.pow(A,t),s=e.eql(n,e.ONE),r=e.eql(n,e.ZERO),i=e.eql(n,e.neg(e.ONE));if(!s&&!r&&!i)throw new Error("invalid Legendre symbol result");return s?1:r?0:-1}function ss(e,A){A!==void 0&&nt(A);let t=A!==void 0?A:e.toString(2).length,n=Math.ceil(t/8);return{nBitLength:t,nByteLength:n}}function wA(e,A,t=!1,n={}){if(e<=AA)throw new Error("invalid field: expected ORDER > 0, got "+e);let s,r,i=!1,a;if(typeof A=="object"&&A!=null){if(n.sqrt||t)throw new Error("cannot specify opts in two arguments");let c=A;c.BITS&&(s=c.BITS),c.sqrt&&(r=c.sqrt),typeof c.isLE=="boolean"&&(t=c.isLE),typeof c.modFromBytes=="boolean"&&(i=c.modFromBytes),a=c.allowedLengths}else typeof A=="number"&&(s=A),n.sqrt&&(r=n.sqrt);let{nBitLength:o,nByteLength:h}=ss(e,s);if(h>2048)throw new Error("invalid field: expected ORDER of <= 2048 bytes");let u,l=Object.freeze({ORDER:e,isLE:t,BITS:o,BYTES:h,MASK:ht(o),ZERO:AA,ONE:$,allowedLengths:a,create:c=>N(c,e),isValid:c=>{if(typeof c!="bigint")throw new Error("invalid field element: expected bigint, got "+typeof c);return AA<=c&&c<e},is0:c=>c===AA,isValidNot0:c=>!l.is0(c)&&l.isValid(c),isOdd:c=>(c&$)===$,neg:c=>N(-c,e),eql:(c,f)=>c===f,sqr:c=>N(c*c,e),add:(c,f)=>N(c+f,e),sub:(c,f)=>N(c-f,e),mul:(c,f)=>N(c*f,e),pow:(c,f)=>$r(l,c,f),div:(c,f)=>N(c*qn(f,e),e),sqrN:c=>c*c,addN:(c,f)=>c+f,subN:(c,f)=>c-f,mulN:(c,f)=>c*f,inv:c=>qn(c,e),sqrt:r||(c=>(u||(u=jr(e)),u(l,c))),toBytes:c=>t?Ht(c,h):Je(c,h),fromBytes:(c,f=!0)=>{if(a){if(!a.includes(c.length)||c.length>h)throw new Error("Field.fromBytes: expected "+a+" bytes, got "+c.length);let g=new Uint8Array(h);g.set(c,t?0:g.length-c.length),c=g}if(c.length!==h)throw new Error("Field.fromBytes: expected "+h+" bytes, got "+c.length);let d=t?rA(c):Gn(c);if(i&&(d=N(d,e)),!f&&!l.isValid(d))throw new Error("invalid field element: outside of range 0..ORDER");return d},invertBatch:c=>Kt(l,c),cmov:(c,f,d)=>d?f:c});return Object.freeze(l)}var Ft=BigInt(0),Qe=BigInt(1);function rs(e,A){let t=A.negate();return e?t:A}function lt(e,A){let t=Kt(e.Fp,A.map(n=>n.Z));return A.map((n,s)=>e.fromAffine(n.toAffine(t[s])))}function cs(e,A){if(!Number.isSafeInteger(e)||e<=0||e>A)throw new Error("invalid window size, expected [1.."+A+"], got W="+e)}function Le(e,A){cs(e,A);let t=Math.ceil(A/e)+1,n=2**(e-1),s=2**e,r=ht(e),i=BigInt(e);return{windows:t,windowSize:n,mask:r,maxNumber:s,shiftBy:i}}function is(e,A,t){let{windowSize:n,mask:s,maxNumber:r,shiftBy:i}=t,a=Number(e&s),o=e>>i;a>n&&(a-=r,o+=Qe);let h=A*n,u=h+Math.abs(a)-1,l=a===0,c=a<0,f=A%2!==0;return{nextN:o,offset:u,isZero:l,isNeg:c,isNegF:f,offsetF:h}}function Ai(e,A){if(!Array.isArray(e))throw new Error("array expected");e.forEach((t,n)=>{if(!(t instanceof A))throw new Error("invalid point at index "+n)})}function ti(e,A){if(!Array.isArray(e))throw new Error("array of scalars expected");e.forEach((t,n)=>{if(!A.isValid(t))throw new Error("invalid scalar at index "+n)})}var Ue=new WeakMap,hs=new WeakMap;function ze(e){return hs.get(e)||1}function os(e){if(e!==Ft)throw new Error("invalid wNAF")}var Gt=class{constructor(A,t){this.BASE=A.BASE,this.ZERO=A.ZERO,this.Fn=A.Fn,this.bits=t}_unsafeLadder(A,t,n=this.ZERO){let s=A;for(;t>Ft;)t&Qe&&(n=n.add(s)),s=s.double(),t>>=Qe;return n}precomputeWindow(A,t){let{windows:n,windowSize:s}=Le(t,this.bits),r=[],i=A,a=i;for(let o=0;o<n;o++){a=i,r.push(a);for(let h=1;h<s;h++)a=a.add(i),r.push(a);i=a.double()}return r}wNAF(A,t,n){if(!this.Fn.isValid(n))throw new Error("invalid scalar");let s=this.ZERO,r=this.BASE,i=Le(A,this.bits);for(let a=0;a<i.windows;a++){let{nextN:o,offset:h,isZero:u,isNeg:l,isNegF:c,offsetF:f}=is(n,a,i);n=o,u?r=r.add(rs(c,t[f])):s=s.add(rs(l,t[h]))}return os(n),{p:s,f:r}}wNAFUnsafe(A,t,n,s=this.ZERO){let r=Le(A,this.bits);for(let i=0;i<r.windows&&n!==Ft;i++){let{nextN:a,offset:o,isZero:h,isNeg:u}=is(n,i,r);if(n=a,!h){let l=t[o];s=s.add(u?l.negate():l)}}return os(n),s}getPrecomputes(A,t,n){let s=Ue.get(t);return s||(s=this.precomputeWindow(t,A),A!==1&&(typeof n=="function"&&(s=n(s)),Ue.set(t,s))),s}cached(A,t,n){let s=ze(A);return this.wNAF(s,this.getPrecomputes(s,A,n),t)}unsafe(A,t,n,s){let r=ze(A);return r===1?this._unsafeLadder(A,t,s):this.wNAFUnsafe(r,this.getPrecomputes(r,A,n),t,s)}createCache(A,t){cs(t,this.bits),hs.set(A,t),Ue.delete(A)}hasCache(A){return ze(A)!==1}};function Zt(e,A,t,n){Ai(t,e),ti(n,A);let s=t.length,r=n.length;if(s!==r)throw new Error("arrays of points and scalars must have equal length");let i=e.ZERO,a=Yn(BigInt(s)),o=1;a>12?o=a-3:a>4?o=a-2:a>0&&(o=2);let h=ht(o),u=new Array(Number(h)+1).fill(i),l=Math.floor((A.BITS-1)/o)*o,c=i;for(let f=l;f>=0;f-=o){u.fill(i);for(let g=0;g<r;g++){let m=n[g],p=Number(m>>BigInt(f)&h);u[p]=u[p].add(t[g])}let d=i;for(let g=u.length-1,m=i;g>0;g--)m=m.add(u[g]),d=d.add(m);if(c=c.add(d),f!==0)for(let g=0;g<o;g++)c=c.double()}return c}function as(e,A,t){if(A){if(A.ORDER!==e)throw new Error("Field.ORDER must match order: Fp == p, Fn == n");return ns(A),A}else return wA(e,{isLE:t})}function ls(e,A,t={},n){if(n===void 0&&(n=e==="edwards"),!A||typeof A!="object")throw new Error(`expected valid ${e} CURVE object`);for(let o of["p","n","h"]){let h=A[o];if(!(typeof h=="bigint"&&h>Ft))throw new Error(`CURVE.${o} must be positive bigint`)}let s=as(A.p,t.Fp,n),r=as(A.n,t.Fn,n),a=["Gx","Gy","a",e==="weierstrass"?"b":"d"];for(let o of a)if(!s.isValid(A[o]))throw new Error(`CURVE.${o} must be valid field element of CURVE.Fp`);return A=Object.freeze(Object.assign({},A)),{CURVE:A,Fp:s,Fn:r}}var vA=BigInt(0),G=BigInt(1),Ne=BigInt(2),ei=BigInt(8);function ni(e,A,t,n){let s=e.sqr(t),r=e.sqr(n),i=e.add(e.mul(A.a,s),r),a=e.add(e.ONE,e.mul(A.d,e.mul(s,r)));return e.eql(i,a)}function si(e,A={}){let t=ls("edwards",e,A,A.FpFnLE),{Fp:n,Fn:s}=t,r=t.CURVE,{h:i}=r;zA(A,{},{uvRatio:"function"});let a=Ne<<BigInt(s.BYTES*8)-G,o=m=>n.create(m),h=A.uvRatio||((m,p)=>{try{return{isValid:!0,value:n.sqrt(n.div(m,p))}}catch{return{isValid:!1,value:vA}}});if(!ni(n,r,r.Gx,r.Gy))throw new Error("bad curve params: generator point");function u(m,p,S=!1){let y=S?G:vA;return VA("coordinate "+m,p,y,a),p}function l(m){if(!(m instanceof d))throw new Error("ExtendedPoint expected")}let c=Re((m,p)=>{let{X:S,Y:y,Z:_}=m,J=m.is0();p==null&&(p=J?ei:n.inv(_));let D=o(S*p),B=o(y*p),I=n.mul(_,p);if(J)return{x:vA,y:G};if(I!==G)throw new Error("invZ was invalid");return{x:D,y:B}}),f=Re(m=>{let{a:p,d:S}=r;if(m.is0())throw new Error("bad point: ZERO");let{X:y,Y:_,Z:J,T:D}=m,B=o(y*y),I=o(_*_),M=o(J*J),C=o(M*M),k=o(B*p),T=o(M*o(k+I)),w=o(C+o(S*o(B*I)));if(T!==w)throw new Error("bad point: equation left != right (1)");let E=o(y*_),v=o(J*D);if(E!==v)throw new Error("bad point: equation left != right (2)");return!0});class d{constructor(p,S,y,_){this.X=u("x",p),this.Y=u("y",S),this.Z=u("z",y,!0),this.T=u("t",_),Object.freeze(this)}static CURVE(){return r}static fromAffine(p){if(p instanceof d)throw new Error("extended point not allowed");let{x:S,y}=p||{};return u("x",S),u("y",y),new d(S,y,G,o(S*y))}static fromBytes(p,S=!1){let y=n.BYTES,{a:_,d:J}=r;p=Be(ct(p,y,"point")),Nt(S,"zip215");let D=Be(p),B=p[y-1];D[y-1]=B&-129;let I=rA(D),M=S?a:n.ORDER;VA("point.y",I,vA,M);let C=o(I*I),k=o(C-G),T=o(J*C-_),{isValid:w,value:E}=h(k,T);if(!w)throw new Error("bad point: invalid y coordinate");let v=(E&G)===G,P=(B&128)!==0;if(!S&&E===vA&&P)throw new Error("bad point: x=0 and x_0=1");return P!==v&&(E=o(-E)),d.fromAffine({x:E,y:I})}static fromHex(p,S=!1){return d.fromBytes(X("point",p),S)}get x(){return this.toAffine().x}get y(){return this.toAffine().y}precompute(p=8,S=!0){return g.createCache(this,p),S||this.multiply(Ne),this}assertValidity(){f(this)}equals(p){l(p);let{X:S,Y:y,Z:_}=this,{X:J,Y:D,Z:B}=p,I=o(S*B),M=o(J*_),C=o(y*B),k=o(D*_);return I===M&&C===k}is0(){return this.equals(d.ZERO)}negate(){return new d(o(-this.X),this.Y,this.Z,o(-this.T))}double(){let{a:p}=r,{X:S,Y:y,Z:_}=this,J=o(S*S),D=o(y*y),B=o(Ne*o(_*_)),I=o(p*J),M=S+y,C=o(o(M*M)-J-D),k=I+D,T=k-B,w=I-D,E=o(C*T),v=o(k*w),P=o(C*w),R=o(T*k);return new d(E,v,R,P)}add(p){l(p);let{a:S,d:y}=r,{X:_,Y:J,Z:D,T:B}=this,{X:I,Y:M,Z:C,T:k}=p,T=o(_*I),w=o(J*M),E=o(B*y*k),v=o(D*C),P=o((_+J)*(I+M)-T-w),R=v-E,O=v+E,x=o(w-S*T),L=o(P*R),U=o(O*x),z=o(P*x),V=o(R*O);return new d(L,U,V,z)}subtract(p){return this.add(p.negate())}multiply(p){if(!s.isValidNot0(p))throw new Error("invalid scalar: expected 1 <= sc < curve.n");let{p:S,f:y}=g.cached(this,p,_=>lt(d,_));return lt(d,[S,y])[0]}multiplyUnsafe(p,S=d.ZERO){if(!s.isValid(p))throw new Error("invalid scalar: expected 0 <= sc < curve.n");return p===vA?d.ZERO:this.is0()||p===G?this:g.unsafe(this,p,y=>lt(d,y),S)}isSmallOrder(){return this.multiplyUnsafe(i).is0()}isTorsionFree(){return g.unsafe(this,r.n).is0()}toAffine(p){return c(this,p)}clearCofactor(){return i===G?this:this.multiplyUnsafe(i)}toBytes(){let{x:p,y:S}=this.toAffine(),y=n.toBytes(S);return y[y.length-1]|=p&G?128:0,y}toHex(){return RA(this.toBytes())}toString(){return`<Point ${this.is0()?"ZERO":this.toHex()}>`}get ex(){return this.X}get ey(){return this.Y}get ez(){return this.Z}get et(){return this.T}static normalizeZ(p){return lt(d,p)}static msm(p,S){return Zt(d,s,p,S)}_setWindowSize(p){this.precompute(p)}toRawBytes(){return this.toBytes()}}d.BASE=new d(r.Gx,r.Gy,G,o(r.Gx*r.Gy)),d.ZERO=new d(vA,G,G,vA),d.Fp=n,d.Fn=s;let g=new Gt(d,s.BITS);return d.BASE.precompute(8),d}var Yt=class{constructor(A){this.ep=A}static fromBytes(A){Pe()}static fromHex(A){Pe()}get x(){return this.toAffine().x}get y(){return this.toAffine().y}clearCofactor(){return this}assertValidity(){this.ep.assertValidity()}toAffine(A){return this.ep.toAffine(A)}toHex(){return RA(this.toBytes())}toString(){return this.toHex()}isTorsionFree(){return!0}isSmallOrder(){return!1}add(A){return this.assertSame(A),this.init(this.ep.add(A.ep))}subtract(A){return this.assertSame(A),this.init(this.ep.subtract(A.ep))}multiply(A){return this.init(this.ep.multiply(A))}multiplyUnsafe(A){return this.init(this.ep.multiplyUnsafe(A))}double(){return this.init(this.ep.double())}negate(){return this.init(this.ep.negate())}precompute(A,t){return this.init(this.ep.precompute(A,t))}toRawBytes(){return this.toBytes()}};function ri(e,A,t={}){if(typeof A!="function")throw new Error('"hash" function param is required');zA(t,{},{adjustScalarBytes:"function",randomBytes:"function",domain:"function",prehash:"function",mapToCurve:"function"});let{prehash:n}=t,{BASE:s,Fp:r,Fn:i}=e,a=t.randomBytes||rt,o=t.adjustScalarBytes||(M=>M),h=t.domain||((M,C,k)=>{if(Nt(k,"phflag"),C.length||k)throw new Error("Contexts/pre-hash are not supported");return M});function u(M){return i.create(rA(M))}function l(M){let C=y.secretKey;M=X("private key",M,C);let k=X("hashed private key",A(M),2*C),T=o(k.slice(0,C)),w=k.slice(C,2*C),E=u(T);return{head:T,prefix:w,scalar:E}}function c(M){let{head:C,prefix:k,scalar:T}=l(M),w=s.multiply(T),E=w.toBytes();return{head:C,prefix:k,scalar:T,point:w,pointBytes:E}}function f(M){return c(M).pointBytes}function d(M=Uint8Array.of(),...C){let k=qA(...C);return u(A(h(k,X("context",M),!!n)))}function g(M,C,k={}){M=X("message",M),n&&(M=n(M));let{prefix:T,scalar:w,pointBytes:E}=c(C),v=d(k.context,T,M),P=s.multiply(v).toBytes(),R=d(k.context,P,E,M),O=i.create(v+R*w);if(!i.isValid(O))throw new Error("sign failed: invalid s");let x=qA(P,i.toBytes(O));return ct(x,y.signature,"result")}let m={zip215:!0};function p(M,C,k,T=m){let{context:w,zip215:E}=T,v=y.signature;M=X("signature",M,v),C=X("message",C),k=X("publicKey",k,y.publicKey),E!==void 0&&Nt(E,"zip215"),n&&(C=n(C));let P=v/2,R=M.subarray(0,P),O=rA(M.subarray(P,v)),x,L,U;try{x=e.fromBytes(k,E),L=e.fromBytes(R,E),U=s.multiplyUnsafe(O)}catch{return!1}if(!E&&x.isSmallOrder())return!1;let z=d(w,L.toBytes(),x.toBytes(),C);return L.add(x.multiplyUnsafe(z)).subtract(U).clearCofactor().is0()}let S=r.BYTES,y={secretKey:S,publicKey:S,signature:2*S,seed:S};function _(M=a(y.seed)){return ct(M,y.seed,"seed")}function J(M){let C=I.randomSecretKey(M);return{secretKey:C,publicKey:f(C)}}function D(M){return PA(M)&&M.length===i.BYTES}function B(M,C){try{return!!e.fromBytes(M,C)}catch{return!1}}let I={getExtendedPublicKey:c,randomSecretKey:_,isValidSecretKey:D,isValidPublicKey:B,toMontgomery(M){let{y:C}=e.fromBytes(M),k=y.publicKey,T=k===32;if(!T&&k!==57)throw new Error("only defined for 25519 and 448");let w=T?r.div(G+C,G-C):r.div(C-G,C+G);return r.toBytes(w)},toMontgomerySecret(M){let C=y.secretKey;ct(M,C);let k=A(M.subarray(0,C));return o(k).subarray(0,C)},randomPrivateKey:_,precompute(M=8,C=e.BASE){return C.precompute(M,!1)}};return Object.freeze({keygen:J,getPublicKey:f,sign:g,verify:p,utils:I,Point:e,lengths:y})}function ii(e){let A={a:e.a,d:e.d,p:e.Fp.ORDER,n:e.n,h:e.h,Gx:e.Gx,Gy:e.Gy},t=e.Fp,n=wA(A.n,e.nBitLength,!0),s={Fp:t,Fn:n,uvRatio:e.uvRatio},r={randomBytes:e.randomBytes,adjustScalarBytes:e.adjustScalarBytes,domain:e.domain,prehash:e.prehash,mapToCurve:e.mapToCurve};return{CURVE:A,curveOpts:s,hash:e.hash,eddsaOpts:r}}function oi(e,A){let t=A.Point;return Object.assign({},A,{ExtendedPoint:t,CURVE:e,nBitLength:t.Fn.BITS,nByteLength:t.Fn.BYTES})}function us(e){let{CURVE:A,curveOpts:t,hash:n,eddsaOpts:s}=ii(e),r=si(A,t),i=ri(r,n,s);return oi(e,i)}var ut=BigInt(0),WA=BigInt(1),qt=BigInt(2);function ai(e){return zA(e,{adjustScalarBytes:"function",powPminus2:"function"}),Object.freeze({...e})}function ds(e){let A=ai(e),{P:t,type:n,adjustScalarBytes:s,powPminus2:r,randomBytes:i}=A,a=n==="x25519";if(!a&&n!=="x448")throw new Error("invalid type");let o=i||rt,h=a?255:448,u=a?32:56,l=BigInt(a?9:5),c=BigInt(a?121665:39081),f=a?qt**BigInt(254):qt**BigInt(447),d=a?BigInt(8)*qt**BigInt(251)-WA:BigInt(4)*qt**BigInt(445)-WA,g=f+d+WA,m=w=>N(w,t),p=S(l);function S(w){return Ht(m(w),u)}function y(w){let E=X("u coordinate",w,u);return a&&(E[31]&=127),m(rA(E))}function _(w){return rA(s(X("scalar",w,u)))}function J(w,E){let v=I(y(E),_(w));if(v===ut)throw new Error("invalid private or public key received");return S(v)}function D(w){return J(w,p)}function B(w,E,v){let P=m(w*(E-v));return E=m(E-P),v=m(v+P),{x_2:E,x_3:v}}function I(w,E){VA("u",w,ut,t),VA("scalar",E,f,g);let v=E,P=w,R=WA,O=ut,x=w,L=WA,U=ut;for(let V=BigInt(h-1);V>=ut;V--){let iA=v>>V&WA;U^=iA,{x_2:R,x_3:x}=B(U,R,x),{x_2:O,x_3:L}=B(U,O,L),U=iA;let oA=R+O,aA=m(oA*oA),cA=R-O,mA=m(cA*cA),gA=aA-mA,Er=x+L,br=x-L,Cn=m(br*oA),wn=m(Er*cA),kn=Cn+wn,_n=Cn-wn;x=m(kn*kn),L=m(P*m(_n*_n)),R=m(aA*mA),O=m(gA*(aA+m(c*gA)))}({x_2:R,x_3:x}=B(U,R,x)),{x_2:O,x_3:L}=B(U,O,L);let z=r(O);return m(R*z)}let M={secretKey:u,publicKey:u,seed:u},C=(w=o(u))=>(W(w,M.seed),w);function k(w){let E=C(w);return{secretKey:E,publicKey:D(E)}}return{keygen:k,getSharedSecret:(w,E)=>J(w,E),getPublicKey:w=>D(w),scalarMult:J,scalarMultBase:D,utils:{randomSecretKey:C,randomPrivateKey:C},GuBytes:p.slice(),lengths:M}}var ci=BigInt(0),_A=BigInt(1),fs=BigInt(2),hi=BigInt(3),li=BigInt(5),ui=BigInt(8),jA=BigInt("0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffed"),dt={p:jA,n:BigInt("0x1000000000000000000000000000000014def9dea2f79cd65812631a5cf5d3ed"),h:ui,a:BigInt("0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffec"),d:BigInt("0x52036cee2b6ffe738cc740797779e89800700a4d4141d8ab75eb4dca135978a3"),Gx:BigInt("0x216936d3cd6e53fec0a4e231fdd6dc5c692cc7609525a7b2c9562d608f25d51a"),Gy:BigInt("0x6666666666666666666666666666666666666666666666666666666666666658")};function gs(e){let A=BigInt(10),t=BigInt(20),n=BigInt(40),s=BigInt(80),r=jA,a=e*e%r*e%r,o=tA(a,fs,r)*a%r,h=tA(o,_A,r)*e%r,u=tA(h,li,r)*h%r,l=tA(u,A,r)*u%r,c=tA(l,t,r)*l%r,f=tA(c,n,r)*c%r,d=tA(f,s,r)*f%r,g=tA(d,s,r)*f%r,m=tA(g,A,r)*u%r;return{pow_p_5_8:tA(m,fs,r)*e%r,b2:a}}function ys(e){return e[0]&=248,e[31]&=127,e[31]|=64,e}var He=BigInt("19681161376707505956807079304988542015446066515923890162744021073123829784752");function Ge(e,A){let t=jA,n=N(A*A*A,t),s=N(n*n*A,t),r=gs(e*s).pow_p_5_8,i=N(e*n*r,t),a=N(A*i*i,t),o=i,h=N(i*He,t),u=a===e,l=a===N(-e,t),c=a===N(-e*He,t);return u&&(i=o),(l||c)&&(i=h),CA(i,t)&&(i=N(-i,t)),{isValid:u||l,value:i}}var kA=wA(dt.p,{isLE:!0}),di=wA(dt.n,{isLE:!0}),fi={...dt,Fp:kA,hash:UA,adjustScalarBytes:ys,uvRatio:Ge},NA=us(fi);var HA=(()=>{let e=kA.ORDER;return ds({P:e,type:"x25519",powPminus2:A=>{let{pow_p_5_8:t,b2:n}=gs(A);return N(tA(t,hi,e)*n,e)},adjustScalarBytes:ys})})();var Ke=He,pi=BigInt("25063068953384623474111414158702152701244531502492656460079210482610430750235"),mi=BigInt("54469307008909316920995813868745141605393597292927456921205312896311721017578"),gi=BigInt("1159843021668779879193775521855586647937357759715417654439879720876111806838"),yi=BigInt("40440834346308536858101042469323190826248399146238708352240133220865137265952"),ps=e=>Ge(_A,e),Si=BigInt("0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),Fe=e=>NA.Point.Fp.create(rA(e)&Si);function ms(e){let{d:A}=dt,t=jA,n=p=>kA.create(p),s=n(Ke*e*e),r=n((s+_A)*gi),i=BigInt(-1),a=n((i-A*s)*n(s+A)),{isValid:o,value:h}=Ge(r,a),u=n(h*e);CA(u,t)||(u=n(-u)),o||(h=u),o||(i=s);let l=n(i*(s-_A)*yi-a),c=h*h,f=n((h+h)*a),d=n(l*pi),g=n(_A-c),m=n(_A+c);return new NA.Point(n(f*m),n(g*d),n(d*m),n(f*g))}function Mi(e){W(e,64);let A=Fe(e.subarray(0,32)),t=ms(A),n=Fe(e.subarray(32,64)),s=ms(n);return new xA(t.add(s))}var xA=class e extends Yt{constructor(A){super(A)}static fromAffine(A){return new e(NA.Point.fromAffine(A))}assertSame(A){if(!(A instanceof e))throw new Error("RistrettoPoint expected")}init(A){return new e(A)}static hashToCurve(A){return Mi(X("ristrettoHash",A,64))}static fromBytes(A){W(A,32);let{a:t,d:n}=dt,s=jA,r=_=>kA.create(_),i=Fe(A);if(!Zn(kA.toBytes(i),A)||CA(i,s))throw new Error("invalid ristretto255 encoding 1");let a=r(i*i),o=r(_A+t*a),h=r(_A-t*a),u=r(o*o),l=r(h*h),c=r(t*n*u-l),{isValid:f,value:d}=ps(r(c*l)),g=r(d*h),m=r(d*g*c),p=r((i+i)*g);CA(p,s)&&(p=r(-p));let S=r(o*m),y=r(p*S);if(!f||CA(y,s)||S===ci)throw new Error("invalid ristretto255 encoding 2");return new e(new NA.Point(p,S,_A,y))}static fromHex(A){return e.fromBytes(X("ristrettoHex",A,32))}static msm(A,t){return Zt(e,NA.Point.Fn,A,t)}toBytes(){let{X:A,Y:t,Z:n,T:s}=this.ep,r=jA,i=m=>kA.create(m),a=i(i(n+t)*i(n-t)),o=i(A*t),h=i(o*o),{value:u}=ps(i(a*h)),l=i(u*a),c=i(u*o),f=i(l*c*s),d;if(CA(s*f,r)){let m=i(t*Ke),p=i(A*Ke);A=m,t=p,d=i(l*mi)}else d=c;CA(A*f,r)&&(t=i(-t));let g=i((n-t)*d);return CA(g,r)&&(g=i(-g)),kA.toBytes(g)}equals(A){this.assertSame(A);let{X:t,Y:n}=this.ep,{X:s,Y:r}=A.ep,i=h=>kA.create(h),a=i(t*r)===i(n*s),o=i(n*r)===i(t*s);return a||o}is0(){return this.equals(e.ZERO)}};xA.BASE=new xA(NA.Point.BASE);xA.ZERO=new xA(NA.Point.ZERO);xA.Fp=kA;xA.Fn=di;function Ss(e){return e instanceof Uint8Array||ArrayBuffer.isView(e)&&e.constructor.name==="Uint8Array"}function Wt(e){if(typeof e!="boolean")throw new Error(`boolean expected, not ${e}`)}function jt(e){if(!Number.isSafeInteger(e)||e<0)throw new Error("positive integer expected, got "+e)}function Q(e,...A){if(!Ss(e))throw new Error("Uint8Array expected");if(A.length>0&&!A.includes(e.length))throw new Error("Uint8Array expected of length "+A+", got length="+e.length)}function IA(e,A=!0){if(e.destroyed)throw new Error("Hash instance has been destroyed");if(A&&e.finished)throw new Error("Hash#digest() has already been called")}function ft(e,A){Q(e);let t=A.outputLen;if(e.length<t)throw new Error("digestInto() expects output buffer of length at least "+t)}function Ms(e){return new Uint8Array(e.buffer,e.byteOffset,e.byteLength)}function K(e){return new Uint32Array(e.buffer,e.byteOffset,Math.floor(e.byteLength/4))}function F(...e){for(let A=0;A<e.length;A++)e[A].fill(0)}function XA(e){return new DataView(e.buffer,e.byteOffset,e.byteLength)}var Ci=new Uint8Array(new Uint32Array([287454020]).buffer)[0]===68;function wi(e){if(typeof e!="string")throw new Error("string expected");return new Uint8Array(new TextEncoder().encode(e))}function lA(e){if(typeof e=="string")e=wi(e);else if(Ss(e))e=uA(e);else throw new Error("Uint8Array expected, got "+typeof e);return e}function Cs(e,A){if(A==null||typeof A!="object")throw new Error("options must be defined");return Object.assign(e,A)}function Xt(e,A){if(e.length!==A.length)return!1;let t=0;for(let n=0;n<e.length;n++)t|=e[n]^A[n];return t===0}var pt=(e,A)=>{function t(n,...s){if(Q(n),!Ci)throw new Error("Non little-endian hardware is not yet supported");if(e.nonceLength!==void 0){let u=s[0];if(!u)throw new Error("nonce / iv required");e.varSizeNonce?Q(u):Q(u,e.nonceLength)}let r=e.tagLength;r&&s[1]!==void 0&&Q(s[1]);let i=A(n,...s),a=(u,l)=>{if(l!==void 0){if(u!==2)throw new Error("cipher output not supported");Q(l)}},o=!1;return{encrypt(u,l){if(o)throw new Error("cannot encrypt() twice with same key + nonce");return o=!0,Q(u),a(i.encrypt.length,l),i.encrypt(u,l)},decrypt(u,l){if(Q(u),r&&u.length<r)throw new Error("invalid ciphertext length: smaller than tagLength="+r);return a(i.decrypt.length,l),i.decrypt(u,l)}}}return Object.assign(t,e),t};function mt(e,A,t=!0){if(A===void 0)return new Uint8Array(e);if(A.length!==e)throw new Error("invalid output length, expected "+e+", got: "+A.length);if(t&&!gt(A))throw new Error("invalid output, must be aligned");return A}function Vt(e,A,t,n){if(typeof e.setBigUint64=="function")return e.setBigUint64(A,t,n);let s=BigInt(32),r=BigInt(4294967295),i=Number(t>>s&r),a=Number(t&r),o=n?4:0,h=n?0:4;e.setUint32(A+o,i,n),e.setUint32(A+h,a,n)}function $t(e,A,t){Wt(t);let n=new Uint8Array(16),s=XA(n);return Vt(s,0,BigInt(A),t),Vt(s,8,BigInt(e),t),n}function gt(e){return e.byteOffset%4===0}function uA(e){return Uint8Array.from(e)}var ks=e=>Uint8Array.from(e.split("").map(A=>A.charCodeAt(0))),ki=ks("expand 16-byte k"),_i=ks("expand 32-byte k"),xi=K(ki),Ei=K(_i);function b(e,A){return e<<A|e>>>32-A}function Ze(e){return e.byteOffset%4===0}var Ae=64,bi=16,_s=2**32-1,ws=new Uint32Array;function Ti(e,A,t,n,s,r,i,a){let o=s.length,h=new Uint8Array(Ae),u=K(h),l=Ze(s)&&Ze(r),c=l?K(s):ws,f=l?K(r):ws;for(let d=0;d<o;i++){if(e(A,t,n,u,i,a),i>=_s)throw new Error("arx: counter overflow");let g=Math.min(Ae,o-d);if(l&&g===Ae){let m=d/4;if(d%4!==0)throw new Error("arx: invalid block position");for(let p=0,S;p<bi;p++)S=m+p,f[S]=c[S]^u[p];d+=Ae;continue}for(let m=0,p;m<g;m++)p=d+m,r[p]=s[p]^h[m];d+=g}}function Ye(e,A){let{allowShortKeys:t,extendNonceFn:n,counterLength:s,counterRight:r,rounds:i}=Cs({allowShortKeys:!1,counterLength:8,counterRight:!1,rounds:20},A);if(typeof e!="function")throw new Error("core must be a function");return jt(s),jt(i),Wt(r),Wt(t),(a,o,h,u,l=0)=>{Q(a),Q(o),Q(h);let c=h.length;if(u===void 0&&(u=new Uint8Array(c)),Q(u),jt(l),l<0||l>=_s)throw new Error("arx: counter overflow");if(u.length<c)throw new Error(`arx: output (${u.length}) is shorter than data (${c})`);let f=[],d=a.length,g,m;if(d===32)f.push(g=uA(a)),m=Ei;else if(d===16&&t)g=new Uint8Array(32),g.set(a),g.set(a,16),m=xi,f.push(g);else throw new Error(`arx: invalid 32-byte key, got length=${d}`);Ze(o)||f.push(o=uA(o));let p=K(g);if(n){if(o.length!==24)throw new Error("arx: extended nonce must be 24 bytes");n(m,p,K(o.subarray(0,16)),p),o=o.subarray(16)}let S=16-s;if(S!==o.length)throw new Error(`arx: nonce must be ${S} or 16 bytes`);if(S!==12){let _=new Uint8Array(12);_.set(o,r?0:12-o.length),o=_,f.push(o)}let y=K(o);return Ti(e,m,p,y,h,u,l,i),F(...f),u}}var Y=(e,A)=>e[A++]&255|(e[A++]&255)<<8,qe=class{constructor(A){this.blockLen=16,this.outputLen=16,this.buffer=new Uint8Array(16),this.r=new Uint16Array(10),this.h=new Uint16Array(10),this.pad=new Uint16Array(8),this.pos=0,this.finished=!1,A=lA(A),Q(A,32);let t=Y(A,0),n=Y(A,2),s=Y(A,4),r=Y(A,6),i=Y(A,8),a=Y(A,10),o=Y(A,12),h=Y(A,14);this.r[0]=t&8191,this.r[1]=(t>>>13|n<<3)&8191,this.r[2]=(n>>>10|s<<6)&7939,this.r[3]=(s>>>7|r<<9)&8191,this.r[4]=(r>>>4|i<<12)&255,this.r[5]=i>>>1&8190,this.r[6]=(i>>>14|a<<2)&8191,this.r[7]=(a>>>11|o<<5)&8065,this.r[8]=(o>>>8|h<<8)&8191,this.r[9]=h>>>5&127;for(let u=0;u<8;u++)this.pad[u]=Y(A,16+2*u)}process(A,t,n=!1){let s=n?0:2048,{h:r,r:i}=this,a=i[0],o=i[1],h=i[2],u=i[3],l=i[4],c=i[5],f=i[6],d=i[7],g=i[8],m=i[9],p=Y(A,t+0),S=Y(A,t+2),y=Y(A,t+4),_=Y(A,t+6),J=Y(A,t+8),D=Y(A,t+10),B=Y(A,t+12),I=Y(A,t+14),M=r[0]+(p&8191),C=r[1]+((p>>>13|S<<3)&8191),k=r[2]+((S>>>10|y<<6)&8191),T=r[3]+((y>>>7|_<<9)&8191),w=r[4]+((_>>>4|J<<12)&8191),E=r[5]+(J>>>1&8191),v=r[6]+((J>>>14|D<<2)&8191),P=r[7]+((D>>>11|B<<5)&8191),R=r[8]+((B>>>8|I<<8)&8191),O=r[9]+(I>>>5|s),x=0,L=x+M*a+C*(5*m)+k*(5*g)+T*(5*d)+w*(5*f);x=L>>>13,L&=8191,L+=E*(5*c)+v*(5*l)+P*(5*u)+R*(5*h)+O*(5*o),x+=L>>>13,L&=8191;let U=x+M*o+C*a+k*(5*m)+T*(5*g)+w*(5*d);x=U>>>13,U&=8191,U+=E*(5*f)+v*(5*c)+P*(5*l)+R*(5*u)+O*(5*h),x+=U>>>13,U&=8191;let z=x+M*h+C*o+k*a+T*(5*m)+w*(5*g);x=z>>>13,z&=8191,z+=E*(5*d)+v*(5*f)+P*(5*c)+R*(5*l)+O*(5*u),x+=z>>>13,z&=8191;let V=x+M*u+C*h+k*o+T*a+w*(5*m);x=V>>>13,V&=8191,V+=E*(5*g)+v*(5*d)+P*(5*f)+R*(5*c)+O*(5*l),x+=V>>>13,V&=8191;let iA=x+M*l+C*u+k*h+T*o+w*a;x=iA>>>13,iA&=8191,iA+=E*(5*m)+v*(5*g)+P*(5*d)+R*(5*f)+O*(5*c),x+=iA>>>13,iA&=8191;let oA=x+M*c+C*l+k*u+T*h+w*o;x=oA>>>13,oA&=8191,oA+=E*a+v*(5*m)+P*(5*g)+R*(5*d)+O*(5*f),x+=oA>>>13,oA&=8191;let aA=x+M*f+C*c+k*l+T*u+w*h;x=aA>>>13,aA&=8191,aA+=E*o+v*a+P*(5*m)+R*(5*g)+O*(5*d),x+=aA>>>13,aA&=8191;let cA=x+M*d+C*f+k*c+T*l+w*u;x=cA>>>13,cA&=8191,cA+=E*h+v*o+P*a+R*(5*m)+O*(5*g),x+=cA>>>13,cA&=8191;let mA=x+M*g+C*d+k*f+T*c+w*l;x=mA>>>13,mA&=8191,mA+=E*u+v*h+P*o+R*a+O*(5*m),x+=mA>>>13,mA&=8191;let gA=x+M*m+C*g+k*d+T*f+w*c;x=gA>>>13,gA&=8191,gA+=E*l+v*u+P*h+R*o+O*a,x+=gA>>>13,gA&=8191,x=(x<<2)+x|0,x=x+L|0,L=x&8191,x=x>>>13,U+=x,r[0]=L,r[1]=U,r[2]=z,r[3]=V,r[4]=iA,r[5]=oA,r[6]=aA,r[7]=cA,r[8]=mA,r[9]=gA}finalize(){let{h:A,pad:t}=this,n=new Uint16Array(10),s=A[1]>>>13;A[1]&=8191;for(let a=2;a<10;a++)A[a]+=s,s=A[a]>>>13,A[a]&=8191;A[0]+=s*5,s=A[0]>>>13,A[0]&=8191,A[1]+=s,s=A[1]>>>13,A[1]&=8191,A[2]+=s,n[0]=A[0]+5,s=n[0]>>>13,n[0]&=8191;for(let a=1;a<10;a++)n[a]=A[a]+s,s=n[a]>>>13,n[a]&=8191;n[9]-=8192;let r=(s^1)-1;for(let a=0;a<10;a++)n[a]&=r;r=~r;for(let a=0;a<10;a++)A[a]=A[a]&r|n[a];A[0]=(A[0]|A[1]<<13)&65535,A[1]=(A[1]>>>3|A[2]<<10)&65535,A[2]=(A[2]>>>6|A[3]<<7)&65535,A[3]=(A[3]>>>9|A[4]<<4)&65535,A[4]=(A[4]>>>12|A[5]<<1|A[6]<<14)&65535,A[5]=(A[6]>>>2|A[7]<<11)&65535,A[6]=(A[7]>>>5|A[8]<<8)&65535,A[7]=(A[8]>>>8|A[9]<<5)&65535;let i=A[0]+t[0];A[0]=i&65535;for(let a=1;a<8;a++)i=(A[a]+t[a]|0)+(i>>>16)|0,A[a]=i&65535;F(n)}update(A){IA(this),A=lA(A),Q(A);let{buffer:t,blockLen:n}=this,s=A.length;for(let r=0;r<s;){let i=Math.min(n-this.pos,s-r);if(i===n){for(;n<=s-r;r+=n)this.process(A,r);continue}t.set(A.subarray(r,r+i),this.pos),this.pos+=i,r+=i,this.pos===n&&(this.process(t,0,!1),this.pos=0)}return this}destroy(){F(this.h,this.r,this.buffer,this.pad)}digestInto(A){IA(this),ft(A,this),this.finished=!0;let{buffer:t,h:n}=this,{pos:s}=this;if(s){for(t[s++]=1;s<16;s++)t[s]=0;this.process(t,0,!0)}this.finalize();let r=0;for(let i=0;i<8;i++)A[r++]=n[i]>>>0,A[r++]=n[i]>>>8;return A}digest(){let{buffer:A,outputLen:t}=this;this.digestInto(A);let n=A.slice(0,t);return this.destroy(),n}};function Di(e){let A=(n,s)=>e(s).update(lA(n)).digest(),t=e(new Uint8Array(32));return A.outputLen=t.outputLen,A.blockLen=t.blockLen,A.create=n=>e(n),A}var xs=Di(e=>new qe(e));function Ts(e,A,t,n,s,r=20){let i=e[0],a=e[1],o=e[2],h=e[3],u=A[0],l=A[1],c=A[2],f=A[3],d=A[4],g=A[5],m=A[6],p=A[7],S=s,y=t[0],_=t[1],J=t[2],D=i,B=a,I=o,M=h,C=u,k=l,T=c,w=f,E=d,v=g,P=m,R=p,O=S,x=y,L=_,U=J;for(let V=0;V<r;V+=2)D=D+C|0,O=b(O^D,16),E=E+O|0,C=b(C^E,12),D=D+C|0,O=b(O^D,8),E=E+O|0,C=b(C^E,7),B=B+k|0,x=b(x^B,16),v=v+x|0,k=b(k^v,12),B=B+k|0,x=b(x^B,8),v=v+x|0,k=b(k^v,7),I=I+T|0,L=b(L^I,16),P=P+L|0,T=b(T^P,12),I=I+T|0,L=b(L^I,8),P=P+L|0,T=b(T^P,7),M=M+w|0,U=b(U^M,16),R=R+U|0,w=b(w^R,12),M=M+w|0,U=b(U^M,8),R=R+U|0,w=b(w^R,7),D=D+k|0,U=b(U^D,16),P=P+U|0,k=b(k^P,12),D=D+k|0,U=b(U^D,8),P=P+U|0,k=b(k^P,7),B=B+T|0,O=b(O^B,16),R=R+O|0,T=b(T^R,12),B=B+T|0,O=b(O^B,8),R=R+O|0,T=b(T^R,7),I=I+w|0,x=b(x^I,16),E=E+x|0,w=b(w^E,12),I=I+w|0,x=b(x^I,8),E=E+x|0,w=b(w^E,7),M=M+C|0,L=b(L^M,16),v=v+L|0,C=b(C^v,12),M=M+C|0,L=b(L^M,8),v=v+L|0,C=b(C^v,7);let z=0;n[z++]=i+D|0,n[z++]=a+B|0,n[z++]=o+I|0,n[z++]=h+M|0,n[z++]=u+C|0,n[z++]=l+k|0,n[z++]=c+T|0,n[z++]=f+w|0,n[z++]=d+E|0,n[z++]=g+v|0,n[z++]=m+P|0,n[z++]=p+R|0,n[z++]=S+O|0,n[z++]=y+x|0,n[z++]=_+L|0,n[z++]=J+U|0}function vi(e,A,t,n){let s=e[0],r=e[1],i=e[2],a=e[3],o=A[0],h=A[1],u=A[2],l=A[3],c=A[4],f=A[5],d=A[6],g=A[7],m=t[0],p=t[1],S=t[2],y=t[3];for(let J=0;J<20;J+=2)s=s+o|0,m=b(m^s,16),c=c+m|0,o=b(o^c,12),s=s+o|0,m=b(m^s,8),c=c+m|0,o=b(o^c,7),r=r+h|0,p=b(p^r,16),f=f+p|0,h=b(h^f,12),r=r+h|0,p=b(p^r,8),f=f+p|0,h=b(h^f,7),i=i+u|0,S=b(S^i,16),d=d+S|0,u=b(u^d,12),i=i+u|0,S=b(S^i,8),d=d+S|0,u=b(u^d,7),a=a+l|0,y=b(y^a,16),g=g+y|0,l=b(l^g,12),a=a+l|0,y=b(y^a,8),g=g+y|0,l=b(l^g,7),s=s+h|0,y=b(y^s,16),d=d+y|0,h=b(h^d,12),s=s+h|0,y=b(y^s,8),d=d+y|0,h=b(h^d,7),r=r+u|0,m=b(m^r,16),g=g+m|0,u=b(u^g,12),r=r+u|0,m=b(m^r,8),g=g+m|0,u=b(u^g,7),i=i+l|0,p=b(p^i,16),c=c+p|0,l=b(l^c,12),i=i+l|0,p=b(p^i,8),c=c+p|0,l=b(l^c,7),a=a+o|0,S=b(S^a,16),f=f+S|0,o=b(o^f,12),a=a+o|0,S=b(S^a,8),f=f+S|0,o=b(o^f,7);let _=0;n[_++]=s,n[_++]=r,n[_++]=i,n[_++]=a,n[_++]=m,n[_++]=p,n[_++]=S,n[_++]=y}var Ii=Ye(Ts,{counterRight:!1,counterLength:4,allowShortKeys:!1}),Ji=Ye(Ts,{counterRight:!1,counterLength:8,extendNonceFn:vi,allowShortKeys:!1});var Bi=new Uint8Array(16),Es=(e,A)=>{e.update(A);let t=A.length%16;t&&e.update(Bi.subarray(t))},Pi=new Uint8Array(32);function bs(e,A,t,n,s){let r=e(A,t,Pi),i=xs.create(r);s&&Es(i,s),Es(i,n);let a=$t(n.length,s?s.length:0,!0);i.update(a);let o=i.digest();return F(r,a),o}var Ds=e=>(A,t,n)=>({encrypt(r,i){let a=r.length;i=mt(a+16,i,!1),i.set(r);let o=i.subarray(0,-16);e(A,t,o,o,1);let h=bs(e,A,t,o,n);return i.set(h,a),F(h),i},decrypt(r,i){i=mt(r.length-16,i,!1);let a=r.subarray(0,-16),o=r.subarray(-16),h=bs(e,A,t,a,n);if(!Xt(o,h))throw new Error("invalid tag");return i.set(r.subarray(0,-16)),e(A,t,i,i,1),F(h),i}}),Ve=pt({blockSize:64,nonceLength:12,tagLength:16},Ds(Ii)),Na=pt({blockSize:64,nonceLength:24,tagLength:16},Ds(Ji));var EA=16,je=new Uint8Array(16),dA=K(je),Ri=225,Oi=(e,A,t,n)=>{let s=n&1;return{s3:t<<31|n>>>1,s2:A<<31|t>>>1,s1:e<<31|A>>>1,s0:e>>>1^Ri<<24&-(s&1)}},eA=e=>(e>>>0&255)<<24|(e>>>8&255)<<16|(e>>>16&255)<<8|e>>>24&255|0;function Li(e){e.reverse();let A=e[15]&1,t=0;for(let n=0;n<e.length;n++){let s=e[n];e[n]=s>>>1|t,t=(s&1)<<7}return e[0]^=-A&225,e}var Ui=e=>e>64*1024?8:e>1024?4:2,te=class{constructor(A,t){this.blockLen=EA,this.outputLen=EA,this.s0=0,this.s1=0,this.s2=0,this.s3=0,this.finished=!1,A=lA(A),Q(A,16);let n=XA(A),s=n.getUint32(0,!1),r=n.getUint32(4,!1),i=n.getUint32(8,!1),a=n.getUint32(12,!1),o=[];for(let d=0;d<128;d++)o.push({s0:eA(s),s1:eA(r),s2:eA(i),s3:eA(a)}),{s0:s,s1:r,s2:i,s3:a}=Oi(s,r,i,a);let h=Ui(t||1024);if(![1,2,4,8].includes(h))throw new Error("ghash: invalid window size, expected 2, 4 or 8");this.W=h;let l=128/h,c=this.windowSize=2**h,f=[];for(let d=0;d<l;d++)for(let g=0;g<c;g++){let m=0,p=0,S=0,y=0;for(let _=0;_<h;_++){if(!(g>>>h-_-1&1))continue;let{s0:D,s1:B,s2:I,s3:M}=o[h*d+_];m^=D,p^=B,S^=I,y^=M}f.push({s0:m,s1:p,s2:S,s3:y})}this.t=f}_updateBlock(A,t,n,s){A^=this.s0,t^=this.s1,n^=this.s2,s^=this.s3;let{W:r,t:i,windowSize:a}=this,o=0,h=0,u=0,l=0,c=(1<<r)-1,f=0;for(let d of[A,t,n,s])for(let g=0;g<4;g++){let m=d>>>8*g&255;for(let p=8/r-1;p>=0;p--){let S=m>>>r*p&c,{s0:y,s1:_,s2:J,s3:D}=i[f*a+S];o^=y,h^=_,u^=J,l^=D,f+=1}}this.s0=o,this.s1=h,this.s2=u,this.s3=l}update(A){IA(this),A=lA(A),Q(A);let t=K(A),n=Math.floor(A.length/EA),s=A.length%EA;for(let r=0;r<n;r++)this._updateBlock(t[r*4+0],t[r*4+1],t[r*4+2],t[r*4+3]);return s&&(je.set(A.subarray(n*EA)),this._updateBlock(dA[0],dA[1],dA[2],dA[3]),F(dA)),this}destroy(){let{t:A}=this;for(let t of A)t.s0=0,t.s1=0,t.s2=0,t.s3=0}digestInto(A){IA(this),ft(A,this),this.finished=!0;let{s0:t,s1:n,s2:s,s3:r}=this,i=K(A);return i[0]=t,i[1]=n,i[2]=s,i[3]=r,A}digest(){let A=new Uint8Array(EA);return this.digestInto(A),this.destroy(),A}},We=class extends te{constructor(A,t){A=lA(A),Q(A);let n=Li(uA(A));super(n,t),F(n)}update(A){A=lA(A),IA(this);let t=K(A),n=A.length%EA,s=Math.floor(A.length/EA);for(let r=0;r<s;r++)this._updateBlock(eA(t[r*4+3]),eA(t[r*4+2]),eA(t[r*4+1]),eA(t[r*4+0]));return n&&(je.set(A.subarray(s*EA)),this._updateBlock(eA(dA[3]),eA(dA[2]),eA(dA[1]),eA(dA[0])),F(dA)),this}digestInto(A){IA(this),ft(A,this),this.finished=!0;let{s0:t,s1:n,s2:s,s3:r}=this,i=K(A);return i[0]=t,i[1]=n,i[2]=s,i[3]=r,A.reverse()}};function vs(e){let A=(n,s)=>e(s,n.length).update(lA(n)).digest(),t=e(new Uint8Array(16),0);return A.outputLen=t.outputLen,A.blockLen=t.blockLen,A.create=(n,s)=>e(n,s),A}var Xe=vs((e,A)=>new te(e,A)),zi=vs((e,A)=>new We(e,A));var An=16,Qi=4,ee=new Uint8Array(An),Ni=283;function tn(e){return e<<1^Ni&-(e>>7)}function Is(e,A){let t=0;for(;A>0;A>>=1)t^=e&-(A&1),e=tn(e);return t}var Hi=(()=>{let e=new Uint8Array(256);for(let t=0,n=1;t<256;t++,n^=tn(n))e[t]=n;let A=new Uint8Array(256);A[0]=99;for(let t=0;t<255;t++){let n=e[255-t];n|=n<<8,A[e[t]]=(n^n>>4^n>>5^n>>6^n>>7^99)&255}return F(e),A})();var Ki=e=>e<<24|e>>>8,$e=e=>e<<8|e>>>24;function Fi(e,A){if(e.length!==256)throw new Error("Wrong sbox length");let t=new Uint32Array(256).map((h,u)=>A(e[u])),n=t.map($e),s=n.map($e),r=s.map($e),i=new Uint32Array(256*256),a=new Uint32Array(256*256),o=new Uint16Array(256*256);for(let h=0;h<256;h++)for(let u=0;u<256;u++){let l=h*256+u;i[l]=t[h]^n[u],a[l]=s[h]^r[u],o[l]=e[h]<<8|e[u]}return{sbox:e,sbox2:o,T0:t,T1:n,T2:s,T3:r,T01:i,T23:a}}var Bs=Fi(Hi,e=>Is(e,3)<<24|e<<16|e<<8|Is(e,2));var Gi=(()=>{let e=new Uint8Array(16);for(let A=0,t=1;A<16;A++,t=tn(t))e[A]=t;return e})();function Zi(e){Q(e);let A=e.length;if(![16,24,32].includes(A))throw new Error("aes: invalid key size, should be 16, 24 or 32, got "+A);let{sbox2:t}=Bs,n=[];gt(e)||n.push(e=uA(e));let s=K(e),r=s.length,i=o=>yt(t,o,o,o,o),a=new Uint32Array(A+28);a.set(s);for(let o=r;o<a.length;o++){let h=a[o-1];o%r===0?h=i(Ki(h))^Gi[o/r-1]:r>6&&o%r===4&&(h=i(h)),a[o]=a[o-r]^h}return F(...n),a}function ne(e,A,t,n,s,r){return e[t<<8&65280|n>>>8&255]^A[s>>>8&65280|r>>>24&255]}function yt(e,A,t,n,s){return e[A&255|t&65280]|e[n>>>16&255|s>>>16&65280]<<16}function Js(e,A,t,n,s){let{sbox2:r,T01:i,T23:a}=Bs,o=0;A^=e[o++],t^=e[o++],n^=e[o++],s^=e[o++];let h=e.length/4-2;for(let d=0;d<h;d++){let g=e[o++]^ne(i,a,A,t,n,s),m=e[o++]^ne(i,a,t,n,s,A),p=e[o++]^ne(i,a,n,s,A,t),S=e[o++]^ne(i,a,s,A,t,n);A=g,t=m,n=p,s=S}let u=e[o++]^yt(r,A,t,n,s),l=e[o++]^yt(r,t,n,s,A),c=e[o++]^yt(r,n,s,A,t),f=e[o++]^yt(r,s,A,t,n);return{s0:u,s1:l,s2:c,s3:f}}function se(e,A,t,n,s){Q(t,An),Q(n),s=mt(n.length,s);let r=t,i=K(r),a=XA(r),o=K(n),h=K(s),u=A?0:12,l=n.length,c=a.getUint32(u,A),{s0:f,s1:d,s2:g,s3:m}=Js(e,i[0],i[1],i[2],i[3]);for(let S=0;S+4<=o.length;S+=4)h[S+0]=o[S+0]^f,h[S+1]=o[S+1]^d,h[S+2]=o[S+2]^g,h[S+3]=o[S+3]^m,c=c+1>>>0,a.setUint32(u,c,A),{s0:f,s1:d,s2:g,s3:m}=Js(e,i[0],i[1],i[2],i[3]);let p=An*Math.floor(o.length/Qi);if(p<l){let S=new Uint32Array([f,d,g,m]),y=Ms(S);for(let _=p,J=0;_<l;_++,J++)s[_]=n[_]^y[J];F(S)}return s}function Yi(e,A,t,n,s){let r=s?s.length:0,i=e.create(t,n.length+r);s&&i.update(s);let a=$t(8*n.length,8*r,A);i.update(n),i.update(a);let o=i.digest();return F(a),o}var en=pt({blockSize:16,nonceLength:12,tagLength:16,varSizeNonce:!0},function(A,t,n){if(t.length<8)throw new Error("aes/gcm: invalid nonce length");let s=16;function r(a,o,h){let u=Yi(Xe,!1,a,h,n);for(let l=0;l<o.length;l++)u[l]^=o[l];return u}function i(){let a=Zi(A),o=ee.slice(),h=ee.slice();if(se(a,!1,h,h,o),t.length===12)h.set(t);else{let l=ee.slice(),c=XA(l);Vt(c,8,BigInt(t.length*8),!1);let f=Xe.create(o).update(t).update(l);f.digestInto(h),f.destroy()}let u=se(a,!1,h,ee);return{xk:a,authKey:o,counter:h,tagMask:u}}return{encrypt(a){let{xk:o,authKey:h,counter:u,tagMask:l}=i(),c=new Uint8Array(a.length+s),f=[o,h,u,l];gt(a)||f.push(a=uA(a)),se(o,!1,u,a,c.subarray(0,a.length));let d=r(h,l,c.subarray(0,c.length-s));return f.push(d),c.set(d,a.length),F(...f),c},decrypt(a){let{xk:o,authKey:h,counter:u,tagMask:l}=i(),c=[o,h,l,u];gt(a)||c.push(a=uA(a));let f=a.subarray(0,-s),d=a.subarray(-s),g=r(h,l,f);if(c.push(g),!Xt(g,d))throw new Error("aes/gcm: invalid ghash tag");let m=se(o,!1,u,f);return F(...c),m}}});var nn=new Uint8Array(12),zs=new DataView(nn.buffer);function Ps(e){return zs.setBigUint64(4,e,!0),nn}function Rs(e){return zs.setBigUint64(4,e,!1),nn}var Os=(e,A)=>HA.getSharedSecret(e,A),Ls=e=>HA.getPublicKey(e),Us=()=>{let e=HA.utils.randomSecretKey();return{privateKey:e,publicKey:HA.getPublicKey(e)}},$A={chacha:{name:"ChaChaPoly",dhLen:32,dh:Os,generateKeypair:Us,publicKey:Ls,hash:j,aeadEncrypt:(e,A,t,n)=>Ve(e,Ps(A),t).encrypt(n),aeadDecrypt:(e,A,t,n)=>Ve(e,Ps(A),t).decrypt(n)},aesgcm:{name:"AESGCM",dhLen:32,dh:Os,generateKeypair:Us,publicKey:Ls,hash:j,aeadEncrypt:(e,A,t,n)=>en(e,Rs(A),t).encrypt(n),aeadDecrypt:(e,A,t,n)=>en(e,Rs(A),t).decrypt(n)}},Qs={chacha:"25519_ChaChaPoly_SHA256",aesgcm:"25519_AESGCM_SHA256"};function H(e){let A="";for(let t=0;t<e.length;t++)A+=String.fromCharCode(e[t]);return btoa(A).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"")}function q(e){let A=e.replace(/-/g,"+").replace(/_/g,"/"),t=atob(A),n=new Uint8Array(t.length);for(let s=0;s<t.length;s++)n[s]=t.charCodeAt(s);return n}var Ns="sendspin-identity-sk",St=class e{constructor(A,t){this.privateKey=A,this.publicKey=t,this.clientId=H(t)}get keypair(){return{privateKey:this.privateKey,publicKey:this.publicKey}}static loadOrCreate(A){let t=$A.chacha;if(A){let s=A.getItem(Ns);if(s)try{let i=q(s);return new e(i,t.publicKey(i))}catch{console.warn("Sendspin: stored identity key is invalid, generating a new one")}let r=t.generateKeypair();return A.setItem(Ns,H(r.privateKey)),new e(r.privateKey,r.publicKey)}console.warn("Sendspin: no storage provided, using an ephemeral identity (client_id changes each session, pairing unavailable)");let n=t.generateKeypair();return new e(n.privateKey,n.publicKey)}};var Hs=new TextEncoder,re=j(Hs.encode("sendspin-sentinel-psk-v1")),sn=Hs.encode("sendspin-psk-id-v1");function KA(e){let A=new Uint8Array(sn.length+e.length);return A.set(sn,0),A.set(e,sn.length),H(j(A))}var cc=KA(re);function Ks(){return crypto.getRandomValues(new Uint8Array(32))}var rn="sendspin-psks",on="sendspin-pairing-psk",Mt=class{constructor(A){this.storage=A,this.entries=new Map,this.add({psk:re,pskId:KA(re),category:"sentinel"}),this.loadPersisted()}add(A){this.entries.set(A.pskId,A)}loadPersisted(){if(!this.storage)return;let A=this.storage.getItem(rn);if(A)try{let n=JSON.parse(A);for(let s of n){let r=q(s.psk);this.add({psk:r,pskId:KA(r),category:"long_term",serverId:s.serverId})}}catch{this.storage.setItem(rn,"[]")}let t=this.storage.getItem(on);if(t)try{let n=q(t);this.add({psk:n,pskId:KA(n),category:"pairing"})}catch{this.storage.setItem(on,"")}}persistLongTerm(){if(!this.storage)return;let A=[];for(let t of this.entries.values())t.category==="long_term"&&A.push({psk:H(t.psk),serverId:t.serverId});this.storage.setItem(rn,JSON.stringify(A))}lookup(A){return this.entries.get(A)??null}addLongTerm(A,t){let n={psk:A,pskId:KA(A),category:"long_term",serverId:t};return this.add(n),this.persistLongTerm(),n}removeByPskId(A){let t=this.entries.get(A);!t||t.category!=="long_term"||t.serverId===void 0||(this.entries.delete(A),this.persistLongTerm())}getOrCreatePairingPsk(){for(let A of this.entries.values())if(A.category==="pairing")return A.psk;return this.setPairingPsk(Ks())}rotatePairingPsk(){for(let[A,t]of this.entries)t.category==="pairing"&&this.entries.delete(A);return this.setPairingPsk(Ks())}setPairingPsk(A){return this.add({psk:A,pskId:KA(A),category:"pairing"}),this.storage?.setItem(on,H(A)),A}};var ie=class extends ZA{constructor(A,t){super(),this.finished=!1,this.destroyed=!1,vn(A);let n=st(t);if(this.iHash=A.create(),typeof this.iHash.update!="function")throw new Error("Expected instance of class which extends utils.Hash");this.blockLen=this.iHash.blockLen,this.outputLen=this.iHash.outputLen;let s=this.blockLen,r=new Uint8Array(s);r.set(n.length>s?A.create().update(n).digest():n);for(let i=0;i<r.length;i++)r[i]^=54;this.iHash.update(r),this.oHash=A.create();for(let i=0;i<r.length;i++)r[i]^=106;this.oHash.update(r),SA(r)}update(A){return YA(this),this.iHash.update(A),this}digestInto(A){YA(this),W(A,this.outputLen),this.finished=!0,this.iHash.digestInto(A),this.oHash.update(A),this.oHash.digestInto(A),this.destroy()}digest(){let A=new Uint8Array(this.oHash.outputLen);return this.digestInto(A),A}_cloneInto(A){A||(A=Object.create(Object.getPrototypeOf(this),{}));let{oHash:t,iHash:n,finished:s,destroyed:r,blockLen:i,outputLen:a}=this;return A=A,A.finished=s,A.destroyed=r,A.blockLen=i,A.outputLen=a,A.oHash=t._cloneInto(A.oHash),A.iHash=n._cloneInto(A.iHash),A}clone(){return this._cloneInto()}destroy(){this.destroyed=!0,this.oHash.destroy(),this.iHash.destroy()}},JA=(e,A,t)=>new ie(e,A).update(t).digest();JA.create=(e,A)=>new ie(e,A);var Fs=new Uint8Array(0),At=class{constructor(A){this.suite=A,this.k=null,this.n=0n}initializeKey(A){this.k=A,this.n=0n}hasKey(){return this.k!==null}encryptWithAd(A,t){if(this.k===null)return t;let n=this.suite.aeadEncrypt(this.k,this.n,A,t);return this.n+=1n,n}decryptWithAd(A,t){if(this.k===null)return t;let n=this.suite.aeadDecrypt(this.k,this.n,A,t);return this.n+=1n,n}};var Gs=32;function an(e,A,t){let n=JA(j,e,A),s=JA(j,n,Uint8Array.of(1)),r=JA(j,n,cn(s,Uint8Array.of(2)));if(t===2)return[s,r];let i=JA(j,n,cn(r,Uint8Array.of(3)));return[s,r,i]}function cn(...e){let A=e.reduce((s,r)=>s+r.length,0),t=new Uint8Array(A),n=0;for(let s of e)t.set(s,n),n+=s.length;return t}var oe=class{constructor(A){this.suite=A,this.cipher=new At(A)}initialize(A){let t=new TextEncoder().encode(A);if(t.length<=Gs){let n=new Uint8Array(Gs);n.set(t),this.h=n}else this.h=this.suite.hash(t);this.ck=this.h,this.cipher.initializeKey(null)}mixHash(A){this.h=this.suite.hash(cn(this.h,A))}mixKey(A){let[t,n]=an(this.ck,A,2);this.ck=t,this.cipher.initializeKey(n.slice(0,32))}mixKeyAndHash(A){let[t,n,s]=an(this.ck,A,3);this.ck=t,this.mixHash(n),this.cipher.initializeKey(s.slice(0,32))}encryptAndHash(A){let t=this.cipher.encryptWithAd(this.h,A);return this.mixHash(t),t}decryptAndHash(A){let t=this.cipher.decryptWithAd(this.h,A);return this.mixHash(A),t}split(){let[A,t]=an(this.ck,Fs,2),n=new At(this.suite),s=new At(this.suite);return n.initializeKey(A.slice(0,32)),s.initializeKey(t.slice(0,32)),[n,s]}};var ln=["e","es","ss"],un=["e","ee","se","psk"];function hn(e,A){let t=new Uint8Array(e.length+A.length);return t.set(e,0),t.set(A,e.length),t}var Ct=class{constructor(A){this.suite=A.suite,this.role=A.role,this.s=A.s,this.rs=A.rs,this.psk=A.psk,this.fixedEphemeral=A.fixedEphemeral,this.sym=new oe(A.suite),this.sym.initialize(`Noise_KKpsk2_25519_${A.suite.name}_SHA256`),this.sym.mixHash(A.prologue);let t=A.role==="initiator"?A.s.publicKey:A.rs,n=A.role==="responder"?A.s.publicKey:A.rs;this.sym.mixHash(t),this.sym.mixHash(n)}get handshakeHash(){return this.sym.h}setPsk(A){this.psk=A}dhToken(A){let t=this.role==="initiator";switch(A){case"ee":return this.suite.dh(this.e.privateKey,this.re);case"ss":return this.suite.dh(this.s.privateKey,this.rs);case"es":return t?this.suite.dh(this.e.privateKey,this.rs):this.suite.dh(this.s.privateKey,this.re);case"se":return t?this.suite.dh(this.s.privateKey,this.re):this.suite.dh(this.e.privateKey,this.rs)}}processTokenWrite(A,t){A==="e"?(this.e=this.fixedEphemeral??this.suite.generateKeypair(),this.sym.mixHash(this.e.publicKey),this.sym.mixKey(this.e.publicKey),t.buf=hn(t.buf,this.e.publicKey)):A==="s"?t.buf=hn(t.buf,this.sym.encryptAndHash(this.s.publicKey)):A==="psk"?this.sym.mixKeyAndHash(this.psk):this.sym.mixKey(this.dhToken(A))}processTokenRead(A,t){if(A==="e")this.re=t.buf.slice(0,this.suite.dhLen),t.buf=t.buf.slice(this.suite.dhLen),this.sym.mixHash(this.re),this.sym.mixKey(this.re);else if(A==="s"){let n=this.suite.dhLen+16;this.sym.decryptAndHash(t.buf.slice(0,n)),t.buf=t.buf.slice(n)}else A==="psk"?this.sym.mixKeyAndHash(this.psk):this.sym.mixKey(this.dhToken(A))}writeMessage(A,t){let n={buf:new Uint8Array(0)};for(let s of A)this.processTokenWrite(s,n);return n.buf=hn(n.buf,this.sym.encryptAndHash(t)),n.buf}readMessage(A,t){let n={buf:t};for(let s of A)this.processTokenRead(s,n);return this.sym.decryptAndHash(n.buf)}split(){return this.sym.split()}};var Zs=new Uint8Array(0),wt=class{constructor(A,t){let[n,s]=t;A==="initiator"?(this.sendCs=n,this.recvCs=s):(this.sendCs=s,this.recvCs=n)}encrypt(A){return this.sendCs.encryptWithAd(Zs,A)}decrypt(A){return this.recvCs.decryptWithAd(Zs,A)}};function Ys(e,A,t){if(e==="long_term"){if(A.has("pairing"))return A.size===1;for(let n of A)if(n!=="playback"&&n!=="management")return!1;return!0}return e==="pairing"?A.size===1&&A.has("pairing"):A.size===0||A.size===1&&A.has("pairing")?!0:A.size===1&&A.has("playback")?t:!1}function qs(e,A,t,n){if(!Ys(e,A,n))return!1;if(t){let s=new Set(A);if(s.add("playback"),!Ys(e,s,n))return!1}return!0}function Vs(e,A,t,n){let s=new Set(A),r=!!t&&t.length>0;return qs(e,s,r,n)?{ok:!0}:e==="sentinel"&&!n&&qs(e,s,r,!0)?{ok:!1,goodbye:"pairing_required"}:{ok:!1,goodbye:"unauthorized"}}var kt=new TextEncoder,ae=new TextDecoder,qi=3e4,Xs=65519,Vi=Xs+16,Ws=4*1024*1024;function js(e,A){let t=new Uint8Array(e.length+A.length);return t.set(e,0),t.set(A,e.length),t}var _t=class e{constructor(A,t,n){this.wsManager=A,this.deps=t,this.cb=n,this.state="idle",this.hs=null,this.session=null,this.matched=null,this.serverId="",this.rawClientInit=new Uint8Array(0),this.rawServerInit=new Uint8Array(0),this.timeout=null,this.frag=null,this.lastHandshakeHash=new Uint8Array(0),this.quiesced=!1,this.outboundQueue=[],this.seenActivate=!1,this.effectiveActiveRoles=void 0}get suite(){return $A[this.deps.suiteId]}get ready(){return this.state==="transport"}get handshakeInfo(){return this.matched?{trustLevel:this.matched.category==="long_term"?"user":"none",category:this.matched.category,serverId:this.serverId,entry:this.matched}:null}get handshakeHash(){return this.lastHandshakeHash}start(){this.resetSession();let A=JSON.stringify({type:"client/init",payload:{client_id:this.deps.identity.clientId,version:1,suite:Qs[this.deps.suiteId]}});this.rawClientInit=kt.encode(A),this.wsManager.sendText(A),this.state="await_server_init",this.armTimeout()}resetSession(){this.hs=null,this.session=null,this.matched=null,this.frag=null,this.serverId="",this.rawServerInit=new Uint8Array(0),this.quiesced=!1,this.outboundQueue=[],this.lastHandshakeHash=new Uint8Array(0),this.seenActivate=!1,this.effectiveActiveRoles=void 0}onSocketClosed(){this.clearTimeout(),this.resetSession(),this.state="idle"}close(){this.clearTimeout(),this.wsManager.disconnect()}handleRaw(A){if(this.state==="transport"){if(typeof A.data=="string")return this.fail();let t;try{let n=new Uint8Array(A.data);if(n.length>Vi)return this.fail();t=this.session.decrypt(n)}catch{return this.fail()}if(t.length<1)return this.fail();try{this.dispatchPlain(t)}catch(n){console.warn("Sendspin: dropped malformed transport message",n)}return}try{if(typeof A.data!="string")return this.fail();this.handleHandshakeText(A.data)}catch{this.fail()}}handleHandshakeText(A){let t=JSON.parse(A);if(this.state==="await_server_init"&&t.type==="server/init"){if(t.payload.version!==1)return this.fail();this.serverId=String(t.payload.server_id),this.rawServerInit=kt.encode(A),this.hs=new Ct({suite:this.suite,role:"responder",prologue:js(this.rawClientInit,this.rawServerInit),s:this.deps.identity.keypair,rs:q(this.serverId)}),this.state="await_noise1",this.armTimeout();return}if(this.state==="await_noise1"&&t.type==="noise/handshake"){this.processNoise1(q(String(t.payload.data)));return}this.fail()}processNoise1(A){let t=this.hs.readMessage(ln,A),{psk_id:n}=JSON.parse(ae.decode(t)),s=this.deps.pskStore.lookup(n);if(!s)return this.fail();if(s.category==="long_term"&&s.serverId!==void 0&&s.serverId!==this.serverId)return this.fail();this.hs.setPsk(s.psk);let r=this.hs.writeMessage(un,kt.encode("{}"));this.wsManager.sendText(JSON.stringify({type:"noise/handshake",payload:{data:H(r)}})),this.session=new wt("responder",this.hs.split()),this.matched=s,this.state="transport",this.clearTimeout(),this.lastHandshakeHash=this.hs.handshakeHash,this.cb.onHandshakeComplete(this.handshakeInfo)}dispatchPlain(A){let t=A[0];t===0?this.handleControl(JSON.parse(ae.decode(A.subarray(1)))):t===2||t===3?this.handleFragment(t,A.subarray(1)):this.cb.onBinaryMessage(A)}handleFragment(A,t){if(A===2&&this.frag===null){if(t.length<1)return this.fail();if(t[0]===2||t[0]===3)return this.fail();let i=t.subarray(1);this.frag={origType:t[0],parts:[i],size:i.length};return}if(A===2)return this.frag.parts.push(t),this.frag.size+=t.length,this.frag.size>Ws?(this.frag=null,this.fail()):void 0;if(this.frag===null)return this.fail();if(this.frag.parts.push(t),this.frag.size+=t.length,this.frag.size>Ws)return this.frag=null,this.fail();let n=this.frag.origType,s=new Uint8Array(this.frag.size+1);s[0]=n;let r=1;for(let i of this.frag.parts)s.set(i,r),r+=i.length;this.frag=null,n===0?this.handleControl(JSON.parse(ae.decode(s.subarray(1)))):this.cb.onBinaryMessage(s)}handleControl(A){if(A.type==="noise/handshake"){this.handleRehandshake(A);return}if(A.type==="server/activate"){this.handleActivate(A);return}if(A.type==="server/unpair"){this.handleUnpair();return}this.cb.onControlMessage(A)}handleRehandshake(A){let t=new Ct({suite:this.suite,role:"responder",prologue:this.lastHandshakeHash,s:this.deps.identity.keypair,rs:q(this.serverId)}),n=t.readMessage(ln,q(A.payload.data)),{psk_id:s}=JSON.parse(ae.decode(n)),r=this.deps.pskStore.lookup(s);if(!r)return this.fail();if(r.category==="long_term"&&r.serverId!==void 0&&r.serverId!==this.serverId)return this.fail();t.setPsk(r.psk);let i=t.writeMessage(un,kt.encode("{}"));this.quiesced=!0,this.armTimeout(),this.encryptSend({type:"noise/handshake",payload:{data:H(i)}}),this.session=new wt("responder",t.split()),this.matched=r,this.lastHandshakeHash=t.handshakeHash,this.seenActivate=!1,this.effectiveActiveRoles=void 0,this.cb.onHandshakeComplete(this.handshakeInfo)}handleActivate(A){let t=A.payload.active_roles;if(!this.seenActivate&&t===void 0){this.sendGoodbyeAndClose("unauthorized");return}t!==void 0&&(this.effectiveActiveRoles=t),this.seenActivate=!0;let n=Vs(this.matched.category,A.payload.activities,this.effectiveActiveRoles,this.deps.unpairedAccess);if(!n.ok){this.sendGoodbyeAndClose(n.goodbye);return}this.clearTimeout();let s=!A.payload.activities.includes("pairing")&&this.effectiveActiveRoles?.includes("controller@v1")?this.outboundQueue.filter(r=>r.type==="client/command"):[];this.quiesced=!1,this.outboundQueue=[],this.cb.onControlMessage(A);for(let r of s)this.encryptSend(r)}handleUnpair(){this.matched?.category==="long_term"&&(this.deps.pskStore.removeByPskId(this.matched.pskId),this.sendGoodbyeAndClose("unpaired"))}sendGoodbyeAndClose(A){try{this.encryptSend({type:"client/goodbye",payload:{reason:A}})}catch{}this.close()}sendControl(A){if(this.state!=="transport"||!this.session){console.warn("Sendspin: sendControl before transport ready");return}let t=A.type;if(this.quiesced&&t!==void 0&&e.QUIESCED_TYPES.has(t)){this.outboundQueue.push(A);return}this.encryptSend(A)}encryptSend(A){let t=kt.encode(JSON.stringify(A)),n=js(Uint8Array.of(0),t);if(n.length>Xs)throw new Error("Sendspin: control message exceeds single-frame limit");this.wsManager.sendBinary(this.session.encrypt(n))}armTimeout(){this.clearTimeout(),this.timeout=globalThis.setTimeout(()=>this.fail(),qi)}clearTimeout(){this.timeout!==null&&(clearTimeout(this.timeout),this.timeout=null)}fail(){this.clearTimeout(),this.wsManager.disconnect()}};_t.QUIESCED_TYPES=new Set(["client/command","client/time","client/state"]);var fA=2n**255n-19n,dn=486662n,Wi=2n,ce=32,he=32,nr=64,$s=pn("CPace255"),ji=pn("CPace255_ISK"),Xi=pn("CPaceMac"),$i=128,pA=class extends Error{};function pn(e){return new TextEncoder().encode(e)}function Et(...e){let A=new Uint8Array(e.reduce((n,s)=>n+s.length,0)),t=0;for(let n of e)A.set(n,t),t+=n.length;return A}function fn(e){let A=e.length,t=[];for(;t.push(A<128?A:A&127|128),A>>=7,A!==0;);return Et(new Uint8Array(t),e)}function xt(...e){return Et(...e.map(fn))}function Ao(e,A,t){let n=Math.max(0,$i-1-fn(e).length-fn($s).length);return xt($s,e,new Uint8Array(n),A,t)}function FA(e,A){let t=e%A;return t<0n?t+A:t}function sr(e,A,t){let n=1n,s=FA(e,t),r=A;for(;r>0n;)r&1n&&(n=n*s%t),s=s*s%t,r>>=1n;return n}function Ar(e,A){return sr(e,A-2n,A)}function to(e){let A=e.slice();A[A.length-1]&=127;let t=0n;for(let n=A.length-1;n>=0;n--)t=t<<8n|BigInt(A[n]);return t}function eo(e){let A=new Uint8Array(ce),t=e;for(let n=0;n<ce;n++)A[n]=Number(t&0xffn),t>>=8n;return A}function no(e){let A=FA(e,fA),t=FA(-dn*Ar(FA(1n+Wi*A*A,fA),fA),fA),n=sr(FA(t*t*t+dn*t*t+t,fA),(fA-1n)/2n,fA),s=FA(n*t-FA(1n-n,fA)*dn*Ar(2n,fA),fA);return eo(s)}function so(e,A,t){let n=UA(Ao(e,A,t)).slice(0,ce);return no(to(n))}function tr(e,A,t){let n;try{n=HA.scalarMult(e,A)}catch{throw new pA(`${t} encodes a low-order point`)}if(n.every(s=>s===0))throw new pA(`${t} encodes a low-order point`);return n}function er(e,A){if(e.length!==A.length)return!1;let t=0;for(let n=0;n<e.length;n++)t|=e[n]^A[n];return t===0}var bt=class e{constructor(A,t,n,s,r,i){this.role=A,this.sid=n,this.ada=s,this.adb=r,this.macKey=null,this.initiatorShare=null,this.responderShare=null,this.iskValue=null,this.scalar=t,this.publicShare=tr(t,i,"generator")}static start(A){let t=A.scalar??crypto.getRandomValues(new Uint8Array(ce)),n=so(A.prs,A.ci??new Uint8Array(0),A.sid);return new e(A.role,t,A.sid,A.ada??new Uint8Array(0),A.adb??new Uint8Array(0),n)}derive(A){if(!this.scalar)throw new pA("derive() may only be called once");let t=this.scalar;if(this.scalar=null,A.length!==he)throw new pA(`peer share must be ${he} bytes, got ${A.length}`);let n=tr(t,A,"peer share");this.role==="initiator"?(this.initiatorShare=this.publicShare,this.responderShare=A):(this.initiatorShare=A,this.responderShare=this.publicShare);let s=Et(xt(this.initiatorShare,this.ada),xt(this.responderShare,this.adb));this.iskValue=UA(Et(xt(ji,this.sid,n),s)),this.macKey=UA(Et(Xi,this.sid,this.iskValue))}get isk(){if(!this.iskValue)throw new pA("derive() must be called before reading the ISK");return this.iskValue}tag(){return this.mac(!0)}verify(A){let t=this.mac(!1);return er(t,this.mac(!0))?!1:er(A,t)}mac(A){if(!this.macKey||!this.initiatorShare||!this.responderShare)throw new pA("derive() must be called before confirmation tags");let t=A===(this.role==="initiator"),n=t?this.initiatorShare:this.responderShare,s=t?this.ada:this.adb;return JA(UA,this.macKey,xt(n,s))}};var Tt=new TextEncoder().encode("sendspin-pin-derive-v1"),mn=new TextEncoder().encode("sendspin-pair-commit-v1"),gn=32,rr=4,yn=12,ir=6,ro=8,io=new RegExp(`^[0-9]{${ro}}$`);function or(e){return io.test(e)}function ar(){return crypto.getRandomValues(new Uint8Array(gn))}function cr(e){let A=new Uint8Array(mn.length+e.length);return A.set(mn,0),A.set(e,mn.length),j(A)}function hr(e,A,t,n){let s=new Uint8Array(Tt.length+e.length+A.length+t.length);s.set(Tt,0),s.set(e,Tt.length),s.set(A,Tt.length+e.length),s.set(t,Tt.length+e.length+A.length);let r=j(s),i=0n;for(let o of r)i=i<<8n|BigInt(o);return(i%10n**BigInt(n)).toString().padStart(n,"0")}var ue=e=>new TextEncoder().encode(e);function oo(...e){let A=new Uint8Array(e.reduce((n,s)=>n+s.length,0)),t=0;for(let n of e)A.set(n,t),t+=n.length;return A}var ao="sendspin-pair-pake-v1",co=ue("sendspin-pair-psk-wrap-v1"),lr=ue("server"),ur=ue("client"),ho=12e4,lo=3e5,uo=10,fo=6,dr="sendspin-pair-failures",po=["dynamic_pin","static_pin"];function fr(e,A){return A?.length?{...e,locations:A}:e}function mo(e){if(!(!Array.isArray(e)||e.length===0))return e.every(A=>typeof A=="string"&&A!=="")?e:void 0}var le=class{constructor(A){if(this.deps=A,this.pendingPsk=null,this.phase="idle",this.method=null,this.cpace=null,this.nonceB=null,this.attemptTimer=null,this.windowTimer=null,this.windowOpen=!1,this.currentSid=null,this.pairingActivateCount=0,this.attemptIndex=0,this.pinLength=null,A.staticPin!==void 0&&!or(A.staticPin))throw new Error("staticPin must be exactly 8 decimal digits");this.minPinLength=Math.min(yn,Math.max(rr,A.minPinLength??ir)),!A.storage&&A.onPin&&console.warn("sendspin: dynamic PIN pairing is enabled without storage, so the failure counter will not persist across reboots."),this.failures=this.loadFailures()}descriptors(){let A=[fr({method:"pairing_psk"},this.deps.pairingPskLocations)];return this.deps.staticPin!==void 0&&A.push(fr({method:"static_pin"},this.deps.staticPinLocations)),this.deps.onPin&&A.push({method:"dynamic_pin",out_channels:this.deps.pinOutChannels??["display"],min_pin_length:this.minPinLength}),A}isDynamicPinEscalated(){return this.failures>=uo}openPairingWindow(){if(this.phase==="await-window"){this.startAttempt();return}this.windowOpen=!0,this.windowTimer&&clearTimeout(this.windowTimer),this.windowTimer=setTimeout(()=>this.closeWindow(),lo)}closeWindow(){this.windowOpen=!1,this.windowTimer&&clearTimeout(this.windowTimer),this.windowTimer=null}cancelPairing(){this.phase!=="idle"&&this.abort("user_cancelled")}onActivate(A,t){if(!A.includes("pairing"))return this.abandonAttempt("server_cancelled"),!1;this.abandonAttempt("superseded"),this.pairingActivateCount+=1,this.attemptIndex=this.pairingActivateCount;let s=t?.method,r=this.descriptors().map(a=>a.method),i=s==="pairing_psk"==(this.deps.matchedCategory()==="pairing");if(!s)return console.warn("sendspin: server/activate carried no pairing method, so the server is not speaking the current specification."),this.fail(),!0;if(!i||!r.includes(s))return this.abort("method_not_supported"),!0;if(this.method=s,s==="pairing_psk")return this.sendFinalize(),this.phase="await-finalize",this.armAttemptTimer(),this.deps.onEvent?.("started"),!0;if(s==="dynamic_pin"){let a=t.pin_length;if(typeof a!="number"||!Number.isInteger(a))return this.fail(),!0;if(a<this.minPinLength||a>yn)return this.abort("pin_length_unacceptable"),!0;this.pinLength=a,this.languages=mo(t.languages)}return this.isGestureGated()&&!this.windowOpen?(this.phase="await-window",this.deps.sendControl({type:"client/pair-pending",payload:{pairing_index:this.attemptIndex}}),this.deps.onEvent?.("pending"),!0):(this.startAttempt(),!0)}isGestureGated(){return this.method==="static_pin"?!0:this.method!=="dynamic_pin"?!1:this.isDynamicPinEscalated()||this.pinLength<fo}onPairInit(A){if(this.phase==="idle")return;if(this.phase!=="await-init"||this.method!=="dynamic_pin")return this.fail();let t=this.decode(A.nonce_A,gn);if(!t)return this.fail();let n=this.deps.handshakeHash(),s=hr(n,t,this.nonceB,this.pinLength);this.currentSid=this.sid(n,this.attemptIndex),this.cpace=bt.start({role:"responder",prs:new TextEncoder().encode(s),sid:this.currentSid,ada:lr,adb:ur}),this.phase="await-auth",this.deps.onPin?.(s,this.languages)}onPairAuth(A){if(this.phase==="idle")return;if(this.phase!=="await-auth"||!this.cpace)return this.fail();let t=this.decode(A.pake_msg_1,he);if(!t)return this.fail();this.deps.sendControl({type:"client/pair-auth",payload:{pake_msg_2:H(this.cpace.publicShare)}});try{this.cpace.derive(t)}catch(n){if(n instanceof pA)return this.fail();throw n}this.phase="await-confirm"}onPairConfirm(A){if(this.phase==="idle")return;if(this.phase!=="await-confirm"||!this.cpace)return this.fail();let t=this.decode(A.server_kc,nr);if(!t)return this.fail();if(!this.cpace.verify(t))return this.method==="dynamic_pin"&&this.recordFailure(),this.abort("pin_mismatch");this.method==="dynamic_pin"&&this.resetFailures();let n={client_kc:H(this.cpace.tag())};this.method==="dynamic_pin"&&(n.nonce_B=H(this.nonceB)),this.deps.sendControl({type:"client/pair-confirm",payload:n}),this.phase="await-finalize",this.sendFinalize()}onPairFinalize(){this.pendingPsk&&(this.deps.pskStore.addLongTerm(this.pendingPsk,this.deps.serverId()),this.clearAttempt(),this.deps.onEvent?.("finalized"))}onAbort(A){this.phase==="idle"&&!this.pendingPsk||(this.clearAttempt(),this.deps.onEvent?.("aborted",A))}reset(){this.clearAttempt(),this.pairingActivateCount=0,this.attemptIndex=0}startAttempt(){if(this.closeWindow(),this.armAttemptTimer(),this.deps.onEvent?.("started"),this.method==="dynamic_pin"){this.nonceB=ar(),this.phase="await-init",this.deps.sendControl({type:"client/pair-init",payload:{pairing_index:this.attemptIndex,commit_B:H(cr(this.nonceB))}});return}let A=this.deps.handshakeHash();this.currentSid=this.sid(A,this.attemptIndex),this.cpace=bt.start({role:"responder",prs:new TextEncoder().encode(this.deps.staticPin),sid:this.currentSid,ada:lr,adb:ur}),this.phase="await-auth",this.deps.sendControl({type:"client/pair-init",payload:{pairing_index:this.attemptIndex}})}sendFinalize(){let A=crypto.getRandomValues(new Uint8Array(32));if(this.pendingPsk=A,this.cpace&&this.currentSid){let t=j(oo(co,this.currentSid,this.cpace.isk)),n=this.deps.aeadSeal(t,A);this.deps.sendControl({type:"client/pair-finalize",payload:{wrapped_psk:H(n)}});return}this.deps.sendControl({type:"client/pair-finalize",payload:{long_term_psk:H(A)}})}sid(A,t){let n=ue(ao),s=new Uint8Array(n.length+A.length+4);return s.set(n,0),s.set(A,n.length),new DataView(s.buffer).setUint32(n.length+A.length,t,!1),s}armAttemptTimer(){this.attemptTimer=setTimeout(()=>this.abort("attempt_timeout"),ho)}abort(A){this.clearAttempt(),this.deps.sendControl({type:"pair/abort",payload:{reason:A}}),this.deps.onEvent?.("aborted",A),A==="concurrent_attempt"&&this.deps.close()}fail(){this.clearAttempt(),this.deps.close()}clearAttempt(){this.attemptTimer&&clearTimeout(this.attemptTimer),this.attemptTimer=null,this.method&&po.includes(this.method)&&this.deps.onPin?.(null),this.pendingPsk=null,this.phase="idle",this.method=null,this.cpace=null,this.currentSid=null,this.nonceB=null,this.pinLength=null,this.languages=void 0}abandonAttempt(A){this.phase==="idle"&&!this.pendingPsk||(this.clearAttempt(),this.deps.onEvent?.("aborted",A))}decode(A,t){if(typeof A!="string")return null;try{let n=q(A);return n.length===t?n:null}catch{return null}}loadFailures(){try{let A=this.deps.storage?.getItem(dr);return A?JSON.parse(A).dynamic_pin??0:0}catch{return 0}}saveFailures(){this.deps.storage?.setItem(dr,JSON.stringify({dynamic_pin:this.failures}))}recordFailure(){this.failures+=1,this.saveFailures()}resetFailures(){this.failures=0,this.saveFailures()}};var pr="ABCDEFGHIJKLMNOPQRSTUVWXYZ234567",de=32;function go(e){let A=0,t=0,n="";for(let s of e){for(t=t<<8|s,A+=8;A>=5;)n+=pr[t>>>A-5&31],A-=5;t&=(1<<A)-1}return A>0&&(n+=pr[t<<5-A&31]),n}function Sn(e,A){let t=q(e),n=q(A);if(t.length!==de)throw new Error(`clientId must decode to ${de} bytes`);if(n.length!==de)throw new Error(`pairingPsk must decode to ${de} bytes`);let s=new Uint8Array(t.length+n.length);return s.set(t),s.set(n,t.length),`SP:0${go(s).replace(/2/g,"9")}`}var Dt=class{constructor(A){this.handshakeInfo=null,A.codecs&&Jt(A.codecs),this.hasStorage=(A.storage??null)!==null,this.identity=St.loadOrCreate(A.storage??null);let t=A.clientName??`Sendspin JS Client (${this.identity.clientId.slice(0,6)})`;this.config={...A,clientName:t},this.delayStore=new Lt(A.storage??null);let n=this.delayStore.load(),s=A.syncDelay??n??A.defaultSyncDelay??0;this._syncDelayMs=nA(s),this.timeFilter=new et(0,1.1,2,1e-12),this.stateManager=new Rt(A.onStateChange),this.decoder=new tt(i=>this._onAudioData?.(i),()=>this.stateManager.streamGeneration),this.wsManager=new Ot(A.reconnect),this.pskStore=new Mt(A.storage??null);for(let i of A.longTermPsks??[])this.pskStore.addLongTerm(q(i.psk),i.serverId);this.hasStorage&&this.pskStore.getOrCreatePairingPsk(),this.transport=new _t(this.wsManager,{identity:this.identity,pskStore:this.pskStore,suiteId:A.suite??"chacha",unpairedAccess:A.unpairedAccess??!0},{onHandshakeComplete:i=>{let a=this.handshakeInfo!==null;this.handshakeInfo=i,this.pairing.reset(),this.protocolHandler.resetActivation(a)},onControlMessage:i=>this.routeControl(i),onBinaryMessage:i=>this.handleBinaryMessage(i.buffer)}),this.pairing=new le({sendControl:i=>this.transport.sendControl(i),close:()=>this.transport.close(),pskStore:this.pskStore,serverId:()=>this.handshakeInfo?.serverId??"",matchedCategory:()=>this.handshakeInfo?.category??"sentinel",handshakeHash:()=>this.transport.handshakeHash,aeadSeal:(i,a)=>$A[A.suite??"chacha"].aeadEncrypt(i,0n,new Uint8Array(0),a),storage:A.storage??null,onPin:A.onPairingPin??null,pinOutChannels:A.pinOutChannels,minPinLength:A.minPinLength,staticPin:A.staticPin,staticPinLocations:A.staticPinLocations,pairingPskLocations:A.pairingPskLocations,onEvent:(i,a)=>this.config.onPairing?.(i,a)});let r={trustLevel:()=>this.handshakeInfo?.trustLevel??"none",pairMethods:()=>this.hasStorage?this.pairing.descriptors():[],unpairedAccess:A.unpairedAccess??!0};this.protocolHandler=new Pt(this.transport,r,this,this.stateManager,this.timeFilter,{clientName:t,productName:A.productName,codecs:A.codecs,bufferCapacity:A.bufferCapacity,requiredLeadTimeMs:A.requiredLeadTimeMs,minBufferMs:A.minBufferMs,useHardwareVolume:A.useHardwareVolume,onVolumeCommand:A.onVolumeCommand,onDelayCommand:A.onDelayCommand,getExternalVolume:A.getExternalVolume})}routeControl(A){if(A.type==="server/activate"){let t=A.payload??{};t.activities?.includes("pairing")&&this.protocolHandler.suspendForPairing(),this.pairing.onActivate(t.activities??[],t.pairing)||this.protocolHandler.handleServerMessage(A);return}if(A.type==="server/pair-init")return this.pairing.onPairInit(A.payload??{});if(A.type==="server/pair-auth")return this.pairing.onPairAuth(A.payload??{});if(A.type==="server/pair-confirm")return this.pairing.onPairConfirm(A.payload??{});if(A.type==="server/pair-finalize")return this.pairing.onPairFinalize();if(A.type==="pair/abort")return this.pairing.onAbort((A.payload??{}).reason??"");this.protocolHandler.handleServerMessage(A)}onTransportClose(){this.transport.onSocketClosed(),this.handshakeInfo=null,this.protocolHandler.stopTimeSync(),this.protocolHandler.resetActivation(),this.pairing.reset(),this.stateManager.clearStateUpdateInterval(),console.log("Sendspin: Connection closed"),this._onConnectionClose?.()}handleBinaryMessage(A){let t=this.stateManager.currentStreamFormat;if(!t){console.warn("Sendspin: Received audio chunk but no stream format set");return}let n=this.stateManager.streamGeneration;this.decoder.handleBinaryMessage(A,t,n)}handleStreamStart(A,t){t||this.decoder.clearState(),this._onStreamStart?.(A,t)}handleStreamClear(){this.decoder.clearState(),this._onStreamClear?.()}handleStreamEnd(){this.decoder.clearState(),this._onStreamEnd?.()}handleVolumeUpdate(){this._onVolumeUpdate?.()}applyDelay(A){this._syncDelayMs=nA(A),this.delayStore.save(this._syncDelayMs),this._onSyncDelayChange?.(this._syncDelayMs)}handleSyncDelayChange(A){this.applyDelay(A)}getSyncDelayMs(){return this._syncDelayMs}set onAudioData(A){this._onAudioData=A}set onStreamStart(A){this._onStreamStart=A}set onStreamClear(A){this._onStreamClear=A}set onStreamEnd(A){this._onStreamEnd=A}set onVolumeUpdate(A){this._onVolumeUpdate=A}set onSyncDelayChange(A){this._onSyncDelayChange=A}set onConnectionOpen(A){this._onConnectionOpen=A}set onConnectionClose(A){this._onConnectionClose=A}async connect(){let A=()=>{this._onConnectionOpen?.(),this.transport.start()},t=r=>{this.transport.handleRaw(r)},n=r=>{console.error("Sendspin: WebSocket error",r)},s=()=>this.onTransportClose();if(this.config.webSocket)await this.wsManager.adopt(this.config.webSocket,A,t,n,s);else{if(!this.config.baseUrl)throw new Error("SendspinCore requires either baseUrl or webSocket to be provided.");let r=new URL(this.config.baseUrl,typeof window<"u"?window.location.href:void 0),i=r.protocol==="https:"?"wss:":"ws:",a=r.pathname.replace(/\/$/,""),o=a.endsWith("/sendspin")?`${i}//${r.host}${a}`:`${i}//${r.host}${a}/sendspin`;await this.wsManager.connect(o,A,t,n,s)}}resetPlaybackState(){this.stateManager.isPlaying=!1,this.stateManager.currentStreamFormat=null}disconnect(A="restart"){this.transport.ready&&this.protocolHandler.sendGoodbye(A),this.protocolHandler.stopTimeSync(),this.stateManager.clearAllIntervals(),this.wsManager.disconnect(),this.decoder.close(),this.timeFilter.reset(),this.stateManager.reset()}setVolume(A){this.stateManager.volume=A,this._onVolumeUpdate?.(),this.protocolHandler.sendStateUpdate()}setMuted(A){this.stateManager.muted=A,this._onVolumeUpdate?.(),this.protocolHandler.sendStateUpdate()}setSyncDelay(A){this.applyDelay(A),this.protocolHandler.sendStateUpdate()}setRequiredLeadTimeMs(A){this.protocolHandler.setRequiredLeadTimeMs(A)}setMinBufferMs(A){this.protocolHandler.setMinBufferMs(A)}sendCommand(A,t){let n=this.stateManager.serverState.controller?.supported_commands;if(n&&!n.includes(A))throw new Error(`Command '${A}' is not supported by the server. Supported commands: ${n.join(", ")}`);this.protocolHandler.sendCommand(A,t)}get isPlaying(){return this.stateManager.isPlaying}get volume(){return this.stateManager.volume}get muted(){return this.stateManager.muted}get playerState(){return this.stateManager.playerState}get currentFormat(){return this.stateManager.currentStreamFormat}get isConnected(){return this.wsManager.isConnected()}get clientId(){return this.identity.clientId}get pairingPsk(){return this.hasStorage?H(this.pskStore.getOrCreatePairingPsk()):null}get pairingToken(){let A=this.pairingPsk;return A?Sn(this.clientId,A):null}rotatePairingPsk(){return this.hasStorage?(this.pskStore.rotatePairingPsk(),this.pairingPsk):null}openPairingWindow(){this.pairing.openPairingWindow()}cancelPairing(){this.pairing.cancelPairing()}isDynamicPinEscalated(){return this.pairing.isDynamicPinEscalated()}get timeSyncInfo(){return{synced:this.timeFilter.is_synchronized,offset:Math.round(this.timeFilter.offset/1e3),error:Math.round(this.timeFilter.error/1e3)}}getCurrentServerTimeUs(){return this.timeFilter.computeServerTime(Math.floor(performance.now()*1e3))}get trackProgress(){let A=this.stateManager.serverState.metadata;if(!A?.progress||A.timestamp===void 0)return null;let n=this.getCurrentServerTimeUs()-A.timestamp,s=A.progress.track_progress+n*A.progress.playback_speed/1e6,r=A.progress.track_duration;return{positionMs:r===0?Math.max(0,s):Math.max(0,Math.min(s,r)),durationMs:r,playbackSpeed:A.progress.playback_speed/1e3}}get _stateManager(){return this.stateManager}get _timeFilter(){return this.timeFilter}};var fe=class{constructor(){this.activeSource="estimated",this._pendingCutover=!1,this._lastRejectReason=null,this._timestampPromotionDisabled=!1,this.lastSample=null,this.goodSamples=0,this.badSamples=0,this.goodSinceMs=null,this.estimateAudioTimeSec=null,this.estimateAtMs=null}get active(){return this.activeSource}get pendingCutover(){return this._pendingCutover}set pendingCutover(A){this._pendingCutover=A}get lastRejectReason(){return this._lastRejectReason}get timestampGoodSamples(){return this.goodSamples}get timestampPromotionDisabled(){return this._timestampPromotionDisabled}disableTimestampPromotion(){this._timestampPromotionDisabled=!0}setActive(A){return this.activeSource===A?!1:(this.activeSource=A,this._pendingCutover=A==="timestamp",this._pendingCutover&&this._onPromotion?.(),this._pendingCutover)}onPromotion(A){this._onPromotion=A}reset(){this.activeSource="estimated",this._pendingCutover=!1,this.lastSample=null,this.goodSamples=0,this._lastRejectReason=null,this.badSamples=0,this.goodSinceMs=null,this.estimateAudioTimeSec=null,this.estimateAtMs=null}demote(A){this.reset(),this._lastRejectReason=A}rejectSample(A,t=!1){if(this.lastSample=null,this.goodSamples=0,this.goodSinceMs=null,this._lastRejectReason=A,this.activeSource!=="timestamp"){this.badSamples=0;return}this.badSamples+=1,(t||this.badSamples>=2)&&this.demote(A)}getEstimatedTime(A,t){if(this.estimateAudioTimeSec===null)this.estimateAudioTimeSec=A,this.estimateAtMs=t;else if(this.estimateAtMs!==null){let n=Math.max(0,(t-this.estimateAtMs)/1e3),s=this.estimateAudioTimeSec+n;this.estimateAtMs=t;let r=A-s;if(Math.abs(r)>.5)this.estimateAudioTimeSec=A;else{let i=Math.max(-.002,Math.min(.002,r)),a=Math.max(this.estimateAudioTimeSec,s+i);this.estimateAudioTimeSec=Math.min(a,A+.1)}}return this.estimateAudioTimeSec??A}getTimestampDerivedTime(A,t,n){if(this._timestampPromotionDisabled)return(this.activeSource!=="estimated"||this.lastSample!==null||this.goodSamples!==0||this._lastRejectReason!==null)&&this.reset(),null;let s=t.getOutputTimestamp;if(typeof s!="function")return this.activeSource==="timestamp"&&this.demote("getOutputTimestamp unavailable"),null;try{let r=s.call(t),i=performance.now(),a=i-r.performanceTime;if(a<-5)return this.rejectSample(`performanceTime in future (${a.toFixed(1)}ms)`,!0),null;let o=Math.max(0,a),h=r.contextTime+o/1e3+n,u={contextTimeSec:r.contextTime,performanceTimeMs:r.performanceTime,nowMs:i,predictedAudioTimeSec:h,rawAudioTimeSec:A};if(o>250)return this.rejectSample(`stale timestamp (${o.toFixed(1)}ms old)`,!0),null;let l=h-A;if(Math.abs(l)>.25)return this.rejectSample(`timestamp/raw divergence ${Math.abs(l*1e3).toFixed(1)}ms`,!0),null;let c=this.lastSample;if(c){let f=r.performanceTime-c.performanceTimeMs;if(f<0)return this.rejectSample(`performanceTime moved backward (${f.toFixed(1)}ms)`,!0),null;if(h<c.predictedAudioTimeSec-.005)return this.rejectSample(`predicted audio time moved backward ${((c.predictedAudioTimeSec-h)*1e3).toFixed(1)}ms`,!0),null;let d=c.predictedAudioTimeSec-c.rawAudioTimeSec;if(Math.abs(l-d)>.05)return this.rejectSample(`timestamp/raw divergence drift ${Math.abs((l-d)*1e3).toFixed(1)}ms`),null;if(f>=40){let g=f/1e3,m=(r.contextTime-c.contextTimeSec)/g,p=(h-c.predictedAudioTimeSec)/g;if(m<.95||m>1.05)return this.rejectSample(`context slope ${m.toFixed(3)} out of range`),null;if(p<.95||p>1.05)return this.rejectSample(`predicted slope ${p.toFixed(3)} out of range`),null}}return this.lastSample=u,this.badSamples=0,this.goodSinceMs===null&&(this.goodSinceMs=i),this.goodSamples+=1,this.activeSource!=="timestamp"&&this.goodSamples>=6&&this.goodSinceMs!==null&&i-this.goodSinceMs>=750&&(this.setActive("timestamp"),this._lastRejectReason=null),h}catch(r){let i=r instanceof Error?`getOutputTimestamp failed: ${r.message}`:`getOutputTimestamp failed: ${String(r)}`;return this.rejectSample(i,!0),null}}getTimingSnapshot(A,t=0){let n=performance.now(),s=n*1e3;if(!A)return{audioContextTimeSec:0,audioContextRawTimeSec:0,nowMs:n,nowUs:s};let r=A.currentTime,i=this.getEstimatedTime(r,n),a=this.getTimestampDerivedTime(r,A,t),o=this.activeSource==="timestamp"&&a!==null?a:i;return Number.isFinite(o)||(o=r),{audioContextTimeSec:o,audioContextRawTimeSec:r,nowMs:n,nowUs:s}}};var pe=class{get minScheduleTimeSec(){return this._minScheduleTimeSec}setMinScheduleTime(A){this._minScheduleTimeSec=A}clearMinScheduleTime(){this._minScheduleTimeSec=null}constructor(A){this.onCheck=A,this.interval=null,this.breachStartedAtMs=null,this.lastRecorrectionAtMs=-1/0,this.prevRawSyncErrorMs=null,this.pendingJumpSign=null,this.pendingJumpAtMs=null,this.transientStartedAtMs=null,this._hardResyncGraceUntilMs=null,this._lastHardResyncAtMs=-1/0,this._minScheduleTimeSec=null}start(){this.interval===null&&(this.interval=globalThis.setInterval(()=>this.onCheck(),250))}stop(){this.interval!==null&&(clearInterval(this.interval),this.interval=null),this.resetCheckState(),this.lastRecorrectionAtMs=-1/0}clearBreachState(){this.breachStartedAtMs=null,this.pendingJumpSign=null,this.pendingJumpAtMs=null,this.transientStartedAtMs=null}resetCheckState(){this.clearBreachState(),this.prevRawSyncErrorMs=null}clearHardResyncCooldown(){this._hardResyncGraceUntilMs=null,this._lastHardResyncAtMs=-1/0}armStartupGrace(A,t){if(t){this._hardResyncGraceUntilMs=null;return}this._hardResyncGraceUntilMs===null&&(this._hardResyncGraceUntilMs=A+1e3)}canUseHardResync(A,t){if(t)this._hardResyncGraceUntilMs=null;else if(this._hardResyncGraceUntilMs!==null&&A<this._hardResyncGraceUntilMs)return!1;return A-this._lastHardResyncAtMs>=500}noteHardResync(A){this._lastHardResyncAtMs=A}markRecorrection(A){this.lastRecorrectionAtMs=A}shouldIgnoreTransientJump(A,t){let n=this.prevRawSyncErrorMs;if(this.prevRawSyncErrorMs=A,n===null)return this.pendingJumpSign=null,this.pendingJumpAtMs=null,!1;let s=A-n,r=Math.sign(s);if(!(Math.abs(s)>=25))return this.pendingJumpSign=null,this.pendingJumpAtMs=null,!1;let a=this.pendingJumpSign===r&&this.pendingJumpAtMs!==null&&t-this.pendingJumpAtMs<=1e3;return this.pendingJumpSign=r,this.pendingJumpAtMs=t,!a}shouldRecorrect(A,t,n){let s=this.shouldIgnoreTransientJump(t,n);if(A<30)return this.clearBreachState(),!1;if(s){if(this.transientStartedAtMs===null&&(this.transientStartedAtMs=n),n-this.transientStartedAtMs<400)return this.breachStartedAtMs=null,!1;this.breachStartedAtMs===null&&(this.breachStartedAtMs=this.transientStartedAtMs)}else this.transientStartedAtMs=null;return this.breachStartedAtMs===null?(this.breachStartedAtMs=n,!1):!(n-this.breachStartedAtMs<400||n-this.lastRecorrectionAtMs<1500)}fullReset(){this.stop(),this._hardResyncGraceUntilMs=null,this._lastHardResyncAtMs=-1/0,this._minScheduleTimeSec=null}},mr=.3;var gr="sendspin-output-latency-us";function yr(e,A){return typeof e=="number"&&Number.isFinite(e)&&e>=0?e:A}var me=class{constructor(A){this.storage=A,this.smoothedOutputLatencyUs=null,this.lastLatencyPersistAtMs=null,this.loadPersisted()}loadPersisted(){if(this.storage)try{let A=this.storage.getItem(gr);if(A){let t=parseFloat(A);!isNaN(t)&&t>=0&&(this.smoothedOutputLatencyUs=t)}}catch{}}persist(){if(!(!this.storage||this.smoothedOutputLatencyUs===null))try{this.storage.setItem(gr,this.smoothedOutputLatencyUs.toString())}catch{}}getRawUs(A){if(!A)return 0;let t=yr(A.baseLatency,0),n=yr(A.outputLatency,.04);return(t+n)*1e6}getSmoothedUs(A){let t=this.getRawUs(A);if(t<=0&&this.smoothedOutputLatencyUs!==null)return this.smoothedOutputLatencyUs;this.smoothedOutputLatencyUs===null?this.smoothedOutputLatencyUs=t:this.smoothedOutputLatencyUs=.01*t+(1-.01)*this.smoothedOutputLatencyUs;let n=typeof performance<"u"?performance.now():Date.now();return(this.lastLatencyPersistAtMs===null||n-this.lastLatencyPersistAtMs>=1e4)&&(this.persist(),this.lastLatencyPersistAtMs=n),this.smoothedOutputLatencyUs}reset(){this.smoothedOutputLatencyUs=null}};function Sr(e=typeof navigator>"u"?void 0:navigator){if(!e)return 0;let{userAgent:A}=e;return/iPad|iPhone|iPod/i.test(A)||e.platform==="MacIntel"&&(e.maxTouchPoints??0)>1||/Macintosh/i.test(A)&&/AppleWebKit/i.test(A)&&/Safari/i.test(A)&&!/Chrome|Chromium|Edg|OPR|Firefox/i.test(A)?100:0}var GA=8,yo=1,So=Math.min(1,2*yo/GA),Mn=new Float32Array(GA);for(let e=0;e<GA;e++)Mn[e]=(GA-e)/(GA+1)*So;var Mr=.003,ge=.005,Cr=.05,Mo=20,Co=8,wo=4,ko=1.5,_o=2,xo=8,Eo=.5,bo=.1,To=5,Do=.015;function vo(e){return Math.pow(e/100,1.5)}var wr={sync:{resyncAboveMs:200,rate2AboveMs:35,rate1AboveMs:8,samplesBelowMs:8,deadbandBelowMs:1,enableRecorrectionMonitor:!0,immediateDelayCutover:!0},quality:{resyncAboveMs:35,rate2AboveMs:1/0,rate1AboveMs:1/0,samplesBelowMs:35,deadbandBelowMs:1,enableRecorrectionMonitor:!1,immediateDelayCutover:!1},"quality-local":{resyncAboveMs:600,rate2AboveMs:1/0,rate1AboveMs:1/0,samplesBelowMs:0,deadbandBelowMs:5,enableRecorrectionMonitor:!1,immediateDelayCutover:!1}},vt=class{constructor(A){this.audioContext=null,this.gainNode=null,this.streamDestination=null,this.audioBufferQueue=[],this.scheduledSources=[],this.nextPlaybackTime=0,this.nextScheduleTime=0,this.lastScheduledServerTime=0,this.currentSyncErrorMs=0,this.smoothedSyncErrorMs=0,this.resyncCount=0,this.currentPlaybackRate=1,this.currentCorrectionMethod="none",this.lastSamplesAdjusted=0,this._correctionMode="sync",this._lastStatusLogMs=0,this._intervalResyncCount=0,this.scheduleTimeout=null,this.refillTimeout=null,this.queueProcessScheduled=!1,this.clockSource=new fe,this.stateManager=A.stateManager,this.timeFilter=A.timeFilter,this.outputMode=A.outputMode??"direct",this.audioElement=A.audioElement,this.isAndroid=A.isAndroid??!1,this.isCastRuntime=A.isCastRuntime??!1,this.ownsAudioElement=A.ownsAudioElement??!1,this.silentAudioSrc=A.silentAudioSrc,this.syncDelayMs=nA(A.syncDelayMs??0),this.useHardwareVolume=A.useHardwareVolume??!1,this._correctionMode=A.correctionMode??"sync",this.useOutputLatencyCompensation=A.useOutputLatencyCompensation??!0,this.unreportedOutputLatencySec=this.useOutputLatencyCompensation?Sr()/1e3:0,this.correctionThresholds={...wr};let t=A.correctionThresholds;if(t)for(let n of Object.keys(t)){let s=t[n];s&&(this.correctionThresholds[n]={...wr[n],...s})}this.latencyTracker=new me(A.storage??null),this.isCastRuntime&&this.clockSource.disableTimestampPromotion(),this.clockSource.onPromotion(()=>{(this.audioBufferQueue.length>0||this.scheduledSources.length>0)&&this.scheduleQueueProcessing()}),this.recorrectionMonitor=new pe(()=>this.checkRecorrection())}get correctionMode(){return this._correctionMode}setCorrectionMode(A){this._correctionMode=A,this.correctionThresholds[A].enableRecorrectionMonitor?this.recorrectionMonitor.start():this.recorrectionMonitor.stop()}get usesRecorrectionMonitor(){return this.correctionThresholds[this._correctionMode].enableRecorrectionMonitor}get usesImmediateDelayCutover(){return this.correctionThresholds[this._correctionMode].immediateDelayCutover}measurePlayoutLatencySec(){return this.latencyTracker.getSmoothedUs(this.audioContext)/1e6}getTargetScheduledHorizonSec(){if(this.isCastRuntime)return ko;let A=this.timeFilter.error/1e3;return A<_o?Mo:A<=xo?Co:wo}getScheduledAheadSec(A){let t=this.nextScheduleTime;for(let n of this.scheduledSources)n.endTime>t&&(t=n.endTime);return t<=0?0:Math.max(0,t-A)}resetScheduledPlaybackState(A){this.nextPlaybackTime=0,this.nextScheduleTime=0,this.lastScheduledServerTime=0,this.recorrectionMonitor.clearMinScheduleTime(),this.recorrectionMonitor.clearHardResyncCooldown(),this.clockSource.pendingCutover=!1,this.recorrectionMonitor.resetCheckState(),this.resetSyncErrorEma(),this.currentSyncErrorMs=0,this.currentPlaybackRate=1,this.currentCorrectionMethod="none",this.lastSamplesAdjusted=0,this._lastStatusLogMs=0,this._intervalResyncCount=0}pruneExpiredScheduledSources(A){this.scheduledSources.length!==0&&(this.scheduledSources=this.scheduledSources.filter(t=>t.endTime>A),this.scheduledSources.length===0&&this.resetScheduledPlaybackState("no scheduled audio ahead"))}performGuardedCutover(A,t={}){if(!this.audioContext)return;let n=t.incrementResyncCount??!1,s=t.markCooldown??!0,r=performance.now(),i=this.audioContext.currentTime+mr;n&&(this.resyncCount++,this._intervalResyncCount++),this.resetSyncErrorEma(),this.currentCorrectionMethod="resync",this.lastSamplesAdjusted=0,this.currentPlaybackRate=1;let a=this.cutScheduledSources(i);this.recorrectionMonitor.setMinScheduleTime(Math.max(i,a.keptTailEndTimeSec)),this.nextPlaybackTime=0,this.nextScheduleTime=0,this.lastScheduledServerTime=0,this.recorrectionMonitor.resetCheckState(),s&&this.recorrectionMonitor.markRecorrection(r),this.recorrectionMonitor.noteHardResync(r),this.processAudioQueue()}checkRecorrection(){if(!this.usesRecorrectionMonitor){this.recorrectionMonitor.resetCheckState();return}if(!this.audioContext||this.audioContext.state!=="running"){this.recorrectionMonitor.resetCheckState();return}if(!this.stateManager.isPlaying||this.nextPlaybackTime===0||this.lastScheduledServerTime===0){this.recorrectionMonitor.resetCheckState();return}let A=this.measurePlayoutLatencySec(),{audioContextTimeSec:t,audioContextRawTimeSec:n,nowMs:s,nowUs:r}=this.clockSource.getTimingSnapshot(this.audioContext,A);if(this.pruneExpiredScheduledSources(n),this.getScheduledAheadSec(n)<=0){this.recorrectionMonitor.resetCheckState(),this.audioBufferQueue.length>0&&this.processAudioQueue();return}let i=this.useOutputLatencyCompensation?A:0,a=this.computeTargetPlaybackTime(this.lastScheduledServerTime,t,r,i),o=(this.nextPlaybackTime-a)*1e3,h=this.applySyncErrorEma(o);this.recorrectionMonitor.shouldRecorrect(Math.abs(h),o,s)&&this.performGuardedCutover("recorrection",{incrementResyncCount:!0,markCooldown:!0})}getSyncDelayMs(){return this.syncDelayMs}setSyncDelay(A){let t=nA(A),n=t-this.syncDelayMs;this.syncDelayMs=t,!(n===0||!this.usesImmediateDelayCutover)&&(!this.audioContext||this.audioContext.state!=="running"||this.stateManager.isPlaying&&(this.scheduledSources.length===0&&this.audioBufferQueue.length===0&&this.nextPlaybackTime===0||this.performGuardedCutover("delay-change",{incrementResyncCount:!1,markCooldown:!0})))}get syncInfo(){return{clockDriftPercent:this.timeFilter.drift*100,syncErrorMs:this.currentSyncErrorMs,resyncCount:this.resyncCount,outputLatencyMs:this.latencyTracker.getRawUs(this.audioContext)/1e3+this.unreportedOutputLatencySec*1e3,playbackRate:this.currentPlaybackRate,correctionMethod:this.currentCorrectionMethod,samplesAdjusted:this.lastSamplesAdjusted,correctionMode:this._correctionMode}}emitStatusLog(A){if(this._lastStatusLogMs!==0&&A-this._lastStatusLogMs<1e4)return;this._lastStatusLogMs=A;let t;switch(this.currentCorrectionMethod){case"rate":t=`rate@${this.currentPlaybackRate}`;break;case"samples":t=`samples:${this.lastSamplesAdjusted}`;break;default:t=this.currentCorrectionMethod}let n=this.audioBufferQueue.length+this.scheduledSources.length,s=this.audioContext?this.getScheduledAheadSec(this.audioContext.currentTime):0,r;this.clockSource.timestampPromotionDisabled?r="estimated(cast-disabled)":this.clockSource.active==="timestamp"?r=`timestamp(good:${this.clockSource.timestampGoodSamples})`:this.clockSource.lastRejectReason?r=`estimated(reject:"${this.clockSource.lastRejectReason}")`:r="estimated";let i=this.timeFilter.is_synchronized?`synced(err=${(this.timeFilter.error/1e3).toFixed(1)}ms,drift=${this.timeFilter.drift.toFixed(3)},n=${this.timeFilter.count})`:`pending(n=${this.timeFilter.count})`,a=this.latencyTracker.getSmoothedUs(this.audioContext),o=Math.round(a/1e3+this.unreportedOutputLatencySec*1e3);console.log(`Sendspin: sync=${this.smoothedSyncErrorMs>=0?"+":""}${this.smoothedSyncErrorMs.toFixed(1)}ms corr=${t} q=${n}/${s.toFixed(1)}s resyncs=${this._intervalResyncCount} clock=${r} tf=${i} lat=${o}ms mode=${this._correctionMode} ctx=${this.audioContext?.state??"null"} gen=${this.stateManager.streamGeneration}`),this._intervalResyncCount=0}applySyncErrorEma(A){return this.currentSyncErrorMs=A,this.smoothedSyncErrorMs=Cr*A+(1-Cr)*this.smoothedSyncErrorMs,this.smoothedSyncErrorMs}resetSyncErrorEma(){this.smoothedSyncErrorMs=0}copyBuffer(A){if(!this.audioContext)return A;let t=this.audioContext.createBuffer(A.numberOfChannels,A.length,A.sampleRate);for(let n=0;n<A.numberOfChannels;n++)t.getChannelData(n).set(A.getChannelData(n));return t}adjustBufferSamples(A,t){if(!this.audioContext||t===0||A.length<2)return this.copyBuffer(A);let n=A.numberOfChannels,s=A.length,r=A.sampleRate;try{if(t>0){let i=this.audioContext.createBuffer(n,s+1,r);for(let a=0;a<n;a++){let o=A.getChannelData(a),h=i.getChannelData(a);h[0]=o[0];let u=(o[0]+o[1])/2;h[1]=u,h.set(o.subarray(1),2);for(let l=0;l<GA;l++){let c=2+l;if(c>=h.length)break;let f=Mn[l];h[c]=h[c]*(1-f)+u*f}}return i}else{let i=this.audioContext.createBuffer(n,s-1,r);for(let a=0;a<n;a++){let o=A.getChannelData(a),h=i.getChannelData(a);h.set(o.subarray(0,s-2));let u=(o[s-2]+o[s-1])/2;h[s-2]=u;for(let l=0;l<GA;l++){let c=s-3-l;if(c<0)break;let f=Mn[l];h[c]=h[c]*(1-f)+u*f}}return i}}catch(i){return console.error("Sendspin: adjustBufferSamples error:",i),A}}initAudioContext(){if(this.audioContext)return;this.outputMode==="media-element"&&this.ownsAudioElement&&(this.audioElement=document.createElement("audio"),this.audioElement.style.display="none",document.body.appendChild(this.audioElement)),navigator.audioSession&&(navigator.audioSession.type="playback");let A=this.stateManager.currentStreamFormat?.sample_rate||48e3;this.audioContext=new AudioContext({sampleRate:A}),this.gainNode=this.audioContext.createGain();let t=this.audioElement;if(this.outputMode==="direct")this.gainNode.connect(this.audioContext.destination);else{if(!t)throw new Error("Media-element output requires an audio element.");this.isAndroid&&this.silentAudioSrc?(this.gainNode.connect(this.audioContext.destination),t.src=this.silentAudioSrc,t.loop=!0,t.muted=!1,t.volume=1,t.play().catch(n=>{console.warn("Sendspin: Audio autoplay blocked:",n)})):(this.streamDestination=this.audioContext.createMediaStreamDestination(),this.gainNode.connect(this.streamDestination),t.srcObject=this.streamDestination.stream,t.volume=1,t.play().catch(n=>{console.warn("Sendspin: Audio autoplay blocked:",n)}))}this.updateVolume(),this.usesRecorrectionMonitor&&this.recorrectionMonitor.start()}async resumeAudioContext(){this.audioContext&&this.audioContext.state==="suspended"&&(await this.audioContext.resume(),console.log("Sendspin: AudioContext resumed"),this.audioBufferQueue.length>0&&this.scheduleQueueProcessing(),this.usesRecorrectionMonitor&&this.recorrectionMonitor.start())}cutScheduledSources(A){if(!this.audioContext)return{requeuedCount:0,cutCount:0,keptTailEndTimeSec:0};let t=Math.max(A,this.audioContext.currentTime),n=0,s=0,r=0;return this.scheduledSources=this.scheduledSources.filter(i=>{if(i.startTime<t)return r=Math.max(r,i.endTime),!0;try{i.source.onended=null,i.source.stop(t)}catch{}return this.audioBufferQueue.push({buffer:i.buffer,serverTime:i.serverTime,generation:i.generation}),n++,s++,!1}),n>0&&this.audioBufferQueue.sort((i,a)=>i.serverTime-a.serverTime),{requeuedCount:n,cutCount:s,keptTailEndTimeSec:r}}updateVolume(){if(!this.gainNode)return;if(this.useHardwareVolume){this.gainNode.gain.value=1;return}let A=this.stateManager.muted?0:vo(this.stateManager.volume);this.audioContext?this.gainNode.gain.setTargetAtTime(A,this.audioContext.currentTime,Do):this.gainNode.gain.value=A}measureBufferedPlaybackRunwaySec(){if(!this.audioContext)return 0;let A=this.audioContext.currentTime;this.pruneExpiredScheduledSources(A);let t=this.getScheduledAheadSec(A),n=this.audioBufferQueue.reduce((s,r)=>s+r.buffer.duration,0);return Math.max(0,t+n)}cancelScheduledRefill(){this.refillTimeout!==null&&(clearTimeout(this.refillTimeout),this.refillTimeout=null)}getScheduledRefillThresholdSec(A){return Math.max(bo,Math.min(To,A*Eo))}scheduleQueueRefill(A){if(this.cancelScheduledRefill(),!this.audioContext||this.audioContext.state!=="running"||!this.stateManager.isPlaying||this.audioBufferQueue.length===0)return;let t=this.audioContext.currentTime;this.pruneExpiredScheduledSources(t);let n=this.getScheduledAheadSec(t),s=this.getScheduledRefillThresholdSec(A);if(n<=s){this.scheduleQueueProcessing();return}let r=(n-s)*1e3,i=()=>{this.refillTimeout=null,!(!this.audioContext||this.audioContext.state!=="running"||!this.stateManager.isPlaying||this.audioBufferQueue.length===0)&&this.scheduleQueueProcessing()};if(typeof globalThis.setTimeout=="function"){this.refillTimeout=globalThis.setTimeout(i,r);return}if(this.refillTimeout=null,typeof globalThis.queueMicrotask=="function"){globalThis.queueMicrotask(i);return}Promise.resolve().then(i)}scheduleQueueProcessing(){if(this.cancelScheduledRefill(),this.queueProcessScheduled)return;if(this.queueProcessScheduled=!0,typeof globalThis.setTimeout=="function"){this.scheduleTimeout=globalThis.setTimeout(()=>{this.scheduleTimeout=null,this.queueProcessScheduled=!1,this.processAudioQueue()},15);return}let A=()=>{this.queueProcessScheduled=!1,this.processAudioQueue()};typeof globalThis.queueMicrotask=="function"?globalThis.queueMicrotask(A):Promise.resolve().then(A)}handleDecodedChunk(A){if(!this.audioContext||!this.gainNode){console.warn("Sendspin: Received audio chunk but no audio context");return}if(A.generation!==this.stateManager.streamGeneration)return;let t=A.samples.length,n=A.samples[0].length,s=this.audioContext.createBuffer(t,n,A.sampleRate);for(let r=0;r<t;r++)s.getChannelData(r).set(A.samples[r]);this.audioBufferQueue.push({buffer:s,serverTime:A.serverTimeUs,generation:A.generation}),this.scheduleQueueProcessing()}processAudioQueue(){if(this.cancelScheduledRefill(),!this.audioContext||!this.gainNode||this.audioContext.state!=="running")return;let A=this.stateManager.streamGeneration;if(this.audioBufferQueue=this.audioBufferQueue.filter(u=>u.generation===A),this.audioBufferQueue.sort((u,l)=>u.serverTime-l.serverTime),!this.timeFilter.is_synchronized)return;let t=this.measurePlayoutLatencySec(),{audioContextTimeSec:n,audioContextRawTimeSec:s,nowMs:r,nowUs:i}=this.clockSource.getTimingSnapshot(this.audioContext,t);this.pruneExpiredScheduledSources(s);let a=this.useOutputLatencyCompensation?t:0,o=this.syncDelayMs/1e3+this.unreportedOutputLatencySec,h=this.getTargetScheduledHorizonSec();if(this.usesRecorrectionMonitor&&this.recorrectionMonitor.start(),this.clockSource.pendingCutover&&(this.clockSource.pendingCutover=!1,this.scheduledSources.length>0||this.nextPlaybackTime!==0||this.lastScheduledServerTime!==0)){this.performGuardedCutover("delay-change",{incrementResyncCount:!1,markCooldown:!1});return}for(;this.audioBufferQueue.length>0;){let u=this.getScheduledAheadSec(s);if(this.nextPlaybackTime>0&&u>=h)break;let l=this.audioBufferQueue.shift(),c,f,d,g=this.computeTargetPlaybackTime(l.serverTime,n,i,a),m=this.clockSource.active==="timestamp";if(this.nextPlaybackTime===0||this.lastScheduledServerTime===0){this.recorrectionMonitor.armStartupGrace(r,m),c=g,f=c-o;let D=this.recorrectionMonitor.minScheduleTimeSec;if(D!==null){if(f+l.buffer.duration<=D)continue;f=Math.max(f,D),c=f+o}this.recorrectionMonitor.clearMinScheduleTime(),d=1}else{let B=(l.serverTime-this.lastScheduledServerTime)/1e6;if(Math.abs(B)<.1){let M=(this.nextPlaybackTime-g)*1e3,C=this.applySyncErrorEma(M),k=this.correctionThresholds[this._correctionMode],T=this.recorrectionMonitor.canUseHardResync(r,m);if(Math.abs(C)>k.resyncAboveMs&&T)this.recorrectionMonitor.noteHardResync(r),this.resyncCount++,this._intervalResyncCount++,this.resetSyncErrorEma(),this.cutScheduledSources(g-o),c=g,f=c-o,d=1,this.currentCorrectionMethod="resync",this.lastSamplesAdjusted=0;else if(Math.abs(C)>k.resyncAboveMs)c=this.nextPlaybackTime,f=this.nextScheduleTime,d=Number.isFinite(k.rate2AboveMs)?C>0?1+ge:1-ge:1,this.currentCorrectionMethod=d===1?"none":"rate",this.lastSamplesAdjusted=0;else if(Math.abs(C)<k.deadbandBelowMs)c=this.nextPlaybackTime,f=this.nextScheduleTime,d=1,this.currentCorrectionMethod="none",this.lastSamplesAdjusted=0;else if(Math.abs(C)<=k.samplesBelowMs){c=this.nextPlaybackTime,f=this.nextScheduleTime,d=1;let w=C>0?-1:1;l.buffer=this.adjustBufferSamples(l.buffer,w),this.currentCorrectionMethod="samples",this.lastSamplesAdjusted=w}else{c=this.nextPlaybackTime,f=this.nextScheduleTime;let w=Math.abs(C);C>0?d=w>=k.rate2AboveMs?1+ge:w>=k.rate1AboveMs?1+Mr:1:d=w>=k.rate2AboveMs?1-ge:w>=k.rate1AboveMs?1-Mr:1,this.currentCorrectionMethod=d===1?"none":"rate",this.lastSamplesAdjusted=0}}else this.recorrectionMonitor.canUseHardResync(r,m)&&(this.recorrectionMonitor.noteHardResync(r),this.resyncCount++,this._intervalResyncCount++,this.cutScheduledSources(g-o)),c=g,f=c-o,d=1,this.currentCorrectionMethod="resync",this.lastSamplesAdjusted=0}if(this.currentPlaybackRate=d,c<s){this.nextPlaybackTime=0,this.nextScheduleTime=0,this.lastScheduledServerTime=0;continue}let p=Math.max(f,s),S=p+(c-f),y=this.audioContext.createBufferSource();y.buffer=l.buffer,y.playbackRate.value=d,y.connect(this.gainNode),y.start(p);let _=l.buffer.duration/d;this.nextPlaybackTime=S+_,this.nextScheduleTime=p+_,this.lastScheduledServerTime=l.serverTime+l.buffer.duration*1e6;let J={source:y,startTime:p,endTime:p+_,buffer:l.buffer,serverTime:l.serverTime,generation:l.generation};this.scheduledSources.push(J),y.onended=()=>{let D=this.scheduledSources.indexOf(J);D>-1&&this.scheduledSources.splice(D,1),this.scheduledSources.length===0&&(this.resetScheduledPlaybackState("all scheduled audio ended"),this.audioBufferQueue.length>0&&this.processAudioQueue())}}this.scheduleQueueRefill(h),this.emitStatusLog(r)}computeTargetPlaybackTime(A,t,n,s){let i=(this.timeFilter.computeClientTime(A)-n)/1e6;return t+i-s}startAudioElement(){this.outputMode==="media-element"&&this.audioElement?.paused&&this.audioElement.play().catch(A=>{console.warn("Sendspin: Failed to start audio element:",A)})}stopAudioElement(){this.outputMode==="media-element"&&this.audioElement&&!this.audioElement.paused&&this.audioElement.pause()}clearBuffers(){this.recorrectionMonitor.fullReset(),this.cancelScheduledRefill(),this.scheduledSources.forEach(A=>{try{A.source.stop()}catch{}}),this.scheduledSources=[],this.audioBufferQueue=[],this.scheduleTimeout!==null&&(clearTimeout(this.scheduleTimeout),this.scheduleTimeout=null),this.queueProcessScheduled=!1,this.stateManager.resetStreamAnchors(),this.resetScheduledPlaybackState(),this.resyncCount=0,this.latencyTracker.reset(),this.clockSource.reset()}close(){this.clearBuffers(),this.audioContext&&(this.audioContext.close(),this.audioContext=null),this.gainNode=null,this.streamDestination=null,this.outputMode==="media-element"&&this.audioElement&&(this.audioElement.pause(),this.audioElement.srcObject=null,this.audioElement.loop=!1,this.audioElement.removeAttribute("src"),this.audioElement.load(),this.ownsAudioElement&&(this.audioElement.remove(),this.audioElement=void 0))}getAudioContext(){return this.audioContext}};var kr="data:audio/flac;base64,ZkxhQwAAACICQAJAAAAMAADIAfQBcAAHkwCKnZ7FLvzY30lWx+3k6wJCBAAALAwAAABMYXZmNjEuNy4xMDABAAAAFAAAAGVuY29kZXI9TGF2ZjYxLjcuMTAwgQAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA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kkkkkkmSSSSSTJJJJJMkkkkySSSTJJJJMkkkk/+/+//f/7//9////////////z///z//8///P//n//+SSSSSSSSSSSSQkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkmSSSSSSSSSSSSSSST////+BVP//gkDBPnQAAAAOc/VEAP/////9//////////////////z////////+f/////////////////////////////////3///////////////////////////gAhn//gkDBTyQP///+c/y0Af/////5//////////////////////////////////v/////////////////////////////////P////////////////////+T8L/+CQMFfVAAAAA5z9xQB////////////3//////////////////////////////////+f///////////////////////////////////////////////gm0f/4JAwW/EAAAADnP9JAH///////7///////////////////////////////////////////////n///////////////////////////////////////+BEl//gkDBf7AAAAABAL//gkDBjWAAAAADVc//gkDBnRAAAAAEw0//gkDBrYAAAAAMeM//gkDBvfAAAAAL7k//gkDBzKAAAAAFD5//gkDB3NAAAAACmR//gkDB7EAAAAAKIp//gkDB/DAAAAANtB//gkDCB+AAAAAMWl//gkDCF5AAAAALzN//gkDCJwAAAAADd1//gkDCN3AAAAAE4d//gkDCRiAAAAAKAA//gkDCVlAAAAANlo//gkDCZsAAAAAFLQ//gkDCdrAAAAACu4//gkDChGAAAAAA7v//gkDClBAAAAAHeH//gkDCpIAAAAAPw///gkDCtPAAAAAIVX//gkDCxaAAAAAGtK//gkDC1dAAAAABIi//gkDC5UAAAAAJma//gkDC9TAAAAAODy//gkDDAOAAAAANM0//gkDDEJAAAAAKpc//gkDDIAAAAAACHk//gkDDMHAAAAAFiM//gkDDQSAAAAALaR//gkDDUVAAAAAM/5//gkDDYcAAAAAERB//gkDDcbAAAAAD0p//gkDDg2AAAAABh+//gkDDkxAAAAAGEW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";var _r;(function(e){e.CLIENT_HELLO="client/hello",e.SERVER_HELLO="server/hello",e.CLIENT_TIME="client/time",e.SERVER_TIME="server/time",e.CLIENT_STATE="client/state",e.SERVER_STATE="server/state",e.CLIENT_COMMAND="client/command",e.CLIENT_GOODBYE="client/goodbye",e.SERVER_COMMAND="server/command",e.STREAM_START="stream/start",e.STREAM_CLEAR="stream/clear",e.STREAM_REQUEST_FORMAT="stream/request-format",e.STREAM_END="stream/end",e.GROUP_UPDATE="group/update",e.CLIENT_INIT="client/init",e.SERVER_INIT="server/init",e.NOISE_HANDSHAKE="noise/handshake",e.SERVER_ACTIVATE="server/activate",e.CLIENT_PAIR_PENDING="client/pair-pending",e.CLIENT_PAIR_INIT="client/pair-init",e.SERVER_PAIR_INIT="server/pair-init",e.SERVER_PAIR_AUTH="server/pair-auth",e.CLIENT_PAIR_AUTH="client/pair-auth",e.SERVER_PAIR_CONFIRM="server/pair-confirm",e.CLIENT_PAIR_CONFIRM="client/pair-confirm",e.CLIENT_PAIR_FINALIZE="client/pair-finalize",e.SERVER_PAIR_FINALIZE="server/pair-finalize",e.PAIR_ABORT="pair/abort",e.SERVER_UNPAIR="server/unpair"})(_r||(_r={}));function xr(){return typeof navigator>"u"?!1:/Android/i.test(navigator.userAgent)}function Io(){return typeof navigator>"u"?!1:/iPad|iPhone|iPod/.test(navigator.userAgent)||navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1}function Jo(){return xr()||Io()}function Bo(){return typeof navigator>"u"?!1:/CrKey/i.test(navigator.userAgent)}var Po=250,ye=class{constructor(A){this.ownsAudioElement=!1,this.disconnectPlaybackResetTimeout=null,this.suppressDisconnectPlaybackReset=!1;let t=xr(),n=Bo(),s=Jo(),r=A.audioElement||s?"media-element":"direct";if(this.ownsAudioElement=r==="media-element"&&!A.audioElement,this.ownsAudioElement&&typeof document>"u")throw new Error("SendspinPlayer requires a DOM document to use media-element output without a provided audioElement.");let i=null;A.storage!==void 0?i=A.storage:typeof localStorage<"u"&&(i=localStorage),this.core=new Dt({baseUrl:A.baseUrl,clientName:A.clientName,productName:A.productName,webSocket:A.webSocket,codecs:A.codecs,bufferCapacity:A.bufferCapacity,syncDelay:A.syncDelay,defaultSyncDelay:A.defaultSyncDelay,storage:i,requiredLeadTimeMs:A.requiredLeadTimeMs,minBufferMs:A.minBufferMs,useHardwareVolume:A.useHardwareVolume,onVolumeCommand:A.onVolumeCommand,onDelayCommand:A.onDelayCommand,getExternalVolume:A.getExternalVolume,reconnect:A.reconnect,onStateChange:A.onStateChange,onPairing:A.onPairing,onPairingPin:A.onPairingPin,pinOutChannels:A.pinOutChannels,minPinLength:A.minPinLength,staticPin:A.staticPin,staticPinLocations:A.staticPinLocations,pairingPskLocations:A.pairingPskLocations,suite:A.suite,unpairedAccess:A.unpairedAccess,longTermPsks:A.longTermPsks});let a=this.core.getSyncDelayMs();this.scheduler=new vt({stateManager:this.core._stateManager,timeFilter:this.core._timeFilter,outputMode:r,audioElement:A.audioElement,isAndroid:t,isCastRuntime:n,ownsAudioElement:this.ownsAudioElement,silentAudioSrc:t?kr:void 0,syncDelayMs:a,useHardwareVolume:A.useHardwareVolume??!1,correctionMode:A.correctionMode??"sync",storage:i,useOutputLatencyCompensation:A.useOutputLatencyCompensation??!0,correctionThresholds:A.correctionThresholds}),this.core.onAudioData=o=>{this.scheduler.handleDecodedChunk(o)},this.core.onStreamStart=(o,h)=>{this.scheduler.initAudioContext(),this.scheduler.resumeAudioContext().catch(u=>{console.warn("Sendspin: Failed to resume AudioContext:",u)}),h||this.scheduler.clearBuffers(),this.scheduler.startAudioElement()},this.core.onStreamClear=()=>{this.scheduler.clearBuffers()},this.core.onStreamEnd=()=>{this.scheduler.clearBuffers(),this.scheduler.stopAudioElement()},this.core.onVolumeUpdate=()=>{this.scheduler.updateVolume()},this.core.onSyncDelayChange=o=>{this.scheduler.setSyncDelay(o)},this.core.onConnectionOpen=()=>{this.cancelPendingDisconnectPlaybackReset()},this.core.onConnectionClose=()=>{this.suppressDisconnectPlaybackReset||this.scheduleDisconnectPlaybackReset()}}cancelPendingDisconnectPlaybackReset(){this.disconnectPlaybackResetTimeout!==null&&(clearTimeout(this.disconnectPlaybackResetTimeout),this.disconnectPlaybackResetTimeout=null)}resetPlaybackStateAfterDisconnect(){this.disconnectPlaybackResetTimeout=null,!this.core.isConnected&&(this.scheduler.clearBuffers(),this.core.resetPlaybackState(),this.scheduler.stopAudioElement(),typeof navigator<"u"&&navigator.mediaSession&&(navigator.mediaSession.playbackState="paused"))}scheduleDisconnectPlaybackReset(){this.cancelPendingDisconnectPlaybackReset();let A=this.scheduler.measureBufferedPlaybackRunwaySec();if(A<=0){this.resetPlaybackStateAfterDisconnect();return}this.disconnectPlaybackResetTimeout=setTimeout(()=>{this.resetPlaybackStateAfterDisconnect()},A*1e3+Po)}async unlock(){this.scheduler.initAudioContext(),await this.scheduler.resumeAudioContext()}async connect(){return this.suppressDisconnectPlaybackReset=!1,this.core.connect()}disconnect(A="restart"){this.cancelPendingDisconnectPlaybackReset(),this.suppressDisconnectPlaybackReset=!0,this.core.disconnect(A),this.scheduler.close(),typeof navigator<"u"&&navigator.mediaSession&&(navigator.mediaSession.playbackState="none",navigator.mediaSession.metadata=null)}setVolume(A){this.core.setVolume(A)}setMuted(A){this.core.setMuted(A)}setSyncDelay(A){this.core.setSyncDelay(A)}setRequiredLeadTimeMs(A){this.core.setRequiredLeadTimeMs(A)}setMinBufferMs(A){this.core.setMinBufferMs(A)}setCorrectionMode(A){this.scheduler.setCorrectionMode(A)}sendCommand(A,t){this.core.sendCommand(A,t)}get isPlaying(){return this.core.isPlaying}get volume(){return this.core.volume}get muted(){return this.core.muted}get playerState(){return this.core.playerState}get currentFormat(){return this.core.currentFormat}get isConnected(){return this.core.isConnected}get clientId(){return this.core.clientId}get pairingPsk(){return this.core.pairingPsk}get pairingToken(){return this.core.pairingToken}rotatePairingPsk(){return this.core.rotatePairingPsk()}openPairingWindow(){this.core.openPairingWindow()}cancelPairing(){this.core.cancelPairing()}isDynamicPinEscalated(){return this.core.isDynamicPinEscalated()}get correctionMode(){return this.scheduler.correctionMode}get timeSyncInfo(){return this.core.timeSyncInfo}getCurrentServerTimeUs(){return this.core.getCurrentServerTimeUs()}get trackProgress(){return this.core.trackProgress}get syncInfo(){return this.scheduler.syncInfo}};return Br(Ro);})();
   window.__crowaiSendspinLib = __CrowSendspinLib;
   return __CrowSendspinLib;

@@ -18,7 +18,8 @@ CrowAI is about **discovery** as much as playback — AI-powered info panels, re
 - **Modern Design** — a **Classic** solid card or a **Glass** frosted-glass card, with an Auto / Light / Dark theme setting, rounded corners, smooth animations and customisable accent colours
 - **Player Icon Themes** — eight icon sets: Standard, Modern, Robot (default), Chunky, Retro Player, Sharp, Pixel and LCD
 - **Artwork Crossfade** — optional cinematic fade-to-black transition between track changes
-- **Apple TV Remote** — built-in remote overlay with directional pad, Back, TV and Power Off
+- **Apple TV Remote** — built-in remote overlay with directional pad, Back, TV and Power Off; long-press the artwork during a show or movie to open it, tap ✕ or swipe down to close
+- **Music Library Button** — on the left of the controls bar on every speaker, Apple TVs included
 - **Tactile Button Feedback** — glow and blur effects when buttons are pressed
 - **Automatic Device Switching** — card follows whichever media player starts playing
 - **Compact and Expanded Modes** — toggle between full album art and a space-saving mini player
@@ -26,7 +27,7 @@ CrowAI is about **discovery** as much as playback — AI-powered info panels, re
 - **Double-tap to Seek** — double-tap the left or right zone of artwork to seek −15s or +15s
 - **Double-tap to Pin** — double-tap the *center* of the artwork to pin whatever's currently playing — a song, movie, TV show, or radio station — with a burst of red hearts floating up from the tap point (grey for unpinning; the heart burst can be turned off with the **Pin Hearts** toggle in Visual Effects, the pin itself always works). For radio, this uses the same station identification as the LIVE pill, so it only works once the station's been resolved (usually near-instant, but a station that's never been looked up this session may need a moment, or a tap of the LIVE pill first)
 - **Pinned Indicator** — a small pin badge in the bottom-left corner of the artwork whenever the current track/movie/show/radio station is pinned, and stays live regardless of which of the card's pin buttons was used. Tap to unpin — shows an iOS-style confirmation first, then the same grey heart-burst as unpinning via double-tap
-- **Artwork Tap Actions** — single-tap opens the info panel (music: AI Info or Discogs; TV/movies: Media Info; live radio with track metadata: that track's info); double-tap the left/right edge to seek −15s/+15s, double-tap the center to pin; long-press opens lyrics
+- **Artwork Tap Actions** — single-tap opens the info panel (music: AI Info or Discogs; TV/movies: Media Info; live radio with track metadata: that track's info); double-tap the left/right edge to seek −15s/+15s, double-tap the center to pin; long-press opens lyrics for music, or the Apple TV remote while a show or movie is playing (or when nothing is showing on an Apple TV)
 - **Artwork Zoom** — tap the mini album art in AI Info or album view to see a larger version
 - **Mute Toggle** — tap the volume percentage badge or speaker icon to instantly mute/unmute
 - **Live Progress Tracking** — real-time playback position updates
@@ -59,7 +60,7 @@ Other conversation agents (Claude, OpenAI, Home Assistant's built-in AI, Ollama,
 
 - **AI Info Panel** — single-tap the artwork while music plays: year, label, length, fun fact, genre tags, band members / artist section, album pill, up to 10 similar tracks; all cached per track. **Info Panel Priority** in AI Settings chooses whether AI or Discogs is tried first
 - **Ask, Meaning and Trivia** — buttons in the music info panel: ask your own question about the song, read what it means, or try a quiz. Movie and TV panels have Ask, Mood Match and Trivia, and episode and person pages have their own Ask box
-- **Discogs Panel** — the default info panel when AI features are off, and the automatic fallback when AI can't identify a track: year, label, length, tappable genre tags, artist section and a full tracklist with community rating, in the same layout. The header reads "Discogs Info" instead of "AI Info" so it's clear where the data came from; tapping a tracklist row opens that track's own info. Built-in rate-limit protection backs off automatically for 10 seconds whenever Discogs asks the card to slow down.
+- **Discogs Panel** — the default info panel when AI features are off, and the automatic fallback when AI can't identify a track: year, label, length, tappable genre tags, artist section and a full tracklist with community rating, in the same layout. The header reads "Discogs Info" instead of "AI Info" so it's clear where the data came from; tapping a tracklist row opens that track's own info, and the row for the track you're viewing is highlighted. Built-in rate-limit protection backs off automatically for 10 seconds whenever Discogs asks the card to slow down.
 - **Song Intro** — a short, intriguing one-line fact about the playing track appears below the artist name a few seconds after it starts, then fades away; off by default, toggle in AI Settings
 - **Vibe Queue Builder** — 100+ vibes across Energy, Calm, Focus, Mood, Social, Decades, Genre, Time, Seasons and Binaural & Noise; builds a themed MA queue instantly; artist exclusion prevents repeats
 - **Add Songs from Same Year / Genre / Genre & Year** — quick-menu actions that add AI-picked songs matching what's playing
@@ -85,7 +86,7 @@ Tap the playlist/queue button in the controls bar to open the contextual quick m
 
 - **Find & browse** — Search (AI natural language search), Library, Queue (MA speakers only)
 - **Discover & build** — Vibe, Recommendations, AI Artist Radio, Radio Mode, and **Add to Queue ›** (Similar Songs, Same Genre, Same Year, Same Genre & Year, This Album)
-- **What's playing** — Lyrics, More Info, Pin / Unpin, Mood Match and Trivia (while a movie or show plays), Remote Control (Apple TV), Find Soundtrack (while watching on Apple TV)
+- **What's playing** — Lyrics, More Info, Pin / Unpin, Mood Match and Trivia (while a movie or show plays), Remote Control (Apple TV — opens or closes the remote), Find Soundtrack (while watching on Apple TV)
 - **Recaps ›** — Music Recap, Video Recap
 - **Share & Announce ›** — Share (track info plus a link to your chosen music service), Announce, Send Message
 
@@ -148,6 +149,7 @@ By default, pins, AI lookups, iTunes artwork, Wikipedia photos and lyrics are ca
 - **iTunes Artwork**, **Wikipedia Artwork**, **Pinned Items**, **AI Info** (track info, bios, recommendations, etc.) and **Lyrics** each have their own Persistent Storage toggle
 - Persistent data is loaded once per session and merged with the on-device cache — Home Assistant's copy always wins on conflict
 - A **Clear Persistent Storage** button (separate from the regular cache-clear buttons) removes everything saved this way
+- **Wikipedia photos** (cast, artists and band members) are also kept on the device after their first download, so they appear almost instantly on later visits, even after the app restarts. This needs Home Assistant to be opened over https (for example through Nabu Casa); over plain http they're downloaded again each session
 
 ## Synced Lyrics
 
@@ -179,7 +181,7 @@ Share is available from the quick menu, the AI Info / Media Info panels, and the
 - Mini album art — tap to see a larger version
 - Action bar: Play Now, Add, Play Next, Add Album
 - **Ask / Meaning / Trivia** (AI) — ask your own question about the song, read its meaning, or try a quiz
-- **Discogs Panel** — the default panel when AI features are off, and the automatic fallback if AI has no info for a track: same layout with a full tracklist and community rating added; the header reads "Discogs Info" rather than "AI Info". Tapping a track in the Discogs tracklist opens that track's own info
+- **Discogs Panel** — the default panel when AI features are off, and the automatic fallback if AI has no info for a track: same layout with a full tracklist and community rating added; the header reads "Discogs Info" rather than "AI Info". Tapping a track in the Discogs tracklist opens that track's own info — the track the panel is showing is highlighted in the tracklist, tapping it jumps back to the top of the panel, and every newly opened track starts at the top
 
 **TV Shows:**
 - Poster (tap to zoom), genre tags, overview, cast
@@ -279,6 +281,10 @@ The same idea as Music Recap, but for movies and TV shows.
 
 ## Apple TV Remote
 
+**Opening the remote** — long-press the artwork while a show or movie is playing on an Apple TV (or when nothing is showing), or choose **Remote Control** from the quick menu. In compact mode the card expands first. Music keeps its own long-press for lyrics.
+
+**Back to the artwork** — tap the **✕** in the top-left corner of the remote, swipe down on the remote, long-press an empty part of it, or choose **Remote Control** in the quick menu again. Swipes that start on the clickpad or the apps list are ignored, and upward swipes still scroll the dashboard.
+
 | Button | Action |
 |--------|--------|
 | **Back** | Navigate back / menu |
@@ -322,10 +328,11 @@ Repository: [github.com/droans/mass_queue](https://github.com/droans/mass_queue)
 
 ## Smart Device Detection
 
-- **Apple TV** (`device_class: tv`) — remote button shown, volume via `remote.send_command`
-- **HomePod** (`device_class: speaker`) — remote hidden, soft-mute
-- **Music Assistant** (`platform: music_assistant`) — MA library button shown
-- **Alexa / all others** — remote hidden, standard controls
+- **Apple TV** (`device_class: tv`) — long-press the artwork for the remote, volume via `remote.send_command`
+- **HomePod** (`device_class: speaker`) — no remote, soft-mute
+- **Music Assistant** (`platform: music_assistant`) — full MA queue and library features
+- **Alexa / all others** — no remote, standard controls
+- **Every speaker** — music library button in the controls bar (turn off **Always Show Library Button** to hide it)
 
 ## Visual Configuration Editor
 
@@ -333,7 +340,7 @@ The editor includes a filter box at the top (search any setting by name) and a R
 
 - **Manage & Reorder Media Players** — accordion list with drag-and-drop reordering; enable/disable per speaker; tap a speaker's name to open its own dedicated settings page (Display Name, Startup Volume, Volume Entity, MA Speaker toggle)
 - **Play on This Device** — Show "Play on this device" and the Music Assistant server URL
-- **Appearance & Behaviour** *(collapsible)* — General (Follow HA Theme, Always Show Library Button, Show Remote Button, Apple TV Keyboard Panel, Default Radio Mode on Startup, iTunes Artwork Fallback, Live/Podcast/Audiobook Pill, Show YouTube Button, Scroll Long Text), Volume (Volume HUD, Volume Buttons, Volume Percentage) and Startup & Navigation (Auto Switch, Remember Last Speaker, Media Player Selector, Startup View, Retain Current View, Remote Button Row Position)
+- **Appearance & Behaviour** *(collapsible)* — General (Follow HA Theme, Always Show Library Button, Apple TV Keyboard Panel, Default Radio Mode on Startup, iTunes Artwork Fallback, Live/Podcast/Audiobook Pill, Show YouTube Button, Scroll Long Text), Volume (Volume HUD, Volume Buttons, Volume Percentage) and Startup & Navigation (Auto Switch, Remember Last Speaker, Media Player Selector, Startup View, Retain Current View, Remote Button Row Position)
 - **Caches & Data** *(collapsible)* — AI caches (bios, trivia, where-to-watch, content warnings, year-in-music, vibe history, AI response cache), artwork caches (iTunes, Wikipedia) with Persistent Storage toggles, library & radio caches (MA library, radio stations, HA registry), Lyrics (line style, Keep Lyrics Open Between Tracks, Cache Lyrics, Save Lyrics For, Persistent Lyrics Storage), pinned items (Persistent Pin Storage, Show Pins in Sections, Clear All Pins), Persistent Info Storage, Clear All Caches and Clear Persistent Storage
 - **Visual Effects** — Style (Classic or Glass), Theme (Auto, Light or Dark), Remote Liquid Glass, Volume HUD Liquid Glass, Ambient Glow, Row Glow, Artwork Crossfade, Pin Hearts, Resize Button Spin
 - **AI Settings** — **Enable AI Features** master switch (off by default), AI Agent (Google Gemini recommended), Info Panel Priority, Library Search (Normal or AI Enhanced), Share Track Service (YouTube Music, Apple Music, Spotify, Tidal, Amazon Music, Deezer), Announce TTS Service, Song Intro, Ghost-Skip Healer
@@ -379,7 +386,6 @@ icon_theme: robot
 artwork_crossfade: false
 ambient_glow: false
 row_glow: false
-show_remote_button: true
 show_media_type_pill: false
 song_intro_enabled: true
 card_liquid_glass: true
