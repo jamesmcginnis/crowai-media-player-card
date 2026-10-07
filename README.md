@@ -131,10 +131,11 @@ Repository: [github.com/droans/mass_queue](https://github.com/droans/mass_queue)
 - **Double-tap to seek** — double-tap left or right of artwork to seek −15s or +15s
 - **Double-tap to pin** — double-tap the *center* of the artwork to pin whatever's currently playing — a song, movie, TV show, or radio station — with a burst of red hearts floating up from the tap point (grey for unpinning; the heart burst can be turned off with the **Pin Hearts** toggle in Visual Effects, the pin itself always works). For radio, this uses the same station identification as the LIVE pill, so it only works once the station's been resolved (usually near-instant, but a station that's never been looked up this session may need a moment, or a tap of the LIVE pill first)
 - **Pinned indicator** — a small pin badge appears in the bottom-left corner of the artwork whenever the currently playing track/movie/show/radio station is pinned, and updates live regardless of which of the card's several pin buttons was used. Tap it to unpin — shows an iOS-style confirmation first, then the same grey heart-burst as unpinning via double-tap
-- **Artwork tap actions** — single-tap opens the info panel (music: AI Info or Discogs; TV/movies: Media Info; live radio with track metadata: that track's info); double-tap the left or right edge to seek −15s/+15s, double-tap the center to pin; long-press opens lyrics for music, or the Apple TV remote while a show or movie is playing (or when nothing is showing on an Apple TV)
+- **Artwork tap actions** — single-tap opens the info panel (music: AI Info or Discogs; TV/movies: Media Info; live radio with track metadata: that track's info); double-tap the left or right edge to seek −15s/+15s, double-tap the center to pin; long-press opens lyrics for music, or the Apple TV remote while a show, movie or video app is playing (or when nothing is showing on an Apple TV)
 - **Artwork zoom** — tap the mini album art in the AI Info panel or album view to see a larger version
 - **Tactile button feedback** — glow and blur effects when buttons are pressed
-- **Music library button** — sits on the left of the controls bar on every speaker, Apple TVs included; turn off **Always Show Library Button** in Appearance & Behaviour to hide it
+- **Music library button** — sits on the left of the controls bar on every speaker; turn off **Always Show Library Button** in Appearance & Behaviour to hide it. On an Apple TV the Remote button uses that spot instead (the library is always in the quick menu)
+- **Apple TV Remote button** — on Apple TVs a Remote button sits on the left of the controls bar for one-tap access to the remote; on by default, toggle **Apple TV Remote Button** in Appearance & Behaviour. Turning it off gives the spot back to the library button
 - **Volume control** — slider or +/− buttons with optional per-speaker routing to a separate volume entity (e.g. an amp or receiver), configured on that speaker's own settings page in the editor
 - **Speaker Display Names** — give any speaker a short friendly name on its settings page in the editor; it's used everywhere the card shows a speaker (speaker menu, summary pill, group sheets, Announce, toasts) while Home Assistant keeps the real name
 - **Volume HUD** — sleek overlay showing current level; fades after 1.5 seconds
@@ -156,7 +157,7 @@ Repository: [github.com/droans/mass_queue](https://github.com/droans/mass_queue)
 ### AI Features
 
 - **AI Info Panel** — tap the artwork while music plays: year, label, length, fun fact, genre tags, band members / artist section, similar tracks; all AI-generated and cached per track. **Info Panel Priority** in AI Settings chooses whether AI or Discogs is tried first
-- **Ask, Meaning and Trivia** — buttons in the music info panel: ask your own question about the song ("Who wrote this? Is there a live version?"), read what it means, or try a quiz. Movie and TV panels have **Ask**, **Mood Match** and **Trivia**, and episode and person pages have their own Ask box
+- **Ask, Meaning and Trivia** — buttons in the music info panel: ask your own question about the song ("Who wrote this? Is there a live version?"), read what it means, or try a quiz. Movie and TV panels have **Ask**, **Mood Match** and **Trivia**, episode pages have **Ask**, **Trivia** and **Soundtrack**, and person pages have **Ask** and **Trivia**
 - **Discogs Panel** — the default info panel when AI features are off, and the automatic fallback when AI can't identify a track: year, label, length, tappable genre tags, artist section and a full tracklist with community rating, in the same panel layout. The header reads "Discogs Info" so it's clear where the data came from; tapping a tracklist row opens that track's own info, same as everywhere else in the card, and the row for the track you're viewing is highlighted. Built-in rate-limit protection backs off automatically for 10 seconds whenever Discogs asks the card to slow down.
 - **Song Intro** — a short, intriguing one-line fact about the playing track appears below the artist name a few seconds after it starts, then fades away; off by default, toggle in AI Settings
 - **Vibe Queue Builder** — 100+ vibes across Energy, Calm, Focus, Mood, Social, Decades, Genre, Time, Seasons and Binaural & Noise; builds a themed MA queue instantly
@@ -175,10 +176,25 @@ Repository: [github.com/droans/mass_queue](https://github.com/droans/mass_queue)
 - **Send Message AI** — improves your notification text
 - **Audiobook search** — find free, public-domain audiobooks via LibriVox/Archive.org, with AI-assisted query refinement when AI features are enabled (plain search works without)
 - **Podcast search** — search iTunes for podcasts and pin your favourites
-- **Find Soundtrack** — available from the media player's quick menu while watching on Apple TV, and from the long-press menu on any Pinned Movie/TV Show — opens an AI-powered search for "Music from [title]"
+- **Find Soundtrack** — available from the media player's quick menu while watching on Apple TV, the long-press menu on any Movie/TV Show in the library, the Soundtrack button on a Watch History title or an episode page — opens an AI-powered search for "Music from [title]"
 - **Open on YouTube / Trailer** — a button in the AI Info / Media Info panel header, next to Share: opens a YouTube search for the current song, or the trailer for a movie/TV show. Always searches YouTube specifically regardless of your configured Share service. Toggle in **Appearance & Behaviour**
 - **Music Recap** — a personal weekly snapshot: top artists and tracks (last 7 days, top 10 each, expandable to 50) plus a short AI-written summary that regenerates fresh every time you open it
 - **Video Recap** — the same idea as Music Recap, but for movies and TV shows: top shows and top movies over the last 7 days plus a fresh AI-written summary every time you open it
+
+### When AI Is Off or Can't Help
+
+Every AI option (Search, Vibe, Recommendations, AI Artist Radio, the Add to Queue songs, Find Soundtrack, Ask, Trivia, Mood Match and the Announce / Send Message improve buttons) is hidden throughout the card while **Enable AI Features** is off, including in the quick menu, the queue's 3-dot menu and every long-press menu, and the card never contacts the AI agent. Where a panel normally gets its details from the AI, it falls back to a free source instead, both when AI is off and when the AI doesn't recognise something:
+
+| What | Fallback |
+|------|----------|
+| Track info | Discogs |
+| Album view (tracklist, year, label, genres) | Discogs |
+| Movie and TV info | TMDB (with a key), then Wikipedia |
+| TV seasons and episodes (counts, titles, air dates, summaries) | TVmaze |
+| Artist, band member, cast and director bios | Wikipedia |
+| Genre pill descriptions | Wikipedia |
+
+None of these need an account or key apart from TMDB. Fallback results are kept for the session only, so turning AI back on gets the richer AI version next time. The Year box in the music info panel opens "This year in music" only when AI is on; with AI off it shows the year as plain text.
 
 ### Movies & TV (TMDB)
 
@@ -262,7 +278,7 @@ Related actions are grouped into sub-menus so the menu fits on a phone screen: t
 | Recaps › | Music Recap, Video Recap |
 | Share & Announce › | Share (track info plus a link to your chosen music service, see [Sharing](#sharing)), Announce, Send Message |
 
-> The AI entries (Search, Vibe, Recommendations, AI Artist Radio, the Add to Queue songs, Mood Match, Trivia) only appear when **Enable AI Features** is on.
+> The AI entries (Search, Vibe, Recommendations, AI Artist Radio, the Add to Queue songs, Mood Match, Trivia, Find Soundtrack) only appear when **Enable AI Features** is on. The same goes for the AI entries in the queue's 3-dot menu and in every long-press menu.
 
 ### Multi-Room Multicast
 
@@ -349,12 +365,14 @@ Share is available from the quick menu, the AI Info / Media Info panels, and the
 - Mini album art — tap to view a larger version
 - Action bar: Play Now, Add, Play Next, Add Album
 - **Ask / Meaning / Trivia** (AI) — ask your own question about the song, read its meaning, or try a quiz
-- **Discogs Panel** — the default panel when AI features are off, and the automatic fallback if AI has no info for a track: same layout with a full tracklist and community rating added; the header reads "Discogs Info" rather than "AI Info" so it's clear where the data came from. Tapping a track in the Discogs tracklist opens that track's own info — the track the panel is showing is highlighted in the tracklist, tapping it jumps back to the top of the panel, and every newly opened track starts at the top
+- **Discogs Panel** — the default panel when AI features are off, and the automatic fallback if AI has no info for a track: same layout with a full tracklist and community rating added; the header reads "Discogs Info" rather than "AI Info" so it's clear where the data came from. Tapping a track in the Discogs tracklist opens that track's own info — the track the panel is showing is highlighted in the tracklist, tapping it jumps back to the top of the panel, and every newly opened track starts at the top. The album pill opens the album view, filled straight from the Discogs release, and Back returns to the track exactly as you left it
+- **Artist bios** — tapping an artist or band member always shows something: the AI bio when AI is on, otherwise the Wikipedia summary (marked "From Wikipedia")
 
 **TV Shows:**
 - Poster (tap to zoom), genre tags, overview, cast
 - Similar Shows — same idea as Similar Tracks; tap any to drill straight into that show's info
-- Season and episode browser with formatted airdates, and an Ask box on each episode
+- Season and episode browser with episode counts and formatted airdates (from TVmaze when AI is off or doesn't know the show)
+- Episode pages with the show's artwork, a Season and Episode label, the episode title, air date and rating, then the description, writer, director and fun fact. With AI on, Ask, Trivia and Soundtrack buttons sit under the artwork
 - Full back-navigation from episode detail back to Media Info
 - **Ask / Mood Match / Trivia** (AI) and **Where to Watch**
 
@@ -365,9 +383,9 @@ Share is available from the quick menu, the AI Info / Media Info panels, and the
 
 **Sources:** AI, TMDB, or both — see [Movies & TV (TMDB)](#movies--tv-tmdb). If the wrong title was identified, **Not this one?** lets you pick another match.
 
-**Cast navigation:** tap any cast member to open their bio with photo (tap to zoom), Known For credits and a fun fact — the same related-content pattern used throughout the card. Tap their photo in the bio to see a larger version.
+**Cast navigation:** tap any cast member to open their bio with photo (tap to zoom), Known For credits and a fun fact — the same related-content pattern used throughout the card. Tap their photo in the bio to see a larger version. With AI off, or when the AI doesn't know the person, the bio comes from Wikipedia.
 
-**Find Soundtrack:** available from the media player's quick menu while watching on Apple TV, and from the long-press menu on any item in Pinned Movies & TV Shows — opens an AI Search for the film or show's music.
+**Find Soundtrack (AI):** available from the media player's quick menu while watching on Apple TV, the long-press menu on Movies & TV items, and the Soundtrack button on Watch History titles and episode pages — opens an AI Search for the film or show's music.
 
 ### Queue Panel
 
@@ -386,8 +404,8 @@ Categories: Recent Searches, Music History, Watch History, Recently Added, Pins,
 - Long-press tracks for the enqueue menu
 - **AI Search** — a box at the top of the library for natural-language search; the Songs, Artists and Albums tabs also each have their own AI search button next to the regular search bar, returning matching tracks, artists or albums specifically
 - **Recent Searches** — every search you've run, MA and AI alike, most-recent-first, capped at 50; tap to re-run, with an iOS-style Clear confirmation
-- **Music History** — a plain chronological list of your last 10 songs played; the 3-dot menu expands the same view to your last 50, or clears history entirely (iOS-style confirmation). A hero bar (Play All / Add All / Play Next) acts on exactly whichever count is currently showing. Tap a song for its AI Info, long-press for the same context menu used throughout the library (Play Now/Next, Add to Queue, Pin, AI Artist Radio, Share), plus **Remove from History** and **Never Log This Artist**. Muted artists are listed under **Muted Artists** in the 3-dot menu, where you can unmute them. Pinning here lands in the same Pinned → Songs category as pinning anywhere else. This reads from the same history log as [Music Recap](#music-recap) — just as a list instead of weekly stats — so clearing history from either one clears it for both
-- **Watch History** — the movie/TV equivalent, same shape: last 10 (expandable to 50), 3-dot menu with Clear History, long-press for Pin/Find Soundtrack/Remove from History (or remove a single viewing), reads from the same history as [Video Recap](#video-recap). No hero bar here — replaying several movies/shows back-to-back the way a music queue does isn't really the natural action for video the way it is for songs
+- **Music History** — a plain chronological list of your last 10 songs played; the 3-dot menu expands the same view to your last 50, or clears history entirely (iOS-style confirmation). A hero bar (Play All / Add All / Play Next) acts on exactly whichever count is currently showing. Tap a song for its AI Info, long-press for the same context menu used throughout the library (Play Now/Next, Add to Queue, Pin, AI Artist Radio, Share), plus **Remove from History**, **Remove All Plays** (every play of that song; only shown when it's been played more than once) and **Never Log This Artist**, each with an iOS-style confirmation. Muted artists are listed under **Muted Artists** in the 3-dot menu, where you can unmute them. Pinning here lands in the same Pinned → Songs category as pinning anywhere else. This reads from the same history log as [Music Recap](#music-recap) — just as a list instead of weekly stats — so clearing history from either one clears it for both
+- **Watch History** — the movie/TV equivalent, same shape: last 10 (expandable to 50), 3-dot menu with Clear History. Long-press a title for Pin, Find Soundtrack and **Remove from History** (removes every watch of it, with an iOS-style confirmation), or open a title to remove a single viewing. Reads from the same history as [Video Recap](#video-recap). No hero bar here — replaying several movies/shows back-to-back the way a music queue does isn't really the natural action for video the way it is for songs
 - **Podcasts tab** — search iTunes directly; pin favourites
 - **Audiobooks tab** — search free, public-domain titles on LibriVox via the Archive.org catalogue, with AI-assisted query refinement and chapter-by-chapter playback; pin favourites
 - **Radio tab** — search radio-browser.info directly, or use **Browse Home Assistant Radio** to explore categories from HA's own Radio Browser integration (requires the [Radio Browser](https://www.home-assistant.io/integrations/radio_browser/) integration under **Settings → Devices & Services**)
@@ -397,7 +415,7 @@ Categories: Recent Searches, Music History, Watch History, Recently Added, Pins,
 
 ### Apple TV Remote
 
-**Opening the remote** — long-press the artwork while a show or movie is playing on an Apple TV (or when nothing is showing), or choose **Remote Control** from the quick menu. In compact mode the card expands first. Music keeps its own long-press for lyrics.
+**Opening the remote** — tap the **Remote** button on the left of the controls bar, long-press the artwork while a show or movie is playing on an Apple TV (or when nothing is showing), or choose **Remote Control** from the quick menu. In compact mode the card expands first. Music keeps its own long-press for lyrics. Anything playing in a video app such as YouTube, Netflix or iPlayer counts as video, even when the app reports a channel name as the artist, so long-press opens the remote rather than lyrics.
 
 **Back to the artwork** — tap the **✕** in the top-left corner of the remote, swipe down on the remote, long-press an empty part of it, or choose **Remote Control** in the quick menu again. Swipes that start on the clickpad or the apps list are ignored, and upward swipes still scroll the dashboard.
 
@@ -419,7 +437,7 @@ The editor includes a filter box at the top (search any setting by name) and a *
 |---------|---------|
 | Manage & Reorder Media Players | Drag-and-drop reorder; enable/disable; tap a speaker's name to open its own dedicated settings page (Display Name, Startup Volume, Volume Entity, MA Speaker toggle) |
 | Play on This Device | Show "Play on this device", Music Assistant server URL |
-| Appearance & Behaviour *(collapsible)* | **General:** Follow HA Theme, Always Show Library Button, Apple TV Keyboard Panel, Default Radio Mode on Startup, iTunes Artwork Fallback, Live/Podcast/Audiobook Pill, Show YouTube Button, Scroll Long Text. **Volume:** Volume HUD, Volume Buttons, Volume Percentage. **Startup & Navigation:** Auto Switch, Remember Last Speaker, Media Player Selector, Startup View, Retain Current View, Remote Button Row Position |
+| Appearance & Behaviour *(collapsible)* | **General:** Follow HA Theme, Always Show Library Button, Apple TV Remote Button, Apple TV Keyboard Panel, Default Radio Mode on Startup, iTunes Artwork Fallback, Live/Podcast/Audiobook Pill, Show YouTube Button, Scroll Long Text. **Volume:** Volume HUD, Volume Buttons, Volume Percentage. **Startup & Navigation:** Auto Switch, Remember Last Speaker, Media Player Selector, Startup View, Retain Current View, Remote Button Row Position |
 | Caches & Data *(collapsible)* | AI caches (bios, trivia, where-to-watch, content warnings, year-in-music, vibe history, AI response cache), artwork caches (iTunes, Wikipedia) with Persistent Storage toggles, library & radio caches (MA library, radio stations, HA registry), **Lyrics** (line style, Keep Lyrics Open Between Tracks, Cache Lyrics, Save Lyrics For, Persistent Lyrics Storage), pinned items (Persistent Pin Storage, Show Pins in Sections, Clear All Pins), Persistent Info Storage, Clear All Caches and Clear Persistent Storage |
 | Visual Effects | Style (Classic or Glass), Theme (Auto, Light or Dark), Remote Liquid Glass, Volume HUD Liquid Glass, Ambient Glow, Row Glow, Artwork Crossfade, Pin Hearts, Resize Button Spin |
 | AI Settings | **Enable AI Features** master switch (off by default), AI Agent, Info Panel Priority (AI or Discogs first), Library Search (Normal or AI Enhanced), Share Track Service (YouTube Music, Apple Music, Spotify, Tidal, Amazon Music, Deezer), Announce TTS Service, Song Intro, Ghost-Skip Healer |
@@ -497,13 +515,22 @@ show_pins_in_sections: true
 - Install the Home Assistant Companion App on your iPhone and log in.
 
 **Where's the remote button?**
-- It's been replaced by a long-press: long-press the artwork while a show or movie plays on your Apple TV, or use **Remote Control** in the quick menu. Tap the **✕** or swipe down to return to the artwork. The music library button now sits in that spot instead.
+- It's on the left of the controls bar for Apple TVs. If it's missing, turn on **Apple TV Remote Button** in Appearance & Behaviour. You can also long-press the artwork while a show or movie plays, or use **Remote Control** in the quick menu. Tap the **✕** or swipe down to return to the artwork.
+
+**Long-press opens lyrics instead of the remote while watching YouTube**
+- Update the card. Video apps such as YouTube are now always treated as video, even when they report a channel name as the artist.
+
+**An AI option I used to see has disappeared**
+- AI options are hidden everywhere while **Enable AI Features** is off. Turn it on in **AI Settings** to bring them back.
 
 **Apple TV won't turn on from Power Off**
 - Use the **TV button** instead — it wakes Apple TV from sleep reliably.
 
 **Movie/TV info is empty with AI off**
-- Add a free TMDB API key in the editor's **Movies & TV** section. With AI off, TMDB is the only source for movie/TV info.
+- Add a free TMDB API key in the editor's **Movies & TV** section for the full panel. Without one, the card falls back to the title's Wikipedia summary.
+
+**Album, bio or episode details are missing**
+- With AI off, or when the AI doesn't recognise something, the card falls back to Discogs (albums), Wikipedia (bios and genres) and TVmaze (seasons and episodes). If those don't know it either, the panel says so.
 
 **"Play on this device" won't connect**
 - You need Music Assistant 2.10 or newer.
@@ -525,6 +552,7 @@ show_pins_in_sections: true
 ## Credits & Acknowledgements
 
 - The [Home Assistant](https://www.home-assistant.io) team
+- Music data from [Discogs](https://www.discogs.com), TV episode data from [TVmaze](https://www.tvmaze.com) (CC BY-SA), movie and TV data from [TMDB](https://www.themoviedb.org), biographies and photos from [Wikipedia](https://www.wikipedia.org), artwork from iTunes, radio stations from [radio-browser.info](https://www.radio-browser.info) and audiobooks from [LibriVox](https://librivox.org)
 - The HA community for inspiration and feedback
 - All users who test, report issues and suggest improvements
 - My Loving Wife for her endless support
