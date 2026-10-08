@@ -98,6 +98,9 @@ None of these need an account or key apart from TMDB. Wikipedia results are kept
 
 **When the AI is struggling.** If the AI runs out of quota, keeps timing out, can't sign in or has no agent, the card pauses it and goes straight to the fallbacks above instead of waiting for each request to fail. A usage-limit pause lasts 2 minutes, then 10, then 30 if it keeps happening; two timeouts in a row pause it for 2 minutes; sign-in, model and agent problems pause it until the AI settings change or the page reloads. You get a single message when a pause starts, and **AI Settings** shows the current state with a **Try AI Again** button. Panels with a fallback give the AI 25 seconds to answer before using it. If the AI misses a particular track, tapping that track's artwork again later in the session opens the Discogs panel straight away, while the card quietly retries the AI once in the background so the full AI panel can return next time.
 
+
+**Choosing which AI features run.** Under the master switch, **AI Settings** has an **AI Features** list so you can turn individual features off to save quota: **Info Panels**, **Look Up in Advance** (fetching AI info in the background before you tap; *off by default*), **Search and Recommendations**, **Ask, Meaning and Trivia**, and **Recap Summaries**. Anything switched off is hidden or falls back to the card's normal behaviour. When Ask, Meaning, Trivia or Mood Match can't get an answer, the panel shows a short reason ("Limit reached", "Busy right now", "No reply"…) with a **Try Again** button. A "busy" answer from the AI service is retried once automatically, identical requests already on their way are shared rather than sent twice, and every prompt tells the AI to treat titles, descriptions and web text strictly as data. If AI is on but no usable agent is chosen, AI Settings shows a warning under the AI Agent box.
+
 ## Quick Menu
 
 Tap the playlist/queue button in the controls bar to open the contextual quick menu. Related actions are grouped into sub-menus so it fits on a phone screen: tap a group (shown with › and how many items it holds) to slide its items in, and ‹ at the top to go back. A group with only one item available shows that item directly, and the menu always fits on screen, scrolling if it needs to.
@@ -181,11 +184,21 @@ Long-press the artwork while music is playing to open the full-screen lyrics pan
 
 ## Sharing
 
-Share is available from the quick menu, the AI Info / Media Info panels, and the long-press menu on any queue row. It copies everything to the clipboard — there's a toast confirmation when it's done.
+Share is available from the quick menu, the info panels, and the long-press menu on any queue row. It copies everything to the clipboard — there's a toast confirmation when it's done. In the info panels, the share button in the header opens a small menu instead: **Copy to Clipboard** (the same as Share), **Export Info to PDF** and, for music with lyrics, **Export Lyrics to PDF** (see [Export to PDF](#export-to-pdf)).
 
 - **Music** — copies the track title and artist (plus album, where shown) along with a link to find the track on your chosen streaming service
 - **Movies & TV** — copies the title, year and a short synopsis along with a link to find it on TheMovieDB
 - **Choose your service** — pick the destination for music links in AI Settings: YouTube Music (default), Apple Music, Spotify, Tidal, Amazon Music or Deezer
+
+## Export to PDF
+
+The share button at the top of every info panel (music, Discogs, album, movie and TV, season and episode, person, podcast, station and audiobook) opens a menu with **Export Info to PDF**. A preview opens straight away with a spinner, then shows the finished PDF with a **Download** button.
+
+- **Music and other panels** — the title and artist as the heading, the artwork beside the grey Year / Label / Length / Genre rows, then everything else on screen in order: Fun Fact, Band Members on one line, Similar Tracks in two columns, tracklists, and anything you've opened with Ask, Meaning or Trivia. Web addresses (a station's website or stream) are clickable
+- **Movies and TV** — the title and year as the heading, the poster beside the user-score ring and grey Type / Seasons / Creator or Director / Genre / Rated rows, then Overview, Fun Fact, Cast in columns, Where to Watch and Similar
+- **Export Lyrics to PDF** — appears in music panels when the track has lyrics (looked up when the menu opens if they aren't already known). The song and band as the heading, the artwork beside the grey detail rows, then the lyrics centred, running onto further pages as needed
+
+The PDF library (jsPDF) loads from a CDN the first time you export. Artwork that a site won't let the card copy is fetched through the images.weserv.nl image proxy; if that fails too, the PDF is made without it. The PDF's built-in fonts only cover Western characters, so emoji and non-Latin text are left out. In the Home Assistant app on iPhone the Download button may not save the file, depending on the app version; it works in Safari.
 
 ## Media Info Panels
 
@@ -267,7 +280,7 @@ Categories: Recent Searches, Music History, Watch History, Recently Added, Pins,
 
 ## Radio Mode
 
-Enable from the quick menu or visual editor. MA automatically queues similar songs after each track. Turns off automatically when switching to a non-MA speaker or clearing the queue.
+Enable from the quick menu, or switch on **Default Radio Mode on Startup** in the visual editor (off by default) to have it on whenever the card loads. Turning it on from the quick menu lasts for that session only. MA automatically queues similar songs after each track. Turns off automatically when switching to a non-MA speaker or clearing the queue.
 
 **Live station identification:** a LIVE pill appears on the artwork while a radio stream plays, on any speaker type (MA or native). Tap it to see the station's format, country, votes, website and description; the artwork also automatically resolves to the station's own logo when available. Stations played straight from the Music Assistant library are identified from MA itself, so their panel opens (fully playable and pinnable) even when radio-browser.info doesn't know them. When a station broadcasts real track metadata (artist + title), tapping the *artwork* opens that track's own info panel with the station shown as a badge — the LIVE pill itself always opens the station panel.
 
@@ -360,10 +373,10 @@ The editor includes a filter box at the top (search any setting by name) and a R
 
 - **Manage & Reorder Media Players** — accordion list with drag-and-drop reordering; enable/disable per speaker; tap a speaker's name to open its own dedicated settings page (Display Name, Startup Volume, Volume Entity, MA Speaker toggle)
 - **Play on This Device** — Show "Play on this device" and the Music Assistant server URL
-- **Appearance & Behaviour** *(collapsible)* — General (Follow HA Theme, Always Show Library Button, Apple TV Remote Button, Apple TV Keyboard Panel, Default Radio Mode on Startup, iTunes Artwork Fallback, Live/Podcast/Audiobook Pill, Show YouTube Button, Scroll Long Text), Volume (Volume HUD, Volume Buttons, Volume Percentage) and Startup & Navigation (Auto Switch, Remember Last Speaker, Media Player Selector, Startup View, Retain Current View, Remote Button Row Position)
+- **Appearance & Behaviour** *(collapsible)* — General (Follow HA Theme, Always Show Library Button, Apple TV Remote Button, Apple TV Keyboard Panel, Default Radio Mode on Startup (off by default), iTunes Artwork Fallback, Live/Podcast/Audiobook Pill, Show YouTube Button, Scroll Long Text), Volume (Volume HUD, Volume Buttons, Volume Percentage) and Startup & Navigation (Auto Switch, Remember Last Speaker, Media Player Selector, Startup View, Retain Current View, Remote Button Row Position)
 - **Caches & Data** *(collapsible)* — AI caches (bios, trivia, where-to-watch, content warnings, year-in-music, vibe history, AI response cache), artwork caches (iTunes, Wikipedia) with Persistent Storage toggles, library & radio caches (MA library, radio stations, HA registry), Lyrics (line style, Keep Lyrics Open Between Tracks, Cache Lyrics, Save Lyrics For, Persistent Lyrics Storage), pinned items (Persistent Pin Storage, Show Pins in Sections, Clear All Pins), TV Episode Cache (season counts, episode lists and episode details from the AI and TVmaze), Persistent Info Storage, Clear All Caches and Clear Persistent Storage
 - **Visual Effects** — Style (Classic or Glass), Theme (Auto, Light or Dark), Remote Liquid Glass, Volume HUD Liquid Glass, Ambient Glow, Row Glow, Artwork Crossfade, Pin Hearts, Resize Button Spin
-- **AI Settings** — **Enable AI Features** master switch (off by default), AI Agent (Google Gemini recommended), Info Panel Priority, Library Search (Normal or AI Enhanced), Share Track Service (YouTube Music, Apple Music, Spotify, Tidal, Amazon Music, Deezer), Announce TTS Service, Song Intro, Ghost-Skip Healer, and an AI status row with **Try AI Again** whenever the AI is paused
+- **AI Settings** — **Enable AI Features** master switch (off by default), AI Agent (Google Gemini recommended), Info Panel Priority, Library Search (Normal or AI Enhanced), Share Track Service (YouTube Music, Apple Music, Spotify, Tidal, Amazon Music, Deezer), Announce TTS Service, Song Intro, Ghost-Skip Healer, the **AI Features** switches (Info Panels, Look Up in Advance (off by default), Search and Recommendations, Ask, Meaning and Trivia, Recap Summaries), a warning when no usable AI agent is chosen, and an AI status row with **Try AI Again** whenever the AI is paused
 - **Movies & TV** — TMDB API Key, Movie/TV Info Priority
 - **AI Vibe Artist Seeds** — customisable playlist search terms and radio fallback artist per vibe category
 - **Colours & Themes** *(collapsible)* — Controls Theme (12 presets), Player Icon Theme (8 sets), Accent Preset, accent, volume, title, artist, button, +Add pill, volume % and custom background/lyrics colours with live preview strip

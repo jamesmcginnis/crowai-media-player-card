@@ -197,6 +197,7 @@ Every AI option (Search, Vibe, Recommendations, AI Artist Radio, the Add to Queu
 None of these need an account or key apart from TMDB. Wikipedia results are kept for the session only, so turning AI back on gets the richer AI version next time; TVmaze lists are saved for 2 days while a show is airing and 7 days once it's ended, so new episodes and seasons appear quickly. TVmaze also fills in any details missing from an AI or TMDB TV panel, such as cast or overview, and a panel built entirely from TVmaze reads "TVmaze Info". The Year box in the music info panel opens "This year in music" only when AI is on; with AI off it shows the year as plain text.
 
 **When the AI is struggling.** If the AI runs out of quota, keeps timing out, can't sign in or has no agent, the card pauses it and goes straight to the fallbacks above instead of waiting for each request to fail. A usage-limit pause lasts 2 minutes, then 10, then 30 if it keeps happening; two timeouts in a row pause it for 2 minutes; sign-in, model and agent problems pause it until the AI settings change or the page reloads. You get a single message when a pause starts, and **AI Settings** shows the current state with a **Try AI Again** button. Panels with a fallback give the AI 25 seconds to answer before using it. If the AI misses a particular track, tapping that track's artwork again later in the session opens the Discogs panel straight away, while the card quietly retries the AI once in the background so the full AI panel can return next time.
+**Choosing which AI features run.** Under the master switch, **AI Settings** has an **AI Features** list so you can turn individual features off to save quota: **Info Panels**, **Look Up in Advance** (fetching AI info in the background before you tap; *off by default*), **Search and Recommendations**, **Ask, Meaning and Trivia**, and **Recap Summaries**. Anything switched off is hidden or falls back to the card's normal behaviour. When Ask, Meaning, Trivia or Mood Match can't get an answer, the panel shows a short reason ("Limit reached", "Busy right now", "No reply"…) with a **Try Again** button. A "busy" answer from the AI service is retried once automatically, identical requests already on their way are shared rather than sent twice, and every prompt tells the AI to treat titles, descriptions and web text strictly as data. If AI is on but no usable agent is chosen, AI Settings shows a warning under the AI Agent box.
 
 ### Movies & TV (TMDB)
 
@@ -349,11 +350,21 @@ Long-press the artwork while music plays to open the full-screen lyrics panel.
 
 ### Sharing
 
-Share is available from the quick menu, the AI Info / Media Info panels, and the long-press menu on any queue row. It copies everything to the clipboard — there's a toast confirmation when it's done.
+Share is available from the quick menu, the info panels, and the long-press menu on any queue row. It copies everything to the clipboard — there's a toast confirmation when it's done. In the info panels, the share button in the header opens a small menu instead: **Copy to Clipboard** (the same as Share), **Export Info to PDF** and, for music with lyrics, **Export Lyrics to PDF** (see [Export to PDF](#export-to-pdf)).
 
 - **Music** — copies the track title and artist (plus album, where shown) along with a link to find the track on your chosen streaming service
 - **Movies & TV** — copies the title, year and a short synopsis along with a link to find it on TheMovieDB
 - **Choose your service** — pick the destination for music links in **AI Settings**: YouTube Music (default), Apple Music, Spotify, Tidal, Amazon Music or Deezer
+
+### Export to PDF
+
+The share button at the top of every info panel (music, Discogs, album, movie and TV, season and episode, person, podcast, station and audiobook) opens a menu with **Export Info to PDF**. A preview opens straight away with a spinner, then shows the finished PDF with a **Download** button.
+
+- **Music and other panels** — the title and artist as the heading, the artwork beside the grey Year / Label / Length / Genre rows, then everything else on screen in order: Fun Fact, Band Members on one line, Similar Tracks in two columns, tracklists, and anything you've opened with Ask, Meaning or Trivia. Web addresses (a station's website or stream) are clickable
+- **Movies and TV** — the title and year as the heading, the poster beside the user-score ring and grey Type / Seasons / Creator or Director / Genre / Rated rows, then Overview, Fun Fact, Cast in columns, Where to Watch and Similar
+- **Export Lyrics to PDF** — appears in music panels when the track has lyrics (looked up when the menu opens if they aren't already known). The song and band as the heading, the artwork beside the grey detail rows, then the lyrics centred, running onto further pages as needed
+
+The PDF library (jsPDF) loads from a CDN the first time you export. Artwork that a site won't let the card copy is fetched through the images.weserv.nl image proxy; if that fails too, the PDF is made without it. The PDF's built-in fonts only cover Western characters, so emoji and non-Latin text are left out. In the Home Assistant app on iPhone the Download button may not save the file, depending on the app version; it works in Safari.
 
 ### Media Info Panels
 
@@ -439,10 +450,10 @@ The editor includes a filter box at the top (search any setting by name) and a *
 |---------|---------|
 | Manage & Reorder Media Players | Drag-and-drop reorder; enable/disable; tap a speaker's name to open its own dedicated settings page (Display Name, Startup Volume, Volume Entity, MA Speaker toggle) |
 | Play on This Device | Show "Play on this device", Music Assistant server URL |
-| Appearance & Behaviour *(collapsible)* | **General:** Follow HA Theme, Always Show Library Button, Apple TV Remote Button, Apple TV Keyboard Panel, Default Radio Mode on Startup, iTunes Artwork Fallback, Live/Podcast/Audiobook Pill, Show YouTube Button, Scroll Long Text. **Volume:** Volume HUD, Volume Buttons, Volume Percentage. **Startup & Navigation:** Auto Switch, Remember Last Speaker, Media Player Selector, Startup View, Retain Current View, Remote Button Row Position |
+| Appearance & Behaviour *(collapsible)* | **General:** Follow HA Theme, Always Show Library Button, Apple TV Remote Button, Apple TV Keyboard Panel, Default Radio Mode on Startup (off by default), iTunes Artwork Fallback, Live/Podcast/Audiobook Pill, Show YouTube Button, Scroll Long Text. **Volume:** Volume HUD, Volume Buttons, Volume Percentage. **Startup & Navigation:** Auto Switch, Remember Last Speaker, Media Player Selector, Startup View, Retain Current View, Remote Button Row Position |
 | Caches & Data *(collapsible)* | AI caches (bios, trivia, where-to-watch, content warnings, year-in-music, vibe history, AI response cache), artwork caches (iTunes, Wikipedia) with Persistent Storage toggles, library & radio caches (MA library, radio stations, HA registry), **Lyrics** (line style, Keep Lyrics Open Between Tracks, Cache Lyrics, Save Lyrics For, Persistent Lyrics Storage), pinned items (Persistent Pin Storage, Show Pins in Sections, Clear All Pins), TV Episode Cache (season counts, episode lists and episode details from the AI and TVmaze), Persistent Info Storage, Clear All Caches and Clear Persistent Storage |
 | Visual Effects | Style (Classic or Glass), Theme (Auto, Light or Dark), Remote Liquid Glass, Volume HUD Liquid Glass, Ambient Glow, Row Glow, Artwork Crossfade, Pin Hearts, Resize Button Spin |
-| AI Settings | **Enable AI Features** master switch (off by default), AI Agent, Info Panel Priority (AI or Discogs first), Library Search (Normal or AI Enhanced), Share Track Service (YouTube Music, Apple Music, Spotify, Tidal, Amazon Music, Deezer), Announce TTS Service, Song Intro, Ghost-Skip Healer, and an AI status row with **Try AI Again** whenever the AI is paused |
+| AI Settings | **Enable AI Features** master switch (off by default), AI Agent, Info Panel Priority (AI or Discogs first), Library Search (Normal or AI Enhanced), Share Track Service (YouTube Music, Apple Music, Spotify, Tidal, Amazon Music, Deezer), Announce TTS Service, Song Intro, Ghost-Skip Healer, the **AI Features** switches (Info Panels, Look Up in Advance (off by default), Search and Recommendations, Ask, Meaning and Trivia, Recap Summaries), a warning when no usable AI agent is chosen, and an AI status row with **Try AI Again** whenever the AI is paused |
 | Movies & TV | TMDB API Key, Movie/TV Info Priority (AI or TMDB first) |
 | AI Vibe Artist Seeds | Playlist search terms and radio fallback artist per vibe; fully customisable |
 | Colours & Themes *(collapsible)* | Controls Theme (12 presets), Player Icon Theme (8 sets), Accent Preset, accent, volume accent, title, artist, button, +Add pill, volume %, custom background and lyrics colours, with live preview |
@@ -515,6 +526,12 @@ show_pins_in_sections: true
 
 **Send Message shows no devices**
 - Install the Home Assistant Companion App on your iPhone and log in.
+
+**Radio Mode turns itself on when the card loads**
+- Check **Default Radio Mode on Startup** in Appearance & Behaviour is off. Turning Radio Mode on from the quick menu no longer carries over to the next load.
+
+**The PDF Download button does nothing in the app**
+- Some versions of the Home Assistant app on iPhone won't save files from a web view. Open your dashboard in Safari and export from there.
 
 **Where's the remote button?**
 - It's on the left of the controls bar for Apple TVs. If it's missing, turn on **Apple TV Remote Button** in Appearance & Behaviour. You can also long-press the artwork while a show or movie plays, or use **Remote Control** in the quick menu. Tap the **✕** or swipe down to return to the artwork.
