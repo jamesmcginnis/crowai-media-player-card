@@ -17,9 +17,6 @@ const CROWAI_SS_PREFIX = 'crowai_ss:';
 const CROWAI_SS_PRODUCT = 'CrowAI Media Player Card';
 const CROWAI_SS_ICON = 'M4,6H20V16H4M20,18A2,2 0 0,0 22,16V6C22,4.89 21.1,4 20,4H4C2.89,4 2,4.89 2,6V16A2,2 0 0,0 4,18H0V20H24V18H20Z';
 
-// The Home Assistant Companion app (iPhone, iPad, Android, Mac) can't be a
-// Sendspin speaker reliably — it's an app's web view, not a browser — so
-// "Play on this device" is only offered in a real web browser such as Safari.
 function crowaiIsCompanionApp() {
   try {
     if (/Home ?Assistant\//i.test(navigator.userAgent || '')) return true;
@@ -543,6 +540,17 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     this._themeIconPaths = null;;
     if (!config.entities || config.entities.length === 0) throw new Error("Please define entities");
     const prevStartup = this._config?.startup_mode;
+    // A sign-in / model / agent pause lasts until the AI settings change
+    try {
+      const _p = JSON.parse(sessionStorage.getItem('crow_ai_pause') || 'null');
+      if (_p?.perm && (_p.agent || '') !== (config.ai_conversation_agent || '')) sessionStorage.removeItem('crow_ai_pause');
+      if (!this._aiPauseBootChecked) {
+        // …or until the page is reloaded (first setConfig of this page load)
+        this._aiPauseBootChecked = true;
+        if (_p?.perm && !window.__crowAiPauseBootDone) sessionStorage.removeItem('crow_ai_pause');
+        window.__crowAiPauseBootDone = true;
+      }
+    } catch (_) {}
     this._config = {
       accent_color: '#007AFF',
       volume_accent: '#007AFF',
@@ -5371,7 +5379,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         // reveals it was actually a double-tap, so that queued action needs
         // cancelling before it fires.
         if (this._artTapTimer) { clearTimeout(this._artTapTimer); this._artTapTimer = null; }
-        this._handleArtworkDoubleTapPin(e.clientX - rect.left, e.clientY - rect.top);
+        // Already pinned (badge showing)? Double-tap would unpin — ask first,
+        // exactly like tapping the badge does.
+        if (this.shadowRoot?.getElementById('pinnedIndicatorBadge')?.style.display === 'flex') {
+          this._confirmUnpinFromBadge(e.clientX - rect.left, e.clientY - rect.top);
+        } else {
+          this._handleArtworkDoubleTapPin(e.clientX - rect.left, e.clientY - rect.top);
+        }
         return;
       }
 
@@ -5775,8 +5789,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         if ((isMa || hasMA) && isPlaying && !isStream && _qmAlbum && (_qmType === 'music' || _qmType === 'track' || _qmType === '')) {
           if (isMa) items.push({ id: 'qm_play_album', label: 'Add Album', icon: '<svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/></svg>', active: false });
         if (this._aiEnabled() && isPlaying && ((isMa || hasMA) || _qmIsVideo)) items.push({ id: 'qm_ai_recs', label: 'AI Recommendations', icon: '<svg viewBox="0 0 24 24"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>', active: false });
-        if (this._aiEnabled() && isPlaying && _qmIsVideo) items.push({ id: 'qm_mood_video', label: 'AI Mood Match', icon: '<svg viewBox="0 0 24 24"><path d="M12 2A10 10 0 1 0 22 12 10 10 0 0 0 12 2M12 20A8 8 0 1 1 20 12 8 8 0 0 1 12 20M17 11.5A1.5 1.5 0 1 1 15.5 10 1.5 1.5 0 0 1 17 11.5M8.5 10A1.5 1.5 0 1 1 7 11.5 1.5 1.5 0 0 1 8.5 10M12 17.5C9.67 17.5 7.69 16.04 6.89 14H17.11C16.31 16.04 14.33 17.5 12 17.5Z"/></svg>', active: false, _qmVideoTitle: attrs?.media_series_title || attrs?.media_title || '' });
-        if (this._aiEnabled() && isPlaying && _qmIsVideo) items.push({ id: 'qm_trivia', label: 'AI Trivia', icon: '<svg viewBox="0 0 24 24"><path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"/></svg>', active: false, _qmVideoTitle: attrs?.media_series_title || attrs?.media_title || '' });
+        if (this._aiEnabled() && isPlaying && _qmIsVideo) items.push({ id: 'qm_mood_video', label: 'AI Mood Match', icon: '<svg viewBox="0 0 24 24"><path d="M12 2A10 10 0 1 0 22 12 10 10 0 0 0 12 2M12 20A8 8 0 1 1 20 12 8 8 0 0 1 12 20M17 11.5A1.5 1.5 0 1 1 15.5 10 1.5 1.5 0 0 1 17 11.5M8.5 10A1.5 1.5 0 1 1 7 11.5 1.5 1.5 0 0 1 8.5 10M12 17.5C9.67 17.5 7.69 16.04 6.89 14H17.11C16.31 16.04 14.33 17.5 12 17.5Z"/></svg>', active: false, _qmVideoTitle: state?.attributes?.media_series_title || state?.attributes?.media_title || '' });
+        if (this._aiEnabled() && isPlaying && _qmIsVideo) items.push({ id: 'qm_trivia', label: 'AI Trivia', icon: '<svg viewBox="0 0 24 24"><path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"/></svg>', active: false, _qmVideoTitle: state?.attributes?.media_series_title || state?.attributes?.media_title || '' });
         }
 
         // Listening Recap — MA only, manual trigger, works off local play-history log.
@@ -5847,14 +5861,14 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           const _qmPin = this._currentMediaPinItem();
           if (_qmPin) {
             const _qmPinLabel = _qmPin.isPinned ? 'Unpin ' + _qmPin.label[1] : 'Pin ' + _qmPin.label[0];
-            items.push({ id: 'qm_pin', label: _qmPinLabel, icon: '<path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/>', active: false, _qmPinInfo: _qmPin });
+            items.push({ id: 'qm_pin', label: _qmPinLabel, icon: '<path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/>', active: false, danger: !!_qmPin.isPinned, _qmPinInfo: _qmPin });
           } else if ((isMa || hasMA) && isPlaying && !isStream) {
             const _qmUri = state?.attributes?.media_content_id || '';
             const _qmTitle = state?.attributes?.media_title || '';
             if (_qmUri && _qmTitle) {
               const _qmPinItem = { uri: _qmUri, name: _qmTitle, artist: state?.attributes?.media_artist || '', media_type: 'track' };
               const _qmPinned = this._maLibIsStarred(_qmPinItem, 'track');
-              items.push({ id: 'qm_pin', label: _qmPinned ? 'Unpin Song' : 'Pin Song', icon: '<path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/>', active: false, _qmPinItem });
+              items.push({ id: 'qm_pin', label: _qmPinned ? 'Unpin Song' : 'Pin Song', icon: '<path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/>', active: false, danger: _qmPinned, _qmPinItem });
             }
           }
         }
@@ -5989,11 +6003,11 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           btn.style.cssText = 'display:flex;align-items:center;gap:12px;width:100%;padding:14px 18px;' +
             (item.active ? 'background:rgba(0,122,255,0.08);' : 'background:transparent;') +
             'border:none;font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:16px;font-weight:400;' +
-            (item.active ? 'color:rgba(0,122,255,1);' : 'color:rgba(255,255,255,0.95);') +
+            (item.danger ? 'color:#ff453a;' : item.active ? 'color:rgba(0,122,255,1);' : 'color:rgba(255,255,255,0.95);') +
             'cursor:pointer;text-align:left;box-sizing:border-box;-webkit-tap-highlight-color:transparent;letter-spacing:-0.2px;';
           const iconEl = document.createElement('span');
           iconEl.style.cssText = 'width:18px;height:18px;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;';
-          iconEl.innerHTML = `<svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:${item.active ? 'rgba(0,122,255,1)' : 'rgba(255,255,255,0.45)'}">${item.icon}</svg>`;
+          iconEl.innerHTML = `<svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:${item.danger ? '#ff453a' : item.active ? 'rgba(0,122,255,1)' : 'rgba(255,255,255,0.45)'}">${item.icon}</svg>`;
           const label = document.createElement('span');
           label.style.cssText = 'flex:1;';
           label.textContent = item.label;
@@ -6021,7 +6035,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           }
           btn.addEventListener('pointerdown', (ev) => { _qmSy = ev.clientY; _qmMoved = false; }, { passive: true });
           btn.addEventListener('pointermove', (ev) => { if (Math.abs(ev.clientY - _qmSy) > 6) _qmMoved = true; }, { passive: true });
-          btn.addEventListener('pointerup', (ev) => {
+          btn.addEventListener('pointerup', async (ev) => {
             if (_qmMoved) return;
             if (Date.now() - _popupOpenedAt < 350) return;
             ev.preventDefault();
@@ -6111,6 +6125,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
               this._copyToClipboard(_clT + ' by ' + _clA + '\n' + this._buildShareUrl(_clT, _clA), this._shareServiceLabel());
             }
             else if (item.id === 'qm_pin') {
+              // Unpinning asks first (pinning doesn't)
+              const _qi = item._qmPinInfo;
+              const _qWasPinned = _qi
+                ? (_qi.type === 'station' ? this._rbIsStarred(_qi.item) : _qi.type === 'podcast' ? this._pcIsStarred(_qi.item) : _qi.type === 'audiobook' ? this._abIsStarred(_qi.item) : false)
+                : !!(item._qmPinItem && this._maLibIsStarred(item._qmPinItem, 'track'));
+              if (_qWasPinned && !(await this._confirmUnpin(_qi ? (_qi.type === 'audiobook' ? 'audiobook' : _qi.type) : 'song', _qi ? this._pinItemName(_qi.item) : this._pinItemName(item._qmPinItem)))) return;
               if (item._qmPinInfo) {
                 const nowPinned = this._toggleCurrentMediaPin(item._qmPinInfo);
                 if (nowPinned !== null && nowPinned !== undefined) { this._showToast(nowPinned ? '📍 ' + item._qmPinInfo.label[0] + ' pinned' : item._qmPinInfo.label[0] + ' unpinned'); this._updatePinnedIndicator(); }
@@ -7015,7 +7035,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           const _qdPin = this._currentMediaPinItem();
           if (_qdPin) {
             const _qdPinLabel = _qdPin.isPinned ? 'Unpin ' + _qdPin.label[1] : 'Pin ' + _qdPin.label[0];
-            items.push({ id: 'qmPinTrack', _needsMA: false, icon: '<svg viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg>', label: _qdPinLabel, extraClass: '', _qdPinInfo: _qdPin });
+            items.push({ id: 'qmPinTrack', _needsMA: false, icon: '<svg viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg>', label: _qdPinLabel, extraClass: _qdPin.isPinned ? 'danger' : '', _qdPinInfo: _qdPin });
           } else if (isMa || hasMA) {
             const _qdTrackUri   = this._hass?.states[this._entity]?.attributes?.media_content_id || '';
             const _qdTrackTitle = this._hass?.states[this._entity]?.attributes?.media_title || '';
@@ -7023,7 +7043,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
               const _qdArtistName = this._hass?.states[this._entity]?.attributes?.media_artist || '';
               const _qdPinItem = { uri: _qdTrackUri, name: _qdTrackTitle, artist: _qdArtistName, artists: _qdArtistName ? [{ name: _qdArtistName }] : [], media_type: 'track' };
               const _qdPinned  = this._maLibIsStarred(_qdPinItem, 'track');
-              items.push({ id: 'qmPinTrack', _needsMA: !isMa && hasMA, icon: '<svg viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg>', label: _qdPinned ? 'Unpin Song' : 'Pin Song', extraClass: '', _qdPinItem });
+              items.push({ id: 'qmPinTrack', _needsMA: !isMa && hasMA, icon: '<svg viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg>', label: _qdPinned ? 'Unpin Song' : 'Pin Song', extraClass: _qdPinned ? 'danger' : '', _qdPinItem });
             }
           }
         }
@@ -7391,10 +7411,17 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         });
 
         // ── Announce ──
-        menu.querySelector('#qmPinTrack')?.addEventListener('pointerup', (ev) => { ev.preventDefault(); ev.stopPropagation();
+        menu.querySelector('#qmPinTrack')?.addEventListener('pointerup', async (ev) => { ev.preventDefault(); ev.stopPropagation();
           if (!_menuReady()) return;
           menu.remove(); backdrop?.remove();
           const _pItem = items.find(i => i.id === 'qmPinTrack');
+          {
+            const _qi = _pItem?._qdPinInfo;
+            const _was = _qi
+              ? (_qi.type === 'station' ? this._rbIsStarred(_qi.item) : _qi.type === 'podcast' ? this._pcIsStarred(_qi.item) : _qi.type === 'audiobook' ? this._abIsStarred(_qi.item) : false)
+              : !!(_pItem?._qdPinItem && this._maLibIsStarred(_pItem._qdPinItem, 'track'));
+            if (_was && !(await this._confirmUnpin(_qi ? _qi.type : 'song', _qi ? this._pinItemName(_qi.item) : this._pinItemName(_pItem?._qdPinItem)))) return;
+          }
           if (_pItem?._qdPinInfo) {
             const nowPinned = this._toggleCurrentMediaPin(_pItem._qdPinInfo);
             if (nowPinned !== null && nowPinned !== undefined) { this._showToast(nowPinned ? '📍 ' + _pItem._qdPinInfo.label[0] + ' pinned' : _pItem._qdPinInfo.label[0] + ' unpinned'); this._updatePinnedIndicator(); }
@@ -11371,12 +11398,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       this._maLibInjectStarred('track', content);
 
       _actionBar.querySelectorAll('.ma-drill-action-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
+        btn.addEventListener('click', async (e) => {
           e.stopPropagation();
           const action = btn.dataset.action;
           if (action === 'play_all') {
             this._playMAItem(item, tab, undefined, opts);
           } else if (action === 'pin') {
+            if (_isPinned && !(await this._confirmUnpin(_pinnableTab === 'playlist' ? 'playlist' : _pinnableTab === 'album' ? 'album' : _pinnableTab === 'artist' ? 'artist' : 'item', this._pinItemName(item)))) return;
             const _result = this._maLibToggleStar(item, _pinnableTab);
             if (_result === null) return; // failed — _maLibToggleStar already showed why
             _isPinned = _result;
@@ -11724,6 +11752,26 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   }
 
   // Toggle pin for any content type using _currentMediaPinItem
+  // Display name for a pinned library item, for confirmation messages
+  _pinItemName(item) {
+    return item?.name || item?.title || item?.artist || '';
+  }
+
+  // Asks before unpinning anything. Pinning never asks — only taking a pin
+  // away, since that's the one that loses something. Resolves true to go
+  // ahead. `snapshot` is for pinned queues / recaps, which are frozen copies
+  // that can't be rebuilt once removed.
+  async _confirmUnpin(noun, title, { snapshot = false } = {}) {
+    const n = String(noun || 'item');
+    const nCap = n.charAt(0).toUpperCase() + n.slice(1);
+    return this._iosConfirm({
+      title: 'Unpin ' + nCap + '?',
+      message: (title ? '\u201c' + title + '\u201d' : 'This ' + n) + ' will be removed from your pins.'
+        + (snapshot ? ' It\u2019s a saved snapshot, so it can\u2019t be recreated once it\u2019s gone.' : ''),
+      confirmLabel: 'Unpin', destructive: true,
+    });
+  }
+
   _toggleCurrentMediaPin(pinInfo) {
     if (!pinInfo) return false;
     const { item, type } = pinInfo;
@@ -12720,7 +12768,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const menu = document.createElement('div');
     menu.className = 'queue-dropdown-menu';
     menu.innerHTML =
-      '<div class="queue-dropdown-item" id="mtPin" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg><span class="queue-dropdown-label">' + (isPinned ? 'Unpin' : 'Pin') + '</span></div>' +
+      '<div class="queue-dropdown-item' + (isPinned ? ' danger' : '') + '" id="mtPin" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg><span class="queue-dropdown-label">' + (isPinned ? 'Unpin' : 'Pin') + '</span></div>' +
       // Find Soundtrack runs through AI Search — hidden when AI features are off
       (!this._aiEnabled() ? '' : '<div class="queue-dropdown-item" id="mtSoundtrack" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6zm0 16c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3-7.82V5h2v4.18l-2 2z"/><path d="M19 3l-4.5 4.5 1.42 1.42 3.08-3.09V11h2V4.41L19 3z"/></svg><span class="queue-dropdown-label">Find Soundtrack</span></div>') +
       // Remove from History — Watch History rows only. Destructive, so it
@@ -12737,7 +12785,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const _menuReady = () => (Date.now() - _menuOpenedAt) > 320;
     const closeMenu = () => { menu.remove(); backdrop.remove(); };
     backdrop.addEventListener('pointerdown', () => { if (!_menuReady()) return; closeMenu(); });
-    menu.querySelector('#mtPin')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
+    menu.querySelector('#mtPin')?.addEventListener('click', async e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
+      if (this._mtIsStarred(item) && !(await this._confirmUnpin((item.kind === 'tv' ? 'show' : 'movie'), item.title))) return;
       const nowPinned = this._mtToggleStar(item);
       this._showToast(nowPinned ? 'Pinned' : 'Unpinned');
       this._updatePinnedIndicator();
@@ -13083,7 +13132,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
     const actions = content.querySelector('.ma-drill-actions');
     actions?.querySelector('[data-action="info"]')?.addEventListener('click', () => this._openWatchInfo(item, g.key));
-    actions?.querySelector('[data-action="pin"]')?.addEventListener('click', () => {
+    actions?.querySelector('[data-action="pin"]')?.addEventListener('click', async () => {
+      if (this._mtIsStarred(item) && !(await this._confirmUnpin((item.kind === 'tv' ? 'show' : 'movie'), item.title))) return;
       const nowPinned = this._mtToggleStar(item);
       this._showToast(nowPinned ? '\ud83d\udccd Pinned' : 'Unpinned');
       this._updatePinnedIndicator();
@@ -13248,10 +13298,23 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     this._showWatchDropdown(anchorEl,
       '<div class="queue-dropdown-item danger" id="watchViewingRemove" role="button">' + trash + '<span class="queue-dropdown-label">Remove this watch</span></div>',
       (menu, closeMenu, ready) => {
-        menu.querySelector('#watchViewingRemove')?.addEventListener('click', ev => {
+        menu.querySelector('#watchViewingRemove')?.addEventListener('click', async ev => {
           ev.stopPropagation();
           if (!ready()) return;
           closeMenu();
+          // Name the viewing by its date and time, as shown on the row
+          const _d = v.startTs ? new Date(v.startTs) : null;
+          const _when = _d
+            ? _d.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' })
+              + ' at ' + _d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+            : '';
+          const ok = await this._iosConfirm({
+            title: 'Remove This Watch?',
+            message: (_when ? 'Your watch of \u201c' + g.title + '\u201d on ' + _when : 'This watch of \u201c' + g.title + '\u201d')
+              + ' will be removed from Watch History and Video Recap. This can\u2019t be undone.',
+            confirmLabel: 'Remove', destructive: true,
+          });
+          if (!ok) return;
           this._removeWatchEntries(v.sessions.map(s => s._key).filter(Boolean));
           this._showToast('Removed');
           // Last watch for this title gone → back to the list.
@@ -13483,12 +13546,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const isPinned = this._pcIsStarred(pod);
     const strategies = [
       { mode: 'play_now',  label: 'Browse Episodes',                   icon: '<path d="M8 5v14l11-7z"/>' },
-      { mode: 'pin',       label: isPinned ? 'Unpin Podcast' : 'Pin Podcast', icon: '<path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/>' },
+      { mode: 'pin',       danger: isPinned, label: isPinned ? 'Unpin Podcast' : 'Pin Podcast', icon: '<path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/>' },
       { mode: 'more_info', label: 'More Info',                         icon: '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/>' },
     ];
 
     menu.innerHTML = strategies.map(s =>
-      '<div class="enqueue-menu-item" data-mode="' + s.mode + '"><svg class="enqueue-menu-icon" viewBox="0 0 24 24">' + s.icon + '</svg><div class="enqueue-menu-label">' + s.label + '</div></div>'
+      '<div class="enqueue-menu-item' + (s.danger ? ' enqueue-menu-item--danger' : '') + '" data-mode="' + s.mode + '"><svg class="enqueue-menu-icon" viewBox="0 0 24 24">' + s.icon + '</svg><div class="enqueue-menu-label">' + s.label + '</div></div>'
     ).join('');
     r.appendChild(menu);
 
@@ -13501,13 +13564,14 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const _menuReady = () => Date.now() - _menuOpenedAt > 350;
 
     menu.querySelectorAll('.enqueue-menu-item').forEach(el => {
-      el.addEventListener('click', e => {
+      el.addEventListener('click', async e => {
         e.stopPropagation();
         if (!_menuReady()) return;
         backdrop.remove(); menu.remove();
         const mode = el.dataset.mode;
         if (mode === 'play_now')  { this._showPcMoreInfo(pod); }
         else if (mode === 'pin')  {
+          if (this._pcIsStarred(pod) && !(await this._confirmUnpin('podcast', pod.title || pod.name || ''))) return;
           const nowPinned = this._pcToggleStar(pod);
           if (nowPinned === null) return;
           this._showToast(nowPinned ? '📍 Podcast pinned' : 'Podcast unpinned');
@@ -13706,7 +13770,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (_pcPin) {
       _pcPin.classList.remove('hidden');
       _updatePinBtn();
-      _pcPin.onclick = () => {
+      _pcPin.onclick = async () => {
+        if (this._pcIsStarred(pod) && !(await this._confirmUnpin('podcast', pod.title || pod.name || ''))) return;
         const nowPinned = this._pcToggleStar(pod);
         if (nowPinned === null) return;
         _updatePinBtn();
@@ -13878,8 +13943,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         const retryBtn = document.createElement('button');
         retryBtn.textContent = 'Try Again';
         retryBtn.style.cssText = 'padding:5px 14px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:8px;color:#fff;font-size:12px;font-family:inherit;cursor:pointer;-webkit-tap-highlight-color:transparent;';
-        retryBtn.addEventListener('click', () => {
-          if (this._pcFeedCache) this._pcFeedCache.delete(feedUrl || '');
+        retryBtn.addEventListener('click', async () => {
+          // The resolved feed URL lives in the try block above — re-read it
+          // from the promise so the stale cache entry really is cleared.
+          let _retryFeedUrl = '';
+          try { _retryFeedUrl = await feedUrlProm; } catch (_) {}
+          if (this._pcFeedCache) this._pcFeedCache.delete(_retryFeedUrl || '');
           epList.innerHTML = '<div style="display:flex;align-items:center;gap:8px;padding:10px 0;opacity:0.5;"><div style="width:12px;height:12px;border:1.5px solid rgba(191,90,242,0.3);border-top-color:#BF5AF2;border-radius:50%;animation:ma-spin 0.8s linear infinite;flex-shrink:0;"></div><span style="font-size:12px;color:' + _pt('dim') + ';">Retrying\u2026</span></div>';
           _loadEpisodes();
         });
@@ -14232,7 +14301,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         if (this._pinnedDetailActive && this._pinnedDetailCategory === 'recaps') this._openPinnedCategoryDetail('recaps');
       });
     });
-    menu.querySelector('#recapDelete')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
+    menu.querySelector('#recapDelete')?.addEventListener('click', async e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
+      if (!(await this._confirmUnpin('recap', recap.name || recap.title || '', { snapshot: true }))) return;
       const list = this._getPinnedRecaps().filter(rc => rc.id !== recap.id);
       this._savePinnedRecapsList(list);
       this._showToast('Music Recap unpinned');
@@ -14330,7 +14400,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     content.querySelector('#pinnedRecapPlayAll')?.addEventListener('click', () => this._playRecapTracks(topTracks, 'replace'));
     content.querySelector('#pinnedRecapAdd')?.addEventListener('click', () => this._playRecapTracks(topTracks, 'add'));
     content.querySelector('#pinnedRecapPlayNext')?.addEventListener('click', () => this._playRecapTracks(topTracks, 'next'));
-    content.querySelector('#pinnedRecapUnpin')?.addEventListener('click', () => {
+    content.querySelector('#pinnedRecapUnpin')?.addEventListener('click', async () => {
+      if (!(await this._confirmUnpin('recap', recap.name || recap.title || '', { snapshot: true }))) return;
       const list = this._getPinnedRecaps().filter(rc => rc.id !== recap.id);
       this._savePinnedRecapsList(list);
       this._showToast('Music Recap unpinned');
@@ -14767,7 +14838,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         }
       });
     });
-    menu.querySelector('#sqDelete')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
+    menu.querySelector('#sqDelete')?.addEventListener('click', async e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
+      if (!(await this._confirmUnpin('queue', sq.name || '', { snapshot: true }))) return;
       const list = this._getSavedQueues().filter(s => s.id !== sq.id);
       this._saveSavedQueuesList(list);
       this._showToast('Queue unpinned');
@@ -14929,7 +15001,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         this._openSavedQueueDetail(updatedSq, true);
       });
     });
-    content.querySelector('#sqDetailDelete')?.addEventListener('click', () => {
+    content.querySelector('#sqDetailDelete')?.addEventListener('click', async () => {
+      if (!(await this._confirmUnpin('queue', sq.name || '', { snapshot: true }))) return;
       const list2 = this._getSavedQueues().filter(s => s.id !== sq.id);
       this._saveSavedQueuesList(list2);
       this._showToast('Queue unpinned');
@@ -15466,21 +15539,22 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const isPinned = this._abIsStarred(book);
     const strategies = [
       { mode: 'more_info', label: 'Browse Chapters',                              icon: '<path d="M8 5v14l11-7z"/>' },
-      { mode: 'pin',       label: isPinned ? 'Unpin Audiobook' : 'Pin Audiobook', icon: '<path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/>' },
+      { mode: 'pin',       danger: isPinned, label: isPinned ? 'Unpin Audiobook' : 'Pin Audiobook', icon: '<path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/>' },
       { mode: 'share',     label: 'Share',                                         icon: '<path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z"/>' },
     ];
-    menu.innerHTML = strategies.map(s => '<div class="enqueue-menu-item" data-mode="' + s.mode + '"><svg class="enqueue-menu-icon" viewBox="0 0 24 24">' + s.icon + '</svg><div class="enqueue-menu-label">' + s.label + '</div></div>').join('');
+    menu.innerHTML = strategies.map(s => '<div class="enqueue-menu-item' + (s.danger ? ' enqueue-menu-item--danger' : '') + '" data-mode="' + s.mode + '"><svg class="enqueue-menu-icon" viewBox="0 0 24 24">' + s.icon + '</svg><div class="enqueue-menu-label">' + s.label + '</div></div>').join('');
     r.appendChild(menu);
     const aR = anchor.getBoundingClientRect(), cR = r.host.getBoundingClientRect();
     menu.style.top = Math.min(aR.bottom - cR.top + 4, cR.height - 160) + 'px';
     menu.style.right = '12px';
     const _mOA = Date.now(), _mr = () => Date.now()-_mOA > 350;
     menu.querySelectorAll('.enqueue-menu-item').forEach(el => {
-      el.addEventListener('click', e => {
+      el.addEventListener('click', async e => {
         e.stopPropagation(); if (!_mr()) return;
         backdrop.remove(); menu.remove();
         if (el.dataset.mode === 'more_info') { this._showAbMoreInfo(book); }
         else if (el.dataset.mode === 'pin') {
+          if (this._abIsStarred(book) && !(await this._confirmUnpin('audiobook', book.title || ''))) return;
           const nowPinned = this._abToggleStar(book);
           if (nowPinned === null) return;
           this._showToast(nowPinned ? '\ud83d\udccd Audiobook pinned' : 'Audiobook unpinned');
@@ -15528,7 +15602,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     };
     if (_abPin) {
       _abPin.classList.remove('hidden'); _updatePinBtn();
-      _abPin.onclick = () => {
+      _abPin.onclick = async () => {
+        if (this._abIsStarred(book) && !(await this._confirmUnpin('audiobook', book.title || ''))) return;
         const nowPinned = this._abToggleStar(book);
         if (nowPinned === null) return;
         _updatePinBtn();
@@ -15574,7 +15649,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     content.querySelector('#ab-homepage-btn')?.addEventListener('click', () => {
       if (book.url_librivox) window.open(book.url_librivox, '_blank');
     });
-    content.querySelector('#ab-info-star-btn')?.addEventListener('click', () => {
+    content.querySelector('#ab-info-star-btn')?.addEventListener('click', async () => {
+      if (this._abIsStarred(book) && !(await this._confirmUnpin('audiobook', book.title || ''))) return;
       const nowStarred = this._abToggleStar(book);
       if (nowStarred === null) return;
       const svg = content.querySelector('#ab-info-star-svg'), label = content.querySelector('#ab-info-star-label');
@@ -15697,13 +15773,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const isPinned = this._rbIsStarred(st);
     const strategies = [
       { mode: 'play_now',   label: 'Play Now',                        icon: '<path d="M8 5v14l11-7z"/>' },
-      { mode: 'pin',        label: isPinned ? 'Unpin Station' : 'Pin Station', icon: '<path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/>' },
+      { mode: 'pin',        danger: isPinned, label: isPinned ? 'Unpin Station' : 'Pin Station', icon: '<path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/>' },
       { mode: 'share',      label: 'Share',                           icon: '<path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z"/>' },
       { mode: 'more_info',  label: 'More Info',                       icon: '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/>' },
     ];
 
     menu.innerHTML = strategies.map(s =>
-      '<div class="enqueue-menu-item" data-mode="' + s.mode + '"><svg class="enqueue-menu-icon" viewBox="0 0 24 24">' + s.icon + '</svg><div class="enqueue-menu-label">' + s.label + '</div></div>'
+      '<div class="enqueue-menu-item' + (s.danger ? ' enqueue-menu-item--danger' : '') + '" data-mode="' + s.mode + '"><svg class="enqueue-menu-icon" viewBox="0 0 24 24">' + s.icon + '</svg><div class="enqueue-menu-label">' + s.label + '</div></div>'
     ).join('');
 
     r.appendChild(menu);
@@ -15718,7 +15794,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const _menuReady = () => Date.now() - _menuOpenedAt > 350;
 
     menu.querySelectorAll('.enqueue-menu-item').forEach(el => {
-      el.addEventListener('click', e => {
+      el.addEventListener('click', async e => {
         e.stopPropagation();
         if (!_menuReady()) return;
         backdrop.remove(); menu.remove();
@@ -15764,6 +15840,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           });
           this._closeMABrowser(true);
         } else if (mode === 'pin') {
+          if (this._rbIsStarred(st) && !(await this._confirmUnpin('station', st.name || ''))) return;
           const nowPinned = this._rbToggleStar(st);
           if (nowPinned === null) return;
           this._showToast(nowPinned ? '📍 Station pinned' : 'Station unpinned');
@@ -15856,7 +15933,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (_rbPin) {
       _rbPin.classList.remove('hidden');
       _updatePinBtn();
-      _rbPin.onclick = () => {
+      _rbPin.onclick = async () => {
+        if (this._rbIsStarred(st) && !(await this._confirmUnpin('station', st.name || ''))) return;
         const nowPinned = this._rbToggleStar(st);
         if (nowPinned === null) return;
         _updatePinBtn();
@@ -19545,8 +19623,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (!this._hass) return false;
     // Session rate-limit backoff — if AI was rate-limited recently, don't retry
     // until the backoff window clears (60 seconds after the last 429).
-    if (this._aiRateLimitUntil && Date.now() < this._aiRateLimitUntil) return false;
-    // Check in-memory cache first
+    // Paused after a recent failure (usage limit, timeouts…) — see _aiPauseGet.
+    // Read from sessionStorage each time so the editor's "Try AI Again"
+    // takes effect immediately.
+    if (this._aiPauseGet()) return false;
+    // Check in-memory cache first (unless the editor's "Try AI Again" cleared it)
+    try { if (this._aiAvailable !== undefined && sessionStorage.getItem('crow_ai_available') === null) this._aiAvailable = undefined; } catch (_) {}
     if (this._aiAvailable !== undefined) return this._aiAvailable;
     // Check sessionStorage — avoids the agent/list call on every page refresh
     try {
@@ -19701,7 +19783,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         heroImg.addEventListener('click', (e) => {
           e.stopPropagation();
           if (this._infoPopupOpenedAt && (Date.now() - this._infoPopupOpenedAt) < 500) return;
-          this._showBioPhotoLightbox(heroImg.src || artUrl, `${trackTitle}${artistName ? ' · ' + artistName : ''}`, content, 'square');
+          this._showBioPhotoLightbox(heroImg.src || artUrl, `${currentTrack}${artist ? ' · ' + artist : ''}`, content, 'square');
         });
       }
     }
@@ -21402,39 +21484,102 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     } catch(_) { /* silent prefetch failure */ }
   }
 
-  async _prefetchAITrackInfo(trackTitle, artistName) {
-    if (!trackTitle || !artistName) return;
-    // Use the SAME cache key and prompt as _showAITrackInfo so prefetched data
-    // is always found by the display function — prevents double-fetching.
-    const primaryArtist = artistName.split(/\s*[&,]\s*/)[0].trim() || artistName;
+  // ── AI track info lookup ────────────────────────────────────────────────
+  // The one place that asks the AI about a track: used by the info panel,
+  // by the prefetch, and by the quiet background retry after a miss, so all
+  // three share the same prompt and cache. Returns the data (possibly
+  // marked _notFound / _incomplete) or throws if the AI couldn't answer.
+  async _fetchAITrackInfoData(trackTitle, artistName, { fallback = false } = {}) {
+    const agentId = this._config?.ai_conversation_agent || 'conversation.home_assistant';
     const cacheKey = ('trackinfo3|' + artistName + '|' + trackTitle).toLowerCase();
     if (!this._aiTrackInfoCache) this._aiTrackInfoCache = new Map();
-    // Check sessionStorage first
-    if (!this._aiTrackInfoCache.has(cacheKey)) {
-      const _p = this._aiSessionGet('trackInfo', cacheKey);
-      if (_p) this._aiTrackInfoCache.set(cacheKey, _p);
+    // If artist contains multiple artists (e.g. "Aerosmith & YUNGBLUD"), try the
+    // primary artist first — concatenated names often cause hallucinated results.
+    const primaryArtist = artistName.split(/\s*[&,]\s*/)[0].trim() || artistName;
+    const queryArtist = primaryArtist !== artistName ? primaryArtist : artistName;
+    const prompt = `You are a music encyclopedia. For the track "${trackTitle}" by "${queryArtist}", provide a JSON object (no markdown, raw JSON only):\n{\n  \"year\": \"release year\",\n  \"chart\": \"highest chart position e.g. UK #1 or US #4 Billboard Hot 100, or null if truly unknown\",\n  \"reception\": \"one short phrase e.g. 4x Platinum or Critically acclaimed or GRAMMY winner, null only if no notable reception\",\n  \"album\": \"album name\",\n  \"label\": \"record label\",\n  \"genre\": [\"genre1\",\"genre2\"],\n  \"duration\": \"duration e.g. 3:42\",\n  \"fact\": \"One fascinating fact in 1-2 sentences. If this track does not exist or you are not confident, set this to null.\",\n  \"vibe\": \"3-word vibe e.g. Euphoric indie anthem\",\n  \"members\": [\"Member Name 1\",\"Member Name 2\"],\n  \"similar\": [{\"title\":\"Track\",\"artist\":\"Artist\"},{\"title\":\"Track\",\"artist\":\"Artist\"}],\n  \"found\": true\n}\\nFor similar: list exactly 10 similar tracks in that array, varied across artists, not just 2-3. For members: list the band members (2-6 names). If the artist is a solo performer, set members to [\"${queryArtist}\"] (just their own name as a single-element array). IMPORTANT: If you cannot find reliable information about this specific track, set \"found\" to false and all other fields to null. Do NOT invent or hallucinate details. Respond with ONLY the JSON.`;
+    const resp = await this._aiProcess({
+      type: 'conversation/process', text: prompt, _crowSilent: true, _crowFallback: fallback,
+      agent_id: agentId, language: navigator.language || 'en'
+    });
+    const raw = resp?.response?.speech?.plain?.speech || '';
+    // Robust extraction — find first { to last }
+    const s = raw.indexOf('{'), e2 = raw.lastIndexOf('}');
+    if (s === -1 || e2 <= s) { const e = new Error('No JSON'); e.kind = 'unreadable'; throw e; }
+    let data = JSON.parse(raw.slice(s, e2 + 1));
+    // Detect hallucination signals — the AI saying it couldn't find the track
+    const _factLower = (data.fact || '').toLowerCase();
+    const _hallucinated = data.found === false
+      || /no (such|official|known)|does not exist|nonexistent|not (a real|an actual)|cannot (find|confirm)|no record of/i.test(_factLower);
+    if (_hallucinated) {
+      data = { album: null, year: null, label: null, duration: null, vibe: null, fact: null, similar: [], _notFound: true };
+      // Short 7-day memory so genuinely unknown tracks don't use quota every session
+      this._aiLocalSet('trackInfo', cacheKey, { ...data, _notFoundTTL: 7 });
+    } else {
+      // Thin answers are marked incomplete so a later open retries the AI
+      const _thin = (!data.members || data.members.length === 0)
+        && (!data.similar || data.similar.length === 0)
+        && !data.fact;
+      if (_thin) data._incomplete = true;
+      this._aiTrackInfoCache.set(cacheKey, data);
+      if (!data._incomplete) this._aiLocalSet('trackInfo', cacheKey, data);
     }
-    if (this._aiTrackInfoCache.has(cacheKey)) return; // already cached
+    // A proper answer clears any "AI missed this track" note
+    this._aiTrackMissDelete(cacheKey);
+    return data;
+  }
+
+  // Tracks the AI failed on this session (sessionStorage, so a refresh keeps
+  // it; a new session gives the AI a fresh chance).
+  _aiTrackMissList() {
+    try { return JSON.parse(sessionStorage.getItem('crow_ai_track_miss') || '[]'); } catch (_) { return []; }
+  }
+  _aiTrackMissHas(key) { return this._aiTrackMissList().includes(key); }
+  _aiTrackMissAdd(key) {
+    try {
+      const l = this._aiTrackMissList().filter(k => k !== key);
+      l.push(key);
+      sessionStorage.setItem('crow_ai_track_miss', JSON.stringify(l.slice(-200)));
+    } catch (_) {}
+  }
+  _aiTrackMissDelete(key) {
+    try {
+      const l = this._aiTrackMissList();
+      if (l.includes(key)) sessionStorage.setItem('crow_ai_track_miss', JSON.stringify(l.filter(k => k !== key)));
+    } catch (_) {}
+  }
+  // One quiet retry per track per session, while the Discogs panel is
+  // showing. Never changes what's on screen — a good answer is simply cached
+  // so the next tap opens the full AI panel.
+  _aiTrackMissRetry(trackTitle, artistName) {
+    const key = ('trackinfo3|' + artistName + '|' + trackTitle).toLowerCase();
+    if (!this._aiTrackMissRetried) this._aiTrackMissRetried = new Set();
+    // Not while the AI is paused — that would just use up the one retry
+    if (this._aiTrackMissRetried.has(key) || !this._aiEnabled() || this._aiPauseGet()) return;
+    this._aiTrackMissRetried.add(key);
+    setTimeout(() => {
+      this._fetchAITrackInfoData(trackTitle, artistName).catch(() => {});
+    }, 4000);
+  }
+
+  async _prefetchAITrackInfo(trackTitle, artistName) {
+    if (!trackTitle || !artistName) return;
+    const cacheKey = ('trackinfo3|' + artistName + '|' + trackTitle).toLowerCase();
+    if (!this._aiTrackInfoCache) this._aiTrackInfoCache = new Map();
+    if (!this._aiTrackInfoCache.has(cacheKey)) {
+      const _p = this._aiLocalGet('trackInfo', cacheKey) || this._aiSessionGet('trackInfo', cacheKey);
+      if (_p && !_p._incomplete) this._aiTrackInfoCache.set(cacheKey, _p);
+    }
+    if (this._aiTrackInfoCache.has(cacheKey) || this._aiTrackMissHas(cacheKey)) return;
     const hasAI = await this._aiCheckAvailable();
     if (!hasAI) return;
     try {
-      const agentId = this._config?.ai_conversation_agent || 'conversation.home_assistant';
-      // Identical prompt to _showAITrackInfo so both functions share the same cached result
-      const prompt = `You are a music encyclopedia. For the track "${trackTitle}" by "${primaryArtist}", provide a JSON object (no markdown, raw JSON only):\n{\n  "year": "release year",\n  "album": "album name",\n  "label": "record label",\n  "genre": ["genre1","genre2"],\n  "duration": "duration e.g. 3:42",\n  "fact": "One fascinating fact in 1-2 sentences. If this track does not exist or you are not confident, set this to null.",\n  "vibe": "3-word vibe e.g. Euphoric indie anthem",\n  "members": ["Member Name 1","Member Name 2"],\n  "similar": [{"title":"Track","artist":"Artist"},{"title":"Track","artist":"Artist"}],\n  "found": true\n}\nFor similar: list exactly 10 similar tracks in that array, varied across artists, not just 2-3. For members: list the band members (2-6 names). If the artist is a solo performer, set members to [\"${primaryArtist}\"] (just their own name as a single-element array). IMPORTANT: If you cannot find reliable information about this specific track, set "found" to false and all other fields to null. Do NOT invent or hallucinate details. Respond with ONLY the JSON.`;
-      const resp = await this._aiProcess({
-        type: 'conversation/process', _crowSilent: true, text: prompt, agent_id: agentId, language: navigator.language || 'en'
-      });
-      const raw = resp?.response?.speech?.plain?.speech || '';
-      const s = raw.indexOf('{'), e2 = raw.lastIndexOf('}');
-      if (s === -1 || e2 <= s) return;
-      if (data.found === false) return; // don't cache hallucinated results
-      this._aiTrackInfoCache.set(cacheKey, data);
-      this._aiSessionSet('trackInfo', cacheKey, data);
+      const data = await this._fetchAITrackInfoData(trackTitle, artistName);
       // Only chain-prefetch album if the user has previously tapped the album pill
-      if (data.album && this._albumPillTapped?.has((data.album + '|' + artistName).toLowerCase())) {
+      if (data && !data._notFound && data.album && this._albumPillTapped?.has((data.album + '|' + artistName).toLowerCase())) {
         setTimeout(() => this._prefetchAIAlbumTracks(data.album, artistName), 1000);
       }
-    } catch(e) { /* silent — prefetch failures are non-critical */ }
+    } catch (_) { /* silent — prefetch failures are non-critical */ }
   }
 
   async _prefetchAIAlbumTracks(albumName, artistName) {
@@ -21834,7 +21979,8 @@ Include ALL tracks. Use null for unknown fields.`;
     };
     _pinBtn.classList.remove('hidden');
     _update();
-    _pinBtn.onclick = () => {
+    _pinBtn.onclick = async () => {
+      if (this._maLibIsStarred(pinItem, pinTab) && !(await this._confirmUnpin(String(labelNoun || 'item').toLowerCase(), this._pinItemName(pinItem)))) return;
       const nowPinned = this._maLibToggleStar(pinItem, pinTab);
       if (nowPinned === null) return;
       _update();
@@ -22168,57 +22314,22 @@ Include ALL tracks. Use null for unknown fields.`;
       // Same shape a failed AI lookup produces — routes into the _notFound
       // handling below (MA queue metadata → Discogs → plain library data).
       data = { album: null, year: null, label: null, duration: null, vibe: null, fact: null, similar: [], _notFound: true };
+    } else if (!data && this._aiTrackMissHas(cacheKey)) {
+      // The AI already failed for this track this session — don't make the
+      // user wait for it again. Straight to Discogs; a quiet background
+      // retry (below) can bring the AI panel back for next time.
+      data = { album: null, year: null, label: null, duration: null, vibe: null, fact: null, similar: [], _notFound: true, _aiFailed: true, _fromMiss: true };
     } else if (!data) {
-      // If artist contains multiple artists (e.g. "Aerosmith & YUNGBLUD"), try the
-      // primary artist first — concatenated names often cause hallucinated results.
-      const primaryArtist = artistName.split(/\s*[&,]\s*/)[0].trim() || artistName;
-      const queryArtist = primaryArtist !== artistName ? primaryArtist : artistName;
-
-      const prompt = `You are a music encyclopedia. For the track "${trackTitle}" by "${queryArtist}", provide a JSON object (no markdown, raw JSON only):\n{\n  \"year\": \"release year\",\n  \"chart\": \"highest chart position e.g. UK #1 or US #4 Billboard Hot 100, or null if truly unknown\",\n  \"reception\": \"one short phrase e.g. 4x Platinum or Critically acclaimed or GRAMMY winner, null only if no notable reception\",\n  \"album\": \"album name\",\n  \"label\": \"record label\",\n  \"genre\": [\"genre1\",\"genre2\"],\n  \"duration\": \"duration e.g. 3:42\",\n  \"fact\": \"One fascinating fact in 1-2 sentences. If this track does not exist or you are not confident, set this to null.\",\n  \"vibe\": \"3-word vibe e.g. Euphoric indie anthem\",\n  \"members\": [\"Member Name 1\",\"Member Name 2\"],\n  \"similar\": [{\"title\":\"Track\",\"artist\":\"Artist\"},{\"title\":\"Track\",\"artist\":\"Artist\"}],\n  \"found\": true\n}\\nFor similar: list exactly 10 similar tracks in that array, varied across artists, not just 2-3. For members: list the band members (2-6 names). If the artist is a solo performer, set members to [\"${queryArtist}\"] (just their own name as a single-element array). IMPORTANT: If you cannot find reliable information about this specific track, set \"found\" to false and all other fields to null. Do NOT invent or hallucinate details. Respond with ONLY the JSON.`;
       try {
-        // Quiet: if the AI can't help, the panel falls back to Discogs
-        // instead, so there's nothing to warn about.
-        const resp = await this._aiProcess({
-          type: 'conversation/process', text: prompt, _crowSilent: true,
-          agent_id: agentId, language: navigator.language || 'en'
-        });
+        data = await this._fetchAITrackInfoData(trackTitle, artistName, { fallback: true });
         if (_stale()) return;
-        const raw = resp?.response?.speech?.plain?.speech || '';
-        // Robust extraction — find first { to last }
-        const s = raw.indexOf('{'), e2 = raw.lastIndexOf('}');
-        if (s === -1 || e2 <= s) throw new Error('No JSON');
-        data = JSON.parse(raw.slice(s, e2 + 1));
-        // Detect hallucination signals — if the AI says it couldn't find the track,
-        // or the fact field contains "no such", "does not exist", "nonexistent" etc,
-        // don't cache and show a friendly not-found state instead.
-        const _factLower = (data.fact || '').toLowerCase();
-        const _hallucinated = data.found === false
-          || /no (such|official|known)|does not exist|nonexistent|not (a real|an actual)|cannot (find|confirm)|no record of/i.test(_factLower);
-        if (_hallucinated) {
-          data = { album: null, year: null, label: null, duration: null, vibe: null, fact: null, similar: [], _notFound: true };
-          // Persist _notFound with a short 7-day TTL so genuinely unknown tracks don't
-          // waste Gemini quota on every session — but still retry after a week in case
-          // the track becomes more widely known or the AI model improves.
-          this._aiLocalSet('trackInfo', cacheKey, { ...data, _notFoundTTL: 7 });
-        } else {
-          // Mark thin responses as incomplete so next panel open retries AI
-          // rather than serving a permanently empty members/similar/fact panel.
-          const _thin = (!data.members || data.members.length === 0)
-            && (!data.similar || data.similar.length === 0)
-            && !data.fact;
-          if (_thin) data._incomplete = true;
-          // Always cache in-session (prevents duplicate AI calls while panel is open)
-          this._aiTrackInfoCache.set(cacheKey, data);
-          // Only persist to localStorage/HA for complete, confident results
-          if (!data._incomplete) {
-            this._aiLocalSet('trackInfo', cacheKey, data);
-          }
-        }
       } catch(e) {
         if (_stale()) return;
         // The AI couldn't help (limit reached, timed out, unreadable answer…):
-        // take the same route as "not found" so Discogs is tried next, then
-        // the library details. Not cached, so the AI is asked again next time.
+        // remember that for this session so the next tap goes straight to
+        // Discogs, and take the same route as "not found" (Discogs, then
+        // the library details).
+        this._aiTrackMissAdd(cacheKey);
         data = { album: null, year: null, label: null, duration: null, vibe: null, fact: null, similar: [], _notFound: true, _aiFailed: true };
       }
     }
@@ -22234,7 +22345,16 @@ Include ALL tracks. Use null for unknown fields.`;
       const _fbAttrs = _fbState?.attributes || {};
       const _isMaFb  = this._maEntityIds?.has(this._entity);
 
-      content.innerHTML = `
+      // AI failed for this track — quietly give it one more go in the
+      // background so the next tap can show the full AI panel.
+      if (data._aiFailed) this._aiTrackMissRetry(trackTitle, artistName);
+
+      // Reopening a track the AI already missed: reuse the queue details from
+      // the first time and skip the spinner, so the (cached) Discogs panel
+      // appears straight away.
+      if (!this._fbQueueItemCache) this._fbQueueItemCache = new Map();
+      const _cachedQ = data._fromMiss && this._fbQueueItemCache.has(cacheKey) ? this._fbQueueItemCache.get(cacheKey) : undefined;
+      if (_cachedQ === undefined) content.innerHTML = `
         <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:10px;padding:24px;">
           <div style="width:24px;height:24px;border:2.5px solid rgba(99,179,237,0.25);border-top-color:#63b3ed;border-radius:50%;animation:ma-spin 0.8s linear infinite;"></div>
           <div style="font-size:12px;color:${this._pt('dim')};">Loading track details…</div>
@@ -22243,9 +22363,9 @@ Include ALL tracks. Use null for unknown fields.`;
       // Try MA queue for rich metadata — but ONLY when playing the currently-playing track.
       // If opened from search/recs (context.fromSearch), the queue reflects the currently
       // playing song, not the tapped one, so skip it and use params + HA attrs only.
-      let _qItem = null;
+      let _qItem = _cachedQ !== undefined ? _cachedQ : null;
       const _fromSearch = !!(context.fromSearch || context.overrideArt);
-      if (_isMaFb && !_fromSearch) {
+      if (_cachedQ === undefined && _isMaFb && !_fromSearch) {
         try {
           const _qRes = await this._hass.connection.sendMessagePromise({
             type: 'call_service', domain: 'music_assistant', service: 'get_queue',
@@ -22265,6 +22385,7 @@ Include ALL tracks. Use null for unknown fields.`;
           }
         } catch(_) {}
       }
+      if (_cachedQ === undefined && !_fromSearch) this._fbQueueItemCache.set(cacheKey, _qItem);
       if (_stale()) return;
 
       // Some non-MA players report media_album_name identical to the track
@@ -22495,7 +22616,8 @@ Include ALL tracks. Use null for unknown fields.`;
         };
         _fbPinBtn.classList.remove('hidden');
         _fbUpdatePin();
-        _fbPinBtn.onclick = () => {
+        _fbPinBtn.onclick = async () => {
+          if (this._maLibIsStarred(_fbPinItem, 'track') && !(await this._confirmUnpin('song', this._pinItemName(_fbPinItem)))) return;
           const nowPinned = this._maLibToggleStar(_fbPinItem, 'track');
           if (nowPinned === null) return;
           _fbUpdatePin();
@@ -22511,9 +22633,9 @@ Include ALL tracks. Use null for unknown fields.`;
       }
     }
 
-    // Reflect the actual data source in the header — Discogs-sourced data
-    // (AI found nothing) gets its own label rather than claiming to be AI.
-    if (titleEl) titleEl.textContent = data._fromDiscogs ? 'Discogs Info' : 'Info';
+    // Reflect the actual data source in the header — "AI Info" for an AI
+    // answer, "Discogs Info" when Discogs filled in (AI found nothing).
+    if (titleEl) titleEl.textContent = data._fromDiscogs ? 'Discogs Info' : 'AI Info';
 
     const metaRows = [
       data.album    && ['Album',   data.album],
@@ -24090,7 +24212,7 @@ Include ALL tracks. Use null for unknown fields.`;
 {"year":"release year or null","label":"record label or null","genre":["genre1","genre2"],"fact":"One fascinating fact in 1-2 sentences or null","tracks":[{"position":"1","title":"Track Name"},{"position":"2","title":"Track Name"}]}
 Include ALL tracks. Use null for unknown fields.`;
     try {
-      const resp = await this._aiProcess({
+      const resp = await this._aiProcess({ _crowFallback: true,
         type: 'conversation/process', text: prompt,
         agent_id: agentId, language: navigator.language || 'en'
       });
@@ -26205,7 +26327,6 @@ Include ALL tracks. Use null for unknown fields.`;
                 return;
               }
             }
-            if (_allTracks?.length >= MIN_LOCAL_TRACKS) localTracks = _allTracks;
           } catch(_) {}
         }
 
@@ -27095,6 +27216,7 @@ Include ALL tracks. Use null for unknown fields.`;
     if (_stale()) return;
     if (!hasAI) { this._aiShowNoAgentBanner(popup); return; }
     let _doSearchFn = null; // hoisted reference updated each time _renderSearch wires up
+    let _wireInputOnlyFn = null; // same, for the clear button's re-wire
     let _doLibrarySearchFn = null; // same, for the plain-MA-search button
     const _renderSearch = (query = '', results = null, loading = false, error = '') => {
       const _inputVal = query.replace(/"/g, '&quot;');
@@ -27251,6 +27373,7 @@ Include ALL tracks. Use null for unknown fields.`;
         if (clr2) clr2.addEventListener('click', () => { _renderSearch(); _wireInputOnly(); });
         if (inp2) setTimeout(() => inp2.focus(), 50);
       };
+      _wireInputOnlyFn = _wireInputOnly;
 
       if (inp) inp.addEventListener('keydown', e => { if (e.key === 'Enter') _doSearch(); });
       if (btn) btn.addEventListener('click', _doLibrarySearch);
@@ -27434,7 +27557,7 @@ Include ALL tracks. Use null for unknown fields.`;
       const _clr0 = content.querySelector('#ai-search-clear');
       if (_inp0) _inp0.addEventListener('keydown', e => { if (e.key === 'Enter') _doSearchFn?.(); });
       if (_btn0) _btn0.addEventListener('click', () => _doLibrarySearchFn?.());
-      if (_clr0) _clr0.addEventListener('click', () => { _renderSearch(); _wireInputOnly?.(); });
+      if (_clr0) _clr0.addEventListener('click', () => { _renderSearch(); _wireInputOnlyFn?.(); });
       if (_inp0) _inp0.value = initialQuery;
       // _doSearchFn is assigned since _aiCheckAvailable has already resolved above
       _doSearchFn?.();
@@ -28086,6 +28209,94 @@ Include ALL tracks. Use null for unknown fields.`;
     return { candidates: [] };
   }
 
+  // TVmaze show lookup shaped like a TMDB candidate, so the normal picker /
+  // detail views can render it. TV only (TVmaze has no movies) and only
+  // accepted when the show's name genuinely matches the title, since
+  // TVmaze's search always returns its closest show even for a film title.
+  // The same request brings the episode list, which is saved for the
+  // seasons screen so it doesn't need fetching again.
+  async _lookupTVmazeShow(title) {
+    const clean = String(title || '').replace(/\s*\(\d{4}\)\s*$/, '').trim();
+    if (!clean) return null;
+    if (!this._tvmazeShowCache) this._tvmazeShowCache = new Map();
+    const key = clean.toLowerCase();
+    if (this._tvmazeShowCache.has(key)) return this._tvmazeShowCache.get(key);
+    const norm = v => String(v || '').toLowerCase().replace(/^the\s+/, '').replace(/[^a-z0-9]+/g, ' ').trim();
+    const plain = html => { const d = document.createElement('div'); d.innerHTML = String(html || ''); return (d.textContent || '').trim(); };
+    let result = null;
+    try {
+      const resp = await fetch('https://api.tvmaze.com/singlesearch/shows?q=' + encodeURIComponent(clean) + '&embed[]=episodes&embed[]=cast');
+      if (resp.ok) {
+        const show = await resp.json();
+        const a = norm(show?.name), b = norm(clean);
+        if (a && b && (a === b || a.startsWith(b + ' ') || b.startsWith(a + ' '))) {
+          const eps = (show._embedded?.episodes || []).filter(e => e && e.season > 0 && e.number != null);
+          const esc = v => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+          const list = eps.map(e => ({ season: e.season, ep: e.number, title: esc(e.name || ('Episode ' + e.number)), airdate: e.airdate || '', overview: esc(plain(e.summary)) }));
+          const running = show.status === 'Running' || show.status === 'In Development';
+          if (list.length) {
+            if (!this._tvmazeCache) this._tvmazeCache = new Map();
+            this._tvmazeCache.set(key, list);
+            this._tvmazeSave(key, list, running);
+            if (running) (this._tvmazeRunning || (this._tvmazeRunning = new Set())).add(key);
+          }
+          result = {
+            type: 'tv',
+            title: show.name || clean,
+            year: (show.premiered || '').split('-')[0] || '',
+            genres: Array.isArray(show.genres) ? show.genres : [],
+            rating: show.rating?.average ? Number(show.rating.average).toFixed(1) : '',
+            votes: 0,
+            overview: plain(show.summary),
+            cast: (show._embedded?.cast || []).slice(0, 15).map(c => c?.person?.name).filter(Boolean),
+            seasons: list.reduce((m, e) => Math.max(m, e.season), 0),
+            status: show.status || '',
+            network: show.network?.name || show.webChannel?.name || '',
+            similar: [],
+            _fromTvmaze: true,
+            _tmdbPoster: show.image?.original || show.image?.medium || '',
+            _tvmazeUrl: show.url || '',
+          };
+        }
+      }
+    } catch (_) { result = null; }
+    this._tvmazeShowCache.set(key, result);
+    return result;
+  }
+
+  // Fills a TV show's missing details (overview, cast, genres, seasons…)
+  // from TVmaze. Only empty fields are touched — the AI's or TMDB's own
+  // values always win. Returns true if anything was added.
+  async _fillVideoGapsFromTVmaze(data) {
+    if (!data || data.type !== 'tv' || data._fromTvmaze || data._tvmazeFilled) return false;
+    data._tvmazeFilled = true;
+    const missing = !data.overview || !data.cast?.length || !data.genres?.length || !data.seasons || !data.year || !data.rating || !data.status;
+    if (!missing) return false;
+    const tm = await this._lookupTVmazeShow(data.title);
+    if (!tm) return false;
+    let changed = false;
+    ['overview', 'year', 'rating', 'status'].forEach(k => { if (!data[k] && tm[k]) { data[k] = tm[k]; changed = true; } });
+    ['cast', 'genres'].forEach(k => { if (!data[k]?.length && tm[k]?.length) { data[k] = tm[k]; changed = true; } });
+    if (!data.seasons && tm.seasons) { data.seasons = tm.seasons; changed = true; }
+    return changed;
+  }
+
+  // Simple Wikipedia summary page for a movie/TV title — the last-resort
+  // fallback when nothing richer is available.
+  _renderVideoWikiFallback(content, wikiFallback, note) {
+    content.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
+    this.shadowRoot?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
+    const _escW = s => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    content.innerHTML = `
+      <div style="padding:24px;">
+        ${wikiFallback.thumbnail ? `<img src="${wikiFallback.thumbnail}" alt="" style="width:100%;max-width:220px;display:block;margin:0 auto 16px;border-radius:10px;">` : ''}
+        <div style="font-size:17px;font-weight:700;color:${this._pt("text")};text-align:center;margin-bottom:4px;">${_escW(wikiFallback.title)}</div>
+        <div style="font-size:11px;color:${this._pt("dim")};text-align:center;margin-bottom:16px;">${_escW(note)}</div>
+        <div style="font-size:14px;line-height:1.6;color:${this._pt("text")};">${_escW(wikiFallback.extract)}</div>
+        ${wikiFallback.url ? `<div style="margin-top:16px;text-align:center;"><a href="${wikiFallback.url}" target="_blank" rel="noopener" style="font-size:12px;color:#63b3ed;">Read more on Wikipedia \u2192</a></div>` : ''}
+      </div>`;
+  }
+
   async _fetchVideoInfo(title, isKnownSeriesTitle, localFileMeta) {
     // Capture and clear the art override at the START so it's available throughout
     const overrideArt = this._videoInfoArtOverride || null;
@@ -28177,7 +28388,8 @@ Include ALL tracks. Use null for unknown fields.`;
     if (_mtPin) {
       _mtPin.classList.remove('hidden');
       _updateMtPinBtn();
-      _mtPin.onclick = () => {
+      _mtPin.onclick = async () => {
+          if (this._mtIsStarred(_mtPinItem) && !(await this._confirmUnpin(_mtPinItem.kind === 'tv' ? 'show' : 'movie', _mtPinItem.title))) return;
         const nowPinned = this._mtToggleStar(_mtPinItem);
         _updateMtPinBtn();
         this._showToast(nowPinned ? '\ud83d\udccd Pinned' : 'Unpinned');
@@ -28223,6 +28435,11 @@ Include ALL tracks. Use null for unknown fields.`;
         return;
       }
       if (_aiOffForVideo) {
+        // Not on TMDB — try TVmaze (TV shows), then Wikipedia, before giving up
+        const _tmShow = await this._lookupTVmazeShow(cleanTitle);
+        if (_tmShow) { this._videoInfoPickerState = null; this._renderVideoInfoDetail(content, _tmShow, _tmShow._tmdbPoster || artUrl); return; }
+        const _wikiOff = await this._fetchWikipediaVideoFallback(cleanTitle, _isSeriesTitle);
+        if (_wikiOff) { this._renderVideoWikiFallback(content, _wikiOff, 'From Wikipedia \u2014 not found on TMDB'); return; }
         content.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
         content.innerHTML = `
           <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:16px;padding:32px;text-align:center;">
@@ -28235,7 +28452,12 @@ Include ALL tracks. Use null for unknown fields.`;
       // AI is on but was set to TMDB-first — fall through to the normal
       // AI-first flow below since TMDB had nothing.
     } else if (_aiOffForVideo) {
-      // AI is off and no TMDB key is configured — nothing left to show.
+      // AI is off and no TMDB key — TVmaze for TV shows, then Wikipedia.
+      const _tmShow = await this._lookupTVmazeShow(cleanTitle);
+      if (_tmShow) { this._videoInfoPickerState = null; this._renderVideoInfoDetail(content, _tmShow, _tmShow._tmdbPoster || artUrl); return; }
+      const _wikiOff = await this._fetchWikipediaVideoFallback(cleanTitle, _isSeriesTitle);
+      if (_wikiOff) { this._renderVideoWikiFallback(content, _wikiOff, 'From Wikipedia \u2014 add a TMDB key for full movie and TV info'); return; }
+      // Nothing left to show.
       content.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
       content.innerHTML = `
         <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:16px;padding:32px;text-align:center;">
@@ -28311,7 +28533,7 @@ Include ALL tracks. Use null for unknown fields.`;
 
       try {
         // Quiet when TMDB can step in if the AI can't help.
-        const resp = await this._aiProcess({
+        const resp = await this._aiProcess({ _crowFallback: true,
           type: 'conversation/process', text: prompt, _crowSilent: _tmdbKeyPresent,
           agent_id: agentId, language: navigator.language || 'en'
         });
@@ -28369,6 +28591,8 @@ Include ALL tracks. Use null for unknown fields.`;
         // is better than nothing, especially for titles the AI's training
         // data doesn't cover or a mangled title that didn't resolve to
         // anything.
+        const _tmShowFb = await this._lookupTVmazeShow(cleanTitle);
+        if (_tmShowFb) { this._videoInfoPickerState = null; this._renderVideoInfoDetail(content, _tmShowFb, _tmShowFb._tmdbPoster || artUrl); return; }
         const wikiFallback = await this._fetchWikipediaVideoFallback(cleanTitle, _isSeriesTitle);
         if (wikiFallback) {
           content.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
@@ -28621,6 +28845,24 @@ Include ALL tracks. Use null for unknown fields.`;
   _renderVideoInfoDetail(content, data, artUrl) {
     content.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
     if (!data) return;
+    // TV show with missing details (no cast, no overview…)? Top it up from
+    // TVmaze in the background and redraw — but only if this same panel is
+    // still showing and none of its Ask / Mood / Trivia panels are open.
+    if (data.type === 'tv' && !data._fromTvmaze && !data._tvmazeFilled) {
+      this._videoDetailShowing = data;
+      this._fillVideoGapsFromTVmaze(data).then(changed => {
+        if (!changed || this._videoDetailShowing !== data) return;
+        if (!content.querySelector('#content-warning-section')) return; // navigated within the panel
+        const _open = ['#ask-panel', '#mood-panel', '#trivia-panel'].some(sel => {
+          const el = content.querySelector(sel); return el && el.style.display !== 'none';
+        });
+        if (_open) return;
+        const _scroll = content.scrollTop;
+        this._renderVideoInfoDetail(content, data, artUrl);
+        content.scrollTop = _scroll;
+      }).catch(() => {});
+    }
+    this._videoDetailShowing = data;
     // Opened from Watch History: keep the cover the history list showed for
     // this title, even if the lookup or picker supplied a different poster
     // (e.g. a spin-off or sequel poster for the same franchise).
@@ -28675,7 +28917,8 @@ Include ALL tracks. Use null for unknown fields.`;
         };
         _mtPin.classList.remove('hidden');
         _updateMtPinBtn();
-        _mtPin.onclick = () => {
+        _mtPin.onclick = async () => {
+          if (this._mtIsStarred(_mtPinItem) && !(await this._confirmUnpin(_mtPinItem.kind === 'tv' ? 'show' : 'movie', _mtPinItem.title))) return;
           const nowPinned = this._mtToggleStar(_mtPinItem);
           _updateMtPinBtn();
           this._showToast(nowPinned ? '\ud83d\udccd Pinned' : 'Unpinned');
@@ -28690,7 +28933,7 @@ Include ALL tracks. Use null for unknown fields.`;
     // (✨ AI Info vs 💿 Discogs Info): shows which source this result came
     // from so it's never ambiguous when both are configured.
     const _videoTitleEl = this.shadowRoot?.getElementById('infoPopupTitle');
-    if (_videoTitleEl) _videoTitleEl.textContent = data._fromTmdb ? 'TMDB Info' : 'Info';
+    if (_videoTitleEl) _videoTitleEl.textContent = data._fromTmdb ? 'TMDB Info' : data._fromTvmaze ? 'TVmaze Info' : 'Info';
 
     // Opened from Watch History and the lookup says this is a TV show —
     // fix any entries for that title that were logged as a movie (some
@@ -29632,22 +29875,74 @@ Include ALL tracks. Use null for unknown fields.`;
   // the AI is off or doesn't know the show. One request returns the show
   // plus every episode; cached in memory for the session. Text fields come
   // back plain and HTML-escaped so they can drop straight into the views.
+  // Best guess at whether a show is still airing, from what's already cached:
+  // TVmaze's own "Running" status, or any episode (TVmaze or the AI's list for
+  // the latest season) that aired in the last 60 days or hasn't aired yet.
+  // Used to give airing shows short cache lifetimes.
+  _tvShowIsAiring(showTitle, latestSeason) {
+    const key = String(showTitle || '').toLowerCase().trim();
+    if (!key) return false;
+    if (this._tvmazeRunning?.has(key)) return true;
+    const recent = d => { const t = Date.parse(d || ''); return !isNaN(t) && t > Date.now() - 60 * 864e5; };
+    const tm = this._tvmazeCachedSync(showTitle);
+    if (tm && tm.some(e => recent(e.airdate))) return true;
+    if (latestSeason) {
+      const ai = this._aiCachedRead(this._tvEpisodesCache || (this._tvEpisodesCache = new Map()), 'tvEpisodes', `${key}|s${latestSeason}|v2`);
+      if (Array.isArray(ai) && ai.some(e => recent(e?.airdate))) return true;
+    }
+    return false;
+  }
+
+  // Synchronous cache check (memory, then localStorage) — lets views render
+  // straight away without flashing a spinner when the data's already here.
+  // Saved for 2 days while a show is still running (so new episodes and
+  // seasons turn up quickly) and 7 days once it's ended; capped at 25 shows
+  // and cleared from the editor's TV Episode Cache row.
+  _tvmazeCachedSync(showTitle) {
+    if (!showTitle) return undefined;
+    if (!this._tvmazeCache) this._tvmazeCache = new Map();
+    const key = showTitle.toLowerCase().trim();
+    if (this._tvmazeCache.has(key)) return this._tvmazeCache.get(key);
+    try {
+      const store = JSON.parse(localStorage.getItem('crow_tvmaze_cache') || '{}');
+      const hit = store[key];
+      const ttlDays = hit?.running ? 2 : 7;
+      if (hit && Date.now() - (hit.ts || 0) < ttlDays * 864e5 && Array.isArray(hit.list)) {
+        this._tvmazeCache.set(key, hit.list);
+        if (hit.running) (this._tvmazeRunning || (this._tvmazeRunning = new Set())).add(key);
+        return hit.list;
+      }
+    } catch (_) {}
+    return undefined;
+  }
+  _tvmazeSave(key, list, running = false) {
+    try {
+      const store = JSON.parse(localStorage.getItem('crow_tvmaze_cache') || '{}');
+      store[key] = { ts: Date.now(), list, running: !!running };
+      const keys = Object.keys(store).sort((a, b) => (store[b].ts || 0) - (store[a].ts || 0));
+      keys.slice(25).forEach(k => delete store[k]);
+      localStorage.setItem('crow_tvmaze_cache', JSON.stringify(store));
+    } catch (_) { /* storage full — memory copy still works for this session */ }
+  }
+
   async _tvmazeEpisodes(showTitle) {
     if (!showTitle) return null;
     if (!this._tvmazeCache) this._tvmazeCache = new Map();
     const key = showTitle.toLowerCase().trim();
-    if (this._tvmazeCache.has(key)) return this._tvmazeCache.get(key);
+    const _cached = this._tvmazeCachedSync(showTitle);
+    if (_cached !== undefined) return _cached;
     const esc = v => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const plain = html => {
       const d = document.createElement('div');
       d.innerHTML = String(html || '');
       return (d.textContent || '').trim();
     };
-    let list = null;
+    let list = null, running = false;
     try {
       const resp = await fetch('https://api.tvmaze.com/singlesearch/shows?q=' + encodeURIComponent(showTitle) + '&embed=episodes');
       if (resp.ok) {
         const show = await resp.json();
+        running = show?.status === 'Running' || show?.status === 'In Development';
         const eps = show?._embedded?.episodes || [];
         list = eps
           .filter(e => e && e.season > 0 && e.number != null)
@@ -29662,6 +29957,10 @@ Include ALL tracks. Use null for unknown fields.`;
       }
     } catch (_) { list = null; }
     this._tvmazeCache.set(key, list);
+    if (list) {
+      this._tvmazeSave(key, list, running);
+      if (running) (this._tvmazeRunning || (this._tvmazeRunning = new Set())).add(key);
+    }
     return list;
   }
 
@@ -29670,7 +29969,10 @@ Include ALL tracks. Use null for unknown fields.`;
     const savedHtml = content.innerHTML;
     const savedScroll = content.scrollTop;
     const showTitle = data.title || '';
-    const totalSeasons = data.seasons || 0;
+    // The show's info (cached up to 30 days) can be behind when a new season
+    // starts — so if TVmaze already knows about more seasons, list those too.
+    const _tmSeasons = (this._tvmazeCachedSync(showTitle) || []).reduce((m, e) => Math.max(m, e.season || 0), 0);
+    const totalSeasons = Math.max(data.seasons || 0, _tmSeasons);
     const agentId = this._config?.ai_conversation_agent || 'conversation.home_assistant';
 
     // Build season rows immediately — episode counts fetched async below
@@ -29706,9 +30008,22 @@ Include ALL tracks. Use null for unknown fields.`;
     const self = this;
     content.querySelectorAll('.tv-season-row').forEach(row => {
       row.addEventListener('click', () => {
-        self._showTvEpisodes(content, data, parseInt(row.dataset.season, 10), artUrl);
+        // Park the seasons list so Back from the episodes restores it
+        // instantly at the same scroll position.
+        const _parked = document.createDocumentFragment();
+        const _scroll = content.scrollTop;
+        while (content.firstChild) _parked.appendChild(content.firstChild);
+        self._showTvEpisodes(content, data, parseInt(row.dataset.season, 10), artUrl, () => {
+          content.innerHTML = '';
+          content.appendChild(_parked);
+          content.scrollTop = _scroll;
+        });
       });
     });
+    // Hold the count labels directly — they stay valid while the list is
+    // parked, so a count that arrives then is still filled in.
+    const _countEls = {};
+    for (let n = 1; n <= totalSeasons; n++) _countEls[n] = content.querySelector(`#tv-ep-count-${n}`);
 
     // Ask AI for episode counts per season in one call
     if (!this._tvEpCountCache) this._tvEpCountCache = new Map();
@@ -29718,10 +30033,20 @@ Include ALL tracks. Use null for unknown fields.`;
       const _lsCounts = this._aiLocalGet('tvEpCount', cacheKey);
       if (_lsCounts) { this._tvEpCountCache.set(cacheKey, _lsCounts); counts = _lsCounts; }
     }
+    // Saved TVmaze list for this show? Count from that rather than asking
+    // the AI again.
+    if (!counts) {
+      const _tmc = this._tvmazeCachedSync(showTitle);
+      if (_tmc) {
+        counts = {};
+        _tmc.forEach(e => { counts[String(e.season)] = (counts[String(e.season)] || 0) + 1; });
+        this._tvEpCountCache.set(cacheKey, counts);
+      }
+    }
     if (!counts) {
       try {
         const prompt = `For the TV series "${showTitle}" (${totalSeasons} seasons), list the episode count for each season. Reply ONLY with a JSON object like {"1":13,"2":13,"3":16} — season number as string key, episode count as integer value. No markdown.`;
-        const resp = await this._aiProcess({
+        const resp = await this._aiProcess({ _crowFallback: true,
           type: 'conversation/process', text: prompt, agent_id: agentId, language: navigator.language || 'en'
         });
         const raw = resp?.response?.speech?.plain?.speech || '';
@@ -29730,7 +30055,8 @@ Include ALL tracks. Use null for unknown fields.`;
         if (counts) {
           this._tvEpCountCache.set(cacheKey, counts);
           this._aiSessionSet('tvEpCount', cacheKey, counts);
-          this._aiLocalSet('tvEpCount', cacheKey, counts);
+          // Still airing → recount after 2 days; finished → keep for 30
+          this._aiLocalSet('tvEpCount', cacheKey, counts, { ttlDays: this._tvShowIsAiring(showTitle, totalSeasons) ? 2 : 30 });
         }
       } catch(e) {}
       // AI off or empty — count them from TVmaze instead
@@ -29743,59 +30069,106 @@ Include ALL tracks. Use null for unknown fields.`;
         }
       }
     }
+    // Any season the counts don't cover (typically a new one) — use TVmaze's
+    // count if we have it.
+    const _tmNow = this._tvmazeCachedSync(showTitle);
+    if (_tmNow) {
+      const _tmCounts = {};
+      _tmNow.forEach(e => { _tmCounts[String(e.season)] = (_tmCounts[String(e.season)] || 0) + 1; });
+      counts = counts ? { ...counts } : {};
+      for (let n = 1; n <= totalSeasons; n++) {
+        if (!counts[String(n)] && _tmCounts[String(n)]) counts[String(n)] = _tmCounts[String(n)];
+      }
+    }
     // Populate episode counts into the rows (if still on this panel)
     if (counts) {
       for (let n = 1; n <= totalSeasons; n++) {
-        const el = content.querySelector(`#tv-ep-count-${n}`);
+        const el = _countEls[n];
         if (!el) break; // panel was navigated away
         const c = counts[String(n)];
         el.textContent = c ? `${c} episode${c !== 1 ? 's' : ''}` : 'Episodes';
       }
     } else {
       for (let n = 1; n <= totalSeasons; n++) {
-        const el = content.querySelector(`#tv-ep-count-${n}`);
+        const el = _countEls[n];
         if (!el) break;
         el.textContent = 'Episodes';
       }
     }
+
+    // Not checked TVmaze for this show yet? Do it quietly in the background —
+    // if it turns up a season this list doesn't have, rebuild the list (only
+    // while it's still on screen). The rebuild reads the now-cached TVmaze
+    // data, so this runs at most once per show.
+    if (this._tvmazeCachedSync(showTitle) === undefined) {
+      const _firstRow = content.querySelector('.tv-season-row');
+      this._tvmazeEpisodes(showTitle).then(tm => {
+        const most = (tm || []).reduce((m, e) => Math.max(m, e.season || 0), 0);
+        if (most > totalSeasons && _firstRow?.isConnected && content.contains(_firstRow)) {
+          const _scroll = content.scrollTop;
+          this._showTvSeasons(content, data, artUrl).then(() => { content.scrollTop = _scroll; });
+        }
+      }).catch(() => {});
+    }
   }
 
   // ── TV Episodes list ─────────────────────────────────────────────────────────
-  async _showTvEpisodes(content, data, seasonNum, artUrl) {
+  async _showTvEpisodes(content, data, seasonNum, artUrl, onBack = null) {
     const savedHtml = content.innerHTML;
     const savedScroll = content.scrollTop;
     const showTitle = data.title || '';
     const agentId = this._config?.ai_conversation_agent || 'conversation.home_assistant';
 
-    this.shadowRoot?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
-    content.innerHTML = `
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
-        <button id="tv-eps-back" style="width:28px;height:28px;border-radius:50%;background:${this._pt("btnBg")};border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;-webkit-tap-highlight-color:transparent;">
-          <svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:${this._pt("text")}"><path d="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z"/></svg>
-        </button>
-        <div style="flex:1;min-width:0;">
-          <div style="font-size:15px;font-weight:700;color:${this._pt("text")};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${showTitle}</div>
-          <div style="font-size:11px;color:${this._pt("dim")};">Season ${seasonNum}</div>
-        </div>
-      </div>
-      <div style="display:flex;flex-direction:column;align-items:center;gap:10px;padding:24px;">
-        <div style="width:20px;height:20px;border:2.5px solid rgba(99,179,237,0.2);border-top-color:#63b3ed;border-radius:50%;animation:ma-spin 0.8s linear infinite;"></div>
-        <div style="font-size:12px;color:${this._pt("dim")};">Loading episodes…</div>
-      </div>`;
-
     const self = this;
-    content.querySelector('#tv-eps-back').addEventListener('click', () => {
-      self._showTvSeasons(content, data, artUrl);
-    });
+    // Back to the seasons list — restores the parked view if we came from
+    // it, otherwise rebuilds it.
+    const _goBack = () => {
+      if (typeof onBack === 'function') onBack();
+      else self._showTvSeasons(content, data, artUrl);
+    };
 
     // Fetch episodes from AI
     if (!this._tvEpisodesCache) this._tvEpisodesCache = new Map();
     const cacheKey = `${showTitle.toLowerCase()}|s${seasonNum}|v2`; // v2 = includes tease field
-    let episodes = this._aiCachedRead(this._tvEpisodesCache, 'tvEpisodes', cacheKey);
-    if (!episodes) {
+    // A season newer than the show's info knows about — TVmaze is the
+    // reliable source for that, so try it before the AI.
+    let episodes;
+    if (seasonNum > (data.seasons || 0)) {
+      const _tmNew = (await this._tvmazeEpisodes(showTitle)) || [];
+      const _season = _tmNew.filter(e => e.season === Number(seasonNum));
+      if (_season.length) episodes = _season.map(({ ep, title, airdate, overview }) => ({ ep, title, airdate, overview }));
+    }
+    if (!episodes?.length) episodes = this._aiCachedRead(this._tvEpisodesCache, 'tvEpisodes', cacheKey);
+    // Already have TVmaze's list for this show? Use it rather than asking the
+    // AI again (which is what made the list reload every time).
+    if (!episodes?.length) {
+      const _tmc = this._tvmazeCachedSync(showTitle);
+      const _season = (_tmc || []).filter(e => e.season === Number(seasonNum));
+      if (_season.length) episodes = _season.map(({ ep, title, airdate, overview }) => ({ ep, title, airdate, overview }));
+    }
+    if (!episodes?.length) {
+      // Only show the loading state when there's genuinely something to fetch
+    this.shadowRoot?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
+      content.innerHTML = `
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+          <button id="tv-eps-back" style="width:28px;height:28px;border-radius:50%;background:${this._pt("btnBg")};border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;-webkit-tap-highlight-color:transparent;">
+            <svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:${this._pt("text")}"><path d="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z"/></svg>
+          </button>
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:15px;font-weight:700;color:${this._pt("text")};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${showTitle}</div>
+            <div style="font-size:11px;color:${this._pt("dim")};">Season ${seasonNum}</div>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:24px;min-height:calc(100% - 60px);box-sizing:border-box;">
+          <div style="width:28px;height:28px;border:2.5px solid rgba(99,179,237,0.25);border-top-color:#63b3ed;border-radius:50%;animation:ma-spin 0.8s linear infinite;"></div>
+          <div style="font-size:12px;color:${this._pt("dim")};">Loading episodes…</div>
+        </div>`;
+  
+      content.querySelector('#tv-eps-back')?.addEventListener('click', _goBack);
+
       try {
         const prompt = `List all episodes of Season ${seasonNum} of "${showTitle}". Reply ONLY with a JSON array — no markdown:\n[{"ep":1,"title":"Episode Title","airdate":"YYYY-MM-DD","tease":"Under 10 words, spoiler-free teaser"}]\nKeep teases intriguing but spoiler-free — no plot reveals.`;
-        const resp = await this._aiProcess({
+        const resp = await this._aiProcess({ _crowFallback: true,
           type: 'conversation/process', text: prompt, agent_id: agentId, language: navigator.language || 'en'
         });
         const raw = resp?.response?.speech?.plain?.speech || '';
@@ -29831,9 +30204,7 @@ Include ALL tracks. Use null for unknown fields.`;
           <div style="font-size:15px;font-weight:700;color:${this._pt("text")};">${showTitle} — Season ${seasonNum}</div>
         </div>
         <div style="padding:24px;text-align:center;font-size:13px;color:${this._pt("dim")};">Couldn't load episodes — try again.</div>`;
-      content.querySelector('#tv-eps-back2').addEventListener('click', () => {
-        self._showTvSeasons(content, data, artUrl);
-      });
+      content.querySelector('#tv-eps-back2').addEventListener('click', _goBack);
       return;
     }
 
@@ -29863,21 +30234,30 @@ Include ALL tracks. Use null for unknown fields.`;
       </div>
       <div style="display:flex;flex-direction:column;gap:6px;">${epRows}</div>`;
 
-    content.querySelector('#tv-eps-back').addEventListener('click', () => {
-      self._showTvSeasons(content, data, artUrl);
-    });
+    content.querySelector('#tv-eps-back').addEventListener('click', _goBack);
 
     content.querySelectorAll('.tv-ep-row').forEach(row => {
       row.addEventListener('click', () => {
         const epIdx = parseInt(row.dataset.ep, 10) - 1;
         const ep = episodes[epIdx] || episodes.find(e => e.ep === parseInt(row.dataset.ep, 10));
-        if (ep) self._showTvEpisodeDetail(content, ep, data, seasonNum, artUrl);
+        if (!ep) return;
+        // Park this list (the real nodes, handlers and all) so Back from the
+        // episode puts it straight back at the same scroll position — no
+        // rebuild, no spinner.
+        const _parked = document.createDocumentFragment();
+        const _scroll = content.scrollTop;
+        while (content.firstChild) _parked.appendChild(content.firstChild);
+        self._showTvEpisodeDetail(content, ep, data, seasonNum, artUrl, () => {
+          content.innerHTML = '';
+          content.appendChild(_parked);
+          content.scrollTop = _scroll;
+        });
       });
     });
   }
 
   // ── TV Episode detail ────────────────────────────────────────────────────────
-  async _showTvEpisodeDetail(content, ep, showData, seasonNum, artUrl) {
+  async _showTvEpisodeDetail(content, ep, showData, seasonNum, artUrl, onBack = null) {
     const showTitle = showData.title || '';
     const agentId = this._config?.ai_conversation_agent || 'conversation.home_assistant';
     const aiOn = this._aiEnabled();
@@ -29888,8 +30268,25 @@ Include ALL tracks. Use null for unknown fields.`;
       const overviewHtml = overview
         ? `<div style="font-size:13px;color:${this._pt("text")};line-height:1.6;margin-top:12px;">${overview}</div>`
         : '';
-      const writerHtml = detail?.writer ? `<div style="font-size:11px;color:${this._pt("dim")};margin-top:6px;">Written by <span class="ep-writer-link" data-name="${(detail.writer||'').replace(/"/g,'&quot;')}" style="color:#63b3ed;cursor:pointer;-webkit-tap-highlight-color:transparent;">${detail.writer}</span></div>` : '';
-      const directorHtml = detail?.director ? `<div style="font-size:11px;color:${this._pt("dim")};margin-top:2px;">Directed by <span class="ep-director-link" data-name="${(detail.director||'').replace(/"/g,'&quot;')}" style="color:#63b3ed;cursor:pointer;-webkit-tap-highlight-color:transparent;">${detail.director}</span></div>` : '';
+      // Writer / director as tappable pills (same style as the artist and
+      // album pills in the music info panel). Several names split into
+      // separate pills; someone who both wrote and directed gets one pill.
+      const _names = v => String(v || '').split(/\s*(?:,|&|\band\b)\s*/i).map(x => x.trim()).filter(Boolean).slice(0, 3);
+      const _writers = _names(detail?.writer), _directors = _names(detail?.director);
+      const _penIcon  = 'M20.71,7.04C21.1,6.65 21.1,6 20.71,5.63L18.37,3.29C18,2.9 17.35,2.9 16.96,3.29L15.12,5.12L18.87,8.87M3,17.25V21H6.75L17.81,9.93L14.06,6.18L3,17.25Z';
+      const _clapIcon = 'M18,4L20,8H17L15,4H13L15,8H12L10,4H8L10,8H7L5,4H4A2,2 0 0,0 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V4H18Z';
+      const _pill = (cls, name, icon, tip, prefix = '') =>
+        `<div class="${cls}" data-name="${esc(name)}" title="${esc(tip)}" role="button" style="display:inline-flex;align-items:center;gap:5px;background:rgba(99,179,237,0.1);border:1px solid rgba(99,179,237,0.25);border-radius:20px;padding:4px 10px;cursor:pointer;-webkit-tap-highlight-color:transparent;max-width:100%;overflow:hidden;box-sizing:border-box;line-height:1;height:26px;"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:#63b3ed;flex-shrink:0"><path d="${icon}"/></svg><span style="font-size:11px;color:#63b3ed;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${prefix}${esc(name)}</span></div>`;
+      const _creditPills = [
+        ..._writers.map(n => _directors.some(x => x.toLowerCase() === n.toLowerCase())
+          ? _pill('ep-writer-link', n, _clapIcon, 'Written and directed by ' + n)
+          : _pill('ep-writer-link', n, _penIcon, 'Written by ' + n)),
+        ..._directors.filter(n => !_writers.some(x => x.toLowerCase() === n.toLowerCase()))
+          .map(n => _pill('ep-director-link', n, _clapIcon, 'Directed by ' + n, 'Dir. ')),
+      ];
+      const creditsHtml = _creditPills.length
+        ? `<div style="margin-top:7px;display:flex;flex-wrap:wrap;gap:5px;align-items:center;">${_creditPills.join('')}</div>`
+        : '';
       const funFactHtml = detail?.fun_fact ? `<div style="margin-top:12px;padding:10px 12px;background:rgba(99,179,237,0.07);border:1px solid rgba(99,179,237,0.14);border-radius:10px;"><div style="font-size:10px;font-weight:700;color:rgba(99,179,237,0.6);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:4px;">Fun Fact</div><div style="font-size:12px;color:${this._pt("text")};line-height:1.5;">${detail.fun_fact}</div></div>` : '';
 
       // Hero — same layout as Watch History's title drill-in: artwork box,
@@ -29909,6 +30306,7 @@ Include ALL tracks. Use null for unknown fields.`;
             <div style="font-size:10px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:#A78BFA;margin-bottom:4px;">Season ${seasonNum} \u00b7 Episode ${ep.ep}</div>
             <div style="font-size:16px;font-weight:700;color:${this._pt('text')};line-height:1.25;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;">${esc(ep.title || 'Episode ' + ep.ep)}</div>
             <div style="font-size:12px;color:${this._pt('dim')};margin-top:4px;line-height:1.45;">${stats.map(esc).join(' \u00b7 ')}</div>
+            ${creditsHtml}
           </div>
         </div>`;
 
@@ -29936,13 +30334,13 @@ Include ALL tracks. Use null for unknown fields.`;
         ${heroHtml}
         ${actionsHtml}
         ${overviewHtml}
-        ${writerHtml}${directorHtml}
         ${funFactHtml}
         <div style="height:8px;"></div>`;
 
       const self = this;
       content.querySelector('#tv-ep-detail-back').addEventListener('click', () => {
-        self._showTvEpisodes(content, showData, seasonNum, artUrl);
+        if (typeof onBack === 'function') onBack();
+        else self._showTvEpisodes(content, showData, seasonNum, artUrl);
       });
       content.querySelectorAll('.ep-director-link, .ep-writer-link').forEach(el => {
         el.addEventListener('click', () => { self._showCastBio(content, el.dataset.name, showTitle, artUrl); });
@@ -29969,7 +30367,7 @@ Include ALL tracks. Use null for unknown fields.`;
       content.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;"><div style="width:28px;height:28px;border:2.5px solid rgba(99,179,237,0.25);border-top-color:#63b3ed;border-radius:50%;animation:ma-spin 0.8s linear infinite;"></div></div>`;
       try {
         const prompt = `Give details for S${seasonNum}E${ep.ep} "${ep.title || ''}" of the TV series "${showTitle}". Reply ONLY with JSON — no markdown: {"overview":"2-3 sentence synopsis","director":"Name","writer":"Name","rating":"8.1","fun_fact":"One interesting behind-the-scenes fact"}`;
-        const resp = await this._aiProcess({
+        const resp = await this._aiProcess({ _crowFallback: true,
           type: 'conversation/process', text: prompt, agent_id: agentId, language: navigator.language || 'en'
         });
         const raw = resp?.response?.speech?.plain?.speech || '';
@@ -30201,7 +30599,7 @@ Include ALL tracks. Use null for unknown fields.`;
       const prompt = isMusicContext
         ? 'Give me a short biography of the musician "' + name + '" known for their work with "' + (showTitle || '') + '". Reply ONLY with JSON: {"known_for":[{"title":"Song or Album 1","year":"YYYY","type":"song"},{"title":"Song or Album 2","year":"YYYY","type":"album"},{"title":"Song or Album 3","year":"YYYY","type":"song"}],"born":"1970","nationality":"American","bio":"2 sentence overview","fun_fact":"One surprising fact about them"}'
         : 'Give me a short biography of the actor/actress "' + name + '" known for appearing in "' + (showTitle || '') + '". Reply ONLY with JSON: {"known_for":[{"title":"Work 1","year":"YYYY","type":"tv"},{"title":"Work 2","year":"YYYY","type":"movie"},{"title":"Work 3","year":"YYYY","type":"tv"}],"born":"1970","nationality":"American","bio":"2 sentence overview","fun_fact":"One surprising fact about them"}';
-      const resp = await this._aiProcess({
+      const resp = await this._aiProcess({ _crowFallback: true,
         type: 'conversation/process', _crowSilent: true, text: prompt, agent_id: agentId, language: navigator.language || 'en'
       });
       const raw = resp?.response?.speech?.plain?.speech || '';
@@ -30252,9 +30650,51 @@ Include ALL tracks. Use null for unknown fields.`;
   async _showCastBio(content, name, showTitle, artUrl, onBack) {
     const savedHtml = content.innerHTML;
     const savedScroll = content.scrollTop;
+    const _escB = v => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    // Header: the panel we came from may say "Discogs Info", "TMDB Info"
+    // etc. — that's about the track or title, not this person, so show a
+    // plain label while the bio is open and put the original back on Back.
+    const _bioTitleEl = this.shadowRoot?.getElementById('infoPopupTitle');
+    const _savedHeader = _bioTitleEl?.textContent || '';
+    // The header itself becomes the back button + the person's name; the
+    // in-panel back row is hidden. The header button just presses that
+    // hidden button, so every existing Back path (onBack callbacks, photo
+    // clean-up) runs exactly as before.
+    const _savedHeaderStyle = _bioTitleEl?.getAttribute('style') || '';
+    if (_bioTitleEl) {
+      _bioTitleEl.setAttribute('style', 'display:flex;align-items:center;gap:10px;min-width:0;flex:1;');
+      _bioTitleEl.innerHTML =
+        `<button id="infoHeaderBioBack" aria-label="Back" style="width:28px;height:28px;border-radius:50%;background:${this._pt("btnBg")};border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;padding:0;-webkit-tap-highlight-color:transparent;">`
+        + `<svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:${this._pt("text")}"><path d="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z"/></svg></button>`
+        + `<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;">${_escB(name)}</span>`;
+      _bioTitleEl.querySelector('#infoHeaderBioBack')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        content.querySelector('#cast-bio-back')?.click();
+      });
+    }
+    const _resetHeaderStyle = () => {
+      if (!_bioTitleEl) return;
+      if (_savedHeaderStyle) _bioTitleEl.setAttribute('style', _savedHeaderStyle); else _bioTitleEl.removeAttribute('style');
+    };
+    const _restoreHeader = () => {
+      _resetHeaderStyle();
+      if (_bioTitleEl && _savedHeader) _bioTitleEl.textContent = _savedHeader;
+    };
+    // Left the bio some other way (a Known For item, closing the panel…)?
+    // Drop the header back button as soon as the bio is gone.
+    const _bioObserver = new MutationObserver(() => {
+      if (content.querySelector('#cast-bio-back')) return;
+      _bioObserver.disconnect();
+      const btn = _bioTitleEl?.querySelector('#infoHeaderBioBack');
+      if (btn) { btn.remove(); _resetHeaderStyle(); }
+    });
+    _bioObserver.observe(content, { childList: true });
+    const _hideBioBackRow = () => {
+      const row = content.querySelector('#cast-bio-back')?.parentElement;
+      if (row) row.style.display = 'none';
+    };
     // Ask / Trivia are AI features — left out entirely when AI is off
     const aiOn = this._aiEnabled();
-    const _escB = v => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     this.shadowRoot?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
 
     // Show bio immediately with placeholder photo, then load async
@@ -30265,54 +30705,32 @@ Include ALL tracks. Use null for unknown fields.`;
 
       const metaLine = [bio?.born ? 'b. ' + bio.born : null, bio?.nationality].filter(Boolean).join(' · ');
 
-      // Loading state — header, photo placeholder, and the Ask/Trivia action
-      // row all render and get wired immediately here, exactly like the
-      // final render below. Only the bio text/fun-fact/Known-For section —
-      // the part that actually depends on the AI + Wikipedia round-trip —
-      // shows a spinner. Previously the entire panel (including these
-      // buttons) was replaced with nothing but a spinner until both
-      // requests finished, which meant Ask/Trivia (and anything else on
-      // this panel) were simply absent from the DOM and couldn't be tapped
-      // until loading completed. Mirrors the fix already applied to
-      // _showAITrackInfo for the same reason.
       if (isLoading) {
+        // Loading: keep the back row so the user can leave, and fill the rest
+        // with the same centred ring + caption used by every other info view.
         this.shadowRoot?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
         content.innerHTML = `
+        <div style="display:flex;flex-direction:column;height:100%;">
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
             <button id="cast-bio-back" style="width:28px;height:28px;border-radius:50%;background:${this._pt("btnBg")};border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;-webkit-tap-highlight-color:transparent;">
               <svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:${this._pt("text")}"><path d="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z"/></svg>
             </button>
             <div style="font-size:15px;font-weight:700;color:${this._pt("text")}">${name}</div>
           </div>
-          <div style="display:flex;gap:14px;align-items:flex-start;margin-bottom:16px;">
-            <div id="cast-bio-photo" style="width:80px;height:80px;border-radius:50%;background:${this._pt("bg")};border:2px solid rgba(255,255,255,0.1);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
-              <div style="width:20px;height:20px;border:2.5px solid rgba(99,179,237,0.2);border-top-color:#63b3ed;border-radius:50%;animation:ma-spin 0.8s linear infinite;"></div>
-            </div>
-            <div style="flex:1;min-width:0;display:flex;align-items:center;gap:7px;padding-top:8px;">
-              <div style="width:12px;height:12px;border:1.5px solid rgba(99,179,237,0.25);border-top-color:#63b3ed;border-radius:50%;animation:ma-spin 0.8s linear infinite;flex-shrink:0;"></div>
-              <span style="font-size:12px;color:${this._pt("dim")};">Looking up ${name}…</span>
-            </div>
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:24px;">
+            <div style="width:28px;height:28px;border:2.5px solid rgba(99,179,237,0.25);border-top-color:#63b3ed;border-radius:50%;animation:ma-spin 0.8s linear infinite;"></div>
+            <div style="font-size:12px;color:${this._pt("dim")};">Looking up ${_escB(name)}…</div>
           </div>
-          ${aiOn ? `<div id="bio-action-row" style="display:flex;gap:8px;margin:14px 0 8px;">
-            <button id="bio-ask-btn" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:9px 12px;border-radius:12px;background:${this._pt('btnBg')};border:1px solid ${this._pt('border')};color:${this._pt('text')};font-size:12px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;-webkit-tap-highlight-color:transparent;">
-              <svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:rgba(99,179,237,0.8);flex-shrink:0"><path d="M20,2H4A2,2 0 0,0 2,4V22L6,18H20A2,2 0 0,0 22,16V4A2,2 0 0,0 20,2M6,9H18V11H6V9M14,14H6V12H14V14M18,8H6V6H18V8Z"/></svg>
-              Ask
-            </button>
-            <button id="bio-trivia-btn" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:9px 12px;border-radius:12px;background:${this._pt('btnBg')};border:1px solid ${this._pt('border')};color:${this._pt('text')};font-size:12px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;-webkit-tap-highlight-color:transparent;">
-              <svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:rgba(99,179,237,0.8);flex-shrink:0"><path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"/></svg>
-              Trivia
-            </button>
-          </div>
-          <div id="bio-ask-panel" style="display:none;margin-bottom:12px;"></div>
-          <div id="bio-trivia-panel" style="display:none;margin-bottom:12px;"></div>` : ''}`;
+        </div>`;
+        _hideBioBackRow();
         content.querySelector('#cast-bio-back')?.addEventListener('click', () => {
           this.shadowRoot?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
+          _restoreHeader();
           if (typeof onBack === 'function') { onBack(); return; }
           content.innerHTML = savedHtml;
           content.scrollTop = savedScroll;
           this._rewireCastClicks(content, showTitle, artUrl);
         });
-        if (aiOn) this._wireBioActionRow(content, name, showTitle);
         return;
       }
 
@@ -30390,9 +30808,11 @@ Include ALL tracks. Use null for unknown fields.`;
             }).join('')}
           </div>` : ''}`;
 
+      _hideBioBackRow();
       content.querySelector('#cast-bio-back').addEventListener('click', () => {
         this.shadowRoot?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
-        if (typeof onBack === 'function') { onBack(); return; }
+        _restoreHeader();
+          if (typeof onBack === 'function') { onBack(); return; }
         content.innerHTML = savedHtml;
         content.scrollTop = savedScroll;
         this._rewireCastClicks(content, showTitle, artUrl);
@@ -30463,7 +30883,7 @@ Include ALL tracks. Use null for unknown fields.`;
         const prompt = isMusicContext
           ? 'Give me a short biography of the musician "' + name + '" known for their work with "' + showTitle + '". Reply ONLY with JSON: {"known_for":[{"title":"Song or Album 1","year":"YYYY","type":"song"},{"title":"Song or Album 2","year":"YYYY","type":"album"},{"title":"Song or Album 3","year":"YYYY","type":"song"}],"born":"1970","nationality":"American","bio":"2 sentence overview","fun_fact":"One surprising fact about them"}'
           : 'Give me a short biography of the actor/actress "' + name + '" known for appearing in "' + showTitle + '". Reply ONLY with JSON: {"known_for":[{"title":"Work 1","year":"YYYY","type":"tv"},{"title":"Work 2","year":"YYYY","type":"movie"},{"title":"Work 3","year":"YYYY","type":"tv"}],"born":"1970","nationality":"American","bio":"2 sentence overview","fun_fact":"One surprising fact about them"}';
-        const resp = await this._aiProcess({
+        const resp = await this._aiProcess({ _crowFallback: true,
           type: 'conversation/process', text: prompt, agent_id: agentId, language: navigator.language || 'en'
         });
         const raw = resp?.response?.speech?.plain?.speech || '';
@@ -30553,7 +30973,7 @@ Include ALL tracks. Use null for unknown fields.`;
               const _agentId = _self._config?.ai_conversation_agent || 'conversation.home_assistant';
               const _typeLabel = kType === 'tv' ? 'TV show' : 'movie';
               const _kPrompt = `You are a movie and TV encyclopedia. For the ${_typeLabel} "${kTitle}"${kYear ? ` (${kYear})` : ''}, return a single JSON object (no array, no markdown): {"type":"${kType}","title":"${kTitle}","year":"${kYear||''}","genres":["Genre"],"rating":"8.0","overview":"2 sentence overview","cast":["Name1","Name2","Name3","Name4","Name5","Name6"],"director":"Name or null","status":"Released or Continuing","vibe":"Short vibe","fun_fact":"One interesting fact","similar":[{"title":"Title","year":"YYYY","type":"${kType}"}]}`;
-              const _kResp = await _self._aiProcess({
+              const _kResp = await _self._aiProcess({ _crowFallback: true,
                 type: 'conversation/process', text: _kPrompt,
                 agent_id: _agentId, language: navigator.language || 'en'
               });
@@ -32865,31 +33285,111 @@ Include ALL tracks. Use null for unknown fields.`;
     }
     this._aiReport(e, false);
   }
+  // ── AI pause ("circuit breaker") ──────────────────────────────────────────
+  // Once the AI is known to be failing, _aiProcess refuses requests straight
+  // away (silently) for a while, so every panel goes directly to its
+  // Discogs / TVmaze / Wikipedia fallback instead of waiting for the AI to
+  // fail again. Kept in sessionStorage so a page refresh remembers it and
+  // the editor's "Try AI Again" button can clear it.
+  //   quota   → 2 min, then 10, then 30 if it keeps happening
+  //   timeout → 2 min, after two in a row
+  //   auth / model / agent → until the card settings change or a reload
+  _aiPauseGet() {
+    try {
+      const p = JSON.parse(sessionStorage.getItem('crow_ai_pause') || 'null');
+      if (!p) return null;
+      if (p.perm) return p;
+      if (Date.now() < (p.until || 0)) return p;
+    } catch (_) {}
+    return null;
+  }
+  _aiPauseClear() {
+    try { sessionStorage.removeItem('crow_ai_pause'); } catch (_) {}
+    this._aiTimeoutStreak = 0;
+    this._aiRateLimitUntil = 0;
+  }
+  // Called for every failed request; returns true if this failure started a pause
+  _aiPauseNote(kind) {
+    let next = null;
+    let prev = null;
+    try { prev = JSON.parse(sessionStorage.getItem('crow_ai_pause') || 'null'); } catch (_) {}
+    if (kind === 'quota') {
+      // Escalate if the last quota pause ended within the past hour
+      const recent = prev?.kind === 'quota' && Date.now() - (prev.until || 0) < 3600000;
+      const level = recent ? Math.min((prev.level || 0) + 1, 2) : 0;
+      next = { kind, level, until: Date.now() + [2, 10, 30][level] * 60000 };
+    } else if (kind === 'timeout') {
+      this._aiTimeoutStreak = (this._aiTimeoutStreak || 0) + 1;
+      if (this._aiTimeoutStreak >= 2) next = { kind, level: 0, until: Date.now() + 2 * 60000 };
+    } else if (kind === 'auth' || kind === 'model' || kind === 'agent') {
+      next = { kind, perm: true, agent: this._config?.ai_conversation_agent || '' };
+    }
+    if (!next) return false;
+    try { sessionStorage.setItem('crow_ai_pause', JSON.stringify(next)); } catch (_) {}
+    if (kind === 'quota') this._aiRateLimitUntil = next.until;
+    // One message when the pause starts — nothing more until it's over
+    const why = { quota: 'The AI has reached its usage limit', timeout: 'The AI isn\u2019t answering', auth: 'The AI couldn\u2019t sign in', model: 'The AI model isn\u2019t available', agent: 'No AI agent is set up' }[kind];
+    this._showToast('\u26a0\ufe0f ' + why + ' \u2014 using Discogs, TVmaze and Wikipedia for now', 6000);
+    this._aiErrorToastAt = Date.now();
+    return true;
+  }
+  _aiPauseUntilLabel(p) {
+    if (!p) return '';
+    if (p.perm) return 'until the AI settings change';
+    return 'until ' + new Date(p.until).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  }
+
   async _aiProcess(msg, opts = {}) {
     const silent = !!(opts.silent || msg?._crowSilent);
+    // Panels that have a fallback (Discogs / TVmaze / Wikipedia) wait 25s
+    // rather than 30s before giving up on the AI. (12s was too short: a full
+    // track-info answer can legitimately take 10–20 seconds to arrive.)
+    const hasFallback = !!(opts.fallback || msg?._crowFallback);
     const send = { ...msg };
     delete send._crowSilent;
+    delete send._crowFallback;
     const fail = (kind, text) => { const e = new Error(text || kind); e.kind = kind; this._aiReport(e, silent); return e; };
     // Master switch backstop — no request ever reaches the conversation
     // agent while AI features are off, even from an entry point that
     // forgot its own check. Thrown pre-reported so no error toast shows.
     if (!this._aiEnabled()) { const e = new Error('AI features disabled'); e.kind = 'disabled'; e._reported = true; throw e; }
     if (!this._hass?.connection) throw fail('offline');
+    // Paused after a recent failure — refuse instantly and silently so the
+    // caller's fallback runs straight away.
+    const _paused = this._aiPauseGet();
+    if (_paused) { const e = new Error('AI paused (' + _paused.kind + ')'); e.kind = _paused.kind; e._reported = true; e._paused = true; throw e; }
+    // No agent at all (known from the session's earlier agent check)
+    let _noAgent = false;
+    try { _noAgent = this._aiAvailable === false && sessionStorage.getItem('crow_ai_available') === '0'; } catch (_) {}
+    if (_noAgent) {
+      const e = new Error('no AI agent'); e.kind = 'agent'; e._reported = true;
+      this._aiPauseNote('agent');
+      throw e;
+    }
     let timer;
-    const timeout = new Promise((_, rej) => { timer = setTimeout(() => rej(fail('timeout')), opts.timeoutMs || 30000); });
+    const timeout = new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('timeout')), opts.timeoutMs || (hasFallback ? 25000 : 30000)); });
     try {
       const resp = await Promise.race([this._hass.connection.sendMessagePromise(send), timeout]);
       const r = resp?.response;
       const speech = r?.speech?.plain?.speech || '';
       if (r?.response_type === 'error' || /^(sorry, i had a problem|error talking to|unexpected error during intent)/i.test(speech.trim())) {
-        throw fail(this._aiErrorKind(speech + ' ' + (r?.data?.code || '')), speech);
+        const k = this._aiErrorKind(speech + ' ' + (r?.data?.code || ''));
+        const e = new Error(speech || k); e.kind = k;
+        throw e;
       }
+      // Healthy answer — reset the failure counters
+      this._aiTimeoutStreak = 0;
       return resp;
     } catch (e) {
       if (!e?._reported) {
         const k = e?.kind || this._aiErrorKind(e?.message || e?.code || String(e));
-        if (e && typeof e === 'object') { e.kind = k; this._aiReport(e, silent); throw e; }
-        throw fail(k, String(e));
+        const err = (e && typeof e === 'object') ? e : new Error(String(e));
+        err.kind = k;
+        // Starting a pause shows its own single message; otherwise the
+        // usual friendly toast (unless the caller asked for silence).
+        if (this._aiPauseNote(k)) err._reported = true;
+        else this._aiReport(err, silent);
+        throw err;
       }
       throw e;
     } finally { clearTimeout(timer); }
@@ -34086,7 +34586,7 @@ Include ALL tracks. Use null for unknown fields.`;
       { mode: 'play_all', label: _isCollection ? 'Play All' : 'Play Now', icon: '<path d="M8 5v14l11-7z"/>' },
       { mode: 'next',     label: 'Play Next',                              icon: '<path d="M3 13h8V5H3v8zm0 8h8v-6H3v6zm10 0h8v-8h-8v8zm0-18v6h8V3h-8z"/>' },
       { mode: 'add',      label: 'Add to Queue',                           icon: '<path d="M19 11h-6V5h-2v6H5v2h6v6h2v-6h6z"/>' },
-      ...(_isPinnable ? [{ mode: 'pin', label: _isPinned ? 'Unpin' : 'Pin', icon: '<path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/>' }] : []),
+      ...(_isPinnable ? [{ mode: 'pin', danger: _isPinned, label: _isPinned ? 'Unpin' : 'Pin', icon: '<path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/>' }] : []),
       ...(this._aiEnabled() && _itemArtist ? [{ mode: 'artist_radio', label: 'AI Artist Radio', icon: '<path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6zm4 0v2h-2V3h2z"/>' }] : []),
       ...(!_isCollection ? [{ mode: 'copy_link', label: 'Share', icon: '<path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z"/>' }] : []),
       ...(opts.savedQueueRemove ? [{ mode: 'remove_from_saved_queue', label: 'Remove', icon: '<path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/>', danger: true }] : []),
@@ -34139,7 +34639,7 @@ Include ALL tracks. Use null for unknown fields.`;
     });
 
     menu.querySelectorAll('.enqueue-menu-item').forEach(function(el) {
-      el.addEventListener('click', function(e) {
+      el.addEventListener('click', async function(e) {
         e.stopPropagation();
         if (!_menuReady()) return;
         var mode = el.dataset.mode;
@@ -34148,6 +34648,8 @@ Include ALL tracks. Use null for unknown fields.`;
         if (_extra && typeof _extra.onClick === 'function') { _extra.onClick(); return; }
         if (mode === 'pin') {
           const pinTab = _pinTab;
+          if (self._maLibIsStarred(item, pinTab) && !(await self._confirmUnpin(
+            pinTab === 'track' ? 'song' : pinTab === 'radio' ? 'station' : pinTab, self._pinItemName(item)))) return;
           const nowPinned = self._maLibToggleStar(item, pinTab);
           if (nowPinned === null) return;
           self._showToast(nowPinned ? '\ud83d\udccd Pinned' : 'Unpinned');
@@ -34421,7 +34923,7 @@ Include ALL tracks. Use null for unknown fields.`;
 
     menu.innerHTML = speakerHtml +
       strategies.map(s =>
-        '<div class="enqueue-menu-item" data-mode="' + s.mode + '"><svg class="enqueue-menu-icon" viewBox="0 0 24 24">' + s.icon + '</svg><div class="enqueue-menu-label">' + s.label + '</div></div>'
+        '<div class="enqueue-menu-item' + (s.danger ? ' enqueue-menu-item--danger' : '') + '" data-mode="' + s.mode + '"><svg class="enqueue-menu-icon" viewBox="0 0 24 24">' + s.icon + '</svg><div class="enqueue-menu-label">' + s.label + '</div></div>'
       ).join('');
 
     r.appendChild(menu);
@@ -34600,7 +35102,7 @@ Include ALL tracks. Use null for unknown fields.`;
       { mode: 'replace',      label: 'Play Now',      icon: '<path d="M8 5v14l11-7z"/>' },
       { mode: 'next',         label: 'Play Next',     icon: '<path d="M3 13h8V5H3v8zm0 8h8v-6H3v6zm10 0h8v-8h-8v8zm0-18v6h8V3h-8z"/>' },
       { mode: 'add',          label: 'Add to Queue',  icon: '<path d="M19 11h-6V5h-2v6H5v2h6v6h2v-6h6z"/>' },
-      ...(trackUri ? [(() => { const _pi = { uri: trackUri, name: trackTitle, artist: artistName, media_type: 'track' }; return { mode: 'pin', label: this._maLibIsStarred(_pi, 'track') ? 'Unpin Song' : 'Pin Song', icon: '<path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/>' }; })()] : []),
+      ...(trackUri ? [(() => { const _pi = { uri: trackUri, name: trackTitle, artist: artistName, media_type: 'track' }; const _piOn = this._maLibIsStarred(_pi, 'track'); return { mode: 'pin', danger: _piOn, label: _piOn ? 'Unpin Song' : 'Pin Song', icon: '<path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/>' }; })()] : []),
       ...(this._aiEnabled() && artistName ? [{ mode: 'artist_radio', label: 'AI Artist Radio', icon: '<path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6zm4 0v2h-2V3h2z"/>' }] : []),
       { mode: 'copy_link',    label: 'Share',         icon: '<path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z"/>' },
       { mode: 'more_info',    label: 'More Info',     icon: '<path d="M11,9H13V7H11M12,20C7.59,20 4,16.41 4,12C4,7.59 7.59,4 12,4C16.41,4 20,7.59 20,12C20,16.41 16.41,20 12,20M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M11,17H13V11H11V17Z"/>' }
@@ -34608,7 +35110,7 @@ Include ALL tracks. Use null for unknown fields.`;
 
     menu.innerHTML = speakerHtml +
       strategies.map(s =>
-        '<div class="enqueue-menu-item" data-mode="' + s.mode + '"><svg class="enqueue-menu-icon" viewBox="0 0 24 24">' + s.icon + '</svg><div class="enqueue-menu-label">' + s.label + '</div></div>'
+        '<div class="enqueue-menu-item' + (s.danger ? ' enqueue-menu-item--danger' : '') + '" data-mode="' + s.mode + '"><svg class="enqueue-menu-icon" viewBox="0 0 24 24">' + s.icon + '</svg><div class="enqueue-menu-label">' + s.label + '</div></div>'
       ).join('');
 
     r.appendChild(menu);
@@ -34645,7 +35147,7 @@ Include ALL tracks. Use null for unknown fields.`;
     });
 
     menu.querySelectorAll('.enqueue-menu-item').forEach(function(el) {
-      el.addEventListener('click', function(e) {
+      el.addEventListener('click', async function(e) {
         e.stopPropagation();
         if (!_menuReady()) return;
         const mode = el.dataset.mode;
@@ -34655,6 +35157,7 @@ Include ALL tracks. Use null for unknown fields.`;
         } else if (mode === 'pin') {
           if (!trackUri) return;
           const _tPinItem = { uri: trackUri, name: trackTitle, artist: artistName, media_type: 'track' };
+          if (self._maLibIsStarred(_tPinItem, 'track') && !(await self._confirmUnpin('song', trackTitle))) return;
           const nowPinned = self._maLibToggleStar(_tPinItem, 'track');
           if (nowPinned === null) return;
           self._showToast(nowPinned ? '📍 Song pinned' : 'Song unpinned');
@@ -35336,7 +35839,7 @@ Include ALL tracks. Use null for unknown fields.`;
       { mode: 'replace',      label: 'Play Now',           icon: '<path d="M8 5v14l11-7z"/>' },
       { mode: 'next',         label: 'Play Next',          icon: '<path d="M3 13h8V5H3v8zm0 8h8v-6H3v6zm10 0h8v-8h-8v8zm0-18v6h8V3h-8z"/>' },
       { mode: 'add',          label: 'Add to Queue',       icon: '<path d="M19 11h-6V5h-2v6H5v2h6v6h2v-6h6z"/>' },
-      ...(_qPinItem ? [{ mode: 'pin', label: _qIsPinned ? 'Unpin Song' : 'Pin Song', icon: '<path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/>' }] : []),
+      ...(_qPinItem ? [{ mode: 'pin', danger: _qIsPinned, label: _qIsPinned ? 'Unpin Song' : 'Pin Song', icon: '<path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/>' }] : []),
       ...(this._aiEnabled() && artist ? [{ mode: 'artist_radio', label: 'AI Artist Radio', icon: '<path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6zm4 0v2h-2V3h2z"/>'}] : []),
       ...((!isHistory && !isCurrent) ? [{ mode: 'remove', label: 'Remove from Queue', icon: '<path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/>', danger: true }] : []),
       { mode: 'copy_link',    label: 'Share', icon: '<path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z"/>' },
@@ -35417,6 +35920,7 @@ Include ALL tracks. Use null for unknown fields.`;
 
         if (mode === 'pin') {
           if (!_qPinItem) return;
+          if (self._maLibIsStarred(_qPinItem, 'track') && !(await self._confirmUnpin('song', self._pinItemName(_qPinItem)))) return;
           const nowPinned = self._maLibToggleStar(_qPinItem, 'track');
           if (nowPinned === null) return;
           self._showToast(nowPinned ? '📍 Song pinned' : 'Song unpinned');
@@ -35447,6 +35951,12 @@ Include ALL tracks. Use null for unknown fields.`;
         }
 
         if (mode === 'remove') {
+          // Ask first — same iOS-style confirmation as everywhere else
+          if (!(await self._iosConfirm({
+            title: 'Remove from Queue?',
+            message: '\u201c' + (title || 'This song') + '\u201d' + (artist ? ' by ' + artist : '') + ' will be removed from the queue.',
+            confirmLabel: 'Remove', destructive: true,
+          }))) return;
           // Remove this track from the queue.
           // Drops the row + purges every place it could resurrect from:
           //  - live DOM lookup by queue-item id (anchorEl may be DETACHED if the
@@ -35937,6 +36447,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       _applyCardGlassAvailability(on);
     };
     _applyHaThemeUi(this._config.use_ha_theme === true);
+    this._applyHaThemeUi = _applyHaThemeUi; // also needed by the toggle's change handler
     const lyricsScrollMode = this._config.lyrics_scroll_mode || 'highlight';
     ['highlight', 'scroll', 'none'].forEach(v => {
       const el = root.getElementById('lsm_' + v);
@@ -36607,6 +37118,13 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                 </div>
                 <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.07);">
                   <div>
+                    <div style="font-size:13px;font-weight:500;margin-bottom:2px;">TV Episode Cache</div>
+                    <span style="font-size:12px;color:#888;" id="tv-episode-cache-status">Calculating…</span>
+                  </div>
+                  <button id="tv-episode-cache-clear-btn" style="font-size:12px;font-weight:500;color:#ff453a;background:rgba(255,69,58,0.12);border:1px solid rgba(255,69,58,0.3);border-radius:8px;padding:5px 12px;cursor:pointer;white-space:nowrap;">Clear</button>
+                </div>
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.07);">
+                  <div>
                     <div style="font-size:13px;font-weight:500;margin-bottom:2px;">HA Registry</div>
                     <span style="font-size:12px;color:#888;" id="registry-cache-status">Calculating…</span>
                   </div>
@@ -36803,6 +37321,10 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
             <div class="ai-dep" style="margin-bottom:12px;">
               <div style="font-size:13px;font-weight:500;margin-bottom:6px;color:var(--primary-text-color, #111);">AI Agent <span class="editor-tooltip"><span class="tooltip-icon" tabindex="0">i</span><span class="tooltip-text">The AI agent used for all AI features. Google Gemini with a current Flash model is recommended — add the Google Generative AI integration under Settings → Devices &amp; Services first.</span></span></div>
               <div style="font-size:11px;color:#888;margin-bottom:8px;line-height:1.4;">Used for all AI features — Recommendations, Mood, Search, Info panels and Announce AI.</div>
+              <div id="ai-pause-row" style="display:none;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;padding:10px 12px;border-radius:10px;background:rgba(255,159,10,0.10);border:1px solid rgba(255,159,10,0.3);">
+                <div id="ai-pause-status" style="font-size:12px;line-height:1.4;color:var(--primary-text-color,#fff);"></div>
+                <button id="ai-pause-retry-btn" style="flex-shrink:0;padding:7px 12px;font-size:12px;font-weight:600;color:#fff;background:#007AFF;border:none;border-radius:8px;cursor:pointer;font-family:inherit;">Try AI Again</button>
+              </div>
               <select id="ai_conversation_agent" style="width:100%;background:var(--card-background-color,rgba(255,255,255,0.07));border:1px solid var(--divider-color,rgba(128,128,128,0.2));border-radius:10px;color:var(--primary-text-color,#fff);font-size:13px;font-family:inherit;padding:10px 12px;outline:none;-webkit-appearance:none;cursor:pointer;">
                 <option value="">Default (Home Assistant)</option>
               </select>
@@ -37426,7 +37948,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
     root.getElementById('volume_control_btn').onchange   = (e) => this._updateConfig('volume_control', e.target.checked ? 'buttons' : 'slider');
     root.getElementById('show_vol_pct').onchange         = (e) => this._updateConfig('show_vol_pct', e.target.checked);
     root.getElementById('scroll_text').onchange          = (e) => this._updateConfig('scroll_text',   e.target.checked);
-    root.getElementById('use_ha_theme').onchange         = (e) => { this._updateConfig('use_ha_theme', e.target.checked); _applyHaThemeUi(e.target.checked); };
+    root.getElementById('use_ha_theme').onchange         = (e) => { this._updateConfig('use_ha_theme', e.target.checked); this._applyHaThemeUi?.(e.target.checked); };
     ['highlight', 'scroll', 'none'].forEach(v => {
       const el = root.getElementById('lsm_' + v);
       if (el) el.onchange = () => this._updateConfig('lyrics_scroll_mode', v);
@@ -37710,7 +38232,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
     const updateAISessionCacheStatus = () => {
       try {
         let count = Object.keys(sessionStorage).filter(k => k.startsWith('crow_ai_')).length;
-        ['videoInfo','recs','moodUriCache','similarArtists','searchResults','tvEpCount','castBio','moviePoster','wtw','cw','meaning','trivia','mTrivia','bioTrivia','dayMusic','mood'].forEach(name => {
+        ['albumTracks','epTrivia','libSearch','pcBio','pcEpisodes','rbBio','trackInfo','tvEpisodes','tvEpDetail','videoInfo','recs','moodUriCache','similarArtists','searchResults','tvEpCount','castBio','moviePoster','wtw','cw','meaning','trivia','mTrivia','bioTrivia','dayMusic','mood'].forEach(name => {
           try {
             const store = JSON.parse(localStorage.getItem('crow_ai_local_' + name) || '{}');
             count += Object.keys(store).length;
@@ -37731,7 +38253,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
         // Also clear the longer-lived localStorage layer (_aiLocalGet/_aiLocalSet,
         // 30-day expiry) — without this, pressing "Clear Cache" looked complete
         // but stale results would just get re-hydrated from here on next lookup.
-        ['videoInfo','recs','moodUriCache','similarArtists','searchResults','tvEpCount','castBio','moviePoster','wtw','cw','meaning','trivia','mTrivia','bioTrivia','dayMusic','mood']
+        ['albumTracks','epTrivia','libSearch','pcBio','pcEpisodes','rbBio','trackInfo','tvEpisodes','tvEpDetail','videoInfo','recs','moodUriCache','similarArtists','searchResults','tvEpCount','castBio','moviePoster','wtw','cw','meaning','trivia','mTrivia','bioTrivia','dayMusic','mood']
           .forEach(name => localStorage.removeItem('crow_ai_local_' + name));
       } catch(_) {}
       // Also clear in-memory AI caches on the card
@@ -37741,6 +38263,63 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
         _ce._aiAvailable = undefined;
         _ce._maConfigEntryId = null;
       }
+      updateAISessionCacheStatus();
+    };
+
+    // ── AI pause status ─────────────────────────────────────────────────────
+    // Shows when the card has paused the AI after a failure (usage limit,
+    // timeouts, sign-in…), and lets you clear it straight away.
+    const aiPauseRow    = root.getElementById('ai-pause-row');
+    const aiPauseStatus = root.getElementById('ai-pause-status');
+    const aiPauseRetry  = root.getElementById('ai-pause-retry-btn');
+    const updateAiPause = () => {
+      let p = null;
+      try { p = JSON.parse(sessionStorage.getItem('crow_ai_pause') || 'null'); } catch (_) {}
+      if (p && !p.perm && Date.now() >= (p.until || 0)) p = null;
+      if (!aiPauseRow) return;
+      if (!p) { aiPauseRow.style.display = 'none'; return; }
+      const why = { quota: 'usage limit reached', timeout: 'not answering', auth: 'couldn\u2019t sign in', model: 'model not available', agent: 'no AI agent found' }[p.kind] || p.kind;
+      const until = p.perm ? 'until the AI settings change' : 'until ' + new Date(p.until).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+      aiPauseStatus.textContent = 'AI paused (' + why + ') ' + until + '. Discogs, TVmaze and Wikipedia are used meanwhile.';
+      aiPauseRow.style.display = 'flex';
+    };
+    updateAiPause();
+    if (aiPauseRetry) aiPauseRetry.onclick = () => {
+      try { sessionStorage.removeItem('crow_ai_pause'); sessionStorage.removeItem('crow_ai_available'); sessionStorage.removeItem('crow_ai_track_miss'); } catch (_) {}
+      updateAiPause();
+    };
+
+    // ── TV Episode cache ──────────────────────────────────────────────────────
+    // Season episode counts, episode lists and episode details — from the AI
+    // and from TVmaze — so going back and forth between seasons and episodes
+    // doesn't reload. Clearing it makes the next visit fetch fresh lists.
+    const tvEpCacheStatus   = root.getElementById('tv-episode-cache-status');
+    const tvEpCacheClearBtn = root.getElementById('tv-episode-cache-clear-btn');
+    const TV_AI_CACHES = ['tvEpCount', 'tvEpisodes', 'tvEpDetail'];
+    const updateTvEpCacheStatus = () => {
+      const shows = new Set();
+      try { Object.keys(JSON.parse(localStorage.getItem('crow_tvmaze_cache') || '{}')).forEach(k => shows.add(k)); } catch (_) {}
+      TV_AI_CACHES.forEach(name => {
+        try { Object.keys(JSON.parse(localStorage.getItem('crow_ai_local_' + name) || '{}')).forEach(k => shows.add(k.split('|')[0])); } catch (_) {}
+      });
+      if (tvEpCacheStatus) tvEpCacheStatus.textContent = shows.size === 0 ? 'No shows cached' : shows.size + ' show' + (shows.size === 1 ? '' : 's') + ' cached';
+    };
+    updateTvEpCacheStatus();
+    if (tvEpCacheClearBtn) tvEpCacheClearBtn.onclick = () => {
+      try {
+        localStorage.removeItem('crow_tvmaze_cache');
+        TV_AI_CACHES.forEach(name => localStorage.removeItem('crow_ai_local_' + name));
+        Object.keys(sessionStorage)
+          .filter(k => TV_AI_CACHES.some(name => k.startsWith('crow_ai_' + name + '|')))
+          .forEach(k => sessionStorage.removeItem(k));
+      } catch (_) {}
+      document.querySelectorAll('crowai-media-player-card').forEach(el => {
+        el._tvmazeCache = new Map();
+        el._tvEpCountCache = new Map();
+        el._tvEpisodesCache = new Map();
+        el._tvEpDetailCache = new Map();
+      });
+      updateTvEpCacheStatus();
       updateAISessionCacheStatus();
     };
 
@@ -38290,7 +38869,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
             '_aiTrackInfoCache', '_aiInfoCache', '_aiRecsCache', '_aiAddSimilarCache', '_aiSimilarAdded',
             '_aiAlbumTracksCache', '_aiVideoInfoCache', '_aiVideoInfoSelectedCache',
             '_aiSimilarArtistsCache', '_aiSearchResultCache', '_aiPromptCache',
-            '_tvEpCountCache', '_tvEpisodesCache', '_tvEpDetailCache', '_tvActorCache',
+            '_tvEpCountCache', '_tvEpisodesCache', '_tvEpDetailCache', '_tvActorCache', '_tvmazeCache',
             // '_entityRegistryCache', '_deviceRegistryCache', '_areaRegistryCache', // handled explicitly below as null
             '_maLibMemCache', '_drillInCache', '_maImageCache', '_maRootCache', '_maTabRenderCache',
             '_lyricsCache', '_moodArtistUriCache', '_moodLibraryCache', '_queueDataCache', '_appIconCache',
