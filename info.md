@@ -2,7 +2,7 @@
 
 CrowAI is a Home Assistant media player card built specifically for **iPhone**. Designed from the ground up for iPhone, it brings frosted-glass aesthetics, fluid touch animations, full Music Assistant integration, synced lyrics, a queue browser, multi-room multicast playback, rich AI-powered media info panels, movie and TV info, an Apple TV remote, and the option to play on the iPhone itself — all in a card that feels like a native iPhone app.
 
-CrowAI is about **discovery** as much as playback — AI-powered info panels, recommendations, artist radio, similar tracks/shows/movies, AI-interpreted library search, Ask / Trivia panels, and personal Music Recap / Video Recap recaps all help you find your next favourite song, album, TV show or film, not just control what's already playing.
+CrowAI is about **discovery** as much as playback — AI-powered info panels, recommendations, artist radio, similar tracks/shows/movies, AI-interpreted library search, Ask / Trivia panels, and personal Music Recap / Video Recap recaps all help you find your next favourite song, album, TV show or film, not just control what's already playing. And when you want something to keep, almost anything can be saved as a PDF, from listening reports to printable CD and DVD / Blu-ray case covers.
 
 > **Music Assistant is required** for the Music Library browser, queue management, Vibe Queue Builder, AI Artist Radio, multi-room multicast playback and all MA-specific features.
 
@@ -21,6 +21,8 @@ CrowAI is about **discovery** as much as playback — AI-powered info panels, re
 - **Apple TV Remote** — built-in remote overlay with directional pad, Back, TV and Power Off; open it with the Remote button in the controls bar, or long-press the artwork during a show, movie or video app such as YouTube; tap ✕ or swipe down to close
 - **Apple TV Remote Button** — on the left of the controls bar for Apple TVs (on by default, toggle in Appearance & Behaviour)
 - **Music Library Button** — on the left of the controls bar on every other speaker, and on Apple TVs when the Remote button is off
+- **Glass Throughout** — with Style set to Glass, the card's confirmations, choosers, toasts and PDF preview use Liquid Glass too, in light and dark
+- **PDF Exports** — save info panels, lyrics, listening and watch reports, recaps, pins and lists as PDFs, and print CD and DVD / Blu-ray case covers (see [Export to PDF](#export-to-pdf))
 - **Tactile Button Feedback** — glow and blur effects when buttons are pressed
 - **Automatic Device Switching** — card follows whichever media player starts playing
 - **Compact and Expanded Modes** — toggle between full album art and a space-saving mini player
@@ -109,6 +111,7 @@ Tap the playlist/queue button in the controls bar to open the contextual quick m
 - **Discover & build** — Vibe, Recommendations, AI Artist Radio, Radio Mode, and **Add to Queue ›** (Similar Songs, Same Genre, Same Year, Same Genre & Year, This Album)
 - **What's playing** — Lyrics, More Info, Pin / Unpin, Mood Match and Trivia (while a movie or show plays), Remote Control (Apple TV — opens or closes the remote), Find Soundtrack (while watching on Apple TV)
 - **Recaps ›** — Music Recap, Video Recap
+- **Export ›** — for what's playing: Lyrics (when the song has them), then CD Case Printables for a song or DVD / Blu-ray Case Printables for a show or film; then Listening Report, Your Month in Music, Recently Played, Watch Report and Pinned Items
 - **Share & Announce ›** — Share (track info plus a link to your chosen music service), Announce, Send Message
 
 The AI entries (Search, Vibe, Recommendations, AI Artist Radio, the Add to Queue songs, Mood Match, Trivia, Find Soundtrack) only appear when **Enable AI Features** is on, and the same goes for the queue's 3-dot menu and every long-press menu.
@@ -184,7 +187,17 @@ Long-press the artwork while music is playing to open the full-screen lyrics pan
 
 ## Sharing
 
-Share is available from the quick menu, the info panels, and the long-press menu on any queue row. It copies everything to the clipboard — there's a toast confirmation when it's done. In the info panels, the share button in the header opens a small menu instead: **Copy to Clipboard** (the same as Share), **Export Info to PDF** and, for music with lyrics, **Export Lyrics to PDF** (see [Export to PDF](#export-to-pdf)).
+Share is available from the quick menu, the info panels, and the long-press menu on any queue row. It copies everything to the clipboard — there's a toast confirmation when it's done. In the info panels, the share button in the header opens a menu instead (see [Export to PDF](#export-to-pdf)):
+
+- **Copy to Clipboard** — the same as Share
+- **Export Info to PDF**
+- **Export Lyrics to PDF** — music with lyrics
+- **CD Case Printables (PDF)** — music
+- **DVD / Blu-ray Case Printables (PDF)** — movies and TV shows
+- **Export Episodes to PDF** — podcasts
+
+Sharing itself:
+
 
 - **Music** — copies the track title and artist (plus album, where shown) along with a link to find the track on your chosen streaming service
 - **Movies & TV** — copies the title, year and a short synopsis along with a link to find it on TheMovieDB
@@ -192,13 +205,55 @@ Share is available from the quick menu, the info panels, and the long-press menu
 
 ## Export to PDF
 
-The share button at the top of every info panel (music, Discogs, album, movie and TV, season and episode, person, podcast, station and audiobook) opens a menu with **Export Info to PDF**. A preview opens straight away with a spinner, then shows the finished PDF with a **Download** button.
+Almost everything in the card can be saved as a PDF. A preview opens straight away with a progress spinner, then shows the finished PDF with a **Download** button. Every type can be switched off in the editor's **Export & PDF** section; a type that's off disappears from every menu and hero bar.
 
+| PDF | Where to find it |
+|-----|------------------|
+| Info | Share menu on every info panel (music, Discogs, album, movie and TV, season and episode, person, podcast, station and audiobook). The PDF button on a TV show's seasons page makes an episode guide |
+| Lyrics | Share menu in music panels, quick menu **Export ›**, album pages (a lyrics booklet for the whole album) |
+| CD Case Printables | Share menu in music panels, quick menu **Export ›** while a song plays, album pages |
+| DVD / Blu-ray Case Printables | Share menu in movie and TV panels, quick menu **Export ›** while a show or film plays, a Watch History title's ⋮ menu, and long-press on any Movies & TV row (Watch History, Video Recap, Movies & TV search, Pins) |
+| Listening Report | Quick menu **Export ›**, Music History ⋮ → **Export to PDF**, the Music History hero bar's **Export**, Music Recap ⋮ → **Export Report to PDF** |
+| Your Month in Music | Quick menu **Export ›**, Music History ⋮ → **Export to PDF** |
+| Recently Played | Quick menu **Export ›**, Music History ⋮ → **Export to PDF** (choose a speaker) |
+| Watch Report | Quick menu **Export ›**, Watch History ⋮ → **Export Report to PDF**, Video Recap ⋮ → **Export Report to PDF**, and a title's **Export** button for that title's history |
+| Recaps | Music Recap and Video Recap ⋮ → **Export Recap to PDF**, and **Export** on a pinned recap |
+| Pinned Items | Pins ⋮ → **Export Pins to PDF**, and **Export** on pinned songs |
+| Lists & Results | Queue ⋮ → **Export Queue to PDF**, saved queues, album tracklists, playlists and artists, AI Search and Recommendations (**Export Results to PDF**), podcast episodes (**Export Episodes to PDF**) |
+
+- **Reports ask for a period** — Today, Last 7 days, Last 30 days, Last 90 days or All time
+- **Album pages** — **Export** on a library or AI album page offers Tracklist, Lyrics booklet or CD case printables. Only the types that are on are offered, and if just one is left it goes straight to it
 - **Music and other panels** — the title and artist as the heading, the artwork beside the grey Year / Label / Length / Genre rows, then everything else on screen in order: Fun Fact, Band Members on one line, Similar Tracks in two columns, tracklists, and anything you've opened with Ask, Meaning or Trivia. Web addresses (a station's website or stream) are clickable
 - **Movies and TV** — the title and year as the heading, the poster beside the user-score ring and grey Type / Seasons / Creator or Director / Genre / Rated rows, then Overview, Fun Fact, Cast in columns, Where to Watch and Similar
-- **Export Lyrics to PDF** — appears in music panels when the track has lyrics (looked up when the menu opens if they aren't already known). The song and band as the heading, the artwork beside the grey detail rows, then the lyrics centred, running onto further pages as needed
+- **Lyrics** — the song and band as the heading, the artwork beside the grey detail rows (centred on its own when there's no artwork), then the lyrics centred, running onto further pages as needed. Offered when the track has lyrics, which are looked up when the menu opens if they aren't already known
+- **Instant the second time** — finished PDFs and the details looked up for them are kept for the session, so reopening one doesn't fetch everything again. They're cleared when the page or the Home Assistant app closes. Lookups that failed aren't kept, so trying again searches afresh
+- **Friendly errors** — if a PDF can't be made, an iOS-style alert says why, such as "You're Offline", "No Artwork Found", "No Lyrics Found" or "Couldn't Make the PDF"
+- **Glass** — with Style set to Glass, the preview, its alerts, the chooser and the Download button use Liquid Glass, in light and dark
+- **Not this one?** — CD and DVD / Blu-ray cases have a **Not this one?** button under the preview (and on their error alerts). It lists other matches with their artwork, and has a search box for anything else. Pick one and the case is made again straight away. Your choice is remembered on that device for that title or album, and a film or show you choose is used by its info panel too
 
-The PDF library (jsPDF) loads from a CDN the first time you export. Artwork that a site won't let the card copy is fetched through the images.weserv.nl image proxy; if that fails too, the PDF is made without it. The PDF's built-in fonts only cover Western characters, so emoji and non-Latin text are left out. In the Home Assistant app on iPhone the Download button may not save the file, depending on the app version; it works in Safari.
+### CD Case Printables
+
+Print-and-cut inserts for a standard CD jewel case:
+
+- **Sizes** — front cover 120 × 120 mm, back tray card 150 × 118 mm with fold marks for the spines, a 118 mm disc label with a 36 mm hole, and booklet pages
+- **Artwork** — the album's own front and back covers from MusicBrainz and the Cover Art Archive first, then the info panel's artwork, iTunes album art (1200 px) and finally the now-playing artwork
+- **No back cover?** — the card makes a tracklist back from MusicBrainz in one to three columns, numbered by disc (D1-1) for multi-disc albums
+- **Album artist** — taken from the album itself, not the song playing. Compilations credited to Various Artists leave out the artist line and spine name
+- **No artwork anywhere** — a **No Cover Art Yet** alert offers **Make with Title Cards**, **Add Cover on MusicBrainz** (or **Find It on MusicBrainz**) and **Not Now**
+
+### DVD / Blu-ray Case Printables
+
+Print-and-cut wraps for a standard DVD or Blu-ray case, for both films and TV shows:
+
+- **Sizes** — DVD wrap 273 × 183 mm, Blu-ray wrap 272 × 149 mm, each with a 14 mm spine, plus a 118 mm disc label. Pages are A4 or US Letter to match your region; set `cd_paper_size` to `a4` or `letter` to choose
+- **Back and spine** — a colour gradient taken from the poster, headings in a matching accent colour with full-width underlines, and a slightly darker spine showing just the title
+- **Films** — tagline, synopsis, a **Film details** grid (Written by, Music by, Cinematography, Produced by, Studio, Released, Country, Language, Box office, Budget), **Starring** in one column with character names when most of the cast have them, and Directed by. A strip along the bottom shows the certificate (your local rating, such as the UK one), Running time, Year, Rating and Genre
+- **TV shows** — synopsis, an **Episode Guide** with every episode title (the text gets smaller, then splits into two columns, so long series still fit), Starring and Created by, then a strip with the certificate, Runtime, Years (for example 2022 - 2026), Seasons, Rating and Genre
+- **Where the details come from** — the info panel if you've opened it, then TMDB, TVmaze, Wikipedia and Wikidata, and the iTunes Store. A TMDB key isn't needed, but it fills in more. Dates are written day, month, year
+- **Titles with a colon** — such as Star Trek: Strange New Worlds or Mission: Impossible — are matched in full, so you get the right show or film
+- **Show or film?** — when the player doesn't say a title is an episode, an exact match decides. Breaking Bad is a show on TVmaze and not a film, so it gets the series case rather than El Camino
+
+The PDF library (jsPDF) loads from a CDN the first time you export, and the preview uses PDF.js. Artwork that a site won't let the card copy is fetched through the images.weserv.nl image proxy; if that fails too, the PDF is made without it. The PDF's built-in fonts only cover Western characters, so non-Latin text is left out. In the Home Assistant app on iPhone the Download button may not save the file, depending on the app version; it works in Safari. When printing a case, choose **Actual size** (100%), not Fit to page.
 
 ## Media Info Panels
 
@@ -210,7 +265,7 @@ The PDF library (jsPDF) loads from a CDN the first time you export. Artwork that
 - Band Members / Artist — tap any member to open their bio with photo (tap to zoom), Known For songs and fun fact
 - Similar Tracks — tap to drill in, long-press for the enqueue menu
 - Mini album art — tap to see a larger version
-- Action bar: Play Now, Add, Play Next, Add Album
+- Action bar: Play Now, Add, Play Next, Add Album. **Play Now** closes the panel (and the library) and takes you back to the player
 - **Ask / Meaning / Trivia** (AI) — ask your own question about the song, read its meaning, or try a quiz
 - **Discogs Panel** — the default panel when AI features are off, and the automatic fallback if AI has no info for a track: same layout with a full tracklist and community rating added; the header reads "Discogs Info" rather than "AI Info". Tapping a track in the Discogs tracklist opens that track's own info — the track the panel is showing is highlighted in the tracklist, tapping it jumps back to the top of the panel, and every newly opened track starts at the top. The album pill opens the album view, filled straight from the Discogs release, and Back returns to the track exactly as you left it
 - **Artist bios** — the AI bio when AI is on, otherwise the Wikipedia summary (marked "From Wikipedia")
@@ -242,7 +297,7 @@ The PDF library (jsPDF) loads from a CDN the first time you export. Artwork that
 - Drag to reorder (MA only, requires Queue Actions integration)
 - Long-press any row: Play Now, Play Next, Move to Top of Queue, Add to Queue, Pin Song, AI Artist Radio, Remove from Queue (with an iOS-style confirmation), Share, More Info
 - Long-press also offers **Reorder Queue** to switch into drag-to-reorder mode
-- Queue 3-dot menu, grouped like the quick menu: Reorder, Jump to Current Track, Pin Song, **Pin Queue**, **Transfer Queue** (move the queue to another MA speaker) · Search, Library · Vibe, Recommendations, AI Artist Radio, Radio Mode, **Add to Queue ›** (Similar Songs, Same Genre, Same Year, Same Genre & Year, This Album) · **Share & Announce ›** (Announce, Send Message) · Clear Queue
+- Queue 3-dot menu, grouped like the quick menu: Reorder, Jump to Current Track, Pin Song, **Pin Queue**, **Transfer Queue** (move the queue to another MA speaker) · Search, Library · Vibe, Recommendations, AI Artist Radio, Radio Mode, **Add to Queue ›** (Similar Songs, Same Genre, Same Year, Same Genre & Year, This Album) · **Share & Announce ›** (Announce, Send Message) · **Export Queue to PDF** · Clear Queue
 
 ## Announce
 
@@ -269,13 +324,14 @@ Categories: Recent Searches, Music History, Watch History, Recently Added, Pins,
 - Long-press tracks for the enqueue menu
 - **AI Search** — a box at the top of the library, plus a dedicated AI search button next to the search bar on the Songs, Artists and Albums tabs (returning matching tracks, artists or albums specifically)
 - **Recent Searches** — every search you've run, MA and AI alike, most-recent-first, capped at 50; tap to re-run, with an iOS-style Clear confirmation
-- **Music History** — a plain chronological list of your last 10 songs played; the 3-dot menu expands the same view to your last 50, or clears history entirely (iOS-style confirmation). A hero bar (Play All / Add All / Play Next) acts on exactly whichever count is currently showing. Tap a song for its AI Info, long-press for the same context menu used throughout the library (Play Now/Next, Add to Queue, Pin, AI Artist Radio, Share), plus **Remove from History**, **Remove All Plays** (every play of that song; only shown when it's been played more than once) and **Never Log This Artist**, each with an iOS-style confirmation (unmute them from **Muted Artists** in the 3-dot menu). Pinning here lands in the same Pins → Songs category as pinning anywhere else. Reads from the same history log as Music Recap below — just as a list instead of weekly stats — so clearing history from either one clears it for both
-- **Watch History** — the movie/TV equivalent, same shape: last 10 (expandable to 50), 3-dot menu with Clear History. Long-press a title for Pin, Find Soundtrack and **Remove from History** (removes every watch of it, with an iOS-style confirmation), or open a title and long-press a viewing to remove just that one (also confirmed). Reads from the same history as Video Recap. No hero bar — replaying movies/shows back-to-back isn't the natural action for video the way it is for songs
+- **Music History** — a plain chronological list of your last 10 songs played; the 3-dot menu expands the same view to your last 50, or clears history entirely (iOS-style confirmation). A hero bar (Play All / Add All / Play Next) acts on exactly whichever count is currently showing. Tap a song for its AI Info, long-press for the same context menu used throughout the library (Play Now/Next, Add to Queue, Pin, AI Artist Radio, Share), plus **Remove from History**, **Remove All Plays** (every play of that song; only shown when it's been played more than once) and **Never Log This Artist**, each with an iOS-style confirmation (unmute them from **Muted Artists** in the 3-dot menu). Pinning here lands in the same Pins → Songs category as pinning anywhere else. Reads from the same history log as Music Recap below — just as a list instead of weekly stats — so clearing history from either one clears it for both. The 3-dot menu's **Export to PDF** offers a Listening report, Your month in music or Recently played on a speaker, and the hero bar's **Export** makes a listening report
+- **Watch History** — the movie/TV equivalent, same shape: last 10 (expandable to 50), 3-dot menu with Clear History. Long-press a title for Pin, Find Soundtrack and **Remove from History** (removes every watch of it, with an iOS-style confirmation), or open a title and long-press a viewing to remove just that one (also confirmed). Reads from the same history as Video Recap. The 3-dot menu has **Export Report to PDF**. Long-press any title for **DVD / Blu-ray Case Printables (PDF)**, which also works on Movies & TV rows in Video Recap, search and Pins. A title's own page has an **Export** button for its watch history, and its ⋮ menu has DVD / Blu-ray Case Printables (PDF) and Remove from History
+- **Album, playlist and artist pages** — **Export** on an album page (library or AI) offers Tracklist, Lyrics booklet or CD case printables; playlists and artists export their tracklist
 - **Podcasts tab** — search iTunes directly; pin favourites
 - **Audiobooks tab** — search free, public-domain titles on LibriVox via the Archive.org catalogue, with AI-assisted query refinement and chapter-by-chapter playback; pin favourites
 - **Radio tab** — search radio-browser.info directly, or use Browse Home Assistant Radio to explore categories from HA's own Radio Browser integration (requires the [Radio Browser](https://www.home-assistant.io/integrations/radio_browser/) integration under Settings → Devices & Services)
 - **Movies & TV** — search movies and TV shows, open their info and pin favourites
-- **Pins** — everything you've pinned, grouped into Songs, Artists, Albums, Playlists, Queues, Radio, Podcasts, Audiobooks, Music Recap, Video Recap and Movies & TV
+- **Pins** — everything you've pinned, grouped into Songs, Artists, Albums, Playlists, Queues, Radio, Podcasts, Audiobooks, Music Recap, Video Recap and Movies & TV. The 3-dot menu has **Export Pins to PDF**
 - **Remembers where you left off** — reopening the library returns to whichever tab you were last in, even after fully closing and reopening the app (within a few hours; a deliberate close resets it back to the top)
 
 ## Radio Mode
@@ -289,7 +345,7 @@ Enable from the quick menu, or switch on **Default Radio Mode on Startup** in th
 Open from the quick menu for a personal snapshot of your recent listening.
 
 - **Top Artists & Top Tracks** — top 10 each, ranked by play count over a rolling last-7-days window; **Show Top 50** in the 3-dot menu expands both lists
-- **3-dot menu** — Show Top 50 / Show Top 10, Play All, Add, Play Next, **Pin This Music Recap** and Clear Listening History
+- **3-dot menu** — Show Top 50 / Show Top 10, Play All, Add, Play Next, **Pin This Music Recap**, **Export Recap to PDF**, **Export Report to PDF** and Clear Listening History
 - **Pin This Music Recap** — saves a frozen snapshot (like Pin Queue, not a live link) under Music Recap in the Pins section; long-press a pinned recap to rename it
 - **AI summary** — a short, warm write-up of your week's listening, regenerated fresh every time the panel opens (not cached, so it always matches the numbers below it). Requires AI features to be enabled — the stats themselves work without AI
 - **Tap a track** to open its AI Info panel; **tap an artist** to open their bio — the same panels used throughout the card
@@ -306,6 +362,7 @@ Open from the quick menu for a personal snapshot of your recent listening.
 The same idea as Music Recap, but for movies and TV shows.
 
 - **Top Shows & Top Movies** — ranked by play count over a rolling last-7-days window; top 10 each, expandable to 50 from the 3-dot menu
+- **Export to PDF** — the 3-dot menu has **Export Recap to PDF** and **Export Report to PDF**
 - **Pin This Video Recap** — saves a snapshot under Video Recap in the Pins section
 - **AI summary** — a fresh, warm write-up of the week's viewing, regenerated every time the panel opens; requires AI features to be enabled — the stats themselves work without AI
 - **Tap a title** to open its Media Info panel
@@ -369,15 +426,16 @@ Repository: [github.com/droans/mass_queue](https://github.com/droans/mass_queue)
 
 ## Visual Configuration Editor
 
-The editor includes a filter box at the top (search any setting by name) and a Reset All Settings to Defaults button. Several sections are collapsible.
+The editor includes a filter box at the top (search any setting by name) and a Reset All Settings to Defaults button. Several sections are collapsible, and headings and buttons use Home Assistant's own icons.
 
 - **Manage & Reorder Media Players** — accordion list with drag-and-drop reordering; enable/disable per speaker; tap a speaker's name to open its own dedicated settings page (Display Name, Startup Volume, Volume Entity, MA Speaker toggle)
 - **Play on This Device** — Show "Play on this device" and the Music Assistant server URL
 - **Appearance & Behaviour** *(collapsible)* — General (Follow HA Theme, Always Show Library Button, Apple TV Remote Button, Apple TV Keyboard Panel, Default Radio Mode on Startup (off by default), iTunes Artwork Fallback, Live/Podcast/Audiobook Pill, Show YouTube Button, Scroll Long Text), Volume (Volume HUD, Volume Buttons, Volume Percentage) and Startup & Navigation (Auto Switch, Remember Last Speaker, Media Player Selector, Startup View, Retain Current View, Remote Button Row Position)
 - **Caches & Data** *(collapsible)* — AI caches (bios, trivia, where-to-watch, content warnings, year-in-music, vibe history, AI response cache), artwork caches (iTunes, Wikipedia) with Persistent Storage toggles, library & radio caches (MA library, radio stations, HA registry), Lyrics (line style, Keep Lyrics Open Between Tracks, Cache Lyrics, Save Lyrics For, Persistent Lyrics Storage), pinned items (Persistent Pin Storage, Show Pins in Sections, Clear All Pins), TV Episode Cache (season counts, episode lists and episode details from the AI and TVmaze), Persistent Info Storage, Clear All Caches and Clear Persistent Storage
 - **Visual Effects** — Style (Classic or Glass), Theme (Auto, Light or Dark), Remote Liquid Glass, Volume HUD Liquid Glass, Ambient Glow, Row Glow, Artwork Crossfade, Pin Hearts, Resize Button Spin
-- **AI Settings** — **Enable AI Features** master switch (off by default), AI Agent (Google Gemini recommended), Info Panel Priority, Library Search (Normal or AI Enhanced), Share Track Service (YouTube Music, Apple Music, Spotify, Tidal, Amazon Music, Deezer), Announce TTS Service, Song Intro, Ghost-Skip Healer, the **AI Features** switches (Info Panels, Look Up in Advance (off by default), Search and Recommendations, Ask, Meaning and Trivia, Recap Summaries), a warning when no usable AI agent is chosen, and an AI status row with **Try AI Again** whenever the AI is paused
-- **Movies & TV** — TMDB API Key, Movie/TV Info Priority
+- **AI Settings** — **Enable AI Features** master switch (off by default), AI Agent (Google Gemini recommended), Info Panel Priority, Library Search (Normal or AI Enhanced), Share Track Service (YouTube Music, Apple Music, Spotify, Tidal, Amazon Music, Deezer), Announce TTS Service, Song Intro (off by default), Ghost-Skip Healer, the **AI Features** switches (Info Panels, Look Up in Advance (off by default), Search and Recommendations, Ask, Meaning and Trivia, Recap Summaries), a warning when no usable AI agent is chosen, and an AI status row with **Try AI Again** whenever the AI is paused
+- **Movies & TV** — TMDB API Key (with TMDB's attribution notice), Movie/TV Info Priority
+- **Export & PDF** *(collapsible)* — **Enable PDF Exports** master switch, then **PDF Types**: Lyrics, CD Case Printables, DVD / Blu-ray Case Printables, Info Panels, Listening & Watch Reports, Your Month in Music, Recently Played, Recaps, Pinned Items, and Lists & Results. All are on by default
 - **AI Vibe Artist Seeds** — customisable playlist search terms and radio fallback artist per vibe category
 - **Colours & Themes** *(collapsible)* — Controls Theme (12 presets), Player Icon Theme (8 sets), Accent Preset, accent, volume, title, artist, button, +Add pill, volume % and custom background/lyrics colours with live preview strip
 
@@ -420,13 +478,16 @@ artwork_crossfade: false
 ambient_glow: false
 row_glow: false
 show_media_type_pill: false
-song_intro_enabled: true
+pdf_enabled: true
+cd_paper_size: a4
 card_liquid_glass: true
 show_pins_in_sections: true
 ```
 
-> **Note:** `ma_entities` should list your MA speaker entities (e.g. `media_player.mass_kitchen_homepod`). These do **not** need to also appear in `entities`. AI features are **off by default** — the example above enables them; leave `ai_features_enabled` out (or set it `false`) for a Discogs-powered card with no AI. `tmdb_api_key` is optional; leave it out if you don't use movie/TV info without AI.
+> **Note:** `ma_entities` should list your MA speaker entities (e.g. `media_player.mass_kitchen_homepod`). These do **not** need to also appear in `entities`. AI features are **off by default** — the example above enables them; leave `ai_features_enabled` out (or set it `false`) for a Discogs-powered card with no AI. `tmdb_api_key` is optional; leave it out if you don't use movie/TV info without AI. Song Intro is off by default. Every PDF type is on by default; `pdf_enabled: false` turns them all off, and `cd_paper_size` can be `a4` or `letter` (leave it out to match your region).
 
 ## Data Sources
 
-Music data from [Discogs](https://www.discogs.com), TV episode data from [TVmaze](https://www.tvmaze.com) (CC BY-SA), movie and TV data from [TMDB](https://www.themoviedb.org), biographies and photos from [Wikipedia](https://www.wikipedia.org), artwork from iTunes, radio stations from [radio-browser.info](https://www.radio-browser.info) and audiobooks from [LibriVox](https://librivox.org).
+Music data from [Discogs](https://www.discogs.com), TV episode data from [TVmaze](https://www.tvmaze.com) (CC BY-SA), movie and TV data from [TMDB](https://www.themoviedb.org), biographies and photos from [Wikipedia](https://www.wikipedia.org), artwork, film blurbs and certificates from the iTunes Store, CD cover art from [MusicBrainz](https://musicbrainz.org) and the [Cover Art Archive](https://coverartarchive.org), film facts from [Wikidata](https://www.wikidata.org), radio stations from [radio-browser.info](https://www.radio-browser.info) and audiobooks from [LibriVox](https://librivox.org). PDFs are made with jsPDF and previewed with PDF.js.
+
+This product uses the TMDB API but is not endorsed or certified by TMDB.

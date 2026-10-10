@@ -624,6 +624,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       sendspin_url: '',
       ...config
     };
+    this._applyPdfVisibility();
     if (!this._entity) {
       const saved = this._config.remember_last_entity && !this._config.auto_switch
         ? localStorage.getItem('crow_last_entity_' + (this._config.entities[0] || ''))
@@ -2822,6 +2823,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         :host { display: block; --accent: #007AFF; --vol-accent: #007AFF; --btn-color: rgba(255,255,255,0.9); --player-bg: transparent; --crow-panel-bg: #13131a; --crow-panel-text: #ffffff; --crow-panel-text-dim: rgba(255,255,255,0.4); --crow-panel-row-bg: rgba(255,255,255,0.03); --crow-panel-row-bg-active: rgba(255,255,255,0.1); --crow-panel-row-border: rgba(255,255,255,0.06); --crow-panel-icon: rgba(255,255,255,0.18); --crow-panel-icon-dim: rgba(255,255,255,0.3); --crow-panel-divider: rgba(255,255,255,0.07); --crow-panel-btn-bg: rgba(255,255,255,0.08); --crow-panel-btn-border: rgba(255,255,255,0.13); border-radius: 24px; overflow: hidden; }
+        :host([data-pdf-off~="lyrics"]) [data-pdf~="lyrics"] { display: none !important; } :host([data-pdf-off~="cd"]) [data-pdf~="cd"] { display: none !important; } :host([data-pdf-off~="disc"]) [data-pdf~="disc"] { display: none !important; } :host([data-pdf-off~="info"]) [data-pdf~="info"] { display: none !important; } :host([data-pdf-off~="history"]) [data-pdf~="history"] { display: none !important; } :host([data-pdf-off~="month"]) [data-pdf~="month"] { display: none !important; } :host([data-pdf-off~="recent"]) [data-pdf~="recent"] { display: none !important; } :host([data-pdf-off~="recap"]) [data-pdf~="recap"] { display: none !important; } :host([data-pdf-off~="pins"]) [data-pdf~="pins"] { display: none !important; } :host([data-pdf-off~="lists"]) [data-pdf~="lists"] { display: none !important; }
 
         /* ── Light theme: force all panel text/bg dark when crow-light-theme class applied ── */
         :host(.crow-light-theme) { --crow-panel-text: #111111 !important; --crow-panel-text-dim: rgba(0,0,0,0.5) !important; --crow-panel-row-bg: rgba(0,0,0,0.04) !important; --crow-panel-row-bg-active: rgba(0,0,0,0.08) !important; --crow-panel-row-border: rgba(0,0,0,0.10) !important; --crow-panel-icon: rgba(0,0,0,0.30) !important; --crow-panel-icon-dim: rgba(0,0,0,0.45) !important; --crow-panel-divider: rgba(0,0,0,0.10) !important; --crow-panel-btn-bg: rgba(0,0,0,0.06) !important; --crow-panel-btn-border: rgba(0,0,0,0.14) !important; }
@@ -4879,6 +4881,66 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         .crow-toast.loading .crow-toast-icon { display: none; }
         .crow-toast.loading .crow-toast-spinner { display: block; }
         .crow-toast-text { font-size: 13px; font-weight: 500; color: rgba(255,255,255,0.9); line-height: 1.4; white-space: normal; }
+        /* ── Glass (card editor → Card Style: Glass): iOS 27 Liquid Glass alerts, choosers and toasts ── */
+        :host(.crow-glass) .crow-ios-backdrop.visible { background: rgba(0,0,0,0.24); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
+        :host(.crow-glass) .crow-ios-alert {
+          position: relative; overflow: hidden;
+          background: linear-gradient(160deg, rgba(255,255,255,0.16), rgba(255,255,255,0.05));
+          backdrop-filter: blur(26px) saturate(2.1) brightness(0.92); -webkit-backdrop-filter: blur(26px) saturate(2.1) brightness(0.92);
+          border: 1px solid rgba(255,255,255,0.22);
+          box-shadow: 0 30px 70px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.38), inset 0 -1px 0 rgba(255,255,255,0.08), inset 0 0 24px rgba(255,255,255,0.05);
+        }
+        :host(.crow-glass) .crow-ios-alert::before {
+          content: ''; position: absolute; inset: 0 0 auto 0; height: 55%; pointer-events: none; border-radius: 34px 34px 0 0;
+          background: linear-gradient(180deg, rgba(255,255,255,0.12), rgba(255,255,255,0));
+        }
+        :host(.crow-glass) .crow-ios-alert > * { position: relative; }
+        :host(.crow-glass) .crow-ios-msg { color: rgba(235,235,245,0.72) !important; }
+        :host(.crow-glass) .crow-ios-btns .crow-ios-cancel {
+          background: rgba(255,255,255,0.12); border: 0.5px solid rgba(255,255,255,0.2);
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.25);
+          backdrop-filter: blur(12px) saturate(1.6); -webkit-backdrop-filter: blur(12px) saturate(1.6);
+        }
+        :host(.crow-glass) .crow-ios-btns .crow-ios-ok {
+          background: linear-gradient(180deg, color-mix(in srgb, var(--accent, #007AFF) 95%, transparent), color-mix(in srgb, var(--accent, #007AFF) 78%, transparent));
+          box-shadow: 0 8px 22px color-mix(in srgb, var(--accent, #007AFF) 35%, transparent), inset 0 1px 0 rgba(255,255,255,0.45), inset 0 -1px 0 rgba(0,0,0,0.12);
+        }
+        /* a destructive button (e.g. Remove) keeps its red, as tinted glass */
+        :host(.crow-glass) .crow-ios-btns .crow-ios-ok[style*="FF3B30"] {
+          background: linear-gradient(180deg, rgba(255,69,58,0.92), rgba(220,40,30,0.85)) !important;
+          box-shadow: 0 8px 22px rgba(255,59,48,0.35), inset 0 1px 0 rgba(255,255,255,0.45), inset 0 -1px 0 rgba(0,0,0,0.12);
+        }
+        /* light panels */
+        :host(.crow-glass) .crow-ios-backdrop.light.visible { background: rgba(255,255,255,0.14); }
+        :host(.crow-glass) .crow-ios-backdrop.light .crow-ios-alert {
+          background: linear-gradient(160deg, rgba(255,255,255,0.62), rgba(255,255,255,0.38));
+          backdrop-filter: blur(26px) saturate(2.1) brightness(1.05); -webkit-backdrop-filter: blur(26px) saturate(2.1) brightness(1.05);
+          border-color: rgba(255,255,255,0.75);
+          box-shadow: 0 30px 70px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.95), inset 0 -1px 0 rgba(255,255,255,0.35), inset 0 0 24px rgba(255,255,255,0.25);
+        }
+        :host(.crow-glass) .crow-ios-backdrop.light .crow-ios-alert::before { background: linear-gradient(180deg, rgba(255,255,255,0.45), rgba(255,255,255,0)); }
+        :host(.crow-glass) .crow-ios-backdrop.light .crow-ios-msg { color: rgba(60,60,67,0.7) !important; }
+        :host(.crow-glass) .crow-ios-backdrop.light .crow-ios-btns .crow-ios-cancel {
+          background: rgba(255,255,255,0.62); border-color: rgba(0,0,0,0.07);
+          box-shadow: inset 0 1px 0 #ffffff, 0 1px 3px rgba(0,0,0,0.08);
+        }
+        /* toasts: a floating glass capsule */
+        :host(.crow-glass) .crow-toast {
+          background: linear-gradient(160deg, rgba(255,255,255,0.2), rgba(255,255,255,0.07));
+          border: 1px solid rgba(255,255,255,0.26); border-radius: 999px; padding: 10px 18px;
+          backdrop-filter: blur(24px) saturate(2) brightness(0.9); -webkit-backdrop-filter: blur(24px) saturate(2) brightness(0.9);
+          box-shadow: 0 12px 32px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.38), inset 0 -1px 0 rgba(255,255,255,0.08);
+        }
+        :host(.crow-glass) .crow-toast-text { color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.25); }
+        /* light theme: bright glass, dark text */
+        :host(.crow-glass.crow-light-theme) .crow-toast {
+          background: linear-gradient(160deg, rgba(255,255,255,0.82), rgba(255,255,255,0.58));
+          border-color: rgba(255,255,255,0.95);
+          backdrop-filter: blur(24px) saturate(1.8) brightness(1.04); -webkit-backdrop-filter: blur(24px) saturate(1.8) brightness(1.04);
+          box-shadow: 0 12px 32px rgba(0,0,0,0.16), inset 0 1px 0 #ffffff, 0 0 0 0.5px rgba(0,0,0,0.06);
+        }
+        :host(.crow-glass.crow-light-theme) .crow-toast-text { color: #1c1c1e; text-shadow: none; }
+        :host(.crow-glass.crow-light-theme) .crow-toast-spinner { border-color: rgba(0,0,0,0.15); border-top-color: rgba(0,0,0,0.65); }
       </style>
 
       <ha-card id="cardOuter" class="mode-compact">
@@ -5356,6 +5418,61 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     artEl.addEventListener('pointerup',   artLongPressEnd);
     artEl.addEventListener('pointercancel', artLongPressEnd);
     artEl.addEventListener('pointermove', artLongPressEnd);
+    // What a single tap on the artwork opens: the LIVE / PODCAST / AUDIOBOOK
+    // panel when one of those is playing, AI Info for music and video, or the
+    // library. Shared by the big artwork and the compact mini artwork.
+    const _routeArtTap = () => {
+        const state = this._hass?.states[this._entity];
+        // Radio/podcast/audiobook streams get misclassified as isMusic below
+        // (playing + mediaType 'music' + a title pulled from the station/show/
+        // book) — route to the same rich detail panel their top-left pill
+        // already opens, rather than falling into the generic AI Info track
+        // lookup, which has no station/show/book data to work with and only
+        // shows library fallback. Whichever pill is currently visible
+        // reflects the card's own up-to-date classification, so just defer
+        // to it rather than re-deriving it here.
+        const _liveBadgeEl = r.getElementById('liveStationBadge');
+        const _pcBadgeEl   = r.getElementById('podcastBadge');
+        const _abBadgeEl   = r.getElementById('audiobookBadge');
+        if (_liveBadgeEl && _liveBadgeEl.style.display !== 'none') {
+          // If the station is broadcasting real track metadata (ICY tags
+          // with a genuine artist — e.g. Showaddywaddy / 'You Got What It
+          // Takes'), a tap on the artwork opens that track's own AI Info
+          // panel — _openInfoPopup already handles exactly this case (live
+          // stream + track metadata → _showAITrackInfo with a station
+          // badge), it just never got the chance because this branch always
+          // intercepted into station resolution first. The station panel
+          // stays one tap away on the LIVE pill itself. Requires a real
+          // artist that isn't just the station name echoed back — a title
+          // alone isn't enough, since stations that overwrite media_title
+          // with the show name would otherwise send talk-radio taps into a
+          // nonsense track lookup.
+          const _lsAttrs   = state?.attributes || {};
+          const _lsArtist  = (_lsAttrs.media_artist || '').trim();
+          const _lsTitle   = (_lsAttrs.media_title || '').trim();
+          const _lsStation = (_lsAttrs.media_album_name || '').trim().toLowerCase();
+          const _lsArtistLower = _lsArtist.toLowerCase();
+          const _lsHasTrackMeta = !!(_lsArtist && _lsTitle)
+            && _lsArtistLower !== '[unknown]' && _lsArtistLower !== 'unknown'
+            && _lsArtistLower !== _lsStation;
+          if (_lsHasTrackMeta) { this._openInfoPopup(); return; }
+          this._resolveAndShowLiveStation();
+          return;
+        }
+        if (_pcBadgeEl && _pcBadgeEl.style.display !== 'none') { this._resolveAndShowPodcast(); return; }
+        if (_abBadgeEl && _abBadgeEl.style.display !== 'none') { this._resolveAndShowAudiobook(); return; }
+        const mediaType = this._detectMediaType(state);
+        const isMusic = state?.state === 'playing' && mediaType === 'music'
+          && !!(state?.attributes?.media_artist || state?.attributes?.media_title);
+        const isVideo = mediaType === 'tv' || mediaType === 'movie';
+        if (isMusic) {
+          this._openInfoPopup();
+        } else if (isVideo && _hasArt()) {
+          this._openInfoPopup();
+        } else if (_isMaEntity() && !this._isAppleTV) {
+          this._openMABrowser();
+        }
+    };
     artEl.onclick = (e) => {
       // Ignore clicks that originated from the live station badge or its children
       if (e.target.closest('#liveStationBadge')) return;
@@ -5460,56 +5577,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         // Don't open anything if the MA library browser is open — taps on library
         // rows bleed through to the artwork underneath and trigger this handler
         if (r.getElementById('maPopup')?.classList.contains('visible')) return;
-        const state = this._hass?.states[this._entity];
-        // Radio/podcast/audiobook streams get misclassified as isMusic below
-        // (playing + mediaType 'music' + a title pulled from the station/show/
-        // book) — route to the same rich detail panel their top-left pill
-        // already opens, rather than falling into the generic AI Info track
-        // lookup, which has no station/show/book data to work with and only
-        // shows library fallback. Whichever pill is currently visible
-        // reflects the card's own up-to-date classification, so just defer
-        // to it rather than re-deriving it here.
-        const _liveBadgeEl = r.getElementById('liveStationBadge');
-        const _pcBadgeEl   = r.getElementById('podcastBadge');
-        const _abBadgeEl   = r.getElementById('audiobookBadge');
-        if (_liveBadgeEl && _liveBadgeEl.style.display !== 'none') {
-          // If the station is broadcasting real track metadata (ICY tags
-          // with a genuine artist — e.g. Showaddywaddy / 'You Got What It
-          // Takes'), a tap on the artwork opens that track's own AI Info
-          // panel — _openInfoPopup already handles exactly this case (live
-          // stream + track metadata → _showAITrackInfo with a station
-          // badge), it just never got the chance because this branch always
-          // intercepted into station resolution first. The station panel
-          // stays one tap away on the LIVE pill itself. Requires a real
-          // artist that isn't just the station name echoed back — a title
-          // alone isn't enough, since stations that overwrite media_title
-          // with the show name would otherwise send talk-radio taps into a
-          // nonsense track lookup.
-          const _lsAttrs   = state?.attributes || {};
-          const _lsArtist  = (_lsAttrs.media_artist || '').trim();
-          const _lsTitle   = (_lsAttrs.media_title || '').trim();
-          const _lsStation = (_lsAttrs.media_album_name || '').trim().toLowerCase();
-          const _lsArtistLower = _lsArtist.toLowerCase();
-          const _lsHasTrackMeta = !!(_lsArtist && _lsTitle)
-            && _lsArtistLower !== '[unknown]' && _lsArtistLower !== 'unknown'
-            && _lsArtistLower !== _lsStation;
-          if (_lsHasTrackMeta) { this._openInfoPopup(); return; }
-          this._resolveAndShowLiveStation();
-          return;
-        }
-        if (_pcBadgeEl && _pcBadgeEl.style.display !== 'none') { this._resolveAndShowPodcast(); return; }
-        if (_abBadgeEl && _abBadgeEl.style.display !== 'none') { this._resolveAndShowAudiobook(); return; }
-        const mediaType = this._detectMediaType(state);
-        const isMusic = state?.state === 'playing' && mediaType === 'music'
-          && !!(state?.attributes?.media_artist || state?.attributes?.media_title);
-        const isVideo = mediaType === 'tv' || mediaType === 'movie';
-        if (isMusic) {
-          this._openInfoPopup();
-        } else if (isVideo && _hasArt()) {
-          this._openInfoPopup();
-        } else if (_isMaEntity() && !this._isAppleTV) {
-          this._openMABrowser();
-        }
+        _routeArtTap();
       }, 300);
     };
     // Long-press on artist name in main player → similar artist radio
@@ -5531,15 +5599,21 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       _tArtistEl.addEventListener('pointermove',   () => clearTimeout(_tArtLpTimer), { passive: true });
     }
 
-    r.getElementById('miniArtClick').onclick = () => {
-      if (!_hasArt()) return;
+    // Mini artwork (compact view): expand the player, then do exactly what a
+    // tap on the big artwork does — the right info panel for music, video,
+    // radio stations, podcasts and audiobooks.
+    r.getElementById('miniArtClick').onclick = (e) => {
+      e?.stopPropagation?.();
+      const state = this._hass?.states[this._entity];
+      if (!state || state.state === 'off' || state.state === 'unavailable') return;
       const card = r.getElementById('cardOuter');
-      if (card.classList.contains('mode-compact')) {
-        card.classList.remove('mode-compact');
-        setTimeout(() => this._openInfoPopup(), 320);
-      } else {
-        this._openInfoPopup();
-      }
+      const wasCompact = card?.classList.contains('mode-compact');
+      const go = () => {
+        if (r.getElementById('infoPopup')?.classList.contains('visible')) return;
+        _routeArtTap();
+      };
+      if (wasCompact) this._expandFromCompact().then(go);
+      else go();
     };
 
     // ── Artwork swipe-to-skip ──────────────────────────────────────────────
@@ -5816,6 +5890,39 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         // one doesn't need any current context at all).
         items.push({ id: 'qm_watch_recap', label: 'Video Recap', icon: '<svg viewBox="0 0 24 24"><path d="M21,3H3C1.89,3 1,3.89 1,5V19A2,2 0 0,0 3,21H21A2,2 0 0,0 23,19V5C23,3.89 22.1,3 21,3M21,19H3V5H21V19M18,13.5L15.5,15.15L15.5,11.85L18,13.5M13,15.5L10.5,17.15L10.5,13.85L13,15.5M8,13.5L5.5,15.15L5.5,11.85L8,13.5Z"/></svg>', active: false });
 
+        // Reports — every standalone PDF report in one place. These read the
+        // saved listening / watch history and pins, so (like the recaps) they
+        // don't depend on what's playing. Queue and info-panel PDFs aren't
+        // listed: they export whatever panel is open, so they stay in those
+        // panels' own menus.
+        [
+          { id: 'qm_rep_listening', pdf: 'history', label: 'Listening Report',    icon: '<path d="M19,3H5C3.9,3 3,3.9 3,5V19C3,20.1 3.9,21 5,21H19C20.1,21 21,20.1 21,19V5C21,3.9 20.1,3 19,3M9,17H7V10H9V17M13,17H11V7H13V17M17,17H15V13H17V17Z"/>' },
+          { id: 'qm_rep_month', pdf: 'month',     label: 'Your Month in Music', icon: '<path d="M19,19H5V8H19M16,1V3H8V1H6V3H5C3.89,3 3,3.89 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V5C21,3.89 20.1,3 19,3H18V1M17,12H12V17H17V12Z"/>' },
+          { id: 'qm_rep_recent', pdf: 'recent',    label: 'Recently Played',     icon: '<path d="M13.5,8H12V13L16.28,15.54L17,14.33L13.5,12.25V8M13,3A9,9 0 0,0 4,12H1L4.96,16.03L9,12H6A7,7 0 0,1 13,5A7,7 0 0,1 20,12A7,7 0 0,1 13,19C11.07,19 9.32,18.21 8.06,16.94L6.64,18.36C8.27,20 10.5,21 13,21A9,9 0 0,0 22,12A9,9 0 0,0 13,3"/>' },
+          { id: 'qm_rep_watch', pdf: 'history',     label: 'Watch Report',        icon: '<path d="M21,3H3C1.89,3 1,3.89 1,5V19A2,2 0 0,0 3,21H21A2,2 0 0,0 23,19V5C23,3.89 22.1,3 21,3M21,19H3V5H21V19M18,13.5L15.5,15.15L15.5,11.85L18,13.5M13,15.5L10.5,17.15L10.5,13.85L13,15.5M8,13.5L5.5,15.15L5.5,11.85L8,13.5Z"/>' },
+          { id: 'qm_rep_pins', pdf: 'pins',      label: 'Pinned Items',        icon: '<path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/>' },
+        ].filter(it => this._pdfOn(it.pdf)).forEach(it => items.push({ ...it, active: false }));
+
+        // Printables for what's playing: lyrics and a CD case for a song, a DVD / Blu-ray case for a show or film.
+        // They lead the Export menu, above the history reports.
+        {
+          const _pa = state?.attributes || {};
+          const _pdfMusic = isPlaying && !isStream && !_qmIsVideo && !!(_pa.media_title && _pa.media_artist);
+          const _pdfVideoTitle = _qmIsVideo ? (_pa.media_series_title || _pa.media_title || '') : '';
+          const _pdfCase = _pdfMusic
+            ? { label: 'CD Case Printables', music: { artist: String(_pa.media_artist).split(/\s*[&,]\s*/)[0].trim() || _pa.media_artist, title: _pa.media_title, album: _pa.media_album_name || '' } }
+            : _pdfVideoTitle
+              ? { label: 'DVD / Blu-ray Case Printables', video: { title: _pdfVideoTitle, isTv: _qmMediaType === 'tv' || !!_pa.media_series_title,
+                  sure: !!_pa.media_series_title || _pa.media_season != null || _pa.media_episode != null || /^(tvshow|episode|season)$/i.test(_pa.media_content_type || ''),
+                  art: (_pa.entity_picture_local || _pa.entity_picture || '').replace(/^http:\/\//i, 'https://') } }
+              : null;
+          if (_pdfMusic && lyricsAvail && this._pdfOn('lyrics')) items.push({ id: 'qm_pdf_lyrics', label: 'Lyrics', _sec: 'now', icon: '<path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M13,9V3.5L18.5,9H13M12,11V16.03C11.71,15.95 11.41,15.9 11.1,15.9C9.5,15.9 8.2,17.2 8.2,18.8C8.2,20.4 9.5,21.7 11.1,21.7C12.7,21.7 14,20.4 14,18.8V13H16.5V11H12Z"/>', active: false,
+            _pdfLyrics: { artist: _pa.media_artist, title: _pa.media_title, album: _pa.media_album_name || '' } });
+          if (_pdfCase && this._pdfOn(_pdfCase.music ? 'cd' : 'disc')) {
+            items.push({ id: 'qm_pdf_case', label: _pdfCase.label, _sec: 'now', icon: '<path fill-rule="evenodd" d="M12,2A10,10 0 1,1 12,22A10,10 0 1,1 12,2Z M12,7.5A4.5,4.5 0 1,0 12,16.5A4.5,4.5 0 1,0 12,7.5Z M12,10.8A1.2,1.2 0 1,1 12,13.2A1.2,1.2 0 1,1 12,10.8Z"/>', active: false, _pdfCase });
+          }
+        }
+
         // AI Artist Radio — MA only, only when a track is playing
         if ((isMa || hasMA) && isPlaying && !isStream) {
           const _curArtist = (state?.attributes?.media_artist || '').split(/\s*[&,]\s*/)[0].trim();
@@ -5912,6 +6019,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           artist: '<path d="M11,4A4,4 0 0,1 15,8A4,4 0 0,1 11,12A4,4 0 0,1 7,8A4,4 0 0,1 11,4M11,6A2,2 0 0,0 9,8A2,2 0 0,0 11,10A2,2 0 0,0 13,8A2,2 0 0,0 11,6M11,13C12.1,13 13.66,13.23 15.11,13.69C14.5,14.07 14,14.6 13.61,15.23C12.79,15.03 11.89,14.9 11,14.9C8.03,14.9 4.9,16.36 4.9,17V18.1H13.04C13.13,18.8 13.38,19.44 13.76,20H3V17C3,14.34 8.33,13 11,13M18.5,10H22V12H20V17.5A2.5,2.5 0 0,1 17.5,20A2.5,2.5 0 0,1 15,17.5A2.5,2.5 0 0,1 17.5,15C17.86,15 18.19,15.07 18.5,15.21V10Z"/>',
           addq:   '<path d="M3 16H10V14H3M18 14V10H16V14H12V16H16V20H18V16H22V14M14 6H3V8H14M14 10H3V12H14V10Z"/>',
           recaps: '<path d="M19,3H5C3.9,3 3,3.9 3,5V19C3,20.1 3.9,21 5,21H19C20.1,21 21,20.1 21,19V5C21,3.9 20.1,3 19,3M9,17H7V10H9V17M13,17H11V7H13V17M17,17H15V13H17V17Z"/>',
+          reports: '<path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20M9,18H11V12H9V18M13,18H15V14H13V18Z"/>',
           share:  '<path d="M12,5.5A3.5,3.5 0 0,1 15.5,9A3.5,3.5 0 0,1 12,12.5A3.5,3.5 0 0,1 8.5,9A3.5,3.5 0 0,1 12,5.5M5,8C5.56,8 6.08,8.15 6.53,8.42C6.38,9.85 6.8,11.27 7.66,12.38C7.16,13.34 6.16,14 5,14A3,3 0 0,1 2,11A3,3 0 0,1 5,8M19,8A3,3 0 0,1 22,11A3,3 0 0,1 19,14C17.84,14 16.84,13.34 16.34,12.38C17.2,11.27 17.62,9.85 17.47,8.42C17.92,8.15 18.44,8 19,8M5.5,18.25C5.5,16.18 8.41,14.5 12,14.5C15.59,14.5 18.5,16.18 18.5,18.25V20H5.5V18.25M0,20V18.5C0,17.11 1.89,15.94 4.45,15.6C3.86,16.28 3.5,17.22 3.5,18.25V20H0M24,20H20.5V18.25C20.5,17.22 20.14,16.28 19.55,15.6C22.11,15.94 24,17.11 24,18.5V20Z"/>',
         };
         // Distinct icons where two items looked the same.
@@ -5922,6 +6030,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         const QM_GROUPS = {
           addq:   { label: 'Add to Queue',     icon: QM_ICON.addq,   ids: ['qm_add_similar', 'qm_add_same_genre', 'qm_add_same_year', 'qm_add_same_genre_year', 'qm_play_album'] },
           recaps: { label: 'Recaps',           icon: QM_ICON.recaps, ids: ['qm_ai_recap', 'qm_watch_recap'] },
+          // Export: what's playing first (lyrics, case printables), then the history reports
+          reports: { label: 'Export',          icon: QM_ICON.reports, ids: ['qm_pdf_lyrics', 'qm_pdf_case', 'qm_rep_listening', 'qm_rep_month', 'qm_rep_recent', 'qm_rep_watch', 'qm_rep_pins'] },
           share:  { label: 'Share & Announce', icon: QM_ICON.share,  ids: ['qm_copy_link', 'qm_announce', 'qm_sendmsg'] },
         };
         // Top level, in sections: find & browse · discover & build · what's
@@ -5933,7 +6043,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           'qm_queue', 'qm_search', 'qm_ai_search', 'qm_library', '|',
           'qm_mood', 'qm_ai_recs', 'qm_artist_radio', '@addq', 'qm_radio', '|',
           'qm_lyrics', 'qm_pin', 'qm_mood_video', 'qm_trivia', 'qm_remote', 'qm_soundtrack', '|',
-          '@recaps', '@share', '|',
+          '@recaps', '@reports', '@share', '|',
           'qm_info',
         ];
         const _byId = new Map(items.map(it => [it.id, it]));
@@ -6070,6 +6180,17 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             else if (item.id === 'qm_ai_search')    { expand().then(() => _runMA(() => this._showAISearchPanel())); }
             else if (item.id === 'qm_ai_recap')        { expand().then(() => _runMA(() => this._showAIRecap())); }
             else if (item.id === 'qm_watch_recap')     { expand().then(() => this._showWatchRecap()); }
+            else if (item.id === 'qm_rep_listening')   { expand().then(() => this._exportHistoryReport('music', 30)); }
+            else if (item.id === 'qm_rep_month')       { expand().then(() => this._exportMonthReport()); }
+            else if (item.id === 'qm_rep_recent')      { expand().then(() => this._exportRecentlyPlayedPDF()); }
+            else if (item.id === 'qm_rep_watch')       { expand().then(() => this._exportHistoryReport('watch', 30)); }
+            else if (item.id === 'qm_rep_pins')        { expand().then(() => this._exportPinsPDF()); }
+            else if (item.id === 'qm_pdf_lyrics')      { this._exportLyricsPDF(item._pdfLyrics); }
+            else if (item.id === 'qm_pdf_case') {
+              const pc = item._pdfCase;
+              if (pc?.music) this._exportCdPrintables(pc.music);
+              else if (pc?.video) this._exportDiscCaseFor(pc.video.title, pc.video.isTv, pc.video.art, { sure: !!pc.video.sure });
+            }
             else if (item.id === 'qm_mood_video')   { expand().then(() => this._showMoodMatchPanel(item._qmVideoTitle)); }
             else if (item.id === 'qm_trivia')       { expand().then(() => this._showTriviaPanel(item._qmVideoTitle)); }
             else if (item.id === 'qm_soundtrack')   { expand().then(() => _runMA(() => this._showAISearchPanel(`Music from ${item._atMedia}`))); }
@@ -6159,7 +6280,11 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             popup.appendChild(_sepEl());
             // Inside a group the shared words are dropped ("Add Songs from Same Year" → "Same Year").
             const SHORT = { qm_add_similar: 'AI Similar Songs', qm_add_same_genre: 'AI Same Genre', qm_add_same_year: 'AI Same Year', qm_add_same_genre_year: 'AI Same Genre & Year', qm_play_album: 'This Album' };
-            entry.kids.forEach(it => popup.appendChild(_makeBtn(SHORT[it.id] ? { ...it, label: SHORT[it.id] } : it)));
+            entry.kids.forEach((it, i) => {
+              // a divider where the group moves to a different kind of item (e.g. Export: what's playing | reports)
+              if (i && (entry.kids[i - 1]._sec || '') !== (it._sec || '')) popup.appendChild(_sepEl());
+              popup.appendChild(_makeBtn(SHORT[it.id] ? { ...it, label: SHORT[it.id] } : it));
+            });
           } else {
             _clean(_top).forEach(x => popup.appendChild(x.sep ? _sepEl() : x.group ? _groupRow(x) : _makeBtn(x)));
           }
@@ -7063,6 +7188,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           extraClass: ''
         });
 
+        if (this._pdfOn('lists')) items.push({
+          id: 'qmExportPdf',
+          icon: '<svg viewBox="0 0 24 24"><path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20M12,19L8,15H10.5V12H13.5V15H16L12,19Z"/></svg>',
+          label: 'Export Queue to PDF',
+          extraClass: ''
+        });
+
         // AI Artist Radio — MA only (hidden when AI features are off)
         if (this._aiFeatureOn('discover') && (isMa || hasMA)) {
           const _qCurState  = this._hass?.states[this._entity];
@@ -7339,6 +7471,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           this._promptSaveQueueAsPlaylist();
         });
 
+        // ── Export Queue to PDF ──
+        menu.querySelector('#qmExportPdf')?.addEventListener('pointerup', (ev) => { ev.preventDefault(); ev.stopPropagation(); if (!_menuReady()) return;
+          closeMenu();
+          this._exportQueuePDF();
+        });
+
         // ── Transfer Queue ──
         menu.querySelector('#qmTransfer')?.addEventListener('pointerup', (ev) => { ev.preventDefault(); ev.stopPropagation(); if (!_menuReady()) return;
           closeMenu();
@@ -7494,6 +7632,16 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         });
       });
     }
+    // Export buttons in the panels' action bars (track info, Recommendations,
+    // AI Search) — the same exports the header's Share/Export menu offers.
+    r.getElementById('infoPopup').addEventListener('click', (e) => {
+      const btn = e.target?.closest?.('[data-crow-export]');
+      if (!btn) return;
+      e.stopPropagation();
+      if (btn.dataset.crowExport === 'info') this._exportInfoPanelPDF();
+      else if (typeof this._resultsExportFn === 'function') this._resultsExportFn();
+      else this._showToast('Nothing to export yet');
+    });
     r.getElementById('infoPopup').addEventListener('click', (e) => {
       if (e.target !== r.getElementById('infoPopup')) return;
       if (this._infoPopupOpenedAt && (Date.now() - this._infoPopupOpenedAt) < 500) return;
@@ -7750,6 +7898,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // Radio mode indicator icon
     this._updateRadioIndicator(); this._updateLiveStationBadge(); this._updatePodcastBadge(); this._updateAudiobookBadge();
     this._pcCheckNowPlaying(this._hass?.states[this._entity]);
+    this._abCheckNowPlaying(this._hass?.states[this._entity]);
     // Queue/menu button tinted accent when radio mode is on
     const _qBtn = r.getElementById('btnQueueOpen');
     if (_qBtn) _qBtn.classList.toggle('active', !!(this._config?.ma_radio_mode));
@@ -8071,6 +8220,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // fallback (streams only), then iTunes cache as a last resort (already
     // forced null for streams above, so no conflict between the two).
     const effectiveUrl = artUrl || rbFaviconArt || cachedItunes;
+    if (isPlaying && effectiveUrl) this._coverCaptureMaybe(state, effectiveUrl);
 
     // ── Artwork display ──────────────────────────────────────────────────────
 
@@ -10270,6 +10420,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           <button class="ma-drill-action-btn" data-action="replace"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div><span class="ma-drill-btn-label">Play All</span></button>
           <button class="ma-drill-action-btn" data-action="add"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M19 11h-6V5h-2v6H5v2h6v6h2v-6h6z"/></svg></div><span class="ma-drill-btn-label">Add All</span></button>
           <button class="ma-drill-action-btn" data-action="next"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M16,18H18V6H16M6,18L14.5,12L6,6V18Z"/></svg></div><span class="ma-drill-btn-label">Play Next</span></button>
+          <button class="ma-drill-action-btn" data-action="pdf" data-pdf="history"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20M12,19L8,15H10.5V12H13.5V15H16L12,19Z"/></svg></div><span class="ma-drill-btn-label">Export</span></button>
         </div>
         <div id="recentPlaysList"></div>`
       : `<div id="recentPlaysList"></div>`;
@@ -10429,6 +10580,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       content.querySelector('#recentPlaysActions')?.querySelectorAll('.ma-drill-action-btn').forEach(btn => {
         btn.addEventListener('click', async () => {
           const action = btn.dataset.action;
+          if (action === 'pdf') { self._exportHistoryReport('music', 30); return; }
           self._maBatchLoading = true;
           clearTimeout(self._maBatchLoadingTimer);
           self._maBatchLoadingTimer = setTimeout(() => { self._maBatchLoading = false; }, 20000);
@@ -10486,6 +10638,32 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // Small dropdown for the 3-dot button — same visual pattern as the Queue
   // panel's own 3-dot menu. Just one toggle: expand this same view to the
   // last 50 plays instead of 10, or collapse back.
+  // Pins' 3-dot menu (shared header button) — just the catalogue export.
+  _showPinsMenu(anchorEl) {
+    const r = this.shadowRoot;
+    const existing = r.getElementById('pinsMenu');
+    if (existing) { existing.remove(); r.getElementById('pinsMenuBackdrop')?.remove(); return; }
+    const backdrop = document.createElement('div');
+    backdrop.id = 'pinsMenuBackdrop';
+    backdrop.className = 'queue-dropdown-backdrop';
+    const _openedAt = Date.now();
+    const menu = document.createElement('div');
+    menu.id = 'pinsMenu';
+    menu.className = 'queue-dropdown-menu';
+    menu.innerHTML = '<div class="queue-dropdown-item" id="pinsExport" data-pdf="pins" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20M12,19L8,15H10.5V12H13.5V15H16L12,19Z"/></svg><span class="queue-dropdown-label">Export Pins to PDF</span></div>';
+    const anchorRect = anchorEl.getBoundingClientRect();
+    const cardRect = r.host.getBoundingClientRect();
+    menu.style.position = 'absolute';
+    menu.style.top = (anchorRect.bottom - cardRect.top + 4) + 'px';
+    menu.style.right = Math.max(4, cardRect.right - anchorRect.right) + 'px';
+    const host = r.getElementById('maPopup') || r.host;
+    host.appendChild(backdrop);
+    host.appendChild(menu);
+    const closeMenu = () => { menu.remove(); backdrop.remove(); };
+    backdrop.addEventListener('pointerdown', () => { if (Date.now() - _openedAt > 200) closeMenu(); });
+    menu.querySelector('#pinsExport')?.addEventListener('click', () => { closeMenu(); this._exportPinsPDF(); });
+  }
+
   _showRecentPlaysMenu(anchorEl) {
     const r = this.shadowRoot;
     // Toggle-close — same pattern the Queue panel's own "⋮" menu uses:
@@ -10514,6 +10692,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         <svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M4,12A8,8 0 0,1 12,4C13.85,4 15.55,4.63 16.9,5.69L5.69,16.9C4.63,15.55 4,13.85 4,12M12,20C10.15,20 8.45,19.37 7.1,18.31L18.31,7.1C19.37,8.45 20,10.15 20,12A8,8 0 0,1 12,20Z"/></svg>
         <span class="queue-dropdown-label">Muted Artists</span>
       </div>` : ''}
+<div class="queue-dropdown-item" id="rpExportReport" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M19 3H5C3.9 3 3 3.9 3 5V19C3 20.1 3.9 21 5 21H19C20.1 21 21 20.1 21 19V5C21 3.9 20.1 3 19 3M9 17H7V10H9V17M13 17H11V7H13V17M17 17H15V13H17V17Z"/></svg><span class="queue-dropdown-label">Export to PDF</span></div>
       <div class="queue-dropdown-item danger" id="rpClearHistory" role="button">
         <svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/></svg>
         <span class="queue-dropdown-label">Clear History</span>
@@ -10539,6 +10718,21 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     menu.querySelector('#rpClearHistory')?.addEventListener('click', () => {
       closeMenu();
       this._confirmClearRecentPlays();
+    });
+    if (!['history', 'month', 'recent'].some(t => this._pdfOn(t))) menu.querySelector('#rpExportReport')?.remove();
+    menu.querySelector('#rpExportReport')?.addEventListener('click', async () => {
+      closeMenu();
+      const _rpOpts = [
+        { label: 'Listening report', value: 'report', pdf: 'history' },
+        { label: 'Your month in music', value: 'month', pdf: 'month' },
+        { label: 'Recently played on a speaker', value: 'recent', pdf: 'recent' },
+      ].filter(o => this._pdfOn(o.pdf));
+      if (!_rpOpts.length) return;
+      const which = _rpOpts.length === 1 ? _rpOpts[0].value
+        : await this._iosChoose({ title: 'Export to PDF', message: 'Which report would you like?', options: _rpOpts, selected: _rpOpts[0].value });
+      if (which === 'report') this._exportHistoryReport('music', 30);
+      else if (which === 'month') this._exportMonthReport();
+      else if (which === 'recent') this._exportRecentlyPlayedPDF();
     });
     menu.querySelector('#rpMutedArtists')?.addEventListener('click', () => {
       closeMenu();
@@ -10572,6 +10766,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         <svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12.5,7V12.25L17,14.92L16.25,16.15L11,13V7H12.5Z"/></svg>
         <span class="queue-dropdown-label">${_expanded ? 'Show last 10' : 'Show last 50'}</span>
       </div>
+<div class="queue-dropdown-item" id="mtWatchExportReport" data-pdf="history" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M19 3H5C3.9 3 3 3.9 3 5V19C3 20.1 3.9 21 5 21H19C20.1 21 21 20.1 21 19V5C21 3.9 20.1 3 19 3M9 17H7V10H9V17M13 17H11V7H13V17M17 17H15V13H17V17Z"/></svg><span class="queue-dropdown-label">Export Report to PDF</span></div>
       <div class="queue-dropdown-item danger" id="mtWatchClearHistory" role="button">
         <svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/></svg>
         <span class="queue-dropdown-label">Clear Watch History</span>
@@ -10596,6 +10791,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     menu.querySelector('#mtWatchClearHistory')?.addEventListener('click', () => {
       closeMenu();
       this._confirmClearMtWatchHistory();
+    });
+    menu.querySelector('#mtWatchExportReport')?.addEventListener('click', () => {
+      closeMenu();
+      this._exportHistoryReport('watch', 30);
     });
   }
 
@@ -10784,10 +10983,11 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // time one of these tabs is re-entered.
     const _rpMenuBtn = rr.getElementById('recentPlaysMenuBtn');
     if (_rpMenuBtn) {
-      const _showsMenu = tab === 'recent_plays' || tab === 'recently_watched';
+      const _showsMenu = tab === 'recent_plays' || tab === 'recently_watched' || tab === 'pinned';
       _rpMenuBtn.classList.toggle('hidden', !_showsMenu);
       if (tab === 'recent_plays') _rpMenuBtn.onclick = () => this._showRecentPlaysMenu(_rpMenuBtn);
       else if (tab === 'recently_watched') _rpMenuBtn.onclick = () => this._showMtWatchOptionsMenu(_rpMenuBtn);
+      else if (tab === 'pinned') _rpMenuBtn.onclick = () => this._showPinsMenu(_rpMenuBtn);
       else _rpMenuBtn.onclick = null;
     }
 
@@ -11397,6 +11597,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
               '<div class="ma-drill-btn-circle"><svg id="drillPinSvg" viewBox="0 0 24 24" style="fill:' + (_isPinned ? '#FFD60A' : 'currentColor') + '"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg></div>' +
               '<span class="ma-drill-btn-label" id="drillPinLabel">' + (_isPinned ? 'Unpin' : 'Pin') + '</span>' +
             '</button>'
+          : '') +
+        ((effectiveTab === 'album' || effectiveTab === 'playlist' || effectiveTab === 'artist') && normalisedTracks.length
+          && (effectiveTab === 'album' ? ['lists', 'lyrics', 'cd'].some(t => this._pdfOn(t)) : this._pdfOn('lists'))
+          ? '<button class="ma-drill-action-btn" data-action="pdf">' +
+              '<div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20M12,19L8,15H10.5V12H13.5V15H16L12,19Z"/></svg></div>' +
+              '<span class="ma-drill-btn-label">Export</span>' +
+            '</button>'
           : '');
       content.insertBefore(_actionBar, content.firstChild);
 
@@ -11409,6 +11616,28 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           const action = btn.dataset.action;
           if (action === 'play_all') {
             this._playMAItem(item, tab, undefined, opts);
+          } else if (action === 'pdf') {
+            if (effectiveTab === 'artist') { this._exportArtistPDF(item, normalisedTracks); return; }
+            if (effectiveTab === 'album') {
+              // Albums: the tracklist, or a booklet of every song's lyrics
+              const _albOpts = [{ label: 'Tracklist', value: 'tracks', pdf: 'lists' }, { label: 'Lyrics booklet', value: 'lyrics', pdf: 'lyrics' }, { label: 'CD case printables', value: 'cd', pdf: 'cd' }]
+                .filter(o => this._pdfOn(o.pdf));
+              if (!_albOpts.length) return;
+              const which = _albOpts.length === 1 ? _albOpts[0].value
+                : await this._iosChoose({ title: 'Export Album', message: 'What would you like in the PDF?', options: _albOpts, selected: _albOpts[0].value });
+              if (which === 'cd') {
+                const artistName = (item.artists || []).map(a => a?.name || a).filter(Boolean)[0] || item.artist || '';
+                this._exportCdPrintables({ artist: artistName, title: normalisedTracks[0]?.name || item.name || '', album: item.name || '' });
+                return;
+              }
+              if (which === 'lyrics') {
+                const artistName = (item.artists || []).map(a => a?.name || a).filter(Boolean)[0] || item.artist || '';
+                this._exportAlbumLyricsPDF({ album: item.name || '', artist: artistName, heroSrc: this._maImgUrl(item),
+                  tracks: normalisedTracks.map(t => ({ title: t.name, artist: (t.artists || [])[0]?.name || artistName, num: t.track_number })) });
+              } else if (which === 'tracks') this._exportCollectionPDF(item, effectiveTab, normalisedTracks);
+              return;
+            }
+            this._exportCollectionPDF(item, effectiveTab, normalisedTracks);
           } else if (action === 'pin') {
             if (_isPinned && !(await this._confirmUnpin(_pinnableTab === 'playlist' ? 'playlist' : _pinnableTab === 'album' ? 'album' : _pinnableTab === 'artist' ? 'artist' : 'item', this._pinItemName(item)))) return;
             const _result = this._maLibToggleStar(item, _pinnableTab);
@@ -12769,10 +12998,15 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // The header share button now opens a small menu (same dropdown style as
   // the queue and quick menus): Share copies the link as before; Export
   // turns whatever is on screen in the panel into a PDF.
-  _showInfoShareMenu(anchor, onShare, { lyrics = null } = {}) {
+  _showInfoShareMenu(anchor, onShare, { lyrics = null, onExport = null, exportLabel = 'Export Info to PDF', exportPdf = 'info', extraItems = [] } = {}) {
     const r = this.shadowRoot;
     const host = r?.getElementById('infoPopup');
     if (!anchor || !host) { onShare?.(); return; }
+    // PDF items switched off in the card editor are left out
+    extraItems = (extraItems || []).filter(x => !x.pdf || this._pdfOn(x.pdf));
+    if (!this._pdfOn('lyrics')) lyrics = null;
+    const showExport = this._pdfOn(exportPdf);
+    if (typeof onShare !== 'function' && !showExport && !extraItems.length && !lyrics) { this._showToast('Exports are switched off in the card settings'); return; }
     host.querySelectorAll('.crow-info-share-menu, .crow-info-share-backdrop').forEach(el => el.remove());
     const backdrop = document.createElement('div');
     backdrop.className = 'queue-dropdown-backdrop crow-info-share-backdrop';
@@ -12782,7 +13016,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       `<div class="queue-dropdown-item" id="${id}" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="${path}"/></svg><span class="queue-dropdown-label">${label}</span></div>`;
     menu.innerHTML =
       (typeof onShare === 'function' ? item('infoMenuShare', 'Copy to Clipboard', 'M18,16.08C17.24,16.08 16.56,16.38 16.04,16.85L8.91,12.7C8.96,12.47 9,12.24 9,12C9,11.76 8.96,11.53 8.91,11.3L15.96,7.19C16.5,7.69 17.21,8 18,8A3,3 0 0,0 21,5A3,3 0 0,0 18,2A3,3 0 0,0 15,5C15,5.24 15.04,5.47 15.09,5.7L8.04,9.81C7.5,9.31 6.79,9 6,9A3,3 0 0,0 3,12A3,3 0 0,0 6,15C6.79,15 7.5,14.69 8.04,14.19L15.16,18.34C15.11,18.55 15.08,18.77 15.08,19C15.08,20.61 16.39,21.92 18,21.92C19.61,21.92 20.92,20.61 20.92,19A2.92,2.92 0 0,0 18,16.08Z') : '')
-      + item('infoMenuExport', 'Export Info to PDF', 'M19 3H5C3.9 3 3 3.9 3 5V19C3 20.1 3.9 21 5 21H19C20.1 21 21 20.1 21 19V5C21 3.9 20.1 3 19 3M9.5 11.5C9.5 12.3 8.8 13 8 13H7V15H5.5V9H8C8.8 9 9.5 9.7 9.5 10.5V11.5M14.5 13.5C14.5 14.3 13.8 15 13 15H10.5V9H13C13.8 9 14.5 9.7 14.5 10.5V13.5M18.5 10.5H17V11.5H18.5V13H17V15H15.5V9H18.5V10.5M12 10.5H13V13.5H12V10.5M7 10.5H8V11.5H7V10.5Z');
+      + (!showExport ? '' : item('infoMenuExport', exportLabel, 'M19 3H5C3.9 3 3 3.9 3 5V19C3 20.1 3.9 21 5 21H19C20.1 21 21 20.1 21 19V5C21 3.9 20.1 3 19 3M9.5 11.5C9.5 12.3 8.8 13 8 13H7V15H5.5V9H8C8.8 9 9.5 9.7 9.5 10.5V11.5M14.5 13.5C14.5 14.3 13.8 15 13 15H10.5V9H13C13.8 9 14.5 9.7 14.5 10.5V13.5M18.5 10.5H17V11.5H18.5V13H17V15H15.5V9H18.5V10.5M12 10.5H13V13.5H12V10.5M7 10.5H8V11.5H7V10.5Z'));
     // Export Lyrics to PDF — only when this track has lyrics. If that's not
     // known yet, it's checked now and the option appears once found.
     const LYR_ICON = 'M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M13,9V3.5L18.5,9H13M12,11V16.03C11.71,15.95 11.41,15.9 11.1,15.9C9.5,15.9 8.2,17.2 8.2,18.8C8.2,20.4 9.5,21.7 11.1,21.7C12.7,21.7 14,20.4 14,18.8V13H16.5V11H12Z';
@@ -12808,7 +13042,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const close = () => { menu.remove(); backdrop.remove(); };
     backdrop.addEventListener('pointerdown', () => { if (ready()) close(); });
     menu.querySelector('#infoMenuShare')?.addEventListener('click', e => { e.stopPropagation(); if (!ready()) return; close(); onShare(); });
-    menu.querySelector('#infoMenuExport')?.addEventListener('click', e => { e.stopPropagation(); close(); this._exportInfoPanelPDF(); });
+    // Further exports for this panel (e.g. a podcast's episode guide)
+    extraItems.forEach((x, i) => {
+      menu.insertAdjacentHTML('beforeend', item('infoMenuExtra' + i, x.label, x.icon || 'M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20M12,19L8,15H10.5V12H13.5V15H16L12,19Z'));
+      menu.querySelector('#infoMenuExtra' + i).addEventListener('click', e => { e.stopPropagation(); close(); x.onClick(); });
+    });
+    menu.querySelector('#infoMenuExport')?.addEventListener('click', e => { e.stopPropagation(); close(); if (typeof onExport === 'function') onExport(); else this._exportInfoPanelPDF(); });
   }
 
   // ── Lyrics for the Export menu ───────────────────────────────────────────
@@ -12857,18 +13096,19 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // Export Lyrics to PDF: the artwork with the title and artist beside it,
   // then the lyrics in a single column, running onto further pages as needed.
   async _exportLyricsPDF(args) {
+    if (!this._pdfOn('lyrics')) return;   // switched off in the card editor
     if (this._pdfBusy) return;
     this._pdfBusy = true;
     const preview = this._openPDFPreview();
-    try { await this._buildLyricsPDF(args, preview); }
+    try { if (this._pdfFromSession('lyrics|' + JSON.stringify(args || {}), preview)) return; await this._buildLyricsPDF(args, preview); }
     catch (e) { console.warn('[CrowAI] lyrics PDF failed', e); preview.fail('Couldn\u2019t create the PDF. Please try again.'); }
     finally { this._pdfBusy = false; }
   }
   async _buildLyricsPDF({ artist, title, album }, preview) {
     const entry = this._lyricsCachedEntry(artist, title) || await this._lyricsLookupForExport(artist, title, album);
-    if (!entry || entry.type === 'none') { preview.fail('No lyrics found for this track.'); return; }
+    if (!entry || entry.type === 'none') { preview.fail({ title: 'No Lyrics Found', message: 'There aren\u2019t any lyrics for this song yet, so there\u2019s nothing to put in the PDF.' }); return; }
     let JsPDFCtor;
-    try { JsPDFCtor = await this._ensureJsPDF(); }
+    try { JsPDFCtor = await this._ensureJsPDF(preview); }
     catch (e) { preview.fail(e?.message || 'Could not load the PDF library'); return; }
 
     // Lyric lines — synced lyrics repeat a line at each timestamp it's sung,
@@ -12879,7 +13119,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // Collapse runs of blank lines into a single stanza break
     lines = lines.reduce((out, l) => { if (l || (out.length && out[out.length - 1])) out.push(l); return out; }, []);
     while (lines.length && !lines[lines.length - 1]) lines.pop();
-    if (!lines.some(Boolean)) { preview.fail('No lyrics found for this track.'); return; }
+    if (!lines.some(Boolean)) { preview.fail({ title: 'No Lyrics Found', message: 'There aren\u2019t any lyrics for this song yet, so there\u2019s nothing to put in the PDF.' }); return; }
 
     const doc = new JsPDFCtor({ unit: 'pt', format: 'a4' });
     const pageW = doc.internal.pageSize.getWidth();
@@ -12951,7 +13191,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const rows = kv.length ? kv : (album ? [['ALBUM', clean(album)]] : []);
     const zebraRgb = [244, 244, 247];
     const rowGap = 3;
+    if (heroSrc) preview?.status?.('Fetching artwork\u2026');
     const img = heroSrc ? await this._pdfImageData(heroSrc) : null;
+    preview?.status?.('Building pages\u2026');
     const artGap = 16;
     const measure = (cw, lw) => {
       doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5);
@@ -12977,13 +13219,30 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       } catch (_) { colX = marginX; colW = contentW; labelW = 112; laid = measure(colW, labelW); }
     }
     let ty = y + 13;   // first row's baseline, its box level with the artwork's top
+    const centred = !img || colX === marginX;   // no artwork beside the rows: centre them, like the lyrics below
     laid.forEach(({ lab, valLines, boxH }) => {
       doc.setFillColor(...zebraRgb);
-      doc.roundedRect(colX, ty - 13, colW, boxH, 3, 3, 'F');
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(...mutedRgb);
-      doc.text(lab, colX + 8, ty);
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5); doc.setTextColor(...inkRgb);
-      valLines.forEach((ln, k) => doc.text(ln, colX + labelW, ty + k * 13));
+      const boxTop = ty - 13;
+      doc.roundedRect(colX, boxTop, colW, boxH, 3, 3, 'F');
+      // text sits in the vertical middle of its box (10.5 pt caps are about 7.5 pt tall)
+      const base = boxTop + (boxH - (valLines.length - 1) * 13) / 2 + 3.7;
+      if (centred) {
+        // label and value as one group, centred across the box
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
+        const lw = doc.getTextWidth(lab), gap = 12;
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5);
+        const vw = Math.max(...valLines.map(l => doc.getTextWidth(l)));
+        const x0 = colX + (colW - (lw + gap + vw)) / 2;
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(...mutedRgb);
+        doc.text(lab, x0, base - 0.5);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5); doc.setTextColor(...inkRgb);
+        valLines.forEach((ln, k) => doc.text(ln, x0 + lw + gap, base + k * 13));
+      } else {
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(...mutedRgb);
+        doc.text(lab, colX + 8, base - 0.5);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5); doc.setTextColor(...inkRgb);
+        valLines.forEach((ln, k) => doc.text(ln, colX + labelW, base + k * 13));
+      }
       ty += boxH + rowGap;
     });
     ty -= 13 + rowGap;   // bottom edge of the last row
@@ -13016,11 +13275,1847 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     this._showPDFPreview(doc, 'crowai-lyrics-' + slug + '-' + new Date().toISOString().slice(0, 10) + '.pdf', preview);
   }
 
+  // ══ CD Case Printables ═══════════════════════════════════════════════════
+  // Finds the front and back covers, booklet pages and disc artwork for the
+  // album that's playing — matched through MusicBrainz, with the images taken
+  // from the Cover Art Archive — and lays them out at real jewel-case sizes in
+  // a PDF, ready to print at 100% and cut out. Anything that can't be found is
+  // handled: a stand-in (title / tracklist) is printed in its place, and a last
+  // "What was found" page says exactly what came from where.
+  //
+  //   Front cover / booklet pages   120 x 120 mm
+  //   Back tray card                150 x 118 mm (fold lines 6 mm from each edge)
+  //   Disc label                    118 mm with a 36 mm centre hole
+  async _exportCdPrintables(args) {
+    if (!this._pdfOn('cd')) return;   // switched off in the card editor
+    if (this._pdfBusy) return;
+    this._pdfBusy = true;
+    const preview = this._openPDFPreview();
+    const orig = { artist: args?.artist || '', title: args?.title || '', album: args?.album || '' };
+    // an album chosen with "Not this one?" for this song / album is used from then on
+    let cur = Object.assign({}, orig, this._cdChoiceGet(orig) || {});
+    let built = null;   // { rgId, album, artist } of the case on screen
+    let running = null, rerun = false;
+    const make = a => (running = (async () => {
+      built = a.rgId ? { rgId: a.rgId, album: a.rgTitle || '', artist: a.rgArtist || '' } : null;
+      if (this._pdfFromSession('cd|' + JSON.stringify(a), preview)) return;
+      const b = await this._buildCdPrintables(a, preview);
+      if (b) built = b;
+    })());
+    let picking = false;
+    preview.offerMatch(async () => {
+      // busy with this preview's own case is fine (it may be waiting on the No Cover Art alert); another export isn't
+      if (preview.closed || picking || (this._pdfBusy && !running)) return;
+      picking = true;
+      const curRg = built?.rgId || cur.rgId || '';
+      const m = await preview.pickMatch({
+        title: 'Not This One?',
+        message: 'Choose the right album.',
+        query: String(built?.album || cur.rgTitle || orig.album || orig.title || '').replace(/\s+-\s+(Single|EP)\s*$/i, ''),
+        placeholder: 'Search albums (or Artist - Album)',
+        thumb: 'square',
+        search: async q => {
+          const res = await this._cdMatchSearch(q, orig.artist);
+          return res && res.map(x => ({ value: x, label: x.title, sub: [x.artist, x.year, x.kind].filter(Boolean).join(' \u00B7 '), img: x.art, current: !!curRg && x.id === curRg }));
+        },
+      }).finally(() => { picking = false; });
+      if (!m || preview.closed) return;
+      rerun = true;
+      preview.abandon();                                   // let a case still waiting on its alert finish
+      try { await running; } catch (_) {}
+      if (preview.closed) return;
+      this._pdfBusy = true;
+      preview.reset();
+      try {
+        const pick = { rgId: m.id, rgTitle: m.title, rgArtist: m.artist };
+        this._cdChoiceSet(orig, pick);
+        cur = Object.assign({}, orig, pick);
+        await make(cur);
+      }
+      catch (e) { console.warn('[CrowAI] CD printables failed', e); preview.fail('Couldn\u2019t create the CD printables. Please try again.'); }
+      finally { this._pdfBusy = false; }
+    }, 'Choose a Different Album');
+    try { await make(cur); }
+    catch (e) { console.warn('[CrowAI] CD printables failed', e); preview.fail('Couldn\u2019t create the CD printables. Please try again.'); }
+    finally { if (!rerun) this._pdfBusy = false; }
+  }
+
+  // Albums chosen with "Not this one?", remembered on this device by artist + album (or song)
+  _cdChoiceKey(a) {
+    const nf = v => String(v || '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, '');
+    const artist = String(a?.artist || '').split(/\s*(?:[,;\/]|\s&\s|\bfeat\.?\s|\bft\.?\s|\bfeaturing\b)\s*/i)[0];
+    const rest = nf(String(a?.album || '').replace(/\s+-\s+(Single|EP)\s*$/i, '')) || ('t:' + nf(a?.title));
+    return rest === 't:' ? '' : nf(artist) + '|' + rest;
+  }
+  _cdChoiceStore() {
+    if (!this._cdChoices) {
+      let o = {};
+      try { o = JSON.parse(localStorage.getItem('crowai_cd_choice_v1') || '{}') || {}; } catch (_) { o = {}; }
+      this._cdChoices = o;
+    }
+    return this._cdChoices;
+  }
+  _cdChoiceGet(a) {
+    const k = this._cdChoiceKey(a);
+    const v = k ? this._cdChoiceStore()[k] : null;
+    return v?.rgId ? { rgId: v.rgId, rgTitle: v.rgTitle || '', rgArtist: v.rgArtist || '' } : null;
+  }
+  _cdChoiceSet(a, pick) {
+    const k = this._cdChoiceKey(a);
+    if (!k || !pick?.rgId) return;
+    const s = this._cdChoiceStore();
+    s[k] = { rgId: pick.rgId, rgTitle: pick.rgTitle || '', rgArtist: pick.rgArtist || '', t: Date.now() };
+    Object.keys(s).sort((x, y) => (s[y].t || 0) - (s[x].t || 0)).slice(80).forEach(x => delete s[x]);
+    try { localStorage.setItem('crowai_cd_choice_v1', JSON.stringify(s)); } catch (_) {}
+  }
+
+  // Albums on MusicBrainz for the chooser (release groups, so each album is listed once), the playing
+  // artist's first. "Artist - Album" searches for that artist. null if MusicBrainz couldn't be reached.
+  async _cdMatchSearch(q, artistHint = '') {
+    q = String(q || '').trim();
+    if (!q) return [];
+    let album = q;
+    let artist = String(artistHint || '').split(/\s*(?:[,;\/]|\s&\s|\bfeat\.?\s|\bft\.?\s|\bfeaturing\b)\s*/i)[0].trim();
+    const dash = q.match(/^(.+?)\s+[-\u2013\u2014]\s+(.+)$/);
+    if (dash) { artist = dash[1].trim(); album = dash[2].trim(); }
+    const esc = s => String(s).replace(/([+\-&|!(){}\[\]^"~*?:\\\/])/g, '\\$1');
+    const queries = [];
+    if (artist) queries.push('releasegroup:(' + esc(album) + ') AND artist:(' + esc(artist) + ')');
+    queries.push('releasegroup:(' + esc(album) + ')');
+    const seen = new Set(), out = [];
+    let reached = false;
+    for (const query of queries) {
+      const res = await this._cdJson('https://musicbrainz.org/ws/2/release-group/?query=' + encodeURIComponent(query) + '&limit=15&fmt=json', { gap: 1100 });
+      if (!res || res.notFound) continue;
+      reached = true;
+      (res['release-groups'] || []).forEach(g => {
+        if (!g?.id || seen.has(g.id)) return;
+        seen.add(g.id);
+        const sec = g['secondary-types'] || [];
+        out.push({
+          id: g.id,
+          title: g.title || '',
+          artist: this._cdCreditName(g['artist-credit']),
+          year: String(g['first-release-date'] || '').slice(0, 4),
+          kind: sec.includes('Compilation') ? 'Compilation' : sec.includes('Soundtrack') ? 'Soundtrack' : sec.includes('Live') ? 'Live' : (g['primary-type'] || ''),
+          art: 'https://coverartarchive.org/release-group/' + g.id + '/front-250',
+        });
+      });
+    }
+    return reached ? out.slice(0, 20) : null;
+  }
+
+  // JSON from MusicBrainz / the Cover Art Archive. Returns the parsed data,
+  // { notFound: true } for a 404, or null if it couldn't be reached.
+  // `gap` spaces MusicBrainz calls out (it asks for one request a second).
+  // Album artwork from the iTunes Store (no key needed), 1200 px. Kept for the session.
+  _cdItunesAlbumArt(artist, album) {
+    return this._sessionMemo('italb', String(artist || '') + '|' + String(album || ''), async () => {
+      const bare = s => String(s || '').replace(/\s+-\s+(Single|EP)\s*$/i, '').trim();
+      const n = s => bare(s).toLowerCase().replace(/[^a-z0-9]+/g, '');
+      try {
+        const r = await fetch('https://itunes.apple.com/search?term=' + encodeURIComponent((artist ? artist + ' ' : '') + bare(album)) + '&entity=album&limit=15');
+        if (!r.ok) return null;
+        const list = (await r.json()).results || [];
+        const a = n(artist);
+        const hit = list.find(x => n(x.collectionName) === n(album) && (!a || n(x.artistName).includes(a) || a.includes(n(x.artistName))))
+          || list.find(x => n(x.collectionName) === n(album));
+        return hit?.artworkUrl100 ? hit.artworkUrl100.replace(/\d+x\d+bb/, '1200x1200bb') : null;
+      } catch (_) { return null; }
+    });
+  }
+
+  async _cdJson(url, opts = {}) {
+    return this._sessionMemo('mb', url, () => this._cdJsonFresh(url, opts));
+  }
+  async _cdJsonFresh(url, { timeout = 10000, retry = true, gap = 0 } = {}) {
+    if (gap) {
+      const wait = (this._cdMbAt || 0) + gap - Date.now();
+      if (wait > 0) await new Promise(r => setTimeout(r, wait));
+      this._cdMbAt = Date.now();
+    }
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeout);
+    try {
+      const resp = await fetch(url, { signal: ctrl.signal });
+      if (resp.status === 404) return { notFound: true };
+      if ((resp.status === 503 || resp.status === 429) && retry) {
+        clearTimeout(t);
+        await new Promise(r => setTimeout(r, 1800));
+        return this._cdJsonFresh(url, { timeout, retry: false, gap });   // straight to the network, not via the cache (it is this call's own entry)
+      }
+      if (!resp.ok) return null;
+      return await resp.json();
+    } catch (_) { return null; } finally { clearTimeout(t); }
+  }
+
+  // Matches the album to a MusicBrainz release and finds which of its images
+  // the Cover Art Archive has. Tries the album name, then the name without
+  // "(Deluxe Edition)"-style tags, then the track itself. CDs and official
+  // releases are preferred; up to six candidates are checked and the one with
+  // the most artwork wins.
+  async _cdFindRelease({ artist, title, album, rgId }, preview) {
+    const nf = v => String(v || '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, '');
+    const nc = v => nf(String(v || '').replace(/[(\[][^)\]]*[)\]]/g, ' '));
+    const matchT = (a, b) => {
+      const f1 = nf(a), f2 = nf(b);
+      if (f1 && f1 === f2) return 3;
+      const c1 = nc(a), c2 = nc(b);
+      if (c1 && c1 === c2) return 2;
+      if (c1 && c2 && Math.min(c1.length, c2.length) >= 4 && (c1.includes(c2) || c2.includes(c1))) return 1;
+      return 0;
+    };
+    const primary = String(artist || '').split(/\s*(?:[,;\/]|\s&\s|\bfeat\.?\s|\bft\.?\s|\bfeaturing\b)\s*/i)[0].trim();
+    const aN = nf(primary);
+    const artistOk = r => !aN || nf((r['artist-credit'] || []).map(x => (x.name || '') + (x.artist?.name || '')).join('')).includes(aN);
+    const key = rgId ? 'rg:' + rgId : aN + '|' + (nf(album) || 't:' + nf(title));
+    if (!this._cdCache) this._cdCache = new Map();
+    if (this._cdCache.has(key)) return this._cdCache.get(key);
+
+    const lq = s => String(s).replace(/[\\"]/g, '\\$&');
+    const mb = path => this._cdJson('https://musicbrainz.org/ws/2/' + path + (path.includes('?') ? '&' : '?') + 'fmt=json', { gap: 1100 });
+    let cands = [], netFail = false;
+
+    if (rgId) {
+      // chosen with "Not this one?": every edition of that album
+      if (preview.closed) return null;
+      preview.status('Opening the album on MusicBrainz\u2026');
+      const res = await mb('release?release-group=' + encodeURIComponent(rgId) + '&inc=artist-credits+media&limit=50');
+      if (!res) netFail = true;
+      else cands = (res.releases || []).map(r => ({ r: Object.assign({ 'release-group': { id: rgId } }, r), m: 3 }));
+    }
+    const albumQueries = [];
+    if (album && !rgId) {
+      albumQueries.push(album);
+      const stripped = String(album).replace(/\s*[(\[][^)\]]*[)\]]\s*/g, ' ').trim();
+      if (stripped && stripped !== album) albumQueries.push(stripped);
+    }
+    for (const aq of albumQueries) {
+      if (preview.closed) return null;
+      preview.status('Searching MusicBrainz\u2026');
+      const q = 'release:"' + lq(aq) + '"' + (primary ? ' AND artist:"' + lq(primary) + '"' : '');
+      const res = await mb('release/?query=' + encodeURIComponent(q) + '&limit=25');
+      if (!res) { netFail = true; break; }
+      cands = (res.releases || [])
+        .map(r => ({ r, m: Math.max(matchT(r.title, album), matchT(r.title, aq)) }))
+        .filter(x => x.m > 0 && artistOk(x.r));
+      if (cands.length) break;
+    }
+    if (!cands.length && !netFail && title && !rgId) {
+      if (preview.closed) return null;
+      preview.status('Looking the track up on MusicBrainz\u2026');
+      const q = 'recording:"' + lq(title) + '"' + (primary ? ' AND artist:"' + lq(primary) + '"' : '');
+      const res = await mb('recording/?query=' + encodeURIComponent(q) + '&limit=10');
+      if (!res) netFail = true;
+      else {
+        const seen = new Set();
+        (res.recordings || []).filter(rc => matchT(rc.title, title) > 0).forEach(rc => (rc.releases || []).forEach(r => {
+          if (seen.has(r.id)) return;
+          seen.add(r.id);
+          const rg = r['release-group'] || {};
+          const plainAlbum = rg['primary-type'] === 'Album' && !(rg['secondary-types'] || []).length;
+          cands.push({ r, m: plainAlbum ? 2 : 0.5 });
+        }));
+      }
+    }
+    const rank = ({ r, m }) => {
+      const cd = (r.media || []).some(x => /\bcd\b|hdcd|cd-r/i.test(x.format || ''));
+      return m * 100 + (r.status === 'Official' ? 20 : 0) + (cd ? 15 : 0) + Math.min(10, Math.round((r.score || 0) / 10));
+    };
+    cands.sort((a, b) => rank(b) - rank(a) || String(a.r.date || '9999').localeCompare(String(b.r.date || '9999')));
+    cands = cands.slice(0, 6);
+
+    let best = null;
+    for (let i = 0; i < cands.length; i++) {
+      if (preview.closed) return null;
+      preview.progress('Checking the Cover Art Archive\u2026', i + 1, cands.length);
+      const j = await this._cdJson('https://coverartarchive.org/release/' + cands[i].r.id);
+      const imgs = (j && !j.notFound && Array.isArray(j.images)) ? j.images.filter(x => x.approved !== false) : [];
+      if (!imgs.length) continue;
+      const has = t => x => (x.types || []).includes(t);
+      const front = imgs.find(x => x.front || has('Front')(x));
+      const back = imgs.find(x => x.back || has('Back')(x)) || imgs.find(has('Tray'));
+      const medium = imgs.find(has('Medium'));
+      const booklets = imgs.filter(has('Booklet'));
+      const score = (front ? 4 : 0) + (back ? 4 : 0) + (booklets.length ? 2 : 0) + (medium ? 1 : 0);
+      if (score > 0 && (!best || score > best.score)) best = { score, release: cands[i].r, front, back, medium, booklets };
+      if (front && back && booklets.length && medium) break;
+    }
+    // Nothing on any edition: the album's "release group" can still hold a front cover
+    if (!best && cands.length) {
+      const rgId = cands[0].r['release-group']?.id;
+      const j = rgId ? await this._cdJson('https://coverartarchive.org/release-group/' + rgId) : null;
+      const f = j && !j.notFound && Array.isArray(j.images) ? j.images.find(x => x.front) : null;
+      if (f) best = { score: 1, release: cands[0].r, front: f, back: null, medium: null, booklets: [] };
+    }
+    const out = { best, found: cands.length, netFail };
+    if (best || (!netFail && cands.length === 0)) this._cdCache.set(key, out);
+    return out;
+  }
+
+  // Track titles for the stand-in back cover: [{ d, n, title }]
+  async _cdTracklist(releaseId) {
+    const j = releaseId ? await this._cdJson('https://musicbrainz.org/ws/2/release/' + releaseId + '?inc=recordings+artist-credits&fmt=json', { gap: 1100 }) : null;
+    const media = j && !j.notFound ? (j.media || []) : [];
+    const out = [];
+    media.forEach((m, mi) => (m.tracks || []).forEach(t => out.push({ d: mi + 1, n: t.number || t.position, title: t.title || '' })));
+    return { tracks: out, discs: media.length, artist: this._cdCreditName(j?.['artist-credit']) };
+  }
+
+  // "Artist A & Artist B" from a MusicBrainz artist-credit list ('' when there isn't one)
+  _cdCreditName(credit) {
+    return (Array.isArray(credit) ? credit : []).map(x => (x?.name || x?.artist?.name || '') + (x?.joinphrase || '')).join('').trim();
+  }
+
+  // An image from the Cover Art Archive (or the artwork on screen). Direct
+  // first; if the browser won't let the page read it, the public image proxy
+  // the other PDF exports use.
+  async _cdLoadBlob(url, max = 1600) {
+    // artwork: kept for the session (images are big, so only the 60 most recent)
+    return this._sessionMemo('img', url + '|' + max, () => this._cdLoadBlobFresh(url, max), { max: 60 });
+  }
+  async _cdLoadBlobFresh(url, max = 1600) {
+    const get = async u => {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 20000);
+      try {
+        const r = await fetch(u, { signal: ctrl.signal });
+        if (!r.ok) return null;
+        const b = await r.blob();
+        return b && b.size > 500 && (!b.type || /^image\//.test(b.type)) ? b : null;
+      } catch (_) { return null; } finally { clearTimeout(t); }
+    };
+    let b = await get(url);
+    const isLocal = /^(https?:\/\/(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|[^/]*\.local\b|[^/]*:8123)|data:|blob:)/i.test(url);
+    if (!b && /^https?:\/\//i.test(url) && !isLocal) b = await get('https://images.weserv.nl/?url=' + encodeURIComponent(url) + '&w=' + max + '&output=jpg');
+    return b;
+  }
+
+  // Draws an image into an exact print size (300 dpi) and returns it as a JPEG.
+  // fit 'auto' fills the space when the shape is close to the target and
+  // otherwise shrinks it to fit with white around it, so nothing important
+  // gets cropped off. shape 'disc' cuts a circle with a centre hole;
+  // part 'left' / 'right' takes one half of a two-page booklet spread.
+  async _cdRender(src, wMm, hMm, { fit = 'auto', shape = 'rect', hole = 0, part = '', dpi = 300, bg = '#fff', focusY = 0.5, fade = false, banner = null } = {}) {
+    const own = !(typeof ImageBitmap !== 'undefined' && src instanceof ImageBitmap);
+    const bmp = own ? await createImageBitmap(src) : src;
+    try {
+      const pxW = Math.min(2400, Math.round(wMm / 25.4 * dpi)), pxH = Math.round(pxW * hMm / wMm);
+      const c = document.createElement('canvas');
+      c.width = pxW; c.height = pxH;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = bg; ctx.fillRect(0, 0, pxW, pxH);
+      ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+      const sx = part === 'right' ? bmp.width / 2 : 0;
+      const sw = part ? bmp.width / 2 : bmp.width, sh = bmp.height;
+      const mode = fit === 'auto' ? (Math.abs(Math.log((sw / sh) / (wMm / hMm))) < 0.2 ? 'cover' : 'contain') : fit;
+      const s = mode === 'cover' ? Math.max(pxW / sw, pxH / sh) : Math.min(pxW / sw, pxH / sh);
+      const dw = sw * s, dh = sh * s;
+      const dx = (pxW - dw) / 2, dy = (pxH - dh) * (mode === 'cover' ? focusY : 0.5);
+      ctx.save();
+      if (shape === 'disc') {
+        const R = pxW / 2, rh = hole / wMm * pxW / 2;
+        ctx.beginPath();
+        ctx.arc(R, R, R, 0, Math.PI * 2);
+        if (rh) { ctx.moveTo(R + rh, R); ctx.arc(R, R, rh, 0, Math.PI * 2); }
+        ctx.clip('evenodd');
+      }
+      ctx.drawImage(bmp, sx, 0, sw, sh, dx, dy, dw, dh);
+      // A poster that doesn't fill the space melts into the background colour
+      if (fade && mode === 'contain' && /^rgb\(/.test(bg)) {
+        const clear = bg.replace('rgb(', 'rgba(').replace(')', ',0)');
+        const edge = (x0, y0, x1, y1) => {
+          const g = ctx.createLinearGradient(x0, y0, x1, y1);
+          g.addColorStop(0, bg); g.addColorStop(1, clear);
+          ctx.fillStyle = g;
+          ctx.fillRect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0) || pxW, Math.abs(y1 - y0) || pxH);
+        };
+        if (dw < pxW - 2) { const f = Math.min(dw * 0.14, pxW * 0.1); edge(dx, 0, dx + f, 0); edge(dx + dw, 0, dx + dw - f, 0); }
+        if (dh < pxH - 2) { const f = Math.min(dh * 0.14, pxH * 0.1); edge(0, dy, 0, dy + f); edge(0, dy + dh, 0, dy + dh - f); }
+      }
+      // Title across the lower half (below the centre hole on a disc)
+      if (banner?.title) {
+        const g = ctx.createLinearGradient(0, pxH * 0.5, 0, pxH);
+        g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,0.72)');
+        ctx.fillStyle = g; ctx.fillRect(0, pxH * 0.5, pxW, pxH * 0.5);
+        const fs = pxW * 0.06, maxW = pxW * 0.58;
+        ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.font = '700 ' + fs + 'px sans-serif';
+        const lines = []; let cur = '';
+        String(banner.title).split(/\s+/).forEach(w => {
+          const t = cur ? cur + ' ' + w : w;
+          if (ctx.measureText(t).width <= maxW || !cur) cur = t; else { lines.push(cur); cur = w; }
+        });
+        if (cur) lines.push(cur);
+        const shown = lines.slice(0, 2);
+        if (lines.length > 2) shown[1] = shown[1].replace(/\s*\S*$/, '') + '...';
+        shown.forEach((l, i) => ctx.fillText(l, pxW / 2, pxH * 0.735 + i * fs * 1.15, maxW));
+        if (banner.sub) {
+          ctx.font = '500 ' + fs * 0.7 + 'px sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.82)';
+          ctx.fillText(String(banner.sub), pxW / 2, pxH * 0.735 + shown.length * fs * 1.15 + fs * 0.1, maxW);
+        }
+      }
+      ctx.restore();
+      const dpiEff = Math.round(sw / (dw / pxW * wMm) * 25.4);
+      return { data: c.toDataURL('image/jpeg', 0.9), mode, aspect: bmp.width / bmp.height, srcW: bmp.width, srcH: bmp.height, dpi: dpiEff };
+    } finally { if (own) { try { bmp.close(); } catch (_) {} } }
+  }
+
+  async _buildCdPrintables({ artist, title, album, rgId = '', rgTitle = '', rgArtist = '' }, preview) {
+    artist = String(artist || '').trim(); title = String(title || '').trim(); album = String(album || '').trim();
+    // a different album chosen with "Not this one?": its own name and artist from here on
+    if (rgId) { album = rgTitle || album; if (rgArtist && !/^various(\s+artists?)?$/i.test(rgArtist)) artist = rgArtist; }
+    if (!artist && !title) { preview.fail('There\u2019s no track to look up.'); return; }
+    const pool = async (arr, n, fn) => {
+      let i = 0;
+      await Promise.all(Array.from({ length: Math.min(n, arr.length) }, async () => { while (i < arr.length) { const k = i++; await fn(arr[k], k); } }));
+    };
+
+    // 1 — find the album and its artwork list
+    const found = await this._cdFindRelease({ artist, title, album, rgId }, preview);
+    if (!found || preview.closed) return;
+    if (found.netFail && !found.best) { preview.fail({ icon: 'offline', title: 'Can\u2019t Reach MusicBrainz', message: 'Check your internet connection, then try again.' }); return; }
+    const best = found.best;
+    const release = best?.release || null;
+    const albumName = release?.title || album || title;
+    // The album's own artist, not the playing song's: a compilation is credited to "Various Artists",
+    // and then no single artist is printed on the cover (the song's artist is just one of many on it).
+    let albumArtist = this._cdCreditName(release?.['artist-credit']);
+    if (!albumArtist && release?.id) albumArtist = (await this._cdTracklist(release.id).catch(() => null))?.artist || '';
+    const various = /^various(\s+artists?)?$/i.test(albumArtist) || albumArtist === '[unknown]';
+    const coverArtist = various ? '' : (albumArtist || artist);
+
+    // 2 — download the images
+    const urlOf = im => String(im?.thumbnails?.['1200'] || im?.thumbnails?.large || im?.image || '').replace(/^http:\/\//i, 'https://');
+    const MAXB = 24;
+    const jobs = [];
+    if (best?.front) jobs.push({ k: 'front', url: urlOf(best.front) });
+    if (best?.back) jobs.push({ k: 'back', url: urlOf(best.back) });
+    if (best?.medium) jobs.push({ k: 'medium', url: urlOf(best.medium) });
+    (best?.booklets || []).slice(0, MAXB).forEach((im, i) => jobs.push({ k: 'bk' + i, url: urlOf(im) }));
+    const blobs = {};
+    let done = 0;
+    if (jobs.length) preview.progress('Downloading artwork\u2026', 0, jobs.length);
+    await pool(jobs, 3, async job => {
+      blobs[job.k] = job.url ? await this._cdLoadBlob(job.url, 1600) : null;
+      preview.progress('Downloading artwork\u2026', ++done, jobs.length);
+    });
+    if (preview.closed) return;
+    let frontSrc = blobs.front ? 'Cover Art Archive' : '';
+    if (!blobs.front && !rgId) {
+      // No front cover from the archive: use the artwork already on screen (not for a chosen album - it shows the old one)
+      const blocks = this._collectInfoPanelBlocks(this.shadowRoot?.getElementById('infoContent') || document.createElement('div'));
+      const src = blocks.find(b => b.type === 'img' && b.w >= 60)?.src;
+      if (src) { blobs.front = await this._cdLoadBlob(src, 1200); if (blobs.front) frontSrc = 'screen'; }
+    }
+    if (!blobs.front && albumName) {
+      // Next: the album's artwork on the iTunes Store (no key needed, 1200 px)
+      preview.status('Checking the iTunes Store for the cover\u2026');
+      const it = await this._cdItunesAlbumArt(artist, albumName).catch(() => null);
+      if (it) { blobs.front = await this._cdLoadBlob(it, 1200); if (blobs.front) frontSrc = 'itunes'; }
+    }
+    if (!blobs.front) {
+      // Last: the artwork of what's playing, when it is this track
+      const n = v => String(v || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+      const at = this._hass?.states[this._entity]?.attributes || {};
+      const pic = (at.entity_picture_local || at.entity_picture || '').replace(/^http:\/\//i, 'https://');
+      if (pic && !rgId && n(at.media_title) === n(title)) { blobs.front = await this._cdLoadBlob(pic, 1200); if (blobs.front) frontSrc = 'playing'; }
+    }
+    if (preview.closed) return;
+    if (!Object.values(blobs).some(Boolean)) {
+      // Nothing anywhere: say so kindly, and offer to carry on with plain title cards
+      const niceAlbum = String(albumName || title).replace(/\s+-\s+(Single|EP)\s*$/i, '').trim();
+      const mbUrl = release?.id ? 'https://musicbrainz.org/release/' + release.id + '/add-cover-art'
+        : 'https://musicbrainz.org/search?type=release&query=' + encodeURIComponent(niceAlbum + ' ' + (artist || ''));
+      const goOn = await new Promise(resolve => {
+        preview.onClose(() => resolve(false));
+        preview.onAbandon?.(() => resolve(false));   // a different album was chosen instead
+        preview.fail({
+          icon: 'art',
+          title: 'No Cover Art Yet',
+          message: 'We couldn\u2019t find the artwork for \u201C' + niceAlbum + '\u201D' + (artist ? ' by ' + artist : '') + '. '
+            + 'You can still print the case with simple title cards, or add the cover to MusicBrainz so it\u2019s here next time.',
+          actions: [
+            { label: 'Make with Title Cards', primary: true, onClick: () => resolve(true) },
+            { label: release?.id ? 'Add Cover on MusicBrainz' : 'Find It on MusicBrainz', href: mbUrl },
+            { label: 'Not Now', onClick: () => { resolve(false); preview.close(); } },
+          ],
+        });
+      });
+      if (!goOn || preview.closed) return;
+      preview.reset();
+      preview.status('Making title cards\u2026');
+    }
+
+    let JsPDFCtor;
+    try { JsPDFCtor = await this._ensureJsPDF(preview); }
+    catch (e) { preview.fail(e?.message || 'Could not load the PDF library'); return; }
+
+    // 3 — size everything for print
+    preview.status('Sizing the artwork for print\u2026');
+    const FW = 120, TW = 150, TH = 118, DD = 118, HOLE = 36;
+    const safe = async fn => { try { return await fn(); } catch (e) { console.warn('[CrowAI] CD artwork skipped', e); return null; } };
+    const rows = [];          // [label, status] for the last page
+    const items = [];
+    const fitNote = r => (r && r.mode === 'contain' ? ' (shrunk to fit - the scan isn\u2019t the usual shape)' : '');
+
+    const frontImg = blobs.front ? await safe(() => this._cdRender(blobs.front, FW, FW)) : null;
+    if (frontImg) {
+      items.push({ kind: 'img', w: FW, h: FW, img: frontImg, cap: 'Front cover - 120 x 120 mm' });
+      rows.push(['Front cover', frontSrc === 'screen'
+        ? 'Not on the Cover Art Archive - used the artwork from the info panel (may be lower quality)' + fitNote(frontImg)
+        : frontSrc === 'itunes' ? 'Not on the Cover Art Archive - used the album artwork from the iTunes Store' + fitNote(frontImg)
+        : frontSrc === 'playing' ? 'Not on the Cover Art Archive - used the artwork of what\'s playing (may be lower quality)' + fitNote(frontImg)
+        : 'Found' + fitNote(frontImg)]);
+    } else {
+      items.push({ kind: 'genFront', w: FW, h: FW, cap: 'Front cover - 120 x 120 mm (title card - no cover found)' });
+      rows.push(['Front cover', 'Not found - printed a plain title card instead']);
+    }
+
+    let discImg = null, discHow = '';
+    if (blobs.medium) { discImg = await safe(() => this._cdRender(blobs.medium, DD, DD, { shape: 'disc', hole: HOLE })); if (discImg) discHow = 'Found'; }
+    if (!discImg && blobs.front) { discImg = await safe(() => this._cdRender(blobs.front, DD, DD, { shape: 'disc', hole: HOLE, fit: 'cover' })); if (discImg) discHow = 'No disc scan on the archive - made from the front cover'; }
+    if (discImg) {
+      items.push({ kind: 'img', disc: true, w: DD, h: DD, img: discImg, cap: 'Disc label - 118 mm, centre hole 36 mm' + (discHow === 'Found' ? '' : ' (made from the front cover)') });
+      rows.push(['Disc', discHow]);
+    } else {
+      items.push({ kind: 'genDisc', disc: true, w: DD, h: DD, cap: 'Disc label - 118 mm, centre hole 36 mm (title only - no artwork found)' });
+      rows.push(['Disc', 'Not found - printed a plain title label']);
+    }
+
+    const backImg = blobs.back ? await safe(() => this._cdRender(blobs.back, TW, TH)) : null;
+    if (backImg) {
+      items.push({ kind: 'img', tray: true, w: TW, h: TH, img: backImg, cap: 'Back tray card - 150 x 118 mm (fold at the two small ticks)' });
+      rows.push(['Back cover', 'Found' + fitNote(backImg)]);
+    } else {
+      preview.status('Getting the tracklist\u2026');
+      const tl = await safe(() => this._cdTracklist(release?.id)) || { tracks: [], discs: 0 };
+      items.push({ kind: 'genBack', tray: true, w: TW, h: TH, tl, cap: 'Back tray card - 150 x 118 mm (fold at the two small ticks)' + (tl.tracks.length ? ' - tracklist from MusicBrainz' : ' - title only') });
+      rows.push(['Back cover', 'Not found - printed a ' + (tl.tracks.length ? 'tracklist card from MusicBrainz' : 'title card') + ' instead']);
+    }
+
+    let pages = 0, bkSkipped = 0, bkSplit = 0;
+    const bkTotal = Math.min(MAXB, best?.booklets?.length || 0);
+    for (let i = 0; i < bkTotal; i++) {
+      const b = blobs['bk' + i];
+      const bmp = b ? await safe(() => createImageBitmap(b)) : null;
+      if (!bmp) { bkSkipped++; continue; }
+      const asp = bmp.width / bmp.height;
+      const parts = asp >= 1.6 && asp <= 2.4 ? ['left', 'right'] : [''];   // a two-page spread becomes two pages
+      if (parts.length === 2) bkSplit++;
+      for (const part of parts) {
+        const img = await safe(() => this._cdRender(bmp, FW, FW, { part }));
+        if (img) { pages++; items.push({ kind: 'img', w: FW, h: FW, img, cap: 'Booklet page ' + pages + ' - 120 x 120 mm' }); }
+        else bkSkipped++;
+      }
+      try { bmp.close(); } catch (_) {}
+    }
+    if (best?.booklets?.length) {
+      rows.push(['Booklet', pages + ' page' + (pages === 1 ? '' : 's') + ' found' + (bkSplit ? ' (' + bkSplit + ' two-page spread' + (bkSplit === 1 ? '' : 's') + ' split into single pages)' : '')
+        + (bkSkipped ? ', ' + bkSkipped + ' couldn\u2019t be downloaded' : '') + (best.booklets.length > MAXB ? ', first ' + MAXB + ' used' : '')]);
+    } else rows.push(['Booklet', 'None on the Cover Art Archive for this album']);
+    if (preview.closed) return;
+
+    // 4 — lay it out
+    preview.status('Building the PDF\u2026');
+    const lang = String(navigator.languages?.[0] || navigator.language || '');
+    const pref = String(this._config?.cd_paper_size || '').toLowerCase();
+    const letter = pref ? pref === 'letter' : /-(US|CA|MX|PH)\b/i.test(lang);
+    const doc = new JsPDFCtor({ unit: 'mm', format: letter ? 'letter' : 'a4', orientation: 'portrait' });
+    const pageW = doc.internal.pageSize.getWidth(), pageH = doc.internal.pageSize.getHeight();
+    const hexToRgb = hex => {
+      const h = String(hex || '#007AFF').replace('#', '');
+      const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h.slice(0, 6);
+      const n = parseInt(full, 16);
+      return isNaN(n) ? [0, 122, 255] : [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    };
+    const inkRgb = [28, 28, 30], mutedRgb = [120, 120, 128], lineRgb = [150, 150, 150], paperRgb = [246, 246, 248];
+    const accentRgb = hexToRgb(this._config?.accent_color || '#007AFF');
+    const clean = s => String(s || '')
+      .replace(/[\u2018\u2019\u201A\u2032]/g, "'").replace(/[\u201C\u201D\u201E\u2033]/g, '"')
+      .replace(/[\u2013\u2014\u2212]/g, '-').replace(/\u2026/g, '...').replace(/\u00A0/g, ' ')
+      .replace(/[^\u0009\u000A\u0020-\u007E\u00A0-\u00FF]/g, '').replace(/[ \t]+/g, ' ').trim();
+    const fit1 = (txt, maxW) => {   // one line that fits, with ... if cut
+      let t = clean(txt);
+      if (doc.getTextWidth(t) <= maxW) return t;
+      while (t.length > 1 && doc.getTextWidth(t + '...') > maxW) t = t.slice(0, -1);
+      return t.trimEnd() + '...';
+    };
+    const marks = (x, y, w, h) => {   // corner cut marks, just outside the artwork
+      doc.setDrawColor(...lineRgb); doc.setLineWidth(0.15);
+      const g = 1.5, L = 4;
+      [[x, y, -1, -1], [x + w, y, 1, -1], [x, y + h, -1, 1], [x + w, y + h, 1, 1]].forEach(([cx, cy, sx, sy]) => {
+        doc.line(cx + sx * g, cy, cx + sx * (g + L), cy);
+        doc.line(cx, cy + sy * g, cx, cy + sy * (g + L));
+      });
+    };
+    const discGuides = (cx, cy) => {
+      doc.setDrawColor(...lineRgb); doc.setLineWidth(0.15);
+      doc.circle(cx, cy, DD / 2 + 0.4, 'S');
+      doc.circle(cx, cy, HOLE / 2 - 0.3, 'S');
+    };
+    const foldTicks = (x, y, h) => {
+      doc.setDrawColor(...lineRgb); doc.setLineWidth(0.15);
+      [x + 6, x + TW - 6].forEach(fx => { doc.line(fx, y - 1.5, fx, y - 5.5); doc.line(fx, y + h + 1.5, fx, y + h + 5.5); });
+    };
+
+    const draw = (it, x, y) => {
+      if (it.kind === 'img') {
+        doc.addImage(it.img.data, 'JPEG', x, y, it.w, it.h, undefined, 'FAST');
+      } else if (it.kind === 'genFront') {
+        doc.setFillColor(...paperRgb); doc.setDrawColor(200, 200, 205); doc.setLineWidth(0.2);
+        doc.rect(x, y, it.w, it.h, 'FD');
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(20); doc.setTextColor(...inkRgb);
+        const t = doc.splitTextToSize(clean(albumName), it.w - 20).slice(0, 5);
+        const lh = 9, ty = y + it.h / 2 - (t.length * lh) / 2 + 4;
+        t.forEach((l, i) => doc.text(l, x + it.w / 2, ty + i * lh, { align: 'center' }));
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(12); doc.setTextColor(...accentRgb);
+        if (coverArtist) doc.splitTextToSize(clean(coverArtist), it.w - 20).slice(0, 2).forEach((l, i) => doc.text(l, x + it.w / 2, ty + t.length * lh + 3 + i * 5.5, { align: 'center' }));
+      } else if (it.kind === 'genDisc') {
+        const cx = x + it.w / 2, cy = y + it.h / 2;
+        doc.setFillColor(...paperRgb); doc.setDrawColor(200, 200, 205); doc.setLineWidth(0.2);
+        doc.circle(cx, cy, DD / 2, 'FD');
+        doc.setFillColor(255, 255, 255); doc.circle(cx, cy, HOLE / 2, 'FD');
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(...inkRgb);
+        const t = doc.splitTextToSize(clean(albumName), 56).slice(0, 3);
+        t.forEach((l, i) => doc.text(l, cx, cy + HOLE / 2 + 8 + i * 5, { align: 'center' }));
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(...accentRgb);
+        if (coverArtist) doc.text(fit1(coverArtist, 56), cx, cy + HOLE / 2 + 9 + t.length * 5, { align: 'center' });
+      } else if (it.kind === 'genBack') {
+        doc.setFillColor(...paperRgb); doc.setDrawColor(200, 200, 205); doc.setLineWidth(0.2);
+        doc.rect(x, y, it.w, it.h, 'FD');
+        doc.setLineDashPattern([1.2, 1.2], 0);
+        doc.line(x + 6, y, x + 6, y + it.h); doc.line(x + it.w - 6, y, x + it.w - 6, y + it.h);
+        doc.setLineDashPattern([], 0);
+        const spine = clean(coverArtist ? coverArtist + ' - ' + albumName : albumName);
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(...inkRgb);
+        const sp = fit1(spine, it.h - 14), sw = doc.getTextWidth(sp);
+        doc.text(sp, x + 3.9, y + it.h / 2 + sw / 2, { angle: 90 });
+        doc.text(sp, x + it.w - 6 + 3.9, y + it.h / 2 + sw / 2, { angle: 90 });
+        const bx = x + 12, bw = it.w - 24;
+        doc.setFontSize(15);
+        const t = doc.splitTextToSize(clean(albumName), bw).slice(0, 2);
+        t.forEach((l, i) => doc.text(l, bx, y + 14 + i * 6.5));
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(...accentRgb);
+        if (coverArtist) doc.text(fit1(coverArtist, bw), bx, y + 14 + t.length * 6.5);
+        const tracks = it.tl?.tracks || [];
+        if (tracks.length) {
+          const cols = tracks.length > 40 ? 3 : tracks.length > 18 ? 2 : 1;
+          const fs = tracks.length > 40 ? 6 : 7, lhT = tracks.length > 40 ? 3 : 3.4;
+          const top = y + (coverArtist ? 20 : 14) + t.length * 6.5, perCol = Math.floor((y + it.h - 8 - top) / lhT), colW = bw / cols;
+          doc.setFontSize(fs); doc.setTextColor(...inkRgb);
+          tracks.slice(0, perCol * cols).forEach((tr, i) => {
+            const c = Math.floor(i / perCol), r = i % perCol;
+            const label = (it.tl.discs > 1 ? 'D' + tr.d + '-' : '') + tr.n + '. ' + tr.title;
+            doc.text(fit1(label, colW - 3), bx + c * colW, top + r * lhT);
+          });
+        }
+      }
+      // Cut guides and caption — outside the artwork so nothing prints over it
+      if (it.disc) discGuides(x + it.w / 2, y + it.h / 2); else marks(x, y, it.w, it.h);
+      if (it.tray) foldTicks(x, y, it.h);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(...mutedRgb);
+      doc.text(clean(it.cap), pageW / 2, y + it.h + 5, { align: 'center' });
+    };
+
+    const MARGIN = 12;
+    let y = MARGIN;
+    items.forEach(it => {
+      if (y + it.h + 5 > pageH - 12 && y > MARGIN + 0.1) { doc.addPage(); y = MARGIN; }
+      draw(it, (pageW - it.w) / 2, y);
+      y += it.h + 9;
+    });
+
+    // Last page: what was found, where from, and how to print it
+    doc.addPage();
+    const mx = 18, cw = pageW - mx * 2;
+    let ny = 24;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(18); doc.setTextColor(...inkRgb);
+    doc.splitTextToSize(clean(albumName), cw).slice(0, 2).forEach(l => { doc.text(l, mx, ny); ny += 8; });
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(12); doc.setTextColor(...accentRgb);
+    doc.text(fit1(coverArtist || 'Various Artists', cw), mx, ny); ny += 5;
+    doc.setDrawColor(...accentRgb); doc.setLineWidth(0.6); doc.line(mx, ny, pageW - mx, ny); ny += 10;
+    const para = (head, body) => {
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(...inkRgb);
+      doc.text(clean(head), mx, ny); ny += 5;
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(60, 60, 67);
+      doc.splitTextToSize(clean(body), cw).forEach(l => { doc.text(l, mx, ny); ny += 4.6; });
+      ny += 4;
+    };
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(...inkRgb);
+    doc.text('What was found', mx, ny); ny += 7;
+    rows.forEach(([k, v]) => {
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5); doc.setTextColor(...inkRgb);
+      doc.text(k, mx, ny);
+      doc.setFont('helvetica', 'normal'); doc.setTextColor(60, 60, 67);
+      const lines = doc.splitTextToSize(clean(v), cw - 32);
+      lines.forEach((l, i) => doc.text(l, mx + 32, ny + i * 4.6));
+      ny += Math.max(1, lines.length) * 4.6 + 2;
+    });
+    ny += 4;
+    if (release) {
+      const fmts = [...new Set((release.media || []).map(m => m.format).filter(Boolean))].join('/');
+      const detail = [release.country, release.date, fmts].filter(Boolean).join(', ');
+      para('Source release', release.title + (detail ? ' (' + detail + ')' : '') + '\nmusicbrainz.org/release/' + release.id);
+    } else para('Source release', 'No matching release was found on MusicBrainz.');
+    para('Printing', 'Print at 100% / "Actual size" - not "Fit to page" - so everything comes out at the real size. Paper: ' + (letter ? 'US Letter' : 'A4') + '. Cut along the corner marks (the disc has a circle and a hole to cut out). On the back tray card, fold along the two small ticks.');
+    para('Sizes', 'Front cover and booklet pages 120 x 120 mm, back tray card 150 x 118 mm, disc 118 mm with a 36 mm centre hole - standard jewel case. Slim cases and digipaks are different sizes.');
+
+    // Footer on every page
+    const pageCount = doc.internal.getNumberOfPages();
+    for (let p = 1; p <= pageCount; p++) {
+      doc.setPage(p);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(...mutedRgb);
+      doc.text(p < pageCount ? 'Print at 100% (Actual size)' : 'CrowAI Media Player Card', MARGIN, pageH - 6);
+      doc.text('Page ' + p + ' of ' + pageCount, pageW - MARGIN, pageH - 6, { align: 'right' });
+    }
+    if (preview.closed) return;
+    const slug = clean((coverArtist ? coverArtist + ' ' : '') + albumName).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 50) || 'album';
+    this._showPDFPreview(doc, 'crowai-cd-printables-' + slug + '-' + new Date().toISOString().slice(0, 10) + '.pdf', preview);
+    return { rgId: release?.['release-group']?.id || rgId || '', album: albumName, artist: albumArtist || artist };
+  }
+
+  // ══ DVD / Blu-ray Case Printables ════════════════════════════════════════
+  // For the movie / TV info panel. Prints a full case wrap (back | spine |
+  // front) at real size, plus a disc label. The poster comes from TMDB when a
+  // TMDB key is set in the card editor; with no key TMDB is skipped and only
+  // key-free sources are used (TVmaze for TV, iTunes for films, then the
+  // artwork already on screen). The spine and back take their colour from
+  // the poster, and the back is laid out from the title's own details.
+  //
+  //   DVD (Amaray)   wrap 273 x 183 mm, spine 14 mm
+  //   Blu-ray        wrap 272 x 149 mm, spine 14 mm
+  //   Disc label     118 mm, 36 mm centre hole
+  // From places that only know a title (Watch History, Video Recap, Movies & TV search, pinned items):
+  // the title's details are looked up once the case size is chosen.
+  // isTv is a hint unless sure is set (the player said it's an episode): history and some players
+  // report shows as films, so an exact title match on TVmaze / the iTunes Store can overrule it.
+  _exportDiscCaseFor(title, isTv, artUrl = '', { sure = false } = {}) {
+    if (!this._pdfOn('disc')) return;   // switched off in the card editor
+    if (!title) return;
+    return this._exportDiscCase(preview => this._discCaseDataFor(title, isTv, preview, sure), artUrl, { origTitles: [title] });
+  }
+
+  // A title's details for the case back, without opening the info panel. Uses what the info panel already
+  // found when it can; otherwise TMDB (with a key), TVmaze (TV) or Wikipedia. Kept for the session.
+  _discCaseDataFor(title, isTv, preview = null, sure = false) {
+    // a match chosen with "Not this one?" (here or in the info panel) wins
+    const chosen = this._videoChoiceGet(title);
+    if (chosen) return Promise.resolve(chosen);
+    return this._sessionMemo('discdata', (isTv ? 'tv' : 'movie') + (sure ? '!' : '|') + String(title).toLowerCase(), async () => {
+      preview?.status?.('Looking up \u201C' + title + '\u201D\u2026');
+      const { title: clean } = await this._videoLookupTitle(title, isTv);
+      const chosenClean = this._videoChoiceGet(clean);
+      if (chosenClean) return chosenClean;
+      // Is it really a show or a film? Unless the player said so, an exact title match decides:
+      // "Breaking Bad" is a show on TVmaze and no film on the iTunes Store, so it's TV even if it was logged as a film.
+      let want = isTv ? 'tv' : 'movie', guessed = null;
+      if (!sure) {
+        guessed = await this._videoKindGuess(clean).catch(() => null);
+        if (guessed?.tv && !guessed.film) want = 'tv';
+        else if (guessed?.film && !guessed.tv) want = 'movie';
+      }
+      const tvWanted = want === 'tv';
+      const unsure = !sure && !(guessed?.tv || guessed?.film);
+      const pick = arr => (Array.isArray(arr) ? arr : []).find(d => d && (d.type || 'movie') === want) || null;
+      const ck = ('videoinfo5|' + clean).toLowerCase();
+      let d = null;
+      try { d = pick(this._aiVideoInfoCache?.get(ck)) || pick(this._aiLocalGet('videoInfo', ck)) || pick(this._aiSessionGet('videoInfo', ck)); } catch (_) {}
+      if (!d && (this._config?.tmdb_api_key || '').trim()) {
+        const r = await this._lookupTMDBVideoInfo(clean, tvWanted).catch(() => null);
+        // TMDB ranks shows and films together: when nothing else could tell, its best match is the answer
+        d = pick(r?.candidates) || (unsure ? (r?.candidates || [])[0] || null : null);
+      }
+      if (!d && tvWanted) d = await this._lookupTVmazeShow(clean).catch(() => null);
+      if (!d) {
+        const w = await this._fetchWikipediaVideoFallback(clean, tvWanted).catch(() => null);
+        if (w) d = Object.assign({}, w, { type: want, title: w.title || clean, overview: w.overview || w.extract || '' });
+      }
+      return d || { type: want, title: clean };
+    }, { keep: v => v && (v.overview || v.cast?.length || v.year) });
+  }
+
+  // Exact title matches on TVmaze (shows) and the iTunes Store (films): { tv, film }. Kept for the session.
+  _videoKindGuess(title) {
+    const clean = String(title || '').replace(/\s*\(\d{4}\)\s*$/, '').trim();
+    return this._sessionMemo('vkind', clean.toLowerCase(), async () => {
+      const norm = v => String(v || '').toLowerCase().replace(/^the\s+/, '').replace(/&/g, 'and').replace(/[^a-z0-9]+/g, ' ').trim();
+      const want = norm(clean);
+      const region = ((String(navigator.languages?.[0] || navigator.language || '').match(/-([A-Za-z]{2})\b/) || [])[1] || 'gb').toLowerCase();
+      const get = async url => {
+        const ctrl = new AbortController(); const tm = setTimeout(() => ctrl.abort(), 6000);
+        try { const r = await fetch(url, { signal: ctrl.signal }); return r.ok ? await r.json() : (r.status === 404 ? {} : null); }
+        catch (_) { return null; } finally { clearTimeout(tm); }
+      };
+      const [show, films] = await Promise.all([
+        get('https://api.tvmaze.com/singlesearch/shows?q=' + encodeURIComponent(clean)),
+        get('https://itunes.apple.com/search?term=' + encodeURIComponent(clean) + '&media=movie&entity=movie&limit=10&country=' + region),
+      ]);
+      if (show == null && films == null) return null;   // offline: try again next time
+      return { tv: !!want && norm(show?.name) === want, film: !!want && (films?.results || []).some(x => norm(x.trackName) === want) };
+    });
+  }
+
+  // ── "Not this one?" ──
+  // A film or show chosen for a title is remembered on this device (it's the person's own choice, so
+  // Clear All Caches keeps it) and used by both the case printables and the info panel.
+  _videoChoiceKey(t) {
+    return String(t || '').toLowerCase().replace(/\s*\(\d{4}\)\s*$/, '').replace(/^the\s+/, '').replace(/&/g, 'and').replace(/[^a-z0-9]+/g, '');
+  }
+  _videoChoiceStore() {
+    if (!this._videoChoices) {
+      let o = {};
+      try { o = JSON.parse(localStorage.getItem('crowai_video_choice_v1') || '{}') || {}; } catch (_) { o = {}; }
+      this._videoChoices = o;
+    }
+    return this._videoChoices;
+  }
+  _videoChoiceGet(...titles) {
+    const s = this._videoChoiceStore();
+    for (const t of titles) {
+      const k = this._videoChoiceKey(t);
+      if (k && s[k]?.data?.title) { try { return JSON.parse(JSON.stringify(s[k].data)); } catch (_) { return null; } }
+    }
+    return null;
+  }
+  _videoChoiceSet(titles, data) {
+    if (!data?.title) return;
+    const s = this._videoChoiceStore();
+    const keep = Object.assign({}, data);
+    delete keep._tvmazeFilled;
+    [].concat(titles || []).forEach(t => { const k = this._videoChoiceKey(t); if (k) s[k] = { data: keep, t: Date.now() }; });
+    Object.keys(s).sort((a, b) => (s[b].t || 0) - (s[a].t || 0)).slice(80).forEach(k => delete s[k]);
+    try { localStorage.setItem('crowai_video_choice_v1', JSON.stringify(s)); } catch (_) {}
+  }
+
+  // Films and shows matching a search, for the chooser: TMDB with a key, otherwise TVmaze (shows) and
+  // the iTunes Store (films). Best name matches first. null if nothing could be reached.
+  async _discMatchSearch(q) {
+    q = String(q || '').trim();
+    if (!q) return [];
+    const norm = v => String(v || '').toLowerCase().replace(/^the\s+/, '').replace(/&/g, 'and').replace(/[^a-z0-9]+/g, ' ').trim();
+    const want = norm(q);
+    const score = name => { const n = norm(name); return n === want ? 4 : (n.startsWith(want) || want.startsWith(n)) ? 3 : (n.includes(want) || want.includes(n)) ? 2 : 1; };
+    const enc = encodeURIComponent(q.replace(/\s*\(\d{4}\)\s*$/, ''));
+    const out = [];
+    let reached = false;
+    if ((this._config?.tmdb_api_key || '').trim()) {
+      try {
+        const base = 'https://api.themoviedb.org/3';
+        const [tv, mv] = await Promise.all([this._tmdbFetch(base + '/search/tv?query=' + enc + '&page=1'), this._tmdbFetch(base + '/search/movie?query=' + enc + '&page=1')]);
+        if (tv.ok || mv.ok) reached = true;
+        const tvr = tv.ok ? ((await tv.json()).results || []) : [];
+        const mvr = mv.ok ? ((await mv.json()).results || []) : [];
+        tvr.slice(0, 10).forEach(r => out.push({ type: 'tv', title: r.name || '', year: String(r.first_air_date || '').slice(0, 4), poster: r.poster_path ? 'https://image.tmdb.org/t/p/w185' + r.poster_path : '', tmdbId: r.id, pop: r.popularity || 0 }));
+        mvr.slice(0, 10).forEach(r => out.push({ type: 'movie', title: r.title || '', year: String(r.release_date || '').slice(0, 4), poster: r.poster_path ? 'https://image.tmdb.org/t/p/w185' + r.poster_path : '', tmdbId: r.id, pop: r.popularity || 0 }));
+      } catch (_) {}
+    }
+    if (!out.length) {
+      const region = ((String(navigator.languages?.[0] || navigator.language || '').match(/-([A-Za-z]{2})\b/) || [])[1] || 'gb').toLowerCase();
+      const get = async url => { try { const r = await fetch(url); return r.ok ? await r.json() : null; } catch (_) { return null; } };
+      const [shows, films] = await Promise.all([
+        get('https://api.tvmaze.com/search/shows?q=' + enc),
+        get('https://itunes.apple.com/search?term=' + enc + '&media=movie&entity=movie&limit=12&country=' + region),
+      ]);
+      if (shows || films) reached = true;
+      (Array.isArray(shows) ? shows : []).slice(0, 10).forEach(x => { const s = x?.show; if (s?.name) out.push({ type: 'tv', title: s.name, year: String(s.premiered || '').slice(0, 4), poster: s.image?.medium || '', tvmazeId: s.id, pop: (x.score || 0) * 10 + (s.weight || 0) / 10 }); });
+      (films?.results || []).forEach(x => { if (x?.trackName) out.push({ type: 'movie', title: x.trackName, year: String(x.releaseDate || '').slice(0, 4), poster: (x.artworkUrl100 || '').replace(/\d+x\d+bb/, '200x200bb'), itunes: { longDescription: x.longDescription || '', primaryGenreName: x.primaryGenreName || '', artistName: x.artistName || '' }, pop: 0 }); });
+    }
+    if (!reached) return null;
+    const seen = new Set();
+    return out
+      .map(x => Object.assign(x, { s: score(x.title) }))
+      .sort((a, b) => b.s - a.s || b.pop - a.pop)
+      .filter(x => { const k = x.type + '|' + norm(x.title) + '|' + x.year; if (seen.has(k)) return false; seen.add(k); return true; })
+      .slice(0, 14);
+  }
+
+  // Full details for a match chosen in the chooser, in the same shape the info panel uses
+  async _discDataFromMatch(m) {
+    if (!m) return null;
+    if (m.tmdbId) {
+      const d = await this._discTmdbById(m.type, m.tmdbId).catch(() => null);
+      if (d) return d;
+    }
+    if (m.type === 'tv') {
+      const d = m.tvmazeId ? await this._discTvmazeById(m.tvmazeId).catch(() => null) : await this._lookupTVmazeShow(m.title).catch(() => null);
+      return d || { type: 'tv', title: m.title, year: m.year || '' };
+    }
+    // a film without TMDB: the iTunes Store blurb, plus Wikipedia when it's the same film
+    const it = m.itunes || {};
+    let w = null;
+    if (m.year) w = await this._fetchWikipediaVideoFallback(m.title + ' (' + m.year + ' film)').catch(() => null);
+    if (!w) w = await this._fetchWikipediaVideoFallback(m.title, false).catch(() => null);
+    const overview = String(it.longDescription || '').trim() || String(w?.extract || '').trim();
+    return {
+      type: 'movie', title: m.title, year: m.year || '', overview,
+      genres: it.primaryGenreName ? [it.primaryGenreName] : [],
+      director: it.artistName || '', cast: [], rating: '',
+    };
+  }
+  async _discTmdbById(type, id) {
+    const base = 'https://api.themoviedb.org/3', img = 'https://image.tmdb.org/t/p/w500';
+    const isTv = type === 'tv';
+    const r = await this._tmdbFetch(base + '/' + type + '/' + id + '?append_to_response=' + (isTv ? 'aggregate_credits' : 'credits'));
+    if (!r.ok) return null;
+    const d = await r.json();
+    const cast = isTv
+      ? (d.aggregate_credits?.cast || []).slice().sort((a, b) => (b.total_episode_count || 0) - (a.total_episode_count || 0))
+      : (d.credits?.cast || []);
+    return {
+      type: isTv ? 'tv' : 'movie',
+      title: (isTv ? d.name : d.title) || '',
+      year: String((isTv ? d.first_air_date : d.release_date) || '').split('-')[0] || '',
+      genres: (d.genres || []).map(g => g.name).filter(Boolean),
+      rating: d.vote_average ? d.vote_average.toFixed(1) : '', votes: d.vote_count || 0,
+      overview: d.overview || '',
+      cast: cast.slice(0, 15).map(c => c.name).filter(Boolean),
+      director: isTv ? null : ((d.credits?.crew || []).find(c => c.job === 'Director')?.name || null),
+      seasons: isTv ? ((d.seasons || []).filter(s => s.season_number > 0).length || d.number_of_seasons || 0) : undefined,
+      status: d.status || '',
+      similar: [],
+      _fromTmdb: true,
+      _tmdbPoster: d.poster_path ? img + d.poster_path : '',
+      _tmdbUrl: 'https://www.themoviedb.org/' + (isTv ? 'tv' : 'movie') + '/' + id,
+    };
+  }
+  // A TVmaze show by its id (so the exact show chosen is used, not the closest name), with its episode guide
+  async _discTvmazeById(id) {
+    const r = await fetch('https://api.tvmaze.com/shows/' + encodeURIComponent(id) + '?embed[]=episodes&embed[]=cast');
+    if (!r.ok) return null;
+    const show = await r.json();
+    const plain = html => { const d = document.createElement('div'); d.innerHTML = String(html || ''); return (d.textContent || '').trim(); };
+    const esc = v => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const eps = (show._embedded?.episodes || []).filter(e => e && e.season > 0 && e.number != null);
+    const list = eps.map(e => ({ season: e.season, ep: e.number, title: esc(e.name || ('Episode ' + e.number)), airdate: e.airdate || '', overview: esc(plain(e.summary)) }));
+    if (list.length && show.name) {
+      // the case's episode guide looks shows up by name: give it this show's episodes
+      if (!this._tvmazeCache) this._tvmazeCache = new Map();
+      this._tvmazeCache.set(String(show.name).toLowerCase().trim(), list);
+    }
+    return {
+      type: 'tv',
+      title: show.name || '',
+      year: String(show.premiered || '').split('-')[0] || '',
+      genres: Array.isArray(show.genres) ? show.genres : [],
+      rating: show.rating?.average ? Number(show.rating.average).toFixed(1) : '',
+      votes: 0,
+      overview: plain(show.summary),
+      cast: (show._embedded?.cast || []).slice(0, 15).map(c => c?.person?.name).filter(Boolean),
+      seasons: list.reduce((mx, e) => Math.max(mx, e.season), 0),
+      status: show.status || '',
+      network: show.network?.name || show.webChannel?.name || '',
+      similar: [],
+      _fromTvmaze: true,
+      _tmdbPoster: show.image?.original || show.image?.medium || '',
+      _tvmazeUrl: show.url || '',
+    };
+  }
+
+  // opts.origTitles: the title(s) this case was asked for, so a "Not this one?" choice is remembered against them
+  async _exportDiscCase(data, artUrl, opts = {}) {
+    if (!this._pdfOn('disc')) return;   // switched off in the card editor
+    if (this._pdfBusy || !data) return;
+    const kind = await this._iosChoose({
+      title: 'Case Printables',
+      message: 'Which case is it for?',
+      options: [
+        { label: 'DVD case (273 x 183 mm)', value: 'dvd' },
+        { label: 'Blu-ray case (272 x 149 mm)', value: 'bluray' },
+      ],
+    });
+    if (kind !== 'dvd' && kind !== 'bluray') return;
+    if (this._pdfBusy) return;
+    this._pdfBusy = true;
+    const preview = this._openPDFPreview();
+    const origTitles = (opts.origTitles || []).filter(Boolean);
+    let cur = (data && typeof data === 'object') ? data : null;   // the details the case is made from
+    const make = async (d, art) => {
+      if (this._pdfFromSession('disc|' + kind + '|' + JSON.stringify([d?.type, d?.title, d?.year, art || '']), preview)) return;
+      await this._buildDiscCase({ data: d, artUrl: art, kind }, preview);
+    };
+    // "Not this one?": pick the right film or show, then the case is made again in the same preview
+    preview.offerMatch(async () => {
+      if (this._pdfBusy || preview.closed) return;
+      const same = (a, b) => !!a && !!b && (a.type || 'movie') === (b.type || 'movie') && this._videoChoiceKey(a.title) === this._videoChoiceKey(b.title)
+        && (!a.year || !b.year || String(a.year).slice(0, 4) === String(b.year).slice(0, 4));
+      const m = await preview.pickMatch({
+        title: 'Not This One?',
+        message: 'Choose the right film or TV show.',
+        query: origTitles[0] || cur?.title || '',
+        placeholder: 'Search films & TV shows',
+        thumb: 'poster',
+        search: async q => {
+          const res = await this._discMatchSearch(q);
+          return res && res.map(x => ({ value: x, label: x.title, sub: [x.type === 'tv' ? 'TV Show' : 'Film', x.year].filter(Boolean).join(' \u00B7 '), img: x.poster, current: same(x, cur) }));
+        },
+      });
+      if (!m || preview.closed || this._pdfBusy) return;
+      this._pdfBusy = true;
+      preview.reset();
+      try {
+        preview.status('Looking up \u201C' + m.title + '\u201D\u2026');
+        const d = await this._discDataFromMatch(m);
+        if (preview.closed) return;
+        if (!d?.title) { preview.fail('Couldn\u2019t find the details for this title.'); return; }
+        // remembered for the title(s) it was asked for, as written and as looked up
+        const titles = origTitles.length ? origTitles.slice() : (cur?.title ? [cur.title] : []);
+        for (const t0 of titles.slice()) {
+          const c = await this._videoLookupTitle(t0, d.type === 'tv').catch(() => null);
+          if (c?.title) titles.push(c.title);
+        }
+        this._videoChoiceSet(titles, d);
+        cur = d;
+        await make(d, d._tmdbPoster || m.poster || '');
+      }
+      catch (e) { console.warn('[CrowAI] Disc case printables failed', e); preview.fail('Couldn\u2019t create the case printables. Please try again.'); }
+      finally { this._pdfBusy = false; }
+    }, 'Choose a Different Title');
+    try {
+      if (typeof data === 'function') {   // only a title to go on: look its details up now
+        data = await data(preview);
+        if (preview.closed) return;
+        if (!data?.title) { preview.fail('Couldn\u2019t find the details for this title.'); return; }
+      }
+      cur = data;
+      await make(data, artUrl);
+    }
+    catch (e) { console.warn('[CrowAI] Disc case printables failed', e); preview.fail('Couldn\u2019t create the case printables. Please try again.'); }
+    finally { this._pdfBusy = false; }
+  }
+
+  // Runtime, tagline and creators from TMDB. Needs the card's TMDB key.
+  // Returns null with no key; { error } if TMDB says no.
+  async _mvTmdbExtras(data) {
+    if (!(this._config?.tmdb_api_key || '').trim()) return null;
+    const key = [data?.type, data?.title, data?.year, data?._tmdbUrl].join('|');
+    return this._sessionMemo('tmdbx', key, () => this._mvTmdbExtrasFresh(data), { keep: v => v && !v.error });
+  }
+  async _mvTmdbExtrasFresh(data) {
+    if (!(this._config?.tmdb_api_key || '').trim()) return null;
+    try {
+      const base = 'https://api.themoviedb.org/3';
+      const isTv = data.type === 'tv';
+      let type = isTv ? 'tv' : 'movie', id = null;
+      const m = String(data._tmdbUrl || '').match(/themoviedb\.org\/(movie|tv)\/(\d+)/);
+      if (m) { type = m[1]; id = m[2]; }
+      if (!id) {
+        const yr = (String(data.year || '').match(/\d{4}/) || [])[0];
+        const resp = await this._tmdbFetch(base + '/search/' + type + '?query=' + encodeURIComponent(data.title || '')
+          + (yr ? (type === 'tv' ? '&first_air_date_year=' : '&year=') + yr : ''));
+        if (resp.status === 401) return { error: 'rejected' };
+        if (!resp.ok) return { error: 'http ' + resp.status };
+        const n = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+        const results = (await resp.json()).results || [];
+        const hit = results.find(r => n(r.title || r.name) === n(data.title)) || results[0];
+        if (!hit) return { error: 'no match' };
+        id = hit.id;
+      }
+      const isMovie = type === 'movie';
+      const dr = await this._tmdbFetch(base + '/' + type + '/' + id
+        + (isMovie ? '?append_to_response=credits,release_dates' : '?append_to_response=content_ratings'));
+      if (dr.status === 401) return { error: 'rejected' };
+      if (!dr.ok) return { error: 'http ' + dr.status };
+      const d = await dr.json();
+      const out = {
+        posterPath: d.poster_path || '',
+        runtime: isMovie ? (d.runtime || 0) : ((d.episode_run_time || [])[0] || 0),
+        tagline: d.tagline || '',
+        creators: type === 'tv' ? (d.created_by || []).map(c => c.name).filter(Boolean) : [],
+      };
+      if (!isMovie) {
+        // TV: the age rating in the viewer's country (then UK, then US)
+        const reg = (String(navigator.languages?.[0] || navigator.language || '').match(/-([A-Za-z]{2})\b/) || [])[1]?.toUpperCase() || 'GB';
+        const crs = d.content_ratings?.results || [];
+        for (const r of [reg, 'GB', 'US']) {
+          const hit = crs.find(x => x.iso_3166_1 === r && String(x.rating || '').trim());
+          if (hit) { out.certificate = String(hit.rating).trim(); out.certRegion = r === 'GB' ? 'UK' : r; break; }
+        }
+        return out;
+      }
+      // Films: the extra details for the back of the case
+      const crew = d.credits?.crew || [];
+      const people = jobs => [...new Set(crew.filter(c => jobs.includes(c.job)).map(c => c.name).filter(Boolean))];
+      const region = (String(navigator.languages?.[0] || navigator.language || '').match(/-([A-Za-z]{2})\b/) || [])[1]?.toUpperCase() || 'GB';
+      const certFor = r => ((d.release_dates?.results || []).find(x => x.iso_3166_1 === r)?.release_dates || [])
+        .slice().sort((a, b) => (a.type || 9) - (b.type || 9)).map(x => String(x.certification || '').trim()).find(Boolean) || '';
+      let certRegion = '', certificate = '';
+      for (const r of [region, 'GB', 'US']) { certificate = certFor(r); if (certificate) { certRegion = r; break; } }
+      const shortCountry = { 'United States of America': 'USA', 'United Kingdom': 'UK' };
+      return Object.assign(out, {
+        releaseDate: d.release_date || '',
+        certificate, certRegion: certRegion === 'GB' ? 'UK' : certRegion,
+        languages: (d.spoken_languages || []).map(l => l.english_name || l.name).filter(Boolean),
+        countries: (d.production_countries || []).map(c => shortCountry[c.name] || c.name).filter(Boolean),
+        studios: (d.production_companies || []).map(c => c.name).filter(Boolean),
+        budget: d.budget || 0,
+        revenue: d.revenue || 0,
+        collection: d.belongs_to_collection?.name || '',
+        directors: people(['Director']),
+        writers: people(['Screenplay', 'Writer', 'Story', 'Novel', 'Author']),
+        composers: people(['Original Music Composer', 'Music']),
+        cinematographers: people(['Director of Photography']),
+        editors: people(['Editor']),
+        producers: people(['Producer']),
+        castChars: (d.credits?.cast || []).slice(0, 20).map(c => ({ name: c.name || '', character: c.character || '' })).filter(c => c.name),
+      });
+    } catch (_) { return { error: 'network' }; }
+  }
+
+  // Key-free film lookup on the iTunes Store (in the viewer's own country, so the certificate is local):
+  // poster, store blurb, certificate and runtime.
+  async _mvItunesMovie(title, year) {
+    return this._sessionMemo('itm', title + '|' + (year || ''), () => this._mvItunesMovieFresh(title, year));
+  }
+  async _mvItunesMovieFresh(title, year) {
+    const region = ((String(navigator.languages?.[0] || navigator.language || '').match(/-([A-Za-z]{2})\b/) || [])[1] || 'gb').toLowerCase();
+    const n = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+    const look = async country => {
+      try {
+        const r = await fetch('https://itunes.apple.com/search?term=' + encodeURIComponent(title) + '&media=movie&entity=movie&limit=8&country=' + country);
+        if (!r.ok) return null;
+        const list = ((await r.json()).results || []).filter(x => n(x.trackName) === n(title));
+        return (year && list.find(x => String(x.releaseDate || '').startsWith(year))) || (year ? null : list[0]) || null;
+      } catch (_) { return null; }
+    };
+    const hit = (await look(region)) || (region !== 'us' ? await look('us') : null);
+    if (!hit) return null;
+    return {
+      poster: hit.artworkUrl100 ? hit.artworkUrl100.replace(/\d+x\d+bb/, '1200x1200bb') : '',
+      blurb: String(hit.longDescription || '').trim(),
+      certificate: String(hit.contentAdvisoryRating || '').trim(),
+      certRegion: String(hit.country || '').toUpperCase() === 'GBR' ? 'UK' : String(hit.country || '').toUpperCase() === 'USA' ? 'US' : '',
+      runtime: hit.trackTimeMillis ? Math.round(hit.trackTimeMillis / 60000) : 0,
+    };
+  }
+
+  // Key-free TV age rating from the iTunes Store (its season listings carry one), in the viewer's own country
+  async _mvItunesTvCert(title) {
+    return this._sessionMemo('itv', title, () => this._mvItunesTvCertFresh(title));
+  }
+  async _mvItunesTvCertFresh(title) {
+    const region = ((String(navigator.languages?.[0] || navigator.language || '').match(/-([A-Za-z]{2})\b/) || [])[1] || 'gb').toLowerCase();
+    const n = s => String(s || '').toLowerCase().replace(/^the\s+/, '').replace(/&/g, 'and').replace(/[^a-z0-9]+/g, '');
+    for (const country of [...new Set([region, 'gb'])]) {
+      try {
+        const r = await fetch('https://itunes.apple.com/search?term=' + encodeURIComponent(title) + '&media=tvShow&entity=tvSeason&limit=25&country=' + country);
+        if (!r.ok) continue;
+        const hit = ((await r.json()).results || []).find(x => n(x.artistName) === n(title) && x.contentAdvisoryRating);
+        if (hit) return { certificate: String(hit.contentAdvisoryRating).trim(), certRegion: country === 'gb' ? 'UK' : country.toUpperCase() };
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  // Key-free film facts from Wikidata (found through the English Wikipedia article):
+  // crew, studio, country, language, release date, budget, box office, awards, filming and story locations.
+  async _mvWikidataFilm(title, year) {
+    return this._sessionMemo('wdf', title + '|' + (year || ''), () => this._mvWikidataFilmFresh(title, year));
+  }
+  async _mvWikidataFilmFresh(title, year) {
+    const wp = 'https://en.wikipedia.org/w/api.php?format=json&origin=*&action=query&prop=pageprops&ppprop=wikibase_item&redirects=1&titles=';
+    const wd = 'https://www.wikidata.org/w/api.php?format=json&origin=*&action=wbgetentities&';
+    const getJson = async url => {
+      const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 12000);
+      try { const r = await fetch(url, { signal: ctrl.signal }); return r.ok ? await r.json() : null; }
+      catch (_) { return null; } finally { clearTimeout(t); }
+    };
+    try {
+      const names = [year ? title + ' (' + year + ' film)' : '', title + ' (film)', title].filter(Boolean);
+      const pj = await getJson(wp + encodeURIComponent(names.join('|')));
+      const pages = Object.values(pj?.query?.pages || {});
+      // keep the order of the names we asked for (redirects / normalised titles map back to them)
+      const back = {};
+      (pj?.query?.normalized || []).concat(pj?.query?.redirects || []).forEach(m => { back[m.to] = back[m.from] || m.from; });
+      const qids = names.map(nm => pages.find(p => (back[p.title] || p.title) === nm || p.title === nm)?.pageprops?.wikibase_item).filter(Boolean);
+      const uniq = [...new Set(qids)];
+      if (!uniq.length) return null;
+      const ej = await getJson(wd + 'props=claims&ids=' + uniq.join('|'));
+      const ents = ej?.entities || {};
+      const claims = (e, p) => (e?.claims?.[p] || []).filter(c => c.rank !== 'deprecated' && c.mainsnak?.datavalue);
+      const yearOf = e => claims(e, 'P577').map(c => String(c.mainsnak.datavalue.value.time || '').slice(1, 5));
+      // the film: has a director and (when we know it) the right year
+      const qid = uniq.find(q => claims(ents[q], 'P57').length && (!year || yearOf(ents[q]).includes(String(year))))
+        || uniq.find(q => claims(ents[q], 'P57').length);
+      if (!qid) return null;
+      const e = ents[qid];
+      const ids = p => [...new Set(claims(e, p).map(c => c.mainsnak.datavalue.value?.id).filter(Boolean))];
+      const want = ['P57', 'P58', 'P86', 'P344', 'P1040', 'P162', 'P272', 'P495', 'P364', 'P166', 'P915', 'P840', 'P144', 'P179', 'P1657'];
+      // cast members with their character (an item via P453, or plain text via P4633)
+      const castRaw = claims(e, 'P161').slice(0, 40).map(c => ({
+        id: c.mainsnak.datavalue.value?.id,
+        roleIds: (c.qualifiers?.P453 || []).map(q => q.datavalue?.value?.id).filter(Boolean),
+        roleTxt: (c.qualifiers?.P4633 || []).map(q => q.datavalue?.value).filter(v => typeof v === 'string'),
+      })).filter(c => c.id);
+      const allIds = [...new Set(want.flatMap(ids).concat(castRaw.flatMap(c => [c.id].concat(c.roleIds))))].slice(0, 200);
+      const label = {};
+      for (let i = 0; i < allIds.length; i += 50) {
+        const lj = await getJson(wd + 'props=labels&languages=en&ids=' + allIds.slice(i, i + 50).join('|'));
+        Object.entries(lj?.entities || {}).forEach(([k, v]) => { if (v.labels?.en?.value) label[k] = v.labels.en.value; });
+      }
+      const L = p => ids(p).map(q => label[q]).filter(Boolean);
+      const cur = { Q4917: '$', Q25224: '\u00A3', Q4916: 'EUR ' };
+      const money = p => {
+        const vals = claims(e, p).map(c => c.mainsnak.datavalue.value).filter(v => v?.amount)
+          .map(v => ({ n: Math.abs(parseFloat(v.amount)), sym: cur[String(v.unit || '').split('/').pop()] || '' }))
+          .filter(v => v.n > 0 && v.sym);
+        if (!vals.length) return null;
+        return p === 'P2142' ? vals.sort((a, b) => b.n - a.n)[0] : vals[0];   // box office: the worldwide (largest) figure
+      };
+      const dates = claims(e, 'P577').map(c => c.mainsnak.datavalue.value).filter(v => (v.precision || 0) >= 11)
+        .map(v => String(v.time).slice(1, 11)).sort();
+      const dur = claims(e, 'P2047').map(c => parseFloat(c.mainsnak.datavalue.value?.amount)).find(v => v > 0) || 0;
+      const shortCountry = { 'United States of America': 'USA', 'United States': 'USA', 'United Kingdom': 'UK' };
+      return {
+        directors: L('P57'), writers: L('P58'), composers: L('P86'), cinematographers: L('P344'), editors: L('P1040'),
+        producers: L('P162'), studios: L('P272'), countries: L('P495').map(c => shortCountry[c] || c), languages: L('P364'),
+        awards: L('P166'), filmedIn: L('P915'), setIn: L('P840'), basedOn: L('P144'), series: L('P179')[0] || '',
+        mpaa: (L('P1657')[0] || '').replace(/^(MPA|MPAA)\s*(rating\s*)?/i, '').replace(/\s*rating$/i, ''),
+        releaseDate: dates[0] || '', runtime: Math.round(dur),
+        budget: money('P2130'), revenue: money('P2142'),
+        castChars: castRaw.map(c => ({ name: label[c.id] || '', character: (c.roleTxt[0] || c.roleIds.map(q => label[q]).filter(Boolean)[0] || '') }))
+          .filter(c => c.name),
+      };
+    } catch (_) { return null; }
+  }
+
+  // The poster's most vivid colour, lifted so it reads on a dark background, for section labels: [r, g, b] or null
+  async _mvAccent(blob) {
+    const bmp = await createImageBitmap(blob);
+    const w = 48, h = Math.max(1, Math.round(48 * bmp.height / bmp.width));
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(bmp, 0, 0, w, h);
+    try { bmp.close(); } catch (_) {}
+    const px = ctx.getImageData(0, 0, w, h).data;
+    // 24 hue buckets, weighted by saturation and by being neither too dark nor washed out
+    const bins = Array.from({ length: 24 }, () => ({ wt: 0, r: 0, g: 0, b: 0 }));
+    for (let i = 0; i < px.length; i += 4) {
+      const r = px[i] / 255, g = px[i + 1] / 255, b = px[i + 2] / 255;
+      const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+      const l = (mx + mn) / 2, s = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+      if (s < 0.35 || l < 0.18 || l > 0.85) continue;
+      let hh = d === 0 ? 0 : mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+      hh = (hh * 60 + 360) % 360;
+      const wt = s * s * (1 - Math.abs(l - 0.5));
+      const bin = bins[Math.floor(hh / 15) % 24];
+      bin.wt += wt; bin.r += px[i] * wt; bin.g += px[i + 1] * wt; bin.b += px[i + 2] * wt;
+    }
+    const best = bins.reduce((a, x) => x.wt > a.wt ? x : a, { wt: 0 });
+    if (best.wt < (px.length / 4) * 0.01) return null;            // a grey / black-and-white poster: no accent
+    let [r, g, b] = [best.r / best.wt, best.g / best.wt, best.b / best.wt];
+    // lift towards a light tint so it stays readable as small text on the dark back
+    const L = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+    const k = L < 0.62 ? (0.62 - L) / (1 - L) : 0;
+    return [r, g, b].map(v => Math.round(v + (255 - v) * k));
+  }
+
+  // The back + spine background as one image: a top-to-bottom gradient built from the poster colours
+  // (a richer, lighter tone at the top fading to a deep shade at the bottom), with the spine a shade darker.
+  // A touch of fine noise stops the gradient printing as visible bands.
+  _cdGradientBg(backMm, spineMm, hMm, baseRgb, accentRgb, dpi = 110) {
+    const W = Math.round((backMm + spineMm) / 25.4 * dpi), H = Math.round(hMm / 25.4 * dpi);
+    const bw = Math.round(backMm / (backMm + spineMm) * W);
+    const lum = c => (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255;
+    const capLum = (c, max) => { const l = lum(c); return l > max ? c.map(v => v * max / l) : c; };
+    // top: the base lifted and nudged towards the accent hue; kept dark enough for white text
+    const mix = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
+    let top = mix(baseRgb.map(v => Math.min(255, v * 1.45 + 8)), accentRgb || baseRgb, accentRgb ? 0.16 : 0);
+    top = capLum(top, 0.26);
+    const bot = baseRgb.map(v => v * 0.5);
+    const c = document.createElement('canvas'); c.width = W; c.height = H;
+    const ctx = c.getContext('2d');
+    const img = ctx.createImageData(W, H), d = img.data;
+    for (let y = 0; y < H; y++) {
+      const t = Math.pow(y / (H - 1), 0.9);
+      const row = mix(top, bot, t);
+      for (let x = 0; x < W; x++) {
+        const k = x >= bw ? 0.8 : 1, n = (Math.random() - 0.5) * 3, i = (y * W + x) * 4;
+        d[i] = row[0] * k + n; d[i + 1] = row[1] * k + n; d[i + 2] = row[2] * k + n; d[i + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    return c.toDataURL('image/jpeg', 0.9);
+  }
+
+  // The poster's main colour, darkened so white text reads on it: [r, g, b]
+  async _mvDominant(blob) {
+    const bmp = await createImageBitmap(blob);
+    const w = 40, h = Math.max(1, Math.round(40 * bmp.height / bmp.width));
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(bmp, 0, 0, w, h);
+    try { bmp.close(); } catch (_) {}
+    const px = ctx.getImageData(0, 0, w, h).data;
+    let R = 0, G = 0, B = 0, W = 0;
+    for (let i = 0; i < px.length; i += 4) {
+      const r = px[i], g = px[i + 1], b = px[i + 2];
+      const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+      const sat = mx ? (mx - mn) / mx : 0, lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+      const wt = 0.05 + sat * (1 - Math.abs(lum - 0.5));
+      R += r * wt; G += g * wt; B += b * wt; W += wt;
+    }
+    R /= W; G /= W; B /= W;
+    const L = (0.2126 * R + 0.7152 * G + 0.0722 * B) / 255;
+    const f = L > 0.22 ? 0.22 / L : (L > 0 && L < 0.07 ? Math.min(2.5, 0.07 / L) : 1);
+    const q = v => Math.max(0, Math.min(255, Math.round(v * f)));
+    return [q(R), q(G), q(B)];
+  }
+
+  async _buildDiscCase({ data, artUrl, kind }, preview) {
+    const title = String(data.title || '').trim();
+    if (!title) { preview.fail('There\u2019s no title to look up.'); return; }
+    const isTv = data.type === 'tv';
+    const hasKey = !!(this._config?.tmdb_api_key || '').trim();
+
+    // 1 — TMDB details (only with a key) and the poster
+    preview.status(hasKey ? 'Checking TMDB\u2026' : 'Finding the poster\u2026');
+    const tm = await this._mvTmdbExtras(data);
+    const cands = [];
+    if (tm?.posterPath) cands.push({ url: 'https://image.tmdb.org/t/p/original' + tm.posterPath, src: 'TMDB' });
+    else if (hasKey && data._fromTmdb && data._tmdbPoster) cands.push({ url: String(data._tmdbPoster).replace('/w500/', '/original/'), src: 'TMDB' });
+    if (isTv) {
+      if (data._fromTvmaze && data._tmdbPoster) cands.push({ url: data._tmdbPoster, src: 'TVmaze' });
+      else {
+        const tv = await this._lookupTVmazeShow(title).catch(() => null);
+        if (tv?._tmdbPoster) cands.push({ url: tv._tmdbPoster, src: 'TVmaze' });
+      }
+    }
+    // Films: key-free extras for the back (iTunes Store + Wikidata), fetched together
+    let itm = null, wdf = null;
+    if (!isTv) {
+      preview.status('Gathering film details…');
+      const bare = title.replace(/\s*\(\d{4}\)\s*$/, ''), yr = (String(data.year || '').match(/\d{4}/) || [])[0];
+      [itm, wdf] = await Promise.all([
+        this._mvItunesMovie(bare, yr).catch(() => null),
+        this._mvWikidataFilm(bare, yr).catch(() => null),
+      ]);
+      if (itm?.poster) cands.push({ url: itm.poster, src: 'iTunes' });
+    }
+    if (preview.closed) return;
+    if (artUrl) {
+      const up = String(artUrl)
+        .replace(/\/\d+x\d+(bb|sr)?(-\d+)?\.(jpg|png|webp)/i, (m, a, b, c) => /mzstatic/i.test(artUrl) ? '/1200x1200bb.jpg' : m)
+        .replace('/medium_portrait/', '/original_untouched/').replace(/\/w(185|342|500|780)\//, '/original/');
+      cands.push({ url: up, src: 'the artwork in the info panel' });
+      if (up !== artUrl) cands.push({ url: artUrl, src: 'the artwork in the info panel' });
+    }
+    let poster = null;
+    for (let i = 0; i < cands.length && !poster; i++) {
+      if (preview.closed) return;
+      preview.progress('Downloading the poster\u2026', i + 1, cands.length);
+      const blob = await this._cdLoadBlob(cands[i].url, 2000);
+      if (blob) poster = { blob, src: cands[i].src };
+    }
+    if (preview.closed) return;
+    if (!poster) {
+      preview.fail('Couldn\u2019t find a poster for \u201C' + title + '\u201D.' + (hasKey ? '' : ' Adding a TMDB key in the card editor gives the best chance.'));
+      return;
+    }
+
+    let JsPDFCtor;
+    try { JsPDFCtor = await this._ensureJsPDF(preview); }
+    catch (e) { preview.fail(e?.message || 'Could not load the PDF library'); return; }
+
+    // 2 — artwork at print size
+    preview.status('Sizing the artwork for print\u2026');
+    const bluray = kind === 'bluray';
+    const CW = bluray ? 272 : 273, CH = bluray ? 149 : 183, SP = 14, PW = (CW - SP) / 2, DD = 118, HOLE = 36;
+    const caseName = bluray ? 'Blu-ray' : 'DVD';
+    const base = await this._mvDominant(poster.blob).catch(() => [34, 34, 40]);
+    const bgCss = 'rgb(' + base.join(',') + ')';
+    const spineRgb = base.map(v => Math.round(v * 0.78));
+    // an accent colour from the poster for headings and spine bands, and a gradient background for the back + spine
+    const accentLbl = (await this._mvAccent(poster.blob).catch(() => null)) || [200, 200, 208];
+    let backdrop = null;
+    try { backdrop = this._cdGradientBg(PW, SP, CH, base, accentLbl); } catch (_) {}
+    const yearTxt = (String(data.year || '').match(/\d{4}/) || [])[0] || '';
+    const front = await this._cdRender(poster.blob, PW, CH, { bg: bgCss, fade: true, focusY: 0.35 });
+    const disc = await this._cdRender(poster.blob, DD, DD, { shape: 'disc', hole: HOLE, fit: 'cover', focusY: 0.3, bg: bgCss, banner: { title: title, sub: yearTxt } });
+
+    // 2b — extra back-panel content: the season / episode guide (TV) and your own viewing stats
+    const bareTitle = title.replace(/\s*\(\d{4}\)\s*$/, '');
+    let epList = null;
+    let tvCert = null;
+    if (isTv) {
+      preview.status('Fetching the episode guide\u2026');
+      [epList, tvCert] = await Promise.all([
+        this._tvmazeEpisodes(bareTitle).catch(() => null),
+        (tm && !tm.error && tm.certificate) ? Promise.resolve(null) : this._mvItunesTvCert(bareTitle).catch(() => null),
+      ]);
+    }
+    let guideDrawn = false;
+
+    let detailsDrawn = false, specDrawn = false, rolesDrawn = false;
+
+    // 3 — the PDF
+    preview.status('Building the PDF\u2026');
+    const lang = String(navigator.languages?.[0] || navigator.language || '');
+    const pref = String(this._config?.cd_paper_size || '').toLowerCase();
+    const letter = pref ? pref === 'letter' : /-(US|CA|MX|PH)\b/i.test(lang);
+    const doc = new JsPDFCtor({ unit: 'mm', format: letter ? 'letter' : 'a4', orientation: 'landscape' });
+    const pageW = doc.internal.pageSize.getWidth(), pageH = doc.internal.pageSize.getHeight();
+    const tight = pageW - CW < 20;
+    const clean = s => String(s || '')
+      .replace(/[\u2018\u2019\u201A\u2032]/g, "'").replace(/[\u201C\u201D\u201E\u2033]/g, '"')
+      .replace(/[\u2013\u2014\u2212]/g, '-').replace(/\u2026/g, '...').replace(/\u00A0/g, ' ')
+      .replace(/[^\u0009\u000A\u0020-\u007E\u00A0-\u00FF]/g, '').replace(/[ \t]+/g, ' ').trim();
+    const inkRgb = [28, 28, 30], mutedRgb = [120, 120, 128], lineRgb = [150, 150, 150], accentRgb = [0, 122, 255];
+    const marks = (x, y, w, h) => {
+      doc.setDrawColor(...lineRgb); doc.setLineWidth(0.15);
+      const g = tight ? 0.8 : 1.5, L = tight ? 2.5 : 4;
+      [[x, y, -1, -1], [x + w, y, 1, -1], [x, y + h, -1, 1], [x + w, y + h, 1, 1]].forEach(([cx, cy, sx, sy]) => {
+        doc.line(cx + sx * g, cy, cx + sx * (g + L), cy);
+        doc.line(cx, cy + sy * g, cx, cy + sy * (g + L));
+      });
+    };
+    const caption = (txt, y) => {
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(...mutedRgb);
+      doc.text(clean(txt), pageW / 2, y, { align: 'center' });
+    };
+
+    // — page 1: the wrap, back | spine | front
+    const wx = (pageW - CW) / 2, wy = (pageH - CH) / 2;
+    doc.setFillColor(...base); doc.rect(wx, wy, PW + 0.2, CH, 'F');                         // back (a hair of overlap avoids white seams)
+    doc.setFillColor(...spineRgb); doc.rect(wx + PW, wy, SP + 0.2, CH, 'F');                 // spine
+    if (backdrop) doc.addImage(backdrop, 'JPEG', wx, wy, PW + SP + 0.2, CH, undefined, 'FAST');   // gradient over both
+    doc.addImage(front.data, 'JPEG', wx + PW + SP, wy, PW, CH, undefined, 'FAST');          // front
+
+    // back panel
+    const bx = wx + 9, bw = PW - 18, bottom = wy + CH - 9;
+    let by = wy + 15;
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(bluray ? 16 : 18);
+    const tl = doc.splitTextToSize(clean(title), bw).slice(0, 3);
+    tl.forEach(l => { doc.text(l, bx, by); by += bluray ? 7 : 7.8; });
+    const num = parseFloat(String(data.rating || ''));
+    const pick = (...vs) => vs.find(v => v?.length) || [];
+    const T = tm && !tm.error ? tm : {};
+    const usd = n => n > 0 ? { n, sym: '$' } : null;
+    const fx = isTv ? {} : {
+      writers: pick(T.writers, wdf?.writers), composers: pick(T.composers, wdf?.composers),
+      cinematographers: pick(T.cinematographers, wdf?.cinematographers), editors: pick(T.editors, wdf?.editors),
+      producers: pick(T.producers, wdf?.producers), studios: pick(T.studios, wdf?.studios),
+      countries: pick(T.countries, wdf?.countries), languages: pick(T.languages, wdf?.languages),
+      directors: pick(T.directors, wdf?.directors),
+      releaseDate: T.releaseDate || wdf?.releaseDate || '',
+      certificate: T.certificate || itm?.certificate || wdf?.mpaa || '',
+      certRegion: T.certificate ? T.certRegion : itm?.certificate ? itm.certRegion : wdf?.mpaa ? 'US' : '',
+      budget: usd(T.budget) || wdf?.budget || null, revenue: usd(T.revenue) || wdf?.revenue || null,
+      collection: T.collection || wdf?.series || '',
+      basedOn: wdf?.basedOn || [], setIn: wdf?.setIn || [], filmedIn: wdf?.filmedIn || [], awards: wdf?.awards || [],
+    };
+    const runMin = tm?.runtime || itm?.runtime || wdf?.runtime || 0;
+    const rt = runMin ? (runMin >= 60 ? Math.floor(runMin / 60) + 'h ' + (runMin % 60) + 'm' : runMin + ' min') : '';
+    // the iTunes store blurb is written for the back of a box - use it when it says more than the short synopsis
+    const blurb = clean(itm?.blurb || '');
+    const synopsis = !isTv && blurb.length > clean(data.overview || '').length + 40 ? blurb : clean(data.overview || '');
+
+    // section heading: accent colour, underlined across the whole heading
+    const heading = (txt, x, y) => {
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(...accentLbl); doc.text(txt, x, y);
+      doc.setDrawColor(...accentLbl); doc.setLineWidth(0.3); doc.line(x, y + 0.9, x + doc.getTextWidth(txt), y + 0.9);
+    };
+    const fitW = (txt, w) => {
+      txt = String(txt || ''); if (doc.getTextWidth(txt) <= w) return txt;
+      while (txt.length > 1 && doc.getTextWidth(txt + '...') > w) txt = txt.slice(0, -1);
+      return txt.replace(/[\s,.;:-]+$/, '') + '...';
+    };
+
+    // spec strip along the bottom (films and TV): certificate box, then label / value columns
+    let tvYears = '';
+    if (isTv && epList?.length) {
+      const ys = epList.map(e => +(String(e.airdate || '').match(/^\d{4}/) || [])[0]).filter(Boolean);
+      if (ys.length) { const a = Math.min(...ys), b = Math.max(...ys); tvYears = a === b ? String(a) : a + ' - ' + b; }
+    }
+    // count the seasons in the episode guide when there is one, so the strip always agrees with it (the stored count can be out of date)
+    const tvSeasons = isTv ? ((epList?.length ? new Set(epList.map(e => e.season)).size : 0) || data.seasons || 0) : 0;
+    const cert = clean(isTv ? ((T.certificate || tvCert?.certificate) || '') : (fx.certificate || ''));
+    const specCols = (isTv ? [
+      ['RUNTIME', runMin ? runMin + ' mins' : '', 0.18],
+      ['YEARS', tvYears || yearTxt, 0.22],
+      ['SEASONS', tvSeasons ? String(tvSeasons) : '', 0.15],
+      ['RATING', num > 0 ? num.toFixed(1) + '/10' : '', 0.15],
+      ['GENRE', clean((data.genres || []).slice(0, 3).join(', ')), 0],
+    ] : [
+      ['RUNNING TIME', runMin ? runMin + ' mins' : '', 0.24],
+      ['YEAR', yearTxt, 0.14],
+      ['RATING', num > 0 ? num.toFixed(1) + '/10' : '', 0.17],
+      ['GENRE', clean((data.genres || []).slice(0, 3).join(', ')), 0],
+    ]).filter(c => c[1]);
+    const STRIP = (cert || specCols.length) ? 13.5 : 0;
+    const textBottom = bottom - STRIP;
+    const drawStrip = () => {
+      if (!STRIP) return;
+      doc.setDrawColor(...accentLbl); doc.setLineWidth(0.25);
+      doc.line(bx, bottom - 10, bx + bw, bottom - 10);
+      let cx0 = bx;
+      if (cert) {
+        let fsz = 11;
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(fsz);
+        while (fsz > 6 && doc.getTextWidth(cert) > 14) { fsz -= 0.5; doc.setFontSize(fsz); }
+        const boxW = Math.max(8, doc.getTextWidth(cert) + 3.5);
+        doc.setDrawColor(255, 255, 255); doc.setLineWidth(0.45);
+        doc.roundedRect(bx, bottom - 8, boxW, 8, 1, 1, 'S');
+        doc.setTextColor(255, 255, 255);
+        doc.text(cert, bx + boxW / 2, bottom - 4 + fsz * 0.353 * 0.36, { align: 'center' });
+        cx0 = bx + boxW + 4;
+      }
+      const W = bx + bw - cx0;
+      specCols.forEach(([lab, val, frac]) => {
+        const w = frac ? W * frac : (bx + bw - cx0);
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(6.3); doc.setTextColor(200, 200, 208);
+        doc.text(lab, cx0, bottom - 5);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(255, 255, 255);
+        doc.text(fitW(val, w - 2), cx0, bottom - 1);
+        cx0 += w;
+      });
+      specDrawn = true;
+    };
+
+    if (isTv) {
+      if (tm?.tagline) {
+        doc.setFont('helvetica', 'italic'); doc.setFontSize(9); doc.setTextColor(255, 255, 255);
+        doc.splitTextToSize(clean(tm.tagline), bw).slice(0, 2).forEach(l => { doc.text(l, bx, by); by += 4.4; });
+        by += 3;
+      }
+      // cast and director anchor to the bottom of the panel
+      const castTxt = (data.cast || []).slice(0, 8).join(', ');
+      const dirTxt = data.director || (fx.directors || []).slice(0, 2).join(', ') || (tm?.creators || []).join(', ');
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+      const castLines = castTxt ? doc.splitTextToSize(clean(castTxt), bw).slice(0, 3) : [];
+      const dirLines = dirTxt ? doc.splitTextToSize(clean(dirTxt), bw).slice(0, 2) : [];
+      const blockH = (castLines.length ? 5 + castLines.length * 4.2 + 3 : 0) + (dirLines.length ? 5 + dirLines.length * 4.2 : 0);
+
+      if (synopsis) {
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(255, 255, 255);
+        const lines = doc.splitTextToSize(synopsis, bw);
+        const room = Math.max(0, Math.floor((textBottom - blockH - 4 - by) / 4.5));
+        const shown = lines.slice(0, room);
+        if (lines.length > room && shown.length) {
+          let last = shown[shown.length - 1];
+          while (last.length > 1 && doc.getTextWidth(last + '...') > bw) last = last.slice(0, -1);
+          shown[shown.length - 1] = last.replace(/[\s,.;:-]+$/, '') + '...';
+        }
+        shown.forEach(l => { doc.text(l, bx, by); by += 4.5; });
+      }
+      const castTop = textBottom - blockH + 4;
+
+      // Season / episode guide (TV): fills the space between the synopsis and the cast
+      if (isTv && epList?.length) {
+        const unesc = t => String(t || '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+        const bySeason = new Map();
+        epList.forEach(e => { if (!bySeason.has(e.season)) bySeason.set(e.season, []); bySeason.get(e.season).push(e); });
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7);
+        const seasons = [...bySeason.entries()].sort((a, b) => a[0] - b[0]).map(([n, list]) => {
+          list.sort((a, b) => a.ep - b.ep);
+          const yr = ((list.find(e => e.airdate)?.airdate || '').match(/^\d{4}/) || [])[0] || '';
+          const titles = list.map(e => clean(unesc(e.title))).filter(Boolean).join('  ·  ');
+          return { n, count: list.length, yr, titles, lines: doc.splitTextToSize(titles, bw) };
+        });
+        const gy0 = by + 5, headH = 7;
+        const avail = (castTop - 6) - gy0 - headH;
+
+        // Every episode title in full if at all possible: try one column with gradually smaller text,
+        // then two columns of seasons, before falling back to shortened lines.
+        const COLGAP = 5;
+        const layout = (fs, ncol) => {
+          const k = fs / 7, lh = 3.1 * k, hh = 3.9 * k, gap = 2.4 * k;
+          const cw = ncol === 1 ? bw : (bw - COLGAP) / 2;
+          doc.setFont('helvetica', 'normal'); doc.setFontSize(fs);
+          const blocks = seasons.map(x => ({ ...x, lines: doc.splitTextToSize(x.titles, cw) }));
+          const bh = x => hh + x.lines.length * lh + gap;
+          const sum = arr => arr.reduce((t, x) => t + bh(x), 0);
+          let cols = [blocks];
+          if (ncol === 2 && blocks.length > 1) {
+            let best = null;
+            for (let i = 1; i < blocks.length; i++) {
+              const h = Math.max(sum(blocks.slice(0, i)), sum(blocks.slice(i)));
+              if (!best || h < best.h) best = { i, h };
+            }
+            cols = [blocks.slice(0, best.i), blocks.slice(best.i)];
+          }
+          return { fs, k, lh, hh, gap, cw, cols, h: Math.max(...cols.map(sum)) - gap };
+        };
+        const tries = [[7, 1], [6.6, 1], [6.2, 1], [6.4, 2], [5.8, 1], [6, 2], [5.6, 2], [5.3, 2]];
+        let fit = null;
+        if (avail >= 12) for (const [fs, nc] of tries) { const L = layout(fs, nc); if (L.h <= avail) { fit = L; break; } }
+
+        if (fit) {
+          heading('EPISODE GUIDE', bx, gy0 + 2.5);
+          fit.cols.forEach((col, ci) => {
+            const cx = bx + ci * (fit.cw + COLGAP);
+            let gy = gy0 + headH + 1.5;
+            col.forEach(x => {
+              const head = 'SEASON ' + x.n;
+              doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5 * fit.k); doc.setTextColor(255, 255, 255);
+              doc.text(head, cx, gy);
+              const hw = doc.getTextWidth(head);
+              doc.setFont('helvetica', 'normal'); doc.setFontSize(7 * fit.k); doc.setTextColor(200, 200, 208);
+              doc.text('  ' + x.count + (x.count === 1 ? ' episode' : ' episodes') + (x.yr ? '  -  ' + x.yr : ''), cx + hw, gy);
+              doc.setFontSize(fit.fs); doc.setTextColor(222, 222, 228);
+              x.lines.forEach((l, j) => doc.text(l, cx, gy + 3.5 * fit.k + j * fit.lh));
+              gy += fit.hh + x.lines.length * fit.lh + fit.gap;
+            });
+          });
+          guideDrawn = true;
+        } else {
+          const fullH = seasons.reduce((t, x) => t + 3.9 + x.lines.length * 3.1 + 2.4, 0);
+          const shortH = seasons.length * (3.9 + 3.1 + 2.4);
+          let ROW = 4.3;
+          const mode = fullH <= avail ? 'full' : shortH <= avail ? 'short' : seasons.length * ROW <= avail ? 'compact' : 'cut';
+          if (mode === 'compact') ROW = Math.min(6.5, avail / seasons.length);   // spread rows out to use the space
+          const maxRows = Math.floor(avail / ROW);
+          // as many lines per season as the space allows (at least one), the last one ending in ...
+          const perSeason = Math.max(1, Math.floor((avail - seasons.length * (3.9 + 2.4)) / (seasons.length * 3.1)));
+          if (mode === 'short') seasons.forEach(x => {
+            if (x.lines.length > perSeason) {
+              doc.setFont('helvetica', 'normal'); doc.setFontSize(7);
+              let l = x.lines[perSeason - 1].replace(/[\s\u00B7,]+$/, '');
+              while (l.length > 1 && doc.getTextWidth(l + ' ...') > bw) l = l.slice(0, -1);
+              x.lines = x.lines.slice(0, perSeason - 1).concat(l.replace(/[\s\u00B7,]+$/, '') + ' ...');
+            }
+          });
+          if (avail >= 12 && (mode !== 'cut' || maxRows >= 2)) {
+            heading('EPISODE GUIDE', bx, gy0 + 2.5);
+            let gy = gy0 + headH + 1.5;
+            const shown = mode === 'cut' && seasons.length > maxRows ? seasons.slice(0, maxRows - 1) : seasons;
+            shown.forEach(x => {
+              doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(255, 255, 255);
+              const head = 'SEASON ' + x.n;
+              doc.text(head, bx, gy);
+              doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(200, 200, 208);
+              doc.text('  ' + x.count + (x.count === 1 ? ' episode' : ' episodes') + (x.yr ? '  -  ' + x.yr : ''), bx + (() => { doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); const w = doc.getTextWidth(head); doc.setFont('helvetica', 'normal'); doc.setFontSize(7); return w; })(), gy);
+              if (mode === 'full' || mode === 'short') {
+                doc.setTextColor(222, 222, 228);
+                x.lines.forEach((l, k) => doc.text(l, bx, gy + 3.5 + k * 3.1));
+                gy += 3.9 + x.lines.length * 3.1 + 2.4;
+              } else gy += ROW;
+            });
+            if (shown.length < seasons.length) {
+              doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(200, 200, 208);
+              const more = seasons.length - shown.length;
+              doc.text('+ ' + more + ' more season' + (more === 1 ? '' : 's'), bx, gy);
+            }
+            guideDrawn = true;
+          }
+        }
+      }
+
+      let cy = castTop;
+      if (castLines.length) {
+        heading('STARRING', bx, cy); cy += 4.4;
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(255, 255, 255);
+        castLines.forEach(l => { doc.text(l, bx, cy); cy += 4.2; });
+        cy += 3;
+      }
+      if (dirLines.length) {
+        heading('CREATED BY', bx, cy); cy += 4.4;
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(255, 255, 255);
+        dirLines.forEach(l => { doc.text(l, bx, cy); cy += 4.2; });
+      }
+    } else {
+
+      // ——— Films: synopsis, film details, a one-column cast with characters, director, then a spec strip ———
+      if (tm?.tagline) {
+        doc.setFont('helvetica', 'italic'); doc.setFontSize(9); doc.setTextColor(255, 255, 255);
+        doc.splitTextToSize(clean(tm.tagline), bw).slice(0, 2).forEach(l => { doc.text(l, bx, by); by += 4.4; });
+        by += 3;
+      }
+      const wrapN = (txt, w, n) => {
+        const ls = doc.splitTextToSize(txt, w);
+        if (ls.length <= n) return ls;
+        let last = ls[n - 1];
+        while (last.length > 1 && doc.getTextWidth(last + '...') > w) last = last.slice(0, -1);
+        return ls.slice(0, n - 1).concat(last.replace(/[\s,.;:-]+$/, '') + '...');
+      };
+      const fit = (txt, w) => wrapN(txt, w, 1)[0] || '';
+      const fmtMoney = m => !m?.n ? '' : m.sym + (m.n >= 1e9 ? (m.n / 1e9).toFixed(2).replace(/\.?0+$/, '') + ' billion' : m.n >= 1e6 ? Math.round(m.n / 1e6) + ' million' : Math.round(m.n).toLocaleString());
+      const fmtDate = s => { const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? new Date(+m[1], +m[2] - 1, +m[3]).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : ''; };
+      const few = (a, n) => (a || []).slice(0, n).join(', ');
+      const label = heading;
+
+
+      // cast in one column, with the character each actor plays when it is known
+      const nk = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+      const roleOf = new Map();
+      [...(T.castChars || []), ...(wdf?.castChars || [])].forEach(c => {
+        const role = String(c.character || '').replace(/\s*\((uncredited|voice)\)\s*/gi, ' ').trim();
+        if (role && !roleOf.has(nk(c.name))) roleOf.set(nk(c.name), role);
+      });
+      const castNames = (data.cast || []).length ? data.cast : (T.castChars?.length ? T.castChars : (wdf?.castChars || [])).map(c => c.name);
+      const castRows = castNames.slice(0, 8).map(n => ({ name: clean(n), role: clean(roleOf.get(nk(n)) || '') })).filter(r => r.name);
+      const dirTxt = data.director || few(fx.directors, 2);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+      const dirLines = dirTxt ? doc.splitTextToSize(clean(dirTxt), bw).slice(0, 2) : [];
+      const castH = n => n ? 4.4 + n * 4.2 + 3 : 0;
+      const dirH = dirLines.length ? 4.4 + dirLines.length * 4.2 : 0;
+      const castTopFor = n => textBottom - castH(n) - dirH + 4;   // baseline of the STARRING label
+      const minCast = Math.min(4, castRows.length);
+
+      // synopsis (the fuller iTunes Store blurb when there is one)
+      if (synopsis) {
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(255, 255, 255);
+        const lines = doc.splitTextToSize(synopsis, bw);
+        const room = Math.max(0, Math.floor((castTopFor(minCast) - 8 - by) / 4.5));
+        const shown = lines.slice(0, room);
+        if (lines.length > room && shown.length) {
+          let last = shown[shown.length - 1];
+          while (last.length > 1 && doc.getTextWidth(last + '...') > bw) last = last.slice(0, -1);
+          shown[shown.length - 1] = last.replace(/[\s,.;:-]+$/, '') + '...';
+        }
+        shown.forEach(l => { doc.text(l, bx, by); by += 4.5; });
+      }
+
+      // film details: two columns of label / value
+      const items = [
+        ['WRITTEN BY', few(fx.writers, 3)],
+        ['MUSIC BY', few(fx.composers, 2)],
+        ['CINEMATOGRAPHY', few(fx.cinematographers, 2)],
+        ['PRODUCED BY', few(fx.producers, 3)],
+        ['STUDIO', few(fx.studios, 3)],
+        ['RELEASED', fmtDate(fx.releaseDate)],
+        ['COUNTRY', few(fx.countries, 3)],
+        ['LANGUAGE', few(fx.languages, 3)],
+        ['BOX OFFICE', fmtMoney(fx.revenue)],
+        ['BUDGET', fmtMoney(fx.budget)],
+      ].filter(x => x[1]);
+      const HEAD = 6, LH = 3.8, colW = bw / 2;
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+      const cells = items.map(([l, v]) => ({ l, lines: wrapN(clean(v), colW - 4, 2) }));
+      const rows = [];
+      for (let i = 0; i < cells.length; i += 2) rows.push(cells.slice(i, i + 2));
+      const rowH = r => 2.3 + Math.max(...r.map(c => c.lines.length)) * LH + 2.4;
+      const rowsH = n => n ? HEAD + rows.slice(0, n).reduce((t, r) => t + rowH(r), 0) : 0;
+      const midTop = by + 5;
+      const fitRows = space => { let n = 0; while (n < rows.length && rowsH(n + 1) <= space) n++; return n; };
+      // the whole cast first, but give up cast lines (down to five) so at least two rows of details fit
+      let castN = castRows.length;
+      while (castN > minCast && castTopFor(castN) - 8 < midTop) castN--;
+      let nRows = fitRows(castTopFor(castN) - 8 - midTop);
+      while (nRows < Math.min(2, rows.length) && castN > Math.max(minCast, 5)) { castN--; nRows = fitRows(castTopFor(castN) - 8 - midTop); }
+      const castTop = castTopFor(castN);
+
+      if (nRows) {
+        const avail = castTop - 8 - midTop, slack = Math.max(0, avail - rowsH(nRows));
+        const rowPad = Math.min(1.6, slack * 0.4 / nRows);              // loosen the rows a little when there is room
+        let y = midTop + Math.min(9, (slack - rowPad * nRows) / 2);      // and centre the panel in the gap
+        label('FILM DETAILS', bx, y + 2.5);
+        y += HEAD;
+        rows.slice(0, nRows).forEach(r => {
+          r.forEach((c, i) => {
+            const cx = bx + i * colW;
+            doc.setFont('helvetica', 'bold'); doc.setFontSize(6.3); doc.setTextColor(200, 200, 208);
+            doc.text(c.l, cx, y + 2.3);
+            doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(255, 255, 255);
+            c.lines.forEach((l, k) => doc.text(l, cx, y + 2.3 + LH + k * LH));
+          });
+          y += rowH(r) + rowPad;
+        });
+        detailsDrawn = true;
+      }
+
+      let cy = castTop;
+      if (castN) {
+        label('STARRING', bx, cy); cy += 4.4;
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+        const shownCast = castRows.slice(0, castN);
+        // characters only when most of the cast have one - a lone character name looks stranded in its own column
+        const anyRole = shownCast.filter(r => r.role).length >= Math.max(2, Math.ceil(shownCast.length * 0.6));
+        if (!anyRole) shownCast.forEach(r => { r.role = ''; });
+        const nameW = anyRole ? Math.min(bw * 0.5, Math.max(...shownCast.map(r => doc.getTextWidth(r.name))) + 6) : bw;
+        shownCast.forEach(r => {
+          doc.setTextColor(255, 255, 255);
+          doc.text(fit(r.name, nameW - 2), bx, cy);
+          if (r.role) { doc.setTextColor(200, 200, 208); doc.text(fit(r.role, bw - nameW), bx + nameW, cy); }
+          cy += 4.2;
+        });
+        if (anyRole) rolesDrawn = true;
+        cy += 3;
+      }
+      if (dirLines.length) {
+        label('DIRECTED BY', bx, cy); cy += 4.4;
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(255, 255, 255);
+        dirLines.forEach(l => { doc.text(l, bx, cy); cy += 4.2; });
+      }
+
+    }
+
+    drawStrip();
+
+    // spine: the title, reading top to bottom
+    const bandT = 6, bandB = 10;   // margins kept clear at the top and bottom of the spine
+    let fs = 12;
+    doc.setFont('helvetica', 'bold');
+    const spineTxt = clean(title);
+    doc.setFontSize(fs);
+    while (fs > 6 && doc.getTextWidth(spineTxt) > CH - bandT - bandB - 10) { fs -= 0.5; doc.setFontSize(fs); }
+    doc.setTextColor(255, 255, 255);
+    doc.text(spineTxt, wx + PW + SP / 2 - fs * 0.353 * 0.36, wy + bandT + 5, { angle: -90 });
+
+    marks(wx, wy, CW, CH);
+    doc.setDrawColor(...lineRgb); doc.setLineWidth(0.15);
+    [wx + PW, wx + PW + SP].forEach(fx => { doc.line(fx, wy - 1.5, fx, wy - (tight ? 4 : 5.5)); doc.line(fx, wy + CH + 1.5, fx, wy + CH + (tight ? 4 : 5.5)); });
+    const wrapNote = caseName + ' case wrap ' + CW + ' x ' + CH + ' mm  -  back | spine | front  -  fold at the ticks';
+
+    // — page 2: the disc label
+    doc.addPage();
+    const dx = (pageW - DD) / 2, dy = (pageH - DD) / 2 - 3;
+    doc.addImage(disc.data, 'JPEG', dx, dy, DD, DD, undefined, 'FAST');
+    doc.setDrawColor(...lineRgb); doc.setLineWidth(0.15);
+    doc.circle(dx + DD / 2, dy + DD / 2, DD / 2 + 0.4, 'S');
+    doc.circle(dx + DD / 2, dy + DD / 2, HOLE / 2 - 0.3, 'S');
+    caption('Disc label - 118 mm, centre hole 36 mm', dy + DD + 6);
+
+    // — last page: what was used, and how to print
+    doc.addPage();
+    const mx = 18, cw = pageW - mx * 2;
+    let ny = 22;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(18); doc.setTextColor(...inkRgb);
+    doc.splitTextToSize(clean(title), cw).slice(0, 2).forEach(l => { doc.text(l, mx, ny); ny += 8; });
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(11); doc.setTextColor(...accentRgb);
+    doc.text(caseName + ' case printables' + (yearTxt ? '  -  ' + yearTxt : ''), mx, ny); ny += 5;
+    doc.setDrawColor(...accentRgb); doc.setLineWidth(0.6); doc.line(mx, ny, pageW - mx, ny); ny += 9;
+    const para = (head, body) => {
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(...inkRgb);
+      doc.text(clean(head), mx, ny); ny += 5;
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(60, 60, 67);
+      doc.splitTextToSize(clean(body), cw).forEach(l => { doc.text(l, mx, ny); ny += 4.6; });
+      ny += 3.5;
+    };
+    const dpiNote = front.dpi && front.dpi < 200 ? ' The poster is low resolution (about ' + front.dpi + ' dpi at this size), so the print will look a little soft.' : '';
+    para('Poster', 'From ' + poster.src + '.' + dpiNote
+      + (front.mode === 'contain' ? ' The poster is narrower than the front panel, so it is shown whole and blended into the poster colour at the sides.' : ' The poster is slightly cropped at the edges to fill the front panel.'));
+    if (poster.src !== 'TMDB') {
+      if (!hasKey) para('Sharper posters', 'No TMDB key is set in the card editor, so TMDB was skipped and only key-free sources were used. Adding a free TMDB key gives high-resolution posters and the runtime and tagline on the back.');
+      else if (tm?.error) para('TMDB', 'A TMDB key is set but the lookup failed (' + (tm.error === 'rejected' ? 'the key was rejected - check it in the card editor' : tm.error) + '), so another source was used.');
+      else para('TMDB', 'TMDB did not have a poster for this title, so another source was used.');
+    }
+    para('Colours and text', 'The back and spine use a gradient built from the poster colours, and the headings use the poster\'s most vivid colour. The back is made from this title\'s details: ' + [synopsis ? (synopsis === blurb ? 'synopsis (iTunes Store)' : 'synopsis') : '', (data.cast || []).length ? 'cast' : '', (data.director || tm?.creators?.length) ? (isTv ? 'creator' : 'director') : '', rt ? 'runtime' : '', tm?.tagline ? 'tagline' : '', guideDrawn ? 'episode guide' : '', rolesDrawn ? 'character names' : '', detailsDrawn ? 'film details' : '', specDrawn ? 'certificate and running time' : ''].filter(Boolean).join(', ') + '.');
+    if (detailsDrawn && (wdf || itm)) para('Film details', 'Gathered from ' + [tm && !tm.error ? 'TMDB' : '', wdf ? 'Wikidata' : '', itm ? 'the iTunes Store' : ''].filter(Boolean).join(', ').replace(/, ([^,]*)$/, ' and $1') + '. Only the details that fit on the back are shown.');
+    para('Printing', 'Print at 100% / "Actual size" - not "Fit to page" - so the wrap comes out at the real size. Paper: ' + (letter ? 'US Letter' : 'A4') + ', landscape. Cut along the corner marks and fold at the two small ticks so the spine sits on the case edge. The disc label has a circle and a centre hole to cut out.'
+      + (tight ? ' US Letter is only a few millimetres wider than the wrap, so a printer that cannot print right to the edge may clip it - A4 or Legal paper is a safer fit.' : ''));
+    para('Sizes', 'DVD (Amaray) wrap 273 x 183 mm and Blu-ray wrap 272 x 149 mm, both with a 14 mm spine. Slim and other case styles are different sizes.');
+
+    const pageCount = doc.internal.getNumberOfPages();
+    for (let p = 1; p <= pageCount; p++) {
+      doc.setPage(p);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(...mutedRgb);
+      doc.text(p === 1 ? 'Print at 100% (Actual size)  -  ' + wrapNote : p < pageCount ? 'Print at 100% (Actual size)' : 'CrowAI Media Player Card', 12, pageH - 4);
+      doc.text('Page ' + p + ' of ' + pageCount, pageW - 12, pageH - 4, { align: 'right' });
+    }
+    if (preview.closed) return;
+    const slug = clean(title).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 50) || 'title';
+    this._showPDFPreview(doc, 'crowai-' + kind + '-case-' + slug + '-' + new Date().toISOString().slice(0, 10) + '.pdf', preview);
+  }
+
   // Lazily loads jsPDF from a CDN the first time a PDF is exported — the
   // same library and approach as the DolphinAI card. Cached as a promise;
   // a failed load can be retried.
-  _ensureJsPDF() {
+  _ensureJsPDF(preview = null) {
     if (window.jspdf?.jsPDF) return Promise.resolve(window.jspdf.jsPDF);
+    preview?.status?.('Loading the PDF tools\u2026');
     if (this._jsPDFLoadPromise) return this._jsPDFLoadPromise;
     this._jsPDFLoadPromise = new Promise((resolve, reject) => {
       const script = document.createElement('script');
@@ -13050,6 +15145,11 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const looksLikeUrl = t => /:\/\/|^www\.|\.(com|co\.uk|org|net|fm|io|de|fr|nl)\b/i.test(String(t || '').trim());
     const walk = el => {
       if (!el || el.nodeType !== 1) return;
+      // A list row marked for the PDF (audiobook chapters…) is one entry
+      if (el.dataset?.pdfRow) {
+        blocks.push({ type: 'row', el, num: el.dataset.pdfNum || '', text: el.dataset.pdfTitle || '', sub: el.dataset.pdfSub || '', size: 13, bold: false, upper: false, italic: false });
+        return;
+      }
       // A button that shows a web address (a station's Website or Stream URL)
       // is information on screen, not just a control — keep its text.
       if (el.tagName === 'BUTTON' && looksLikeUrl(el.textContent)) {
@@ -13090,14 +15190,169 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
   // Turns an image on screen into a data URL jsPDF can embed (JPEG).
   // Images from sites that don't allow it are simply left out.
-  async _pdfImageData(src) {
+  // ── Cover cache ─────────────────────────────────────────────────────────
+  // Small copies (96px) of the artwork shown while things play, kept in this
+  // browser's database (IndexedDB — far roomier than localStorage) so PDF
+  // exports and reports have covers instantly, even after the original
+  // image link has stopped working. One cover per album (or per show or
+  // movie), up to COVER_MAX, dropping the ones played longest ago.
+  _coverKey(a = {}) {
+    const n = v => String(v || '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, '');
+    if (a.video) return a.video ? 'v|' + n(a.video) : '';
+    const artist = n(String(a.artist || '').split(/\s*(?:[,&\/;]|\bfeat\.?\b|\bft\.?\b)\s*/i)[0]);
+    const what = n(a.album) || n(a.title);
+    return artist && what ? 'm|' + artist + '|' + what : '';
+  }
+  _coverDb() {
+    if (this._coverDbP) return this._coverDbP;
+    this._coverDbP = new Promise(resolve => {
+      try {
+        const req = indexedDB.open('crowai-covers', 1);
+        req.onupgradeneeded = () => {
+          const st = req.result.createObjectStore('covers', { keyPath: 'k' });
+          st.createIndex('ts', 'ts');
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => resolve(null);
+        req.onblocked = () => resolve(null);
+      } catch (_) { resolve(null); }
+    });
+    return this._coverDbP;
+  }
+  async _coverGet(key) {
+    if (!key) return null;
+    if (!this._coverMem) this._coverMem = new Map();
+    if (this._coverMem.has(key)) return this._coverMem.get(key);
+    const db = await this._coverDb();
+    if (!db) return null;
+    const rec = await new Promise(res => {
+      try {
+        const rq = db.transaction('covers', 'readonly').objectStore('covers').get(key);
+        rq.onsuccess = () => res(rq.result || null); rq.onerror = () => res(null);
+      } catch (_) { res(null); }
+    });
+    const val = rec ? { data: rec.data, w: rec.w, h: rec.h } : null;
+    if (val) this._coverMem.set(key, val);
+    return val;
+  }
+  async _coverPut(key, img) {
+    if (!key || !img?.data) return;
+    if (!this._coverMem) this._coverMem = new Map();
+    this._coverMem.set(key, img);
+    const db = await this._coverDb();
+    if (!db) return;
+    try {
+      const tx = db.transaction('covers', 'readwrite');
+      tx.objectStore('covers').put({ k: key, data: img.data, w: img.w, h: img.h, ts: Date.now() });
+    } catch (_) { return; }
+    // Trim now and then, not on every save
+    this._coverPuts = (this._coverPuts || 0) + 1;
+    if (this._coverPuts % 25 === 1) this._coverTrim(db);
+  }
+  _coverTrim(db) {
+    const COVER_MAX = 2000;
+    try {
+      const st = db.transaction('covers', 'readwrite').objectStore('covers');
+      const cq = st.count();
+      cq.onsuccess = () => {
+        let extra = cq.result - COVER_MAX;
+        if (extra <= 0) return;
+        const cur = st.index('ts').openCursor();
+        cur.onsuccess = () => {
+          const c = cur.result;
+          if (!c || extra <= 0) return;
+          c.delete(); extra--; c.continue();
+        };
+      };
+    } catch (_) { /* best effort */ }
+  }
+  // Called from the artwork update: once per track, a few seconds in (so the
+  // art has settled), save a small copy of what's on screen. Radio streams
+  // are skipped — their art is a station logo, not a cover.
+  _coverCaptureMaybe(state, url) {
+    try {
+      const at = state?.attributes || {};
+      let art = null;
+      const cls = this._classifyWatchMedia(at, state);
+      if (cls?.kind === 'tv' || cls?.kind === 'movie') art = { video: cls.seriesTitle || cls.title };
+      else if (!this._isLiveStream(state)) art = { artist: at.media_artist, album: at.media_album_name, title: at.media_title };
+      const key = art ? this._coverKey(art) : '';
+      if (!key || this._coverLastKey === key + '|' + url) return;
+      this._coverLastKey = key + '|' + url;
+      clearTimeout(this._coverCaptureTimer);
+      this._coverCaptureTimer = setTimeout(async () => {
+        if (this._coverLastKey !== key + '|' + url) return;   // track changed meanwhile
+        const img = await this._pdfImageData(url, 96).catch(() => null);
+        if (img) this._coverPut(key, img);
+      }, 4000);
+    } catch (_) { /* never let this affect playback UI */ }
+  }
+
+  async _pdfImageData(src, max = 600) {
+    if (!src) return null;
     if (!this._pdfImageCache) this._pdfImageCache = new Map();
-    if (this._pdfImageCache.has(src)) return this._pdfImageCache.get(src);
-    const result = await this._pdfImageDataFetch(src);
-    if (result) this._pdfImageCache.set(src, result);
+    const ck = max + '|' + src;
+    if (this._pdfImageCache.has(ck)) return this._pdfImageCache.get(ck);
+    const result = await this._pdfImageDataFetch(src, max);
+    if (result) this._pdfImageCache.set(ck, result);
     return result;
   }
-  async _pdfImageDataFetch(src) {
+
+  // Artwork for one row of a list PDF, small. Tries what the screen tries:
+  // the row's own image, Music Assistant's image proxy (for library images
+  // the browser can't fetch directly), the iTunes art already found for the
+  // on-screen list, then a quick iTunes search (limited per PDF).
+  async _pdfThumbFor(it, budget = { itunes: 0 }) {
+    const coverKey = this._coverKey(it.art || {});
+    const saved = coverKey ? await this._coverGet(coverKey) : null;
+    if (saved) return saved;
+    const found = await this._pdfThumbLookup(it, budget);
+    if (found && coverKey) this._coverPut(coverKey, found);
+    return found;
+  }
+  async _pdfThumbLookup(it, budget) {
+    const SIZE = 96;
+    const raw = typeof it.thumb === 'string' ? it.thumb : (it.thumb?.path || it.thumb?.url || '');
+    const asData = v => !v ? '' : (/^(data:|https?:|blob:)/.test(v) ? v : 'data:image/jpeg;base64,' + v);
+    const tryImg = async src => (src ? await this._pdfImageData(src, SIZE).catch(() => null) : null);
+    let r = null;
+    if (raw && this._maImageCache?.[raw]) r = await tryImg(asData(this._maImageCache[raw]));
+    if (!r && raw && /^(https?:|data:|blob:)/.test(raw)) r = await tryImg(raw);
+    if (!r && raw && this._hass?.services?.mass_queue) {
+      const enc = await this._fetchMAImage(raw).catch(() => null);
+      if (enc) r = await tryImg(asData(enc));
+    }
+    if (r) return r;
+    const a = it.art || {};
+    if (a.video) {
+      // Shows and movies: the poster the Watch History list already found
+      const poster = this._mtArtCache?.['tv|' + a.video.toLowerCase()] || this._mtArtCache?.['movie|' + a.video.toLowerCase()];
+      return poster ? await tryImg(poster) : null;
+    }
+    if (!a.artist && !a.title) return null;
+    const key = [a.artist, a.album || a.title].filter(Boolean).join('|').toLowerCase();
+    const cached = this._itunesArtCache?.[key];
+    if (cached) { r = await tryImg(cached); if (r) return r; }
+    if (cached === '' || budget.itunes <= 0) return null;
+    budget.itunes--;
+    const ctrl = new AbortController();
+    const tm = setTimeout(() => ctrl.abort(), 4000);
+    try {
+      const term = encodeURIComponent([a.artist, a.title || a.album].filter(Boolean).join(' '));
+      const resp = await fetch('https://itunes.apple.com/search?term=' + term + '&entity=musicTrack&limit=10', { signal: ctrl.signal });
+      const data = resp.ok ? await resp.json() : null;
+      const norm = v => String(v || '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]/g, '');
+      const nT = norm(a.title), nA = norm(a.artist), nAl = norm(a.album);
+      const best = (data?.results || []).map(x => ({ x, s: (nT && norm(x.trackName).includes(nT) ? 3 : 0) + (nA && norm(x.artistName).includes(nA) ? 2 : 0) + (nAl && norm(x.collectionName).includes(nAl) ? 1 : 0) }))
+        .sort((p, q) => q.s - p.s)[0];
+      const url = best && best.s >= 2 ? best.x.artworkUrl100 : null;
+      if (!url) return null;
+      if (!this._itunesArtCache) this._itunesArtCache = {};
+      if (!this._itunesArtCache[key]) this._itunesArtCache[key] = url.replace('100x100bb', '600x600bb');
+      return await tryImg(url);
+    } catch (_) { return null; } finally { clearTimeout(tm); }
+  }
+  async _pdfImageDataFetch(src, max = 600) {
     const get = async (url) => {
       const ctrl = new AbortController();
       const t = setTimeout(() => ctrl.abort(), 4000);
@@ -13112,12 +15367,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       // other pages read their images. Those are fetched again through
       // images.weserv.nl, a free public image proxy that allows it.
       let blob = await get(src);
-      if (!blob && /^https?:\/\//i.test(src)) {
-        blob = await get('https://images.weserv.nl/?url=' + encodeURIComponent(src) + '&w=600&output=jpg');
+      // (The proxy can't reach addresses on the home network.)
+      const isLocal = /^https?:\/\/(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|[^/]*\.local\b|[^/]*:8123)/i.test(src);
+      if (!blob && /^https?:\/\//i.test(src) && !isLocal) {
+        blob = await get('https://images.weserv.nl/?url=' + encodeURIComponent(src) + '&w=' + max + '&output=jpg');
       }
       if (!blob || !/^image\//.test(blob.type || 'image/')) return null;
       const bmp = await createImageBitmap(blob);
-      const max = 600;
       const scale = Math.min(1, max / Math.max(bmp.width, bmp.height));
       const c = document.createElement('canvas');
       c.width = Math.max(1, Math.round(bmp.width * scale));
@@ -13126,7 +15382,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, c.width, c.height);
       ctx.drawImage(bmp, 0, 0, c.width, c.height);
-      return { data: c.toDataURL('image/jpeg', 0.88), w: c.width, h: c.height };
+      return { data: c.toDataURL('image/jpeg', max <= 120 ? 0.8 : 0.88), w: c.width, h: c.height };
     } catch (_) { return null; }
   }
 
@@ -13135,10 +15391,17 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // audiobook) and shows it in a preview with a Download button — the same
   // flow as the DolphinAI card's exports.
   async _exportInfoPanelPDF() {
+    if (!this._pdfOn('info')) return;   // switched off in the card editor
     if (this._pdfBusy) return;
     this._pdfBusy = true;
     const preview = this._openPDFPreview();
-    try { await this._buildInfoPanelPDF(preview); }
+    try {
+      // the same panel content as before -> the same PDF
+      const c = this.shadowRoot?.getElementById('infoContent');
+      const key = c ? 'info|' + this._pdfHash((this.shadowRoot.getElementById('infoPopupTitle')?.textContent || '') + '\n' + c.textContent) : null;
+      if (this._pdfFromSession(key, preview)) return;
+      await this._buildInfoPanelPDF(preview);
+    }
     catch (e) { console.warn('[CrowAI] info PDF failed', e); preview.fail('Couldn\u2019t create the PDF. Please try again.'); }
     finally { this._pdfBusy = false; }
   }
@@ -13264,7 +15527,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
     const posterSrc = content.querySelector('.info-hero-art img')?.currentSrc || content.querySelector('.info-hero-art img')?.src
       || this._collectInfoPanelBlocks(content).find(b => b.type === 'img' && b.w >= 60)?.src;
+    if (posterSrc) preview?.status?.('Fetching artwork\u2026');
     const img = posterSrc ? await this._pdfImageData(posterSrc) : null;
+    preview?.status?.('Building pages\u2026');
     const artGap = 16, rowGap = 3, labelW = 64;
     let colX = marginX, colW = contentW;
     const measure = w => {
@@ -13383,7 +15648,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (!content) return;
     const headerText = (r.getElementById('infoPopupTitle')?.textContent || 'Info').trim();
     let JsPDFCtor;
-    try { JsPDFCtor = await this._ensureJsPDF(); }
+    try { JsPDFCtor = await this._ensureJsPDF(preview); }
     catch (e) { preview.fail(e?.message || 'Could not load the PDF library'); return; }
 
     // A movie / TV info panel has its own tidy layout built from its data
@@ -13447,8 +15712,16 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // (or the panel's own subtitle) as the masthead, then the artwork sized
     // to the grey Year / Label / Length / Genre rows beside it. Blocks used
     // here are skipped in the main pass below.
-    const texts = blocks.filter(b => b.type === 'text');
+    const texts = blocks.filter(b => b.type === 'text' || b.type === 'row');
     const isLbl = b => b.upper && b.size <= 12;
+    // A label and its value form a "box" only when that box holds just the
+    // two of them — otherwise the label is a section heading (Chapters,
+    // Cast…) and the first item under it mustn't be pulled into a grey row.
+    const boxOfTwo = (lab, val) => {
+      const box = lab.el.parentElement;
+      if (!box || box === r.getElementById('infoContent') || !box.contains(val.el)) return false;
+      return texts.filter(t => box.contains(t.el)).length === 2;
+    };
     const used = new Set();
     const tIdx = texts.findIndex(b => b.size >= 15 && b.bold);
     let subTxt = '';
@@ -13459,8 +15732,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         const b = texts[k], nx = texts[k + 1];
         if (isLbl(b)) {
           const v = nx ? clean(nx.text) : '';
-          const same = nx && !isLbl(nx) && b.el.parentElement && b.el.parentElement.contains(nx.el)
-            && b.el.parentElement.parentElement !== r.getElementById('infoContent');
+          const same = nx && !isLbl(nx) && nx.type !== 'row' && boxOfTwo(b, nx);
           if (!same || !v || v.length > 60 || nx.url) break;   // a section heading or long value ends the header
           kvRows.push([clean(b.text).toUpperCase(), v]);
           used.add(k); used.add(k + 1);
@@ -13493,7 +15765,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
     // Artwork sized to the grey rows, rows starting level with its top
     const heroIdx = blocks.findIndex(b => b.type === 'img' && b.w >= 60);
+    if (heroIdx !== -1) preview?.status?.('Fetching artwork\u2026');
     const heroImg = heroIdx !== -1 ? await this._pdfImageData(blocks[heroIdx].src) : null;
+    preview?.status?.('Building pages\u2026');
     const artGap = 16, rowGap = 3;
     const measureRows = (cw, lw) => {
       doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5);
@@ -13534,6 +15808,30 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     for (let i = 0; i < texts.length; i++) {
       if (used.has(i)) continue;
       const b = texts[i];
+      // List rows (audiobook chapters…): one line each — number, title,
+      // and the length on the right
+      if (b.type === 'row') {
+        exitSide();
+        const t = clean(b.text);
+        const num = clean(b.num);
+        const sub = /^0\s*min/i.test(String(b.sub || '').trim()) ? '' : clean(b.sub);
+        newPageIfNeeded(16);
+        const titleX = marginX + (num ? 24 : 0);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(...mutedRgb);
+        if (num) doc.text(num, marginX, y);
+        if (sub) doc.text(sub, marginX + contentW, y, { align: 'right' });
+        const subW = sub ? doc.getTextWidth(sub) + 12 : 0;
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5); doc.setTextColor(...inkRgb);
+        let show = t;
+        const maxW = contentW - (titleX - marginX) - subW;
+        if (doc.getTextWidth(show) > maxW) {
+          while (show.length > 1 && doc.getTextWidth(show + '...') > maxW) show = show.slice(0, -1);
+          show = show.trimEnd() + '...';
+        }
+        doc.text(show, titleX, y);
+        y += 15;
+        continue;
+      }
       const text = clean(b.text);
       if (!text) continue;
       const isLabel = b.upper && b.size <= 12;
@@ -13543,8 +15841,15 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         // it's a section heading (Fun Fact, Band Members, Tracklist…).
         const next = texts[i + 1];
         const nextText = next ? clean(next.text) : '';
-        const sameBox = next && !(next.upper && next.size <= 12) && b.el.parentElement && b.el.parentElement.contains(next.el)
-          && (next.url || b.el.parentElement.parentElement !== r.getElementById('infoContent'));
+        const sameBox = next && !(next.upper && next.size <= 12) && next.type !== 'row'
+          && (next.url ? (b.el.parentElement && b.el.parentElement.contains(next.el)) : boxOfTwo(b, next));
+        // Already in the page title (e.g. an "Artist" box holding just the
+        // artist's name) — leave it out rather than repeat it
+        const _inTitle = v => !!v && [mastTitle, mastSub].some(m => m && m.toLowerCase() === v.toLowerCase());
+        if (nextText && _inTitle(nextText)) {
+          const after = texts[i + 2];
+          if (sameBox || !after || isLbl(after) || (after.size >= 15 && after.bold)) { i++; continue; }
+        }
         if (sameBox && nextText && (nextText.length <= 90 || next.url)) {
           // Long values (a stream URL…) don't fit beside the artwork
           if (inSide && nextText.length > 60) exitSide();
@@ -13568,6 +15873,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           continue;
         }
         sectionHeader(text.charAt(0) + text.slice(1).toLowerCase());
+        if (texts[i + 1]?.type === 'row') continue;   // rows draw themselves below
         // List sections (Band Members, Similar Tracks, Tracklist, Known
         // For…) are laid out in columns so they don't run down the page:
         // a bold line with a smaller line under it (title + artist, track +
@@ -13675,6 +15981,1791 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // overlay over the page with the rendered PDF and a Download button. If
   // the app's web view won't show PDFs inline the preview is blank, but
   // Download still works.
+  // ── History reports (Music History / Watch History / the Recaps) ─────────
+  // "Export Report to PDF" in their 3-dot menus: pick a period, then a PDF
+  // of charts and stats for it — the same charting as the DolphinAI card.
+
+  // An iOS-style sheet with a list of choices (same look as _iosConfirm).
+  // Resolves to the chosen option's value, or undefined if cancelled.
+  _iosChoose({ title, message, options = [], selected } = {}) {
+    return new Promise(resolve => {
+      const r = this.shadowRoot;
+      const popup = r?.getElementById('infoPopup');
+      const host = (popup && popup.classList.contains('visible')) ? popup : (r?.getElementById('cardOuter') || popup);
+      if (!host) { resolve(undefined); return; }
+      host.querySelector('.crow-ios-backdrop')?.remove();
+      const esc = t => String(t ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+      const light = !!this._panelIsLight;
+      const text = light ? '#000000' : '#ffffff';
+      const dim  = light ? 'rgba(60,60,67,0.62)' : 'rgba(235,235,245,0.62)';
+      const back = document.createElement('div');
+      back.className = 'crow-ios-backdrop' + (light ? ' light' : '');
+      back.style.setProperty('--crow-ios-bg',    light ? 'rgba(250,250,252,0.86)' : 'rgba(48,48,52,0.78)');
+      back.style.setProperty('--crow-ios-edge',  light ? 'rgba(0,0,0,0.08)'      : 'rgba(255,255,255,0.12)');
+      back.style.setProperty('--crow-ios-shine', light ? 'rgba(255,255,255,0.7)'  : 'rgba(255,255,255,0.08)');
+      back.style.setProperty('--crow-ios-pill',  light ? 'rgba(120,120,128,0.16)' : 'rgba(255,255,255,0.12)');
+      back.innerHTML =
+        '<div class="crow-ios-alert" role="alertdialog" aria-modal="true">' +
+          (title ? '<div class="crow-ios-title" style="color:' + text + ';">' + esc(title) + '</div>' : '') +
+          (message ? '<div class="crow-ios-msg" style="color:' + dim + ';">' + esc(message) + '</div>' : '') +
+          '<div class="crow-ios-btns">' +
+            options.map((o, i) => '<button data-i="' + i + '" class="' + (o.value === selected ? 'crow-ios-ok' : 'crow-ios-cancel') + '"'
+              + (o.value === selected ? '' : ' style="color:' + text + ';"') + '>' + esc(o.label) + '</button>').join('') +
+            '<button class="crow-ios-cancel crow-ios-choose-cancel" style="color:' + text + ';">Cancel</button>' +
+          '</div>' +
+        '</div>';
+      host.appendChild(back);
+      requestAnimationFrame(() => requestAnimationFrame(() => back.classList.add('visible')));
+      let done = false;
+      const finish = (v) => {
+        if (done) return; done = true;
+        document.removeEventListener('keydown', onKey, true);
+        back.classList.remove('visible');
+        setTimeout(() => back.remove(), 240);
+        resolve(v);
+      };
+      const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); finish(undefined); } };
+      document.addEventListener('keydown', onKey, true);
+      back.addEventListener('click', (e) => { e.stopPropagation(); if (e.target === back) finish(undefined); });
+      back.querySelector('.crow-ios-choose-cancel').addEventListener('click', (e) => { e.stopPropagation(); finish(undefined); });
+      back.querySelectorAll('[data-i]').forEach(b => b.addEventListener('click', (e) => {
+        e.stopPropagation(); finish(options[+b.dataset.i].value);
+      }));
+    });
+  }
+
+  // kind: 'music' | 'watch'. defaultRange: preselected period.
+  async _exportHistoryReport(kind, defaultRange = 30) {
+    if (!this._pdfOn('history')) return;   // switched off in the card editor
+    const options = [
+      { label: 'Today', value: 'today' },
+      { label: 'Last 7 days', value: 7 },
+      { label: 'Last 30 days', value: 30 },
+      { label: 'Last 90 days', value: 90 },
+      { label: 'All time', value: 'all' },
+    ];
+    const range = await this._iosChoose({
+      title: kind === 'music' ? 'Music Report' : 'Watch Report',
+      message: 'Choose the period to include in the PDF.',
+      options, selected: defaultRange,
+    });
+    if (range === undefined) return;
+    if (this._pdfBusy) return;
+    this._pdfBusy = true;
+    const preview = this._openPDFPreview();
+    try {
+      // rebuilt when the history has changed (or on another day, since ranges count back from today)
+      const log = (kind === 'music' ? this._getListenLogEntries() : this._getWatchLogEntries()) || [];
+      const fp = log.length + ':' + log.reduce((m, e) => Math.max(m, e?.ts || 0), 0);
+      if (this._pdfFromSession('hist|' + kind + '|' + range + '|' + new Date().toDateString() + '|' + fp, preview)) return;
+      await this._buildHistoryReportPDF(kind, range, preview);
+    }
+    catch (e) { console.warn('[CrowAI] history report failed', e); preview.fail('Couldn’t create the report. Please try again.'); }
+    finally { this._pdfBusy = false; }
+  }
+
+  async _buildHistoryReportPDF(kind, range, preview) {
+    let JsPDFCtor;
+    try { JsPDFCtor = await this._ensureJsPDF(preview); }
+    catch (e) { preview.fail(e?.message || 'Could not load the PDF library'); return; }
+    const isMusic = kind === 'music';
+    const now = Date.now();
+    const DAY = 864e5;
+    const midnight = d => { const t = new Date(d); t.setHours(0, 0, 0, 0); return t.getTime(); };
+    const all = (isMusic ? this._getListenLogEntries() : this._getWatchLogEntries())
+      .filter(e => e && e.ts).sort((a, b) => a.ts - b.ts);
+    const cutoff = range === 'today' ? midnight(now) : range === 'all' ? 0 : now - range * DAY;
+    const entries = all.filter(e => e.ts >= cutoff);
+    const rangeLabel = range === 'today' ? 'Today' : range === 'all' ? 'All time' : 'Last ' + range + ' days';
+
+    const doc = new JsPDFCtor({ unit: 'pt', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const marginX = 44, contentW = pageW - marginX * 2;
+    const hexToRgb = hex => {
+      const h = String(hex || '#007AFF').replace('#', '');
+      const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h.slice(0, 6);
+      const n = parseInt(full, 16);
+      return isNaN(n) ? [0, 122, 255] : [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    };
+    const inkRgb = [28, 28, 30], mutedRgb = [120, 120, 128], zebraRgb = [244, 244, 247];
+    const accentHex = this._config?.accent_color || '#007AFF';
+    const accentRgb = hexToRgb(accentHex);
+    const theme = {
+      hexToRgb, inkRgb, mutedRgb, zebraRgb, accentRgb,
+      setInk: () => doc.setTextColor(...inkRgb), setMuted: () => doc.setTextColor(...mutedRgb), setAccent: () => doc.setTextColor(...accentRgb),
+    };
+    const clean = s => String(s || '')
+      .replace(/[‘’‚′]/g, "'").replace(/[“”„″]/g, '"')
+      .replace(/[–—−]/g, '-').replace(/…/g, '...').replace(/ /g, ' ')
+      .replace(/[^\u0009\u000A -~ -ÿ]/g, '').replace(/[ \t]+/g, ' ').trim();
+    const fmtDur = ms => {
+      const m = Math.round((ms || 0) / 60000);
+      if (m < 60) return m + 'm';
+      const h = Math.floor(m / 60), r = m % 60;
+      return h + 'h' + (r ? ' ' + r + 'm' : '');
+    };
+    const PALETTE = [accentHex, '#34C759', '#FF9500', '#AF52DE', '#FF2D55', '#5AC8FA', '#8E8E93'];
+    let y = 44;
+    const bottom = pageH - 40;
+    const newPageIfNeeded = need => { if (y + need > bottom) { doc.addPage(); y = 44; return true; } return false; };
+    const sectionHeader = title => {
+      newPageIfNeeded(40);
+      y += 6;
+      doc.setFillColor(...accentRgb);
+      doc.rect(marginX, y - 10, 3, 13, 'F');
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(...inkRgb);
+      doc.text(title, marginX + 9, y);
+      y += 16;
+    };
+    // Ranked horizontal bars — a name on the left, a bar, the value on the right
+    // With covers (items carrying .art), each row gets a small thumbnail.
+    const rankedBars = async (items, { valueLabel = v => String(v), covers = false } = {}) => {
+      if (!items.length) return;
+      let thumbs = [];
+      if (covers) {
+        preview?.status?.('Fetching artwork\u2026');
+        const budget = { itunes: 10 };
+        thumbs = await Promise.all(items.map(it => it.art ? this._pdfThumbFor({ art: it.art }, budget).catch(() => null) : null));
+        preview?.status?.('Building pages\u2026');
+      }
+      const useThumbs = thumbs.some(Boolean);
+      const rowH = useThumbs ? 24 : 16, off = useThumbs ? 6 : 0;
+      const max = Math.max(...items.map(i => i.value), 1);
+      const thumbW = useThumbs ? 26 : 0;
+      const labelW = 170 - thumbW, valW = 54, barX = marginX + thumbW + labelW + 8, barW = contentW - thumbW - labelW - 8 - valW;
+      items.forEach((it, k) => {
+        newPageIfNeeded(rowH);
+        if (useThumbs) {
+          const td = thumbs[k];
+          if (td) { try { doc.addImage(td.data, 'JPEG', marginX, y - 1, 20, 20); } catch (_) {} }
+          else { doc.setFillColor(...zebraRgb); doc.roundedRect(marginX, y - 1, 20, 20, 2, 2, 'F'); }
+        }
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(...inkRgb);
+        let label = (k + 1) + '. ' + clean(it.label);
+        while (doc.getTextWidth(label) > labelW && label.length > 4) label = label.slice(0, -2);
+        if (label !== (k + 1) + '. ' + clean(it.label)) label = label.trimEnd() + '...';
+        doc.text(label, marginX + thumbW, y + 8 + off);
+        doc.setFillColor(...zebraRgb);
+        doc.roundedRect(barX, y + off, barW, 10, 2, 2, 'F');
+        doc.setFillColor(...hexToRgb(it.color || accentHex));
+        doc.roundedRect(barX, y + off, Math.max(3, barW * (it.value / max)), 10, 2, 2, 'F');
+        doc.setTextColor(...mutedRgb); doc.setFontSize(8.5);
+        doc.text(valueLabel(it.value), marginX + contentW, y + 8 + off, { align: 'right' });
+        y += rowH;
+      });
+      y += 4;
+    };
+    const statCards = stats => {
+      newPageIfNeeded(56);
+      const gap = 8, cardW = (contentW - gap * (stats.length - 1)) / stats.length;
+      stats.forEach((st, i) => {
+        const x = marginX + i * (cardW + gap);
+        doc.setFillColor(...zebraRgb);
+        doc.roundedRect(x, y, cardW, 44, 4, 4, 'F');
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(15); doc.setTextColor(...(st.accent ? accentRgb : inkRgb));
+        let v = clean(st.value);
+        while (doc.getTextWidth(v) > cardW - 16 && v.length > 3) v = v.slice(0, -2);
+        doc.text(v, x + 10, y + 20);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...mutedRgb);
+        doc.text(st.label, x + 10, y + 34);
+      });
+      y += 44 + 18;
+    };
+    const countBy = (list, keyFn, valFn = () => 1) => {
+      const m = new Map();
+      list.forEach(e => { const k = keyFn(e); if (!k) return; m.set(k, (m.get(k) || 0) + valFn(e)); });
+      return [...m.entries()].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
+    };
+    const topWithOther = (items, n) => {
+      if (items.length <= n) return items;
+      const top = items.slice(0, n - 1);
+      top.push({ label: 'Other', value: items.slice(n - 1).reduce((s, i) => s + i.value, 0) });
+      return top;
+    };
+    // A title counts as TV if any of its watches (in the whole history) was
+    // identified as an episode — same rule as the Watch History list — so a
+    // show whose episodes didn't all report season/episode isn't counted
+    // as a pile of movies.
+    const titleKey = e => String(e.seriesTitle || e.title || '').toLowerCase().trim();
+    const tvTitles = new Set(isMusic ? [] : all.filter(e => e.mediaType === 'tv' || Number.isFinite(e.season) || (e.seriesTitle && e.seriesTitle !== e.title)).map(titleKey));
+    const isTv = e => tvTitles.has(titleKey(e));
+    const watchedMs = e => (e.watchedMs > 0 ? e.watchedMs : (e.durationMs || 0));
+    const valueOf = isMusic ? (() => 1) : (e => watchedMs(e) / 60000);   // plays, or minutes watched
+
+    // ── Masthead ──
+    const heading = isMusic ? 'Music History' : 'Watch History';
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(18);
+    doc.setTextColor(...inkRgb); doc.text(heading, marginX, y);
+    doc.setTextColor(...accentRgb); doc.text('  ' + rangeLabel, marginX + doc.getTextWidth(heading), y);
+    y += 7;
+    doc.setDrawColor(...accentRgb); doc.setLineWidth(1.5);
+    doc.line(marginX, y, pageW - marginX, y);
+    y += 14;
+    const firstTs = entries.length ? entries[0].ts : cutoff || now;
+    // The history only keeps so many entries, so it may not reach back to
+    // the start of the chosen range — then the report starts where the
+    // history does, rather than showing weeks of empty days.
+    const historyStart = all.length ? all[0].ts : now;
+    const reportStart = range === 'all' ? firstTs : Math.max(cutoff, historyStart);
+    const span = new Date(reportStart).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+      + ' - ' + new Date(now).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(...mutedRgb);
+    doc.text(range === 'today' ? new Date(now).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : span, marginX, y);
+    y += 22;
+
+    if (!entries.length) {
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(11); doc.setTextColor(...inkRgb);
+      doc.text(isMusic ? 'Nothing was played in this period.' : 'Nothing was watched in this period.', marginX, y);
+    } else {
+      // ── Summary ──
+      if (isMusic) {
+        const byDay = countBy(entries, e => midnight(e.ts));
+        const busiest = byDay[0];
+        statCards([
+          { label: 'Listening time', value: fmtDur(entries.reduce((s, e) => s + (e.durationMs || 0), 0)), accent: true },
+          { label: 'Artists', value: String(new Set(entries.map(e => (e.artist || '').toLowerCase()).filter(Boolean)).size) },
+          { label: 'Busiest day', value: busiest ? new Date(busiest.label).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) + ' (' + busiest.value + ')' : '-' },
+        ]);
+      } else {
+        statCards([
+          { label: 'Watches', value: String(entries.length), accent: true },
+          { label: 'Time watched', value: fmtDur(entries.reduce((s, e) => s + watchedMs(e), 0)) },
+          { label: 'Movies / episodes', value: entries.filter(e => !isTv(e)).length + ' / ' + entries.filter(isTv).length },
+        ]);
+      }
+
+      // ── Optional AI summary ──
+      if (this._aiFeatureOn('recap')) {
+        preview?.status?.('Writing the summary\u2026');
+        try {
+          const topNames = countBy(entries, e => isMusic ? e.artist : (e.seriesTitle || e.title), valueOf).slice(0, 5).map(i => i.label).join(', ');
+          const prompt = isMusic
+            ? `Someone's music listening for "${rangeLabel}": top artists ${topNames}. Write a warm 2-sentence summary of their listening. Do not mention how many plays or tracks. Plain text, no emojis.`
+            : `Someone's TV and movie watching for "${rangeLabel}": ${entries.length} watches, mostly ${topNames}. Write a warm 2-sentence summary of their watching. Plain text, no emojis.`;
+          const raw = await this._aiConverseF('recap', prompt);
+          const text = clean(raw);
+          if (text) {
+            doc.setFont('helvetica', 'italic'); doc.setFontSize(10); doc.setTextColor(...inkRgb);
+            doc.splitTextToSize(text, contentW).forEach(l => { newPageIfNeeded(14); doc.text(l, marginX, y); y += 14; });
+            y += 8;
+          }
+        } catch (_) { /* the summary is optional */ }
+        preview?.status?.('Building pages\u2026');
+      }
+
+      // ── When ── time of day and day of week, side by side
+      const drawWhen = () => {
+      const halfW = (contentW - 16) / 2;
+      const tod = [['Morning', 5, 12], ['Afternoon', 12, 17], ['Evening', 17, 22], ['Night', 22, 29]]
+        .map(([label]) => ({ label, value: 0 }));
+      const dow = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(label => ({ label, value: 0 }));
+      entries.forEach(e => {
+        const d = new Date(e.ts), h = d.getHours();
+        const b = h >= 5 && h < 12 ? 0 : h >= 12 && h < 17 ? 1 : h >= 17 && h < 22 ? 2 : 3;
+        tod[b].value += valueOf(e);
+        dow[(d.getDay() + 6) % 7].value += valueOf(e);
+      });
+      tod.forEach(t => { t.value = Math.round(t.value); });
+      dow.forEach(t => { t.value = Math.round(t.value); });
+      newPageIfNeeded(170);
+      const yStart = y + 4;
+      const y1 = this._pdfDrawCategoryBarChart(doc, theme, tod, marginX, yStart, marginX * 2 + halfW, { title: 'Time of day' });
+      const x2 = marginX + halfW + 16;
+      const y2 = this._pdfDrawCategoryBarChart(doc, theme, dow, x2, yStart, x2 * 2 + halfW, { title: 'Day of the week' });
+      y = Math.max(y1, y2);
+      };
+
+      // ── Where and when ── at the top: the speaker share, then time of day
+      // and day of week side by side (a per-day bar chart was dropped — it
+      // was dominated by a few heavy days and hard to read)
+      const drawWhere = () => {
+        // ── Where ──
+        const speakers = topWithOther(countBy(entries, e => e.entity ? (this._entityDisplayName(e.entity) || e.entity) : 'Unknown', valueOf), 6)
+          .map((it, i) => {
+            // Full speaker names — only a very long one is shortened
+            doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+            let lab = clean(it.label);
+            if (doc.getTextWidth(lab) > 200) { while (lab.length > 2 && doc.getTextWidth(lab + '...') > 200) lab = lab.slice(0, -1); lab = lab.trimEnd() + '...'; }
+            return { ...it, label: lab, value: Math.round(it.value * 10) / 10, color: PALETTE[i % PALETTE.length] };
+          });
+        if (speakers.length > 1) {   // one speaker → nothing to compare
+          newPageIfNeeded(110);
+          y = this._pdfDrawDonutWithBars(doc, theme, speakers, marginX, y + 4, pageW, { title: isMusic ? 'Where you listen' : 'Where you watch', newPageIfNeeded });
+        }
+      };
+      drawWhere();
+      drawWhen();
+
+      // ── Top lists ──
+      if (isMusic) {
+        sectionHeader('Top artists');
+        await rankedBars(countBy(entries, e => e.artist).slice(0, 10), { valueLabel: v => v + (v === 1 ? ' play' : ' plays') });
+        sectionHeader('Top tracks');
+        // The album each track was last played from — for its cover
+        const albumOf = new Map();
+        entries.forEach(e => { if (e.title) albumOf.set(e.title + '\u0000' + (e.artist || ''), e.album || ''); });
+        const tracks = countBy(entries, e => e.title ? e.title + '\u0000' + (e.artist || '') : '').slice(0, 10)
+          .map(t => { const [ti, ar] = t.label.split('\u0000'); return { label: ti + (ar ? ' - ' + ar : ''), value: t.value, art: { artist: ar, album: albumOf.get(t.label), title: ti } }; });
+        await rankedBars(tracks, { valueLabel: v => v + (v === 1 ? ' play' : ' plays'), covers: true });
+        const albums = countBy(entries.filter(e => e.album && e.album.toLowerCase() !== (e.title || '').toLowerCase()),
+          e => e.album + '\u0000' + (e.artist || '')).slice(0, 5)
+          .map(t => { const [al, ar] = t.label.split('\u0000'); return { label: al + (ar ? ' - ' + ar : ''), value: t.value, art: { artist: ar, album: al } }; });
+        if (albums.length) { sectionHeader('Top albums'); await rankedBars(albums, { valueLabel: v => v + (v === 1 ? ' play' : ' plays'), covers: true }); }
+      } else {
+        const movies = entries.filter(e => !isTv(e)), eps = entries.filter(isTv);
+        newPageIfNeeded(60);
+        y = this._pdfDrawSegmentedBar(doc, theme, [
+          { label: 'Movies', value: movies.reduce((s, e) => s + watchedMs(e), 0) || movies.length, color: PALETTE[0] },
+          { label: 'TV episodes', value: eps.reduce((s, e) => s + watchedMs(e), 0) || eps.length, color: PALETTE[1] },
+        ], marginX, y + 4, pageW, { title: 'Movies vs TV (time watched)', newPageIfNeeded });
+        sectionHeader('Top titles by time watched');
+        await rankedBars(countBy(entries, e => isTv(e) ? (e.seriesTitle || e.title) : e.title, e => watchedMs(e)).slice(0, 10)
+          .map(t => ({ ...t, art: { video: t.label } })),
+          { valueLabel: v => fmtDur(v), covers: true });
+      }
+
+
+    }
+
+    const pages = doc.internal.getNumberOfPages();
+    for (let p = 1; p <= pages; p++) {
+      doc.setPage(p);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...mutedRgb);
+      doc.text('CrowAI Media Player Card', marginX, pageH - 22);
+      doc.text('Page ' + p + ' of ' + pages, pageW - marginX, pageH - 22, { align: 'right' });
+    }
+    if (preview.closed) return;
+    const slug = (isMusic ? 'music' : 'watch') + '-report-' + (range === 'today' ? 'today' : range === 'all' ? 'all-time' : range + '-days');
+    this._showPDFPreview(doc, 'crowai-' + slug + '-' + new Date().toISOString().slice(0, 10) + '.pdf', preview);
+  }
+
+  // ── PDF chart helpers (from the DolphinAI card) ─────────────────────────
+  _pdfFillPolygon(doc, points) {
+    if (!points || points.length < 3) return;
+    const start = points[0];
+    const segs = points.slice(1).map((p, i) => [p[0] - points[i][0], p[1] - points[i][1]]);
+    doc.lines(segs, start[0], start[1], [1, 1], 'F', true);
+  }
+  _pdfDrawRing(doc, theme, items, cx, cy, outerR, innerR) {
+    const usable = (items || []).filter(i => i.value > 0);
+    if (!usable.length) return;
+    const total = usable.reduce((s, i) => s + i.value, 0);
+    const stepDeg = 4;
+    let startDeg = -90;
+    usable.forEach(item => {
+      const endDeg = startDeg + (item.value / total) * 360;
+      const pts = [];
+      for (let a = startDeg; a < endDeg; a += stepDeg) {
+        const r = a * Math.PI / 180;
+        pts.push([cx + outerR * Math.cos(r), cy + outerR * Math.sin(r)]);
+      }
+      const rEnd = endDeg * Math.PI / 180;
+      pts.push([cx + outerR * Math.cos(rEnd), cy + outerR * Math.sin(rEnd)]);
+      pts.push([cx + innerR * Math.cos(rEnd), cy + innerR * Math.sin(rEnd)]);
+      for (let a = endDeg; a > startDeg; a -= stepDeg) {
+        const r = a * Math.PI / 180;
+        pts.push([cx + innerR * Math.cos(r), cy + innerR * Math.sin(r)]);
+      }
+      const rStart = startDeg * Math.PI / 180;
+      pts.push([cx + innerR * Math.cos(rStart), cy + innerR * Math.sin(rStart)]);
+      doc.setFillColor(...theme.hexToRgb(item.color || this._config.accent_color || '#007AFF'));
+      this._pdfFillPolygon(doc, pts);
+      startDeg = endDeg;
+    });
+  }
+  _pdfDrawDonutWithBars(doc, theme, items, marginX, y, pageW, { title = null, newPageIfNeeded = null } = {}) {
+    const usable = (items || []).filter(i => i.value > 0);
+    if (!usable.length) return y;
+    if (newPageIfNeeded) newPageIfNeeded(100);
+    if (title) {
+      doc.setFillColor(...theme.accentRgb);
+      doc.rect(marginX, y - 10, 3, 13, 'F');
+      doc.setFontSize(12); doc.setFont(undefined, 'bold'); theme.setInk();
+      doc.text(title, marginX + 9, y); y += 20;
+    }
+    const outerR = 34, innerR = 17;
+    const cx = marginX + outerR, cy = y + outerR;
+    this._pdfDrawRing(doc, theme, usable, cx, cy, outerR, innerR);
+
+    // Names get as much room as the longest one needs (up to about half the
+    // space); the bars fill the rest, with the percentage inside the margin.
+    const labelX = marginX + outerR * 2 + 20;
+    const rightEdge = pageW - marginX;
+    const pctW = 28;
+    doc.setFontSize(8.5);
+    const longest = usable.reduce((m, i) => { doc.setFont(undefined, i.bold ? 'bold' : 'normal'); return Math.max(m, doc.getTextWidth(String(i.label))); }, 0);
+    const labelW = Math.min(longest, (rightEdge - labelX - pctW) * 0.5);
+    const barX = labelX + labelW + 12;
+    const barMaxW = rightEdge - pctW - barX;
+    const total = usable.reduce((s, i) => s + i.value, 0);
+    let by = y + 4;
+    usable.forEach(item => {
+      const pct = item.value / total;
+      doc.setFontSize(8.5); doc.setFont(undefined, item.bold ? 'bold' : 'normal'); theme.setInk();
+      let lab = String(item.label);
+      if (doc.getTextWidth(lab) > labelW) { while (lab.length > 2 && doc.getTextWidth(lab + '...') > labelW) lab = lab.slice(0, -1); lab = lab.trimEnd() + '...'; }
+      doc.text(lab, labelX, by + 8);
+      doc.setFillColor(...theme.zebraRgb);
+      doc.roundedRect(barX, by, barMaxW, 10, 2, 2, 'F');
+      doc.setFillColor(...theme.hexToRgb(item.color || this._config.accent_color || '#007AFF'));
+      doc.roundedRect(barX, by, Math.max(barMaxW * pct, 3), 10, 2, 2, 'F');
+      theme.setMuted();
+      doc.text(`${Math.round(pct * 100)}%`, rightEdge, by + 8, { align: 'right' });
+      by += 17;
+    });
+    const ringBottom = y + outerR * 2 + 6;
+    return Math.max(ringBottom, by) + 10;
+  }
+  _pdfDrawSegmentedBar(doc, theme, items, marginX, y, pageW, { title = null, newPageIfNeeded = null } = {}) {
+    const usable = (items || []).filter(i => i.value > 0);
+    if (!usable.length) return y;
+    if (title) {
+      doc.setFillColor(...theme.accentRgb);
+      doc.rect(marginX, y - 10, 3, 13, 'F');
+      doc.setFontSize(12); doc.setFont(undefined, 'bold'); theme.setInk();
+      doc.text(title, marginX + 9, y); y += 20;
+    }
+    const total = usable.reduce((s, i) => s + i.value, 0);
+    const barMaxW = pageW - marginX * 2 - 130;
+    usable.forEach(item => {
+      if (newPageIfNeeded) newPageIfNeeded(18);
+      const pct = item.value / total;
+      const rgb = item.color ? theme.hexToRgb(item.color) : theme.accentRgb;
+      doc.setFontSize(8.5); doc.setFont(undefined, item.bold ? 'bold' : 'normal'); theme.setInk();
+      doc.text(String(item.label), marginX, y + 8);
+      doc.setFillColor(...theme.zebraRgb);
+      doc.roundedRect(marginX + 110, y, barMaxW, 10, 2, 2, 'F');
+      doc.setFillColor(...rgb);
+      doc.roundedRect(marginX + 110, y, Math.max(barMaxW * pct, 3), 10, 2, 2, 'F');
+      theme.setMuted();
+      doc.text(`${Math.round(pct * 100)}%`, marginX + 114 + barMaxW, y + 8);
+      y += 17;
+    });
+    return y + 4;
+  }
+  _pdfDrawBarChart(doc, theme, dailyTotals, marginX, y, pageW, { color = null, unitSuffix = '', title = null } = {}) {
+    if (title) {
+      doc.setFillColor(...theme.accentRgb);
+      doc.rect(marginX, y - 10, 3, 13, 'F');
+      doc.setFontSize(12); doc.setFont(undefined, 'bold'); theme.setInk();
+      doc.text(title, marginX + 9, y); y += 20;
+    }
+    if (!dailyTotals || !dailyTotals.length) {
+      doc.setFontSize(9.5); doc.setFont(undefined, 'normal'); theme.setMuted();
+      doc.text('No data in this range.', marginX, y);
+      return y + 16;
+    }
+    const chartH = 110;
+    const chartW = pageW - marginX * 2;
+    const padTop = 8, padBottom = 18, padLeftAxis = 26, padRight = 6;
+    const plotX = marginX + padLeftAxis;
+    const plotW = chartW - padLeftAxis - padRight;
+    const plotTop = y + padTop;
+    const plotH = chartH - padTop - padBottom;
+    const baseY = plotTop + plotH;
+
+    doc.setFillColor(...theme.zebraRgb);
+    doc.roundedRect(marginX, y, chartW, chartH, 6, 6, 'F');
+
+    const maxVal = Math.max(...dailyTotals.map(d => d.value), 1);
+    const n = dailyTotals.length;
+    const slot = plotW / n;
+    const barW = Math.max(1, slot - (n > 40 ? 0.5 : 2));
+    doc.setFillColor(...(color ? theme.hexToRgb(color) : theme.accentRgb));
+    dailyTotals.forEach((d, i) => {
+      const h = (d.value / maxVal) * plotH;
+      if (h > 0.3) doc.rect(plotX + i * slot, baseY - h, barW, h, 'F');
+    });
+
+    doc.setFontSize(7); doc.setFont(undefined, 'normal'); theme.setMuted();
+    doc.text(`${Math.round(maxVal)}${unitSuffix}`, marginX + 2, plotTop + 6);
+
+    const fmtDate = ts => new Date(ts).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit' });
+    doc.setFontSize(7.5);
+    doc.text(fmtDate(dailyTotals[0].date), plotX, y + chartH - 5);
+    const lastLabel = fmtDate(dailyTotals[n - 1].date);
+    doc.text(lastLabel, plotX + plotW - doc.getTextWidth(lastLabel), y + chartH - 5);
+
+    return y + chartH + 20;
+  }
+  _pdfDrawCategoryBarChart(doc, theme, items, marginX, y, pageW, { color = null, title = null, showValues = true } = {}) {
+    if (title) {
+      doc.setFillColor(...theme.accentRgb);
+      doc.rect(marginX, y - 10, 3, 13, 'F');
+      doc.setFontSize(12); doc.setFont(undefined, 'bold'); theme.setInk();
+      doc.text(title, marginX + 9, y); y += 20;
+    }
+    const usable = items || [];
+    if (!usable.length) {
+      doc.setFontSize(9.5); doc.setFont(undefined, 'normal'); theme.setMuted();
+      doc.text('No data in this range.', marginX, y);
+      return y + 16;
+    }
+    const chartH = 120;
+    const chartW = pageW - marginX * 2;
+    const padTop = 16, padBottom = 22, padSide = 6;
+    const plotW = chartW - padSide * 2;
+    const plotTop = y + padTop;
+    const plotH = chartH - padTop - padBottom;
+    const baseY = plotTop + plotH;
+
+    doc.setFillColor(...theme.zebraRgb);
+    doc.roundedRect(marginX, y, chartW, chartH, 6, 6, 'F');
+
+    const maxVal = Math.max(...usable.map(i => i.value), 1);
+    const n = usable.length;
+    const slot = plotW / n;
+    const barW = Math.max(2, Math.min(22, slot - 8));
+    usable.forEach((item, i) => {
+      const x = marginX + padSide + i * slot + (slot - barW) / 2;
+      const h = maxVal > 0 ? (item.value / maxVal) * plotH : 0;
+      doc.setFillColor(...(item.color ? theme.hexToRgb(item.color) : (color ? theme.hexToRgb(color) : theme.accentRgb)));
+      if (h > 0.3) doc.rect(x, baseY - h, barW, h, 'F');
+      if (showValues && item.value > 0) {
+        doc.setFontSize(7); doc.setFont(undefined, 'normal'); theme.setInk();
+        const valText = String(item.value);
+        doc.text(valText, x + barW / 2 - doc.getTextWidth(valText) / 2, baseY - h - 4);
+      }
+      // Long labels (a date, a multi-word category) get shrunk to fit the
+      // slot rather than overlapping the next bar's label.
+      doc.setFontSize(7); doc.setFont(undefined, 'normal'); theme.setMuted();
+      let label = String(item.label);
+      while (doc.getTextWidth(label) > slot && label.length > 3) label = label.slice(0, -2) + '…';
+      doc.text(label, x + barW / 2 - doc.getTextWidth(label) / 2, y + chartH - 6);
+    });
+
+    return y + chartH + 20;
+  }
+
+  // ── List PDFs (queue, albums, playlists, episode guides, pins, results) ──
+  // One shared layout: a masthead (title + accent subtitle), optionally the
+  // artwork beside grey detail rows, an optional paragraph, then sections of
+  // one-line entries — number, title, a grey detail after it, a value on the
+  // right, an optional small thumbnail and an optional "watched" tick.
+  //
+  // spec = { title, subtitle, heroSrc, rows: [[LABEL, value]], intro,
+  //          sections: [{ heading, thumbs, items: [{ num, title, sub, right, thumb, tick }] }],
+  //          filename }
+  async _exportListPDF(makeSpec) {
+    if (this._pdfBusy) return;
+    this._pdfBusy = true;
+    const preview = this._openPDFPreview();
+    try {
+      preview.status('Gathering the details\u2026');
+      const spec = await makeSpec(preview);
+      if (!spec) { preview.fail('Nothing to export.'); return; }
+      let key = null;
+      try { key = 'list|' + this._pdfHash(JSON.stringify(spec)); } catch (_) {}
+      if (this._pdfFromSession(key, preview)) return;
+      await this._buildListPDF(spec, preview);
+    } catch (e) {
+      console.warn('[CrowAI] list PDF failed', e);
+      preview.fail('Couldn’t create the PDF. Please try again.');
+    } finally { this._pdfBusy = false; }
+  }
+
+  async _buildListPDF(spec, preview) {
+    let JsPDFCtor;
+    try { JsPDFCtor = await this._ensureJsPDF(preview); }
+    catch (e) { preview.fail(e?.message || 'Could not load the PDF library'); return; }
+    const doc = new JsPDFCtor({ unit: 'pt', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const marginX = 44, contentW = pageW - marginX * 2;
+    const bottom = pageH - 40;
+    const hexToRgb = hex => {
+      const h = String(hex || '#007AFF').replace('#', '');
+      const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h.slice(0, 6);
+      const n = parseInt(full, 16);
+      return isNaN(n) ? [0, 122, 255] : [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    };
+    const inkRgb = [28, 28, 30], mutedRgb = [120, 120, 128], zebraRgb = [244, 244, 247], tickRgb = [52, 199, 89];
+    const accentRgb = hexToRgb(this._config?.accent_color || '#007AFF');
+    const clean = s => String(s ?? '')
+      .replace(/<[^>]*>/g, ' ')
+      .replace(/[‘’‚′]/g, "'").replace(/[“”„″]/g, '"')
+      .replace(/[–—−]/g, '-').replace(/…/g, '...').replace(/ /g, ' ')
+      .replace(/[•●]/g, '·')
+      .replace(/[^\u0009\u000A -~ -ÿ]/g, '').replace(/[ \t]+/g, ' ').trim();
+    const fit = (str, maxW) => {
+      if (doc.getTextWidth(str) <= maxW) return str;
+      let out = str;
+      while (out.length > 1 && doc.getTextWidth(out + '...') > maxW) out = out.slice(0, -1);
+      return out.trimEnd() + '...';
+    };
+    let y = 44;
+    const newPage = () => { doc.addPage(); y = 44; };
+    const newPageIfNeeded = need => { if (y + need > bottom) { newPage(); return true; } return false; };
+
+    // ── Masthead ──
+    const title = clean(spec.title) || 'CrowAI';
+    const sub = clean(spec.subtitle);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(18);
+    if (!sub || doc.getTextWidth(title + '  ' + sub) <= contentW) {
+      doc.setTextColor(...inkRgb); doc.text(fit(title, contentW), marginX, y);
+      if (sub) { doc.setTextColor(...accentRgb); doc.text('  ' + sub, marginX + doc.getTextWidth(title), y); }
+    } else {
+      doc.setTextColor(...inkRgb);
+      doc.splitTextToSize(title, contentW).forEach((l, k, a) => { doc.text(l, marginX, y); if (k < a.length - 1) y += 22; });
+      y += 22; doc.setTextColor(...accentRgb); doc.text(fit(sub, contentW), marginX, y);
+    }
+    y += 7;
+    doc.setDrawColor(...accentRgb); doc.setLineWidth(1.5);
+    doc.line(marginX, y, pageW - marginX, y);
+    y += 16;
+
+    // ── Artwork beside the grey rows ──
+    const rows = (spec.rows || []).filter(r => r && r[1] !== '' && r[1] != null).map(([l, v]) => [clean(l).toUpperCase(), clean(v)]);
+    if (spec.heroSrc) preview?.status?.('Fetching artwork\u2026');
+    const img = spec.heroSrc ? await this._pdfImageData(spec.heroSrc) : null;
+    preview?.status?.('Building pages\u2026');
+    const artGap = 16, rowGap = 3;
+    // Label column sized from the widest label (8pt bold) + 8pt left padding + 10pt gap,
+    // so long labels like "TIME WATCHED" never run into their values
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
+    const fitLabelW = Math.ceil(rows.reduce((m, [lab]) => Math.max(m, doc.getTextWidth(lab)), 0)) + 18;
+    let labelW = Math.max(112, fitLabelW), colX = marginX, colW = contentW, artBottom = y;
+    const measure = w => {
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5);
+      return rows.map(([lab, val]) => { const vl = doc.splitTextToSize(val, w - labelW - 8); return { lab, vl, h: Math.max(20, vl.length * 13 + 7) }; });
+    };
+    let laid = measure(colW);
+    if (img) {
+      labelW = Math.max(64, fitLabelW);
+      laid = measure(contentW - 92 - artGap);
+      const rowsH = laid.reduce((h, r) => h + r.h, 0) + rowGap * Math.max(0, laid.length - 1);
+      const side = rows.length ? Math.max(64, Math.min(110, rowsH)) : 90;
+      const h = Math.min(side, side * (img.h / img.w)), w = h * (img.w / img.h);
+      try {
+        doc.addImage(img.data, 'JPEG', marginX, y, w, h);
+        colX = marginX + w + artGap; colW = contentW - w - artGap; artBottom = y + h;
+        laid = measure(colW);
+      } catch (_) { labelW = Math.max(112, fitLabelW); colX = marginX; colW = contentW; laid = measure(colW); }
+    }
+    let ty = y + 13;
+    laid.forEach(({ lab, vl, h }) => {
+      doc.setFillColor(...zebraRgb);
+      doc.roundedRect(colX, ty - 13, colW, h, 3, 3, 'F');
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(...mutedRgb);
+      doc.text(lab, colX + 8, ty);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5); doc.setTextColor(...inkRgb);
+      vl.forEach((ln, k) => doc.text(ln, colX + labelW, ty + k * 13));
+      ty += h + rowGap;
+    });
+    if (img || laid.length) y = Math.max(laid.length ? ty - 13 - rowGap : y, artBottom) + 20;
+
+    // ── Intro paragraph ──
+    const intro = clean(spec.intro);
+    if (intro) {
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5); doc.setTextColor(...inkRgb);
+      doc.splitTextToSize(intro, contentW).forEach(l => { newPageIfNeeded(14); doc.text(l, marginX, y); y += 14; });
+      y += 8;
+    }
+
+    // ── Charts (DolphinAI style) ──
+    // spec.charts: { type: 'days' (dated bars) | 'category' | 'donut' |
+    // 'segmented' | 'ranked' | 'pair' (two category charts side by side),
+    // title, items, ... }
+    if (spec.charts?.length) {
+      const theme = {
+        hexToRgb, inkRgb, mutedRgb, zebraRgb, accentRgb,
+        setInk: () => doc.setTextColor(...inkRgb), setMuted: () => doc.setTextColor(...mutedRgb), setAccent: () => doc.setTextColor(...accentRgb),
+      };
+      const accentHex = this._config?.accent_color || '#007AFF';
+      const PALETTE = [accentHex, '#34C759', '#FF9500', '#AF52DE', '#FF2D55', '#5AC8FA', '#8E8E93'];
+      const colour = list => list.map((it, i) => ({ ...it, label: clean(it.label), color: it.color || PALETTE[i % PALETTE.length] }));
+      for (const ch of spec.charts) {
+        if (!ch) continue;
+        const items = (ch.items || []).filter(Boolean);
+        const total = items.reduce((t, it) => t + (Number(it.value) || 0), 0);
+        if (ch.type !== 'pair' && (!items.length || !total)) continue;
+        if (ch.type === 'days') {
+          newPageIfNeeded(150);
+          y = this._pdfDrawBarChart(doc, theme, items, marginX, y + 10, pageW, { title: ch.title, unitSuffix: ch.unitSuffix || '' });
+        } else if (ch.type === 'category') {
+          newPageIfNeeded(160);
+          y = this._pdfDrawCategoryBarChart(doc, theme, items, marginX, y + 10, pageW, { title: ch.title, showValues: ch.showValues !== false });
+        } else if (ch.type === 'donut') {
+          if (items.filter(it => it.value > 0).length < 2) continue;   // one slice says nothing
+          newPageIfNeeded(110);
+          y = this._pdfDrawDonutWithBars(doc, theme, colour(items), marginX, y + 10, pageW, { title: ch.title, newPageIfNeeded });
+        } else if (ch.type === 'segmented') {
+          newPageIfNeeded(60);
+          y = this._pdfDrawSegmentedBar(doc, theme, colour(items), marginX, y + 10, pageW, { title: ch.title, newPageIfNeeded });
+        } else if (ch.type === 'pair') {
+          const [a, b] = ch.charts || [];
+          const ok = c => c && (c.items || []).some(it => it.value > 0);
+          if (!ok(a) && !ok(b)) continue;
+          newPageIfNeeded(170);
+          const halfW = (contentW - 16) / 2, yStart = y + 10;
+          const y1 = ok(a) ? this._pdfDrawCategoryBarChart(doc, theme, a.items, marginX, yStart, marginX * 2 + halfW, { title: a.title, showValues: a.showValues !== false }) : yStart;
+          const x2 = marginX + halfW + 16;
+          const y2 = ok(b) ? this._pdfDrawCategoryBarChart(doc, theme, b.items, x2, yStart, x2 * 2 + halfW, { title: b.title, showValues: b.showValues !== false }) : yStart;
+          y = Math.max(y1, y2);
+        } else if (ch.type === 'ranked') {
+          // Ranked bars — name, bar, value — optionally with covers
+          newPageIfNeeded(40);
+          y += 10;
+          doc.setFillColor(...accentRgb); doc.rect(marginX, y - 10, 3, 13, 'F');
+          doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(...inkRgb); doc.text(clean(ch.title), marginX + 9, y);
+          y += 18;
+          let thumbs = [];
+          if (ch.covers) {
+            preview?.status?.('Fetching artwork\u2026');
+            const budget = { itunes: 10 };
+            thumbs = await Promise.all(items.map(it => (it.art || it.thumb) ? this._pdfThumbFor({ art: it.art, thumb: it.thumb }, budget).catch(() => null) : null));
+            preview?.status?.('Building pages\u2026');
+          }
+          const useThumbs = thumbs.some(Boolean);
+          const rowH = useThumbs ? 24 : 16, off = useThumbs ? 6 : 0, thumbW = useThumbs ? 26 : 0;
+          const max = Math.max(...items.map(it => it.value), 1);
+          const labelW = 180 - thumbW, valW = 58, barX = marginX + thumbW + labelW + 8, barW = contentW - thumbW - labelW - 8 - valW;
+          items.forEach((it, k) => {
+            newPageIfNeeded(rowH);
+            if (useThumbs) {
+              const td = thumbs[k];
+              if (td) { try { doc.addImage(td.data, 'JPEG', marginX, y - 1, 20, 20); } catch (_) {} }
+              else { doc.setFillColor(...zebraRgb); doc.roundedRect(marginX, y - 1, 20, 20, 2, 2, 'F'); }
+            }
+            doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(...inkRgb);
+            doc.text(fit((k + 1) + '. ' + clean(it.label), labelW), marginX + thumbW, y + 8 + off);
+            doc.setFillColor(...zebraRgb); doc.roundedRect(barX, y + off, barW, 10, 2, 2, 'F');
+            doc.setFillColor(...accentRgb); doc.roundedRect(barX, y + off, Math.max(3, barW * (it.value / max)), 10, 2, 2, 'F');
+            doc.setTextColor(...mutedRgb); doc.setFontSize(8.5);
+            doc.text(ch.valueLabel ? ch.valueLabel(it.value) : String(it.value), marginX + contentW, y + 8 + off, { align: 'right' });
+            y += rowH;
+          });
+          y += 6;
+        }
+      }
+      y += 4;
+    }
+
+    // ── Sections ──
+    const drawTick = (x, yy) => {
+      doc.setDrawColor(...tickRgb); doc.setLineWidth(1.6);
+      if (doc.setLineCap) doc.setLineCap('round');
+      doc.line(x, yy - 3.5, x + 3, yy - 0.5);
+      doc.line(x + 3, yy - 0.5, x + 8.5, yy - 7.5);
+      if (doc.setLineCap) doc.setLineCap('butt');
+    };
+    for (const sec of spec.sections || []) {
+      const items = (sec.items || []).filter(it => it && clean(it.title));
+      if (!items.length) continue;
+      // Section heading (kept with at least two entries)
+      newPageIfNeeded(56);
+      if (sec.heading) {
+        y += 6;
+        doc.setFillColor(...accentRgb);
+        doc.rect(marginX, y - 10, 3, 13, 'F');
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(...inkRgb);
+        doc.text(clean(sec.heading), marginX + 9, y);
+        if (sec.note) {
+          const hw = doc.getTextWidth(clean(sec.heading));
+          doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(...mutedRgb);
+          doc.text(clean(sec.note), marginX + 9 + hw + 8, y);
+        }
+        y += 16;
+      }
+      // Thumbnails (fetched a few at a time; anything slow or blocked is skipped)
+      // Same sources the on-screen lists use: the image itself, Music
+      // Assistant's image proxy, then iTunes. Capped so a huge playlist
+      // doesn't take minutes to build.
+      const THUMB_CAP = 500;
+      const thumbItems = sec.thumbs ? items.slice(0, THUMB_CAP) : [];
+      const thumbData = [];
+      if (thumbItems.some(it => it.thumb || it.art)) {
+        const budget = { itunes: 80 };
+        let next = 0, done = 0, skipped = false;
+        const total = thumbItems.length;
+        preview?.progress?.('Fetching artwork\u2026', 0, total);
+        if (total > 20) preview?.offerSkip?.(() => { skipped = true; });
+        const worker = async () => {
+          while (next < total && !skipped && !preview?.closed) {
+            const i = next++;
+            thumbData[i] = await this._pdfThumbFor(thumbItems[i], budget).catch(() => null);
+            done++;
+            if (!skipped) preview?.progress?.('Fetching artwork\u2026', done, total);
+          }
+        };
+        // Skipping stops waiting at once — fetches already under way are left to finish on their own
+        let release;
+        const skipWait = new Promise(res => { release = res; });
+        const poll = setInterval(() => { if (skipped || preview?.closed) release(); }, 200);
+        await Promise.race([Promise.all(Array.from({ length: 6 }, worker)), skipWait]);
+        clearInterval(poll);
+        preview?.clearSkip?.();
+      }
+      preview?.status?.('Building pages\u2026');
+      const useThumbs = thumbData.some(Boolean);
+      const rowH = useThumbs ? 26 : 16;
+      const hasNums = items.some(it => it.num != null && it.num !== '');
+      const hasTicks = items.some(it => it.tick != null);
+      items.forEach((it, idx) => {
+        newPageIfNeeded(rowH);
+        let x = marginX;
+        const base = useThumbs ? y + 4 : y;   // text baseline
+        if (hasTicks) { if (it.tick) drawTick(x, base); x += 14; }
+        if (hasNums) {
+          doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(...mutedRgb);
+          doc.text(clean(it.num), x + 18, base, { align: 'right' });
+          x += 26;
+        }
+        if (useThumbs) {
+          const td = thumbData[idx];
+          if (td) { try { doc.addImage(td.data, 'JPEG', x, y - 9, 20, 20); } catch (_) {} }
+          else { doc.setFillColor(...zebraRgb); doc.roundedRect(x, y - 9, 20, 20, 2, 2, 'F'); }
+          x += 28;
+        }
+        const right = clean(it.right);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(9); 
+        const rightW = right ? doc.getTextWidth(right) + 12 : 0;
+        if (right) { doc.setTextColor(...mutedRgb); doc.text(right, marginX + contentW, base, { align: 'right' }); }
+        const avail = marginX + contentW - rightW - x;
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(...inkRgb);
+        const t = fit(clean(it.title), avail * (it.sub ? 0.62 : 1));
+        doc.text(t, x, base);
+        const subT = clean(it.sub);
+        if (subT) {
+          const tw = doc.getTextWidth(t);
+          doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(...mutedRgb);
+          doc.text(fit(subT, avail - tw - 10), x + tw + 10, base);
+        }
+        y += rowH;
+      });
+      y += 6;
+    }
+
+    const pages = doc.internal.getNumberOfPages();
+    for (let p = 1; p <= pages; p++) {
+      doc.setPage(p);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...mutedRgb);
+      doc.text('CrowAI Media Player Card', marginX, pageH - 22);
+      doc.text('Page ' + p + ' of ' + pages, pageW - marginX, pageH - 22, { align: 'right' });
+    }
+    if (preview.closed) return;
+    const slug = (spec.filename || title).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'list';
+    this._showPDFPreview(doc, 'crowai-' + slug + '-' + new Date().toISOString().slice(0, 10) + '.pdf', preview);
+  }
+
+  // Small formatting helpers for the list exports
+  _pdfFmtDuration(sec) {
+    const s = Math.round(Number(sec) || 0);
+    if (!s) return '';
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+    return h ? h + ':' + String(m).padStart(2, '0') + ':' + String(r).padStart(2, '0') : m + ':' + String(r).padStart(2, '0');
+  }
+  _pdfFmtTotal(sec) {
+    const m = Math.round((Number(sec) || 0) / 60);
+    if (!m) return '';
+    return m < 60 ? m + ' min' : Math.floor(m / 60) + ' hr ' + (m % 60) + ' min';
+  }
+
+  // ── Export: the current queue ──
+  _exportQueuePDF() {
+    if (!this._pdfOn('lists')) return;   // switched off in the card editor
+    this._exportListPDF(async () => {
+      const content = this.shadowRoot?.getElementById('infoContent');
+      const q = content?._queueItemsFull;
+      if (!q || (!q.current && !(q.after || []).length)) return null;
+      const all = [q.current, ...(q.after || [])].filter(Boolean);
+      const total = all.reduce((s, t) => s + (Number(t.duration) || 0), 0);
+      const item = (t, n) => ({ num: n, title: t.title, sub: [t.artist, t.album].filter(Boolean).join(' · '), right: this._pdfFmtDuration(t.duration), thumb: t.thumbnail || null, art: { artist: t.artist, album: t.album, title: t.title } });
+      return {
+        title: 'Queue', subtitle: this._entityDisplayName(this._entity) || '',
+        heroSrc: q.current?.thumbnail || null,
+        rows: [['Tracks', String(all.length)], ['Length', this._pdfFmtTotal(total)], ['Now playing', q.current ? [q.current.title, q.current.artist].filter(Boolean).join(' - ') : '']],
+        sections: [
+          { heading: 'Now playing', thumbs: true, items: q.current ? [item(q.current, 1)] : [] },
+          { heading: 'Coming up', thumbs: true, items: (q.after || []).map((t, i) => item(t, i + 2)) },
+        ],
+        filename: 'queue',
+      };
+    });
+  }
+
+  // ── Export: a pinned queue ──
+  _exportSavedQueuePDF(sq) {
+    if (!this._pdfOn('lists')) return;   // switched off in the card editor
+    this._exportListPDF(async () => {
+      const tracks = sq?.tracks || [];
+      if (!tracks.length) return null;
+      const total = tracks.reduce((s, t) => s + (Number(t.duration) || 0), 0);
+      return {
+        title: sq.name || 'Pinned Queue', subtitle: 'Pinned queue',
+        heroSrc: tracks.find(t => t.thumbnail || t.image)?.thumbnail || tracks.find(t => t.image)?.image || null,
+        rows: [['Tracks', String(tracks.length)], ['Length', this._pdfFmtTotal(total)],
+          ['Pinned', sq.createdAt ? new Date(sq.createdAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '']],
+        sections: [{ heading: 'Tracks', thumbs: true, items: tracks.map((t, i) => ({
+          num: i + 1, title: t.title || t.name, sub: [t.artist, t.album].filter(Boolean).join(' · '),
+          right: this._pdfFmtDuration(t.duration), thumb: t.thumbnail || t.image || null, art: { artist: t.artist, album: t.album, title: t.title || t.name } })) }],
+        filename: 'queue-' + (sq.name || ''),
+      };
+    });
+  }
+
+  // ── Export: an album or playlist from the library ──
+  _exportCollectionPDF(item, tab, tracks) {
+    if (!this._pdfOn('lists')) return;   // switched off in the card editor
+    this._exportListPDF(async () => {
+      if (!tracks?.length) return null;
+      const artistsOf = t => (t.artists || []).map(a => a?.name || a).filter(Boolean).join(', ');
+      const total = tracks.reduce((s, t) => s + (Number(t.duration) || 0), 0);
+      const isAlbum = tab === 'album';
+      const owner = isAlbum ? artistsOf(item) : (item.owner || '');
+      const year = item.year || item.metadata?.year || (item.metadata?.release_date || '').slice(0, 4) || '';
+      const genre = (item.metadata?.genres || []).slice(0, 3).join(', ');
+      return {
+        title: item.name || item.title || (isAlbum ? 'Album' : 'Playlist'),
+        subtitle: owner || (isAlbum ? 'Album' : 'Playlist'),
+        heroSrc: item.image || item.metadata?.images?.[0]?.path || tracks.find(t => t.image)?.image || null,
+        rows: [['Type', isAlbum ? 'Album' : 'Playlist'], ['Year', year], ['Tracks', String(tracks.length)], ['Length', this._pdfFmtTotal(total)], ['Genre', genre]],
+        sections: [{ heading: 'Tracklist', thumbs: !isAlbum, items: tracks.map((t, i) => ({
+          num: t.track_number || i + 1, title: t.name || t.title,
+          sub: isAlbum ? (artistsOf(t) !== owner ? artistsOf(t) : '') : [artistsOf(t), t.album?.name].filter(Boolean).join(' · '),
+          right: this._pdfFmtDuration(t.duration), thumb: t.image || null, art: { artist: artistsOf(t), album: t.album?.name || '', title: t.name || t.title } })) }],
+        filename: (isAlbum ? 'album-' : 'playlist-') + (item.name || ''),
+      };
+    });
+  }
+
+  // ── Export: a TV show's episode guide ──
+  // Episodes from TVmaze (free, cached), or the AI's cached lists for any
+  // season TVmaze doesn't have; episodes in Watch History are ticked.
+  _exportEpisodeGuidePDF(data, artUrl) {
+    if (!this._pdfOn('info')) return;   // switched off in the card editor
+    this._exportListPDF(async (preview) => {
+      const showTitle = data?.title || '';
+      if (!showTitle) return null;
+      preview?.status?.('Looking up episodes\u2026');
+      const tm = (await this._tvmazeEpisodes(showTitle).catch(() => null)) || [];
+      const seasons = Math.max(data.seasons || 0, tm.reduce((m, e) => Math.max(m, e.season || 0), 0));
+      const key = showTitle.toLowerCase().trim();
+      if (!this._tvEpisodesCache) this._tvEpisodesCache = new Map();
+      const norm = v => String(v || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+      const watched = new Set(this._getWatchLogEntries()
+        .filter(e => norm(e.seriesTitle || e.title) === norm(showTitle) && Number.isFinite(e.season) && Number.isFinite(e.episode))
+        .map(e => e.season + 'x' + e.episode));
+      const fmtDate = d => { const t = Date.parse(d || ''); return isNaN(t) ? '' : new Date(t).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }); };
+      const sections = [];
+      let total = 0;
+      for (let n = 1; n <= seasons; n++) {
+        // Episode titles are stored HTML-escaped for the panel; the PDF wants plain text.
+        const unesc = v => String(v || '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+        let eps = tm.filter(e => e.season === n).map(e => ({ ep: e.ep, title: unesc(e.title), airdate: e.airdate }));
+        if (!eps.length) {
+          const ai = this._aiCachedRead(this._tvEpisodesCache, 'tvEpisodes', `${key}|s${n}|v2`);
+          if (Array.isArray(ai)) eps = ai.map(e => ({ ep: e.ep, title: unesc(e.title), airdate: e.airdate }));
+        }
+        if (!eps.length) continue;
+        total += eps.length;
+        const seen = eps.filter(e => watched.has(n + 'x' + e.ep)).length;
+        sections.push({ heading: 'Season ' + n, note: eps.length + ' episodes' + (seen ? '  ·  ' + seen + ' watched' : ''),
+          items: eps.map(e => ({ num: e.ep, title: e.title || ('Episode ' + e.ep), right: fmtDate(e.airdate), tick: watched.has(n + 'x' + e.ep) })) });
+      }
+      if (!sections.length) return null;
+      return {
+        title: showTitle, subtitle: data.year || '',
+        heroSrc: artUrl || null,
+        rows: [['Seasons', String(seasons)], ['Episodes', String(total)], ['Watched', watched.size ? watched.size + ' of ' + total : 'None yet'],
+          ['Genre', (data.genres || []).slice(0, 3).join(', ')]],
+        sections,
+        filename: 'episode-guide-' + showTitle,
+      };
+    });
+  }
+
+  // ── Export: everything pinned ──
+  _exportPinsPDF() {
+    if (!this._pdfOn('pins')) return;   // switched off in the card editor
+    this._exportListPDF(async () => {
+      const first = v => Array.isArray(v) ? (v[0]?.name || v[0] || '') : (v?.name || v || '');
+      const subFor = (it, key) => {
+        switch (key) {
+          case 'track':      return [first(it.artists) || it.artist, it.album?.name || it.album].filter(Boolean).join(' · ');
+          case 'album':      return first(it.artists) || it.artist || '';
+          case 'playlist':   return it.owner || '';
+          case 'queues':     return (it.tracks || []).length + ' tracks';
+          case 'stations':   return [it.country, (it.tags || '').split(',')[0]].filter(Boolean).join(' · ');
+          case 'podcasts':   return it.artistName || '';
+          case 'audiobooks': return it.author || '';
+          case 'recaps':     return it.dateRangeLabel || '';
+          case 'movies_tv':  return [it.year, it.kind === 'tv' ? 'TV Series' : 'Movie'].filter(Boolean).join(' · ');
+          default: return '';
+        }
+      };
+      const sections = this._pinnedCategoryDefs().map(cat => {
+        const list = this._getPinnedCategoryItems(cat.key) || [];
+        return { heading: cat.label, note: list.length + ' pinned', items: list.map(it => ({ title: this._pinnedItemDisplayName(it, cat.key), sub: subFor(it, cat.key) })) };
+      }).filter(s => s.items.length);
+      if (!sections.length) return null;
+      const total = sections.reduce((n, s) => n + s.items.length, 0);
+      return {
+        title: 'Pins', subtitle: total + ' pinned items',
+        sections, filename: 'pins',
+      };
+    });
+  }
+
+  // ── Export: a results list (Recommendations, AI Search, video suggestions) ──
+  _exportResultsPDF(kind, heading, results) {
+    if (!this._pdfOn('lists')) return;   // switched off in the card editor
+    this._exportListPDF(async () => {
+      if (!results?.length) return null;
+      return {
+        title: kind, subtitle: heading || '',
+        sections: [{ heading: results.length + ' results', items: results.map((r, i) => ({
+          num: i + 1, title: r.title,
+          sub: [r.artist || [r.year, r.type === 'tv' ? 'TV Series' : (r.type === 'movie' ? 'Movie' : '')].filter(Boolean).join(' · '), r.reason].filter(Boolean).join('  -  '),
+        })) }],
+        filename: kind + '-' + (heading || ''),
+      };
+    });
+  }
+
+  // ── Chart data for the list PDFs ──
+  // Time of day and day of week, from history entries (value per entry:
+  // 1 for a play, or minutes for watching).
+  _pdfTimeBuckets(entries, valueFn = () => 1) {
+    const tod = [['Morning', 5, 12], ['Afternoon', 12, 17], ['Evening', 17, 22], ['Night', 22, 29]].map(([label]) => ({ label, value: 0 }));
+    const dow = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(label => ({ label, value: 0 }));
+    (entries || []).forEach(e => {
+      if (!e?.ts) return;
+      const d = new Date(e.ts), h = d.getHours(), v = valueFn(e);
+      tod[h >= 5 && h < 12 ? 0 : h >= 12 && h < 17 ? 1 : h >= 17 && h < 22 ? 2 : 3].value += v;
+      dow[(d.getDay() + 6) % 7].value += v;
+    });
+    tod.forEach(t => { t.value = Math.round(t.value); });
+    dow.forEach(t => { t.value = Math.round(t.value); });
+    return { tod, dow };
+  }
+  // One bar per day from the first entry (or startTs) to today
+  _pdfDailySeries(entries, valueFn = () => 1, startTs = null) {
+    const list = (entries || []).filter(e => e?.ts);
+    if (!list.length) return [];
+    const mid = ts => { const d = new Date(ts); d.setHours(0, 0, 0, 0); return d.getTime(); };
+    const start = mid(startTs || list.reduce((m, e) => Math.min(m, e.ts), Infinity));
+    const end = mid(Date.now());
+    const days = [];
+    for (let d = start; d <= end && days.length < 400; d = mid(d + 36 * 3600 * 1000)) days.push({ date: d, value: 0 });
+    list.forEach(e => { const i = days.findIndex(x => x.date === mid(e.ts)); if (i !== -1) days[i].value += valueFn(e); });
+    days.forEach(d => { d.value = Math.round(d.value); });
+    return days;
+  }
+  // Share by speaker (top five plus Other)
+  _pdfSpeakerShare(entries, valueFn = () => 1) {
+    const m = {};
+    (entries || []).forEach(e => { if (e?.entity) m[e.entity] = (m[e.entity] || 0) + valueFn(e); });
+    const list = Object.entries(m).sort((a, b) => b[1] - a[1]).map(([k, v]) => ({ label: this._entityDisplayName(k) || k, value: Math.round(v * 10) / 10 }));
+    if (list.length > 6) list.splice(5, list.length, { label: 'Other', value: list.slice(5).reduce((t, x) => t + x.value, 0) });
+    return list;
+  }
+
+  // ── Export: one title's Watch History (a show or movie) ──
+  _exportWatchTitlePDF(g, artUrl) {
+    if (!this._pdfOn('history')) return;   // switched off in the card editor
+    this._exportListPDF(async () => {
+      if (!g?.viewings?.length) return null;
+      const isTv = g.kind === 'tv';
+      const fmtDay = ts => new Date(ts).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+      const fmtTime = ts => new Date(ts).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+      const count = g.viewings.length;
+      return {
+        title: g.title, subtitle: isTv ? 'TV Show' : 'Movie',
+        heroSrc: artUrl || null,
+        rows: [['Watches', String(count)],
+          ['Time watched', g.watchedMs >= 60000 ? this._watchDuration(g.watchedMs) : ''],
+          ['First watched', fmtDay(g.firstTs)], ['Last watched', fmtDay(g.lastTs)]],
+        sections: [{ heading: 'Watch history', items: g.viewings.map(v => ({
+          title: isTv ? (this._watchEpisodeLabel(v.entry, g.title, false) || 'Episode') : fmtDay(v.lastTs),
+          sub: [isTv ? fmtDay(v.lastTs) : '', fmtTime(v.lastTs), v.entry?.entity ? (this._entityDisplayName(v.entry.entity) || '') : ''].filter(Boolean).join(' · '),
+          right: v.watchedMs >= 60000 ? this._watchDuration(v.watchedMs) : '',
+        })) }],
+        charts: (() => {
+          const ents = g.entries || [];
+          const mins = e => (e.watchedMs || 0) / 60000;
+          const tb = this._pdfTimeBuckets(ents, mins);
+          return [
+            { type: 'donut', title: 'Where you watch', items: this._pdfSpeakerShare(ents, mins) },
+            count >= 3 ? { type: 'pair', charts: [{ title: 'Time of day', items: tb.tod }, { title: 'Day of the week', items: tb.dow }] } : null,
+          ];
+        })(),
+        filename: 'watch-history-' + g.title,
+      };
+    });
+  }
+
+  // ── Export: Pinned Songs ──
+  _exportPinnedSongsPDF(items) {
+    if (!this._pdfOn('pins')) return;   // switched off in the card editor
+    this._exportListPDF(async () => {
+      if (!items?.length) return null;
+      const artistsOf = t => (t.artists || []).map(a => a?.name || a).filter(Boolean).join(', ') || t.artist || '';
+      const total = items.reduce((s, t) => s + (Number(t.duration) || 0), 0);
+      return {
+        title: 'Pinned Songs', subtitle: items.length + (items.length === 1 ? ' song' : ' songs'),
+        rows: total ? [['Songs', String(items.length)], ['Length', this._pdfFmtTotal(total)]] : [],
+        sections: [{ heading: 'Songs', thumbs: true, items: items.map((t, i) => ({
+          num: i + 1, title: t.name || t.title || '', sub: [artistsOf(t), t.album?.name || (typeof t.album === 'string' ? t.album : '')].filter(Boolean).join(' · '),
+          right: this._pdfFmtDuration(t.duration), thumb: t.image || t.thumbnail || null, art: { artist: artistsOf(t), album: t.album?.name || (typeof t.album === 'string' ? t.album : ''), title: t.name || t.title } })) }],
+        filename: 'pinned-songs',
+      };
+    });
+  }
+
+  // ── Daily listening summaries ──
+  // One small record per day (plays, time, top artists/tracks/albums,
+  // speakers, time of day, stations), rebuilt from Music History. The
+  // history itself only holds the most recent 2,000 plays, but these
+  // summaries are kept for about six months, which is what "Your month in
+  // music" reads. A day is only summarised once the history covers all of
+  // it, and rebuilding gives the same result on every device, so copies
+  // synced through Home Assistant never double-count.
+  _listenDailyRollup() {
+    try {
+      const entries = this._getListenLogEntries().filter(e => e && e.ts);
+      if (!entries.length) return;
+      const dayKey = ts => { const d = new Date(ts); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+      const oldest = entries.reduce((m, e) => Math.min(m, e.ts), Infinity);
+      const partialDay = dayKey(oldest);
+      const byDay = {};
+      entries.forEach(e => { const k = dayKey(e.ts); if (k === partialDay) return; (byDay[k] = byDay[k] || []).push(e); });
+      const lsKey = 'crow_ai_local_listenDaily';
+      const store = JSON.parse(localStorage.getItem(lsKey) || '{}');
+      const topN = (m, n) => Object.fromEntries(Object.entries(m).sort((a, b) => b[1] - a[1]).slice(0, n));
+      const inc = (m, k) => { if (k) m[k] = (m[k] || 0) + 1; };
+      let changed = false;
+      Object.entries(byDay).forEach(([k, list]) => {
+        const a = {}, t = {}, al = {}, en = {}, stn = {}, h = [0, 0, 0, 0];
+        let sec = 0;
+        list.forEach(e => {
+          sec += (e.durationMs || 0) / 1000;
+          inc(a, e.artist);
+          if (e.title) inc(t, e.title + '\u0001' + (e.artist || '') + '\u0001' + (e.album || ''));
+          if (e.album && e.album.toLowerCase() !== (e.title || '').toLowerCase()) inc(al, e.album + '\u0001' + (e.artist || ''));
+          inc(en, e.entity);
+          inc(stn, e.station);
+          const hr = new Date(e.ts).getHours();
+          h[hr >= 5 && hr < 12 ? 0 : hr >= 12 && hr < 17 ? 1 : hr >= 17 && hr < 22 ? 2 : 3]++;
+        });
+        const rec = { p: list.length, s: Math.round(sec), a: topN(a, 40), t: topN(t, 25), al: topN(al, 15), e: en, h, st: topN(stn, 10) };
+        if (JSON.stringify(store[k]) !== JSON.stringify(rec)) { store[k] = rec; changed = true; }
+      });
+      const keep = dayKey(Date.now() - 190 * 864e5);
+      Object.keys(store).forEach(k => { if (k < keep) { delete store[k]; changed = true; } });
+      if (changed) {
+        localStorage.setItem(lsKey, JSON.stringify(store));
+        this._haStorageSaveAI('listenDaily');
+      }
+    } catch (_) { /* best effort */ }
+  }
+
+  // ── Export: an artist from the library ──
+  _exportArtistPDF(item, tracks) {
+    if (!this._pdfOn('lists')) return;   // switched off in the card editor
+    this._exportListPDF(async (preview) => {
+      const name = item?.name || '';
+      if (!name) return null;
+      const norm = v => String(v || '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, '');
+      const nName = norm(name);
+      // Bio: the one already looked up for this artist, else Wikipedia
+      const bioKey = ('bio|' + name).toLowerCase();
+      const bio = this._castBioCache?.get(bioKey) || this._aiLocalGet?.('castBio', bioKey) || null;
+      let bioText = bio?.bio || '';
+      if (!bioText) {
+        preview?.status?.('Looking up the biography…');
+        bioText = (await this._fetchWikipediaPersonSummary(name, true).catch(() => null))?.bio || '';
+      }
+      if (bioText.length > 900) bioText = bioText.slice(0, 900).replace(/\s+\S*$/, '') + '...';
+      // Your listening, from Music History
+      const log = this._getListenLogEntries().filter(e => (this._splitArtists(e.artist) || [e.artist]).some(a => norm(a) === nName));
+      const songs = {};
+      log.forEach(e => { const k = e.title; if (!k) return; if (!songs[k]) songs[k] = { title: k, album: e.album || '', n: 0 }; songs[k].n++; });
+      const topSongs = Object.values(songs).sort((a, b) => b.n - a.n).slice(0, 10);
+      const fmtDay = ts => new Date(ts).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+      const firstTs = log.reduce((m, e) => Math.min(m, e.ts), Infinity), lastTs = log.reduce((m, e) => Math.max(m, e.ts), 0);
+      // Albums, from the artist's tracks in the library
+      const albums = new Map();
+      (tracks || []).forEach(t => {
+        const an = t.album?.name || (typeof t.album === 'string' ? t.album : '');
+        if (!an) return;
+        if (!albums.has(an)) albums.set(an, { name: an, n: 0, year: t.album?.year || '', image: (t.album && typeof t.album === 'object' ? this._maImgUrl(t.album) : null) || t.image || null });
+        albums.get(an).n++;
+      });
+      const albumList = [...albums.values()].sort((a, b) => (Number(b.year) || 0) - (Number(a.year) || 0) || a.name.localeCompare(b.name));
+      let hero = this._maImgUrl(item);
+      if (!hero) hero = await this._fetchWikipediaThumb(name).catch(() => null);
+      return {
+        title: name, subtitle: 'Artist', heroSrc: hero || null,
+        rows: [['Plays', log.length ? String(log.length) : ''], ['First played', log.length ? fmtDay(firstTs) : ''],
+          ['Last played', log.length ? fmtDay(lastTs) : ''], ['In your library', (tracks || []).length + ' tracks'],
+          ['Born', bio?.born || ''], ['From', bio?.nationality || '']],
+        intro: bioText,
+        sections: [
+          { heading: 'Your most played', note: 'from Music History', thumbs: true, items: topSongs.map((s, i) => ({
+            num: i + 1, title: s.title, sub: s.album, right: s.n + (s.n === 1 ? ' play' : ' plays'), art: { artist: name, album: s.album, title: s.title } })) },
+          { heading: 'Albums', thumbs: true, items: albumList.map(a => ({
+            title: a.name, sub: [a.year, a.n + (a.n === 1 ? ' track' : ' tracks') + ' in your library'].filter(Boolean).join(' · '), thumb: a.image, art: { artist: name, album: a.name } })) },
+        ],
+        charts: log.length ? (() => {
+          const tb = this._pdfTimeBuckets(log);
+          return [
+            { type: 'donut', title: 'Where you listen', items: this._pdfSpeakerShare(log) },
+            log.length >= 5 ? { type: 'pair', charts: [{ title: 'Time of day', items: tb.tod }, { title: 'Day of the week', items: tb.dow }] } : null,
+          ];
+        })() : [],
+        filename: 'artist-' + name,
+      };
+    });
+  }
+
+  // ── Export: a podcast's episodes ──
+  _exportPodcastPDF(pod) {
+    if (!this._pdfOn('lists')) return;   // switched off in the card editor
+    this._exportListPDF(async (preview) => {
+      if (!pod) return null;
+      preview?.status?.('Looking up episodes…');
+      const feedUrl = await this._pcResolveFeedUrl(pod).catch(() => null);
+      if (!feedUrl) return null;
+      const eps = await this._pcFetchEpisodes(feedUrl, 50).catch(() => []);
+      if (!eps?.length) return null;
+      const norm = v => String(v || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+      const heard = new Set(this._getListenLogEntries().map(e => norm(e.title)).filter(Boolean));
+      const played = eps.filter(e => heard.has(norm(e.title))).length;
+      const bioKey = 'pcbio|' + (pod.collectionId || pod.collectionName || '').toString().toLowerCase();
+      const bio = String(this._rbTagCache?.get(bioKey) || this._aiLocalGet?.('pcBio', bioKey) || '').replace(/<[^>]+>/g, ' ');
+      return {
+        title: pod.collectionName || 'Podcast', subtitle: pod.artistName || '',
+        heroSrc: pod.artworkUrl600 || pod.artworkUrl100 || null,
+        rows: [['Genre', pod.primaryGenreName || ''], ['Episodes', String(pod.trackCount || eps.length)],
+          ['Latest', eps[0]?.date || ''], ['Played', played ? played + ' of these' : '']],
+        intro: bio,
+        sections: [{ heading: eps.length >= 50 ? 'Latest 50 episodes' : 'Episodes', note: played ? played + ' played' : '',
+          items: eps.map((e, i) => ({ num: i + 1, title: e.title, sub: e.date, right: e.duration, tick: heard.has(norm(e.title)) })) }],
+        charts: (() => {
+          // Episode lengths, oldest to newest
+          const mins = str => {
+            const t = String(str || '').trim();
+            if (/^\d+(:\d+){1,2}$/.test(t)) { const p = t.split(':').map(Number); return p.length === 3 ? p[0] * 60 + p[1] + p[2] / 60 : p[0] + p[1] / 60; }
+            const h = /(\d+)\s*h/i.exec(t), m = /(\d+)\s*m/i.exec(t);
+            return (h ? +h[1] * 60 : 0) + (m ? +m[1] : 0);
+          };
+          const MON = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
+          const when = str => { const m = /(\d{1,2})\s+([A-Za-z]{3})[A-Za-z]*\s+(\d{4})/.exec(String(str || '')); return m && MON[m[2].toLowerCase()] != null ? new Date(+m[3], MON[m[2].toLowerCase()], +m[1]).getTime() : null; };
+          const lens = eps.map(e => ({ date: when(e.date), value: Math.round(mins(e.duration)) })).filter(x => x.date && x.value > 0).reverse();
+          return [
+            played ? { type: 'donut', title: 'Episodes played', items: [{ label: 'Played', value: played }, { label: 'Not played yet', value: eps.length - played }] } : null,
+            lens.length > 2 ? { type: 'days', title: 'Episode length', items: lens, unitSuffix: 'm' } : null,
+          ];
+        })(),
+        filename: 'podcast-' + (pod.collectionName || ''),
+      };
+    });
+  }
+
+  // ── Export: recently played on one speaker (the last 24 hours) ──
+  async _exportRecentlyPlayedPDF() {
+    if (!this._pdfOn('recent')) return;   // switched off in the card editor
+    const since = Date.now() - 24 * 3600 * 1000;
+    const recent = this._getListenLogEntries().filter(e => e.ts >= since && e.entity);
+    if (!recent.length) { this._showToast('Nothing played in the last 24 hours'); return; }
+    const counts = {};
+    recent.forEach(e => { counts[e.entity] = (counts[e.entity] || 0) + 1; });
+    const options = Object.entries(counts).sort((a, b) => b[1] - a[1])
+      .map(([ent, n]) => ({ label: (this._entityDisplayName(ent) || ent) + ' (' + n + ')', value: ent }));
+    if (options.length > 1) options.push({ label: 'All speakers', value: '*' });
+    const ent = options.length === 1 ? options[0].value
+      : await this._iosChoose({ title: 'Recently Played', message: 'Songs played in the last 24 hours on:', options, selected: options[0].value });
+    if (ent === undefined) return;
+    this._exportListPDF(async () => {
+      const list = recent.filter(e => ent === '*' || e.entity === ent).sort((a, b) => a.ts - b.ts);
+      if (!list.length) return null;
+      const fmtT = ts => new Date(ts).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+      const fmtD = ts => new Date(ts).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+      const sections = [];
+      let n = 0;
+      list.forEach(e => {
+        const d = fmtD(e.ts);
+        if (!sections.length || sections[sections.length - 1].heading !== d) sections.push({ heading: d, thumbs: true, items: [] });
+        sections[sections.length - 1].items.push({
+          num: ++n, title: e.title,
+          sub: [e.artist, e.album, ent === '*' ? (this._entityDisplayName(e.entity) || '') : ''].filter(Boolean).join(' · '),
+          right: fmtT(e.ts), art: { artist: e.artist, album: e.album, title: e.title } });
+      });
+      const ms = list.reduce((s, e) => s + (e.durationMs || 0), 0);
+      return {
+        title: 'Recently Played', subtitle: ent === '*' ? 'All speakers' : (this._entityDisplayName(ent) || ent),
+        rows: [['Songs', String(list.length)], ['Started', fmtT(list[0].ts)], ['Last song', fmtT(list[list.length - 1].ts)],
+          ['Listening time', ms >= 60000 ? this._pdfFmtTotal(ms / 1000) : '']],
+        sections,
+        charts: (() => {
+          // Songs per hour
+          const h0 = new Date(list[0].ts); h0.setMinutes(0, 0, 0);
+          const hours = [];
+          for (let t = h0.getTime(); t <= list[list.length - 1].ts && hours.length < 25; t += 3600 * 1000) {
+            hours.push({ label: String(new Date(t).getHours()).padStart(2, '0'), value: 0, t });
+          }
+          list.forEach(e => { const i = Math.floor((e.ts - h0.getTime()) / 3600000); if (hours[i]) hours[i].value++; });
+          if (hours.length > 12) hours.forEach((h, i) => { if (i % 2) h.label = ''; });
+          const am = {};
+          list.forEach(e => { if (e.artist) am[e.artist] = (am[e.artist] || 0) + 1; });
+          const arts = Object.entries(am).sort((a, b) => b[1] - a[1]).map(([label, value]) => ({ label, value }));
+          if (arts.length > 6) arts.splice(5, arts.length, { label: 'Other', value: arts.slice(5).reduce((t, x) => t + x.value, 0) });
+          return [
+            hours.length > 1 ? { type: 'category', title: 'Songs per hour', items: hours, showValues: hours.length <= 12 } : null,
+            { type: 'donut', title: 'Artists played', items: arts },
+            ent === '*' ? { type: 'donut', title: 'Speakers', items: this._pdfSpeakerShare(list) } : null,
+          ];
+        })(),
+        filename: 'recently-played-' + (ent === '*' ? 'all' : (this._entityDisplayName(ent) || ent)),
+      };
+    });
+  }
+
+  // ── Export: the Watch Recap ──
+  _exportWatchRecapPDF() {
+    if (!this._pdfOn('recap')) return;   // switched off in the card editor
+    const d = this._lastWatchRecapData;
+    if (!d || (!d.topShows?.length && !d.topMovies?.length)) { this._showToast('Nothing to export yet'); return; }
+    this._exportListPDF(async () => {
+      const fmtD = ts => new Date(ts).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+      const dur = ms => (ms >= 60000 ? this._watchDuration(ms) : '');
+      const totalMs = Object.values(d.ms || {}).reduce((s, v) => s + v, 0);
+      return {
+        title: 'Watch Recap', subtitle: fmtD(d.since || Date.now() - 7 * 864e5) + ' - ' + fmtD(Date.now()),
+        rows: [['Watches', String(d.total || 0)], ['Time watched', dur(totalMs)],
+          ['Shows', String(d.topShows.length)], ['Movies', String(d.topMovies.length)]],
+        intro: d.narrative || '',
+        sections: [
+          { heading: 'Top shows', thumbs: true, items: d.topShows.map((s, i) => ({ num: i + 1, title: s.title,
+            sub: s.count + (s.count === 1 ? ' episode' : ' episodes'), right: dur(d.ms?.[s.title]), art: { video: s.title } })) },
+          { heading: 'Top movies', thumbs: true, items: d.topMovies.map((m, i) => ({ num: i + 1, title: m.title,
+            sub: m.count > 1 ? m.count + ' plays' : '', right: dur(d.ms?.[m.title]), art: { video: m.title } })) },
+        ],
+        charts: (() => {
+          const ents = d.entries || [];
+          const mins = e => (e.watchedMs > 0 ? e.watchedMs : (e.durationMs || 0)) / 60000;
+          const isTv = e => e.mediaType === 'tv';
+          const tb = this._pdfTimeBuckets(ents, mins);
+          return [
+            { type: 'donut', title: 'TV and movies (time watched)', items: [
+              { label: 'TV', value: Math.round(ents.filter(isTv).reduce((t, e) => t + mins(e), 0)) },
+              { label: 'Movies', value: Math.round(ents.filter(e => !isTv(e)).reduce((t, e) => t + mins(e), 0)) }] },
+            { type: 'pair', charts: [{ title: 'Time of day', items: tb.tod }, { title: 'Day of the week', items: tb.dow }] },
+          ];
+        })(),
+        filename: 'watch-recap',
+      };
+    });
+  }
+
+  // ── Export: an album's lyrics as one booklet ──
+  async _exportAlbumLyricsPDF(args) {
+    if (!this._pdfOn('lyrics')) return;   // switched off in the card editor
+    if (this._pdfBusy) return;
+    this._pdfBusy = true;
+    const preview = this._openPDFPreview();
+    try {
+      let key = null;
+      try { key = 'alyrics|' + this._pdfHash(JSON.stringify(args || {})); } catch (_) {}
+      if (this._pdfFromSession(key, preview)) return;
+      await this._buildAlbumLyricsPDF(args, preview);
+    }
+    catch (e) { console.warn('[CrowAI] album lyrics PDF failed', e); preview.fail('Couldn’t create the PDF. Please try again.'); }
+    finally { this._pdfBusy = false; }
+  }
+  async _buildAlbumLyricsPDF({ album, artist, tracks = [], heroSrc = null }, preview) {
+    if (!tracks.length) { preview.fail('This album has no tracks.'); return; }
+    let JsPDFCtor;
+    try { JsPDFCtor = await this._ensureJsPDF(preview); }
+    catch (e) { preview.fail(e?.message || 'Could not load the PDF library'); return; }
+    // Look up each song's lyrics (two at a time), with progress
+    const toLines = entry => {
+      if (!entry || entry.type === 'none') return null;
+      let lines = entry.type === 'synced'
+        ? (entry.lines || []).map(l => String(l.text || '').trim())
+        : String(entry.text || '').split('\n').map(l => l.trim());
+      lines = lines.reduce((out, l) => { if (l || (out.length && out[out.length - 1])) out.push(l); return out; }, []);
+      while (lines.length && !lines[lines.length - 1]) lines.pop();
+      return lines.some(Boolean) ? lines : null;
+    };
+    const songs = tracks.map((t, i) => ({ num: t.num || i + 1, title: t.title || '', artist: t.artist || artist, lines: null }));
+    let next = 0, done = 0, skipped = false;
+    preview.progress?.('Finding lyrics…', 0, songs.length);
+    if (songs.length > 4) preview.offerSkip?.(() => { skipped = true; }, 12000, 'Skip the rest');
+    const worker = async () => {
+      while (next < songs.length && !skipped && !preview.closed) {
+        const s = songs[next++];
+        const entry = this._lyricsCachedEntry(s.artist, s.title) || await this._lyricsLookupForExport(s.artist, s.title, album).catch(() => null);
+        s.lines = toLines(entry);
+        done++;
+        if (!skipped) preview.progress?.('Finding lyrics…', done, songs.length);
+      }
+    };
+    let release;
+    const skipWait = new Promise(res => { release = res; });
+    const poll = setInterval(() => { if (skipped || preview.closed) release(); }, 200);
+    await Promise.race([Promise.all([worker(), worker()]), skipWait]);
+    clearInterval(poll);
+    preview.clearSkip?.();
+    if (preview.closed) return;
+    const withLyrics = songs.filter(s => s.lines);
+    if (!withLyrics.length) { preview.fail({ title: 'No Lyrics Found', message: 'None of the songs on this album have lyrics available yet, so there\u2019s nothing to put in the booklet.' }); return; }
+    preview.status?.('Building pages…');
+
+    const doc = new JsPDFCtor({ unit: 'pt', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth(), pageH = doc.internal.pageSize.getHeight();
+    const marginX = 44, contentW = pageW - marginX * 2, bottom = pageH - 40;
+    const hexToRgb = hex => { const h = String(hex || '#007AFF').replace('#', ''); const n = parseInt(h.length === 3 ? h.split('').map(c => c + c).join('') : h.slice(0, 6), 16); return isNaN(n) ? [0, 122, 255] : [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
+    const inkRgb = [28, 28, 30], mutedRgb = [120, 120, 128], zebraRgb = [244, 244, 247];
+    const accentRgb = hexToRgb(this._config?.accent_color || '#007AFF');
+    const clean = s => String(s || '')
+      .replace(/[‘’‚′]/g, "'").replace(/[“”„″]/g, '"')
+      .replace(/[–—−]/g, '-').replace(/…/g, '...').replace(/ /g, ' ')
+      .replace(/[^\u0009\u000A -~ -ÿ]/g, '').replace(/[ \t]+/g, ' ').trim();
+    let y = 44;
+    // Masthead: album, then the artist in the accent colour
+    {
+      const a = clean(album), b = clean(artist);
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(18);
+      if (doc.getTextWidth(a + '  ' + b) <= contentW) {
+        doc.setTextColor(...inkRgb); doc.text(a, marginX, y);
+        doc.setTextColor(...accentRgb); doc.text('  ' + b, marginX + doc.getTextWidth(a), y);
+      } else {
+        doc.setTextColor(...inkRgb); doc.splitTextToSize(a, contentW).forEach((l, k, arr) => { doc.text(l, marginX, y); if (k < arr.length - 1) y += 22; });
+        y += 22; doc.setTextColor(...accentRgb); doc.text(doc.splitTextToSize(b, contentW)[0], marginX, y);
+      }
+    }
+    y += 7; doc.setDrawColor(...accentRgb); doc.setLineWidth(1.5); doc.line(marginX, y, pageW - marginX, y); y += 16;
+    // Cover beside the grey rows
+    const rows = [['TYPE', 'Lyrics booklet'], ['TRACKS', String(songs.length)], ['WITH LYRICS', withLyrics.length + ' of ' + songs.length]];
+    const img = heroSrc ? await this._pdfImageData(heroSrc).catch(() => null) : null;
+    const rowH = 20, rowGap = 3, rowsH = rows.length * rowH + (rows.length - 1) * rowGap;
+    let colX = marginX, colW = contentW, artBottom = y;
+    if (img) {
+      const side = Math.max(64, rowsH);
+      try { doc.addImage(img.data, 'JPEG', marginX, y, side, side); colX = marginX + side + 16; colW = contentW - side - 16; artBottom = y + side; } catch (_) {}
+    }
+    let ty = y + 13;
+    rows.forEach(([l, v]) => {
+      doc.setFillColor(...zebraRgb); doc.roundedRect(colX, ty - 13, colW, rowH, 3, 3, 'F');
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(...mutedRgb); doc.text(l, colX + 8, ty);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5); doc.setTextColor(...inkRgb); doc.text(clean(v), colX + 90, ty);
+      ty += rowH + rowGap;
+    });
+    y = Math.max(ty - 13 - rowGap + 4, artBottom) + 22;
+    const heading = (t) => {
+      if (y + 40 > bottom) { doc.addPage(); y = 44; }
+      doc.setFillColor(...accentRgb); doc.rect(marginX, y - 10, 3, 13, 'F');
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(11.5); doc.setTextColor(...inkRgb);
+      doc.text(doc.splitTextToSize(clean(t), contentW - 12)[0], marginX + 9, y);
+      y += 18;
+    };
+    // Contents
+    heading('Contents');
+    songs.forEach(s => {
+      if (y + 14 > bottom) { doc.addPage(); y = 44; }
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(...mutedRgb);
+      doc.text(String(s.num), marginX + 18, y, { align: 'right' });
+      doc.setFont('helvetica', s.lines ? 'bold' : 'normal'); doc.setFontSize(10); doc.setTextColor(...(s.lines ? inkRgb : mutedRgb));
+      doc.text(doc.splitTextToSize(clean(s.title), contentW - 120)[0], marginX + 26, y);
+      if (!s.lines) { doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.text('no lyrics found', marginX + contentW, y, { align: 'right' }); }
+      y += 14;
+    });
+    y += 14;
+    // The songs, one after another, lyrics centred
+    const lineH = 13.5, blankH = 7;
+    withLyrics.forEach(s => {
+      if (y + 70 > bottom) { doc.addPage(); y = 44; }
+      heading(s.num + '. ' + s.title);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5); doc.setTextColor(...inkRgb);
+      s.lines.map(clean).forEach(l => {
+        if (!l) { y += blankH; return; }
+        doc.splitTextToSize(l, contentW).forEach(w => {
+          if (y + lineH > bottom) { doc.addPage(); y = 44; doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5); doc.setTextColor(...inkRgb); }
+          doc.text(w, pageW / 2, y, { align: 'center' }); y += lineH;
+        });
+      });
+      y += 22;
+    });
+    const pages = doc.internal.getNumberOfPages();
+    for (let p = 1; p <= pages; p++) {
+      doc.setPage(p);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...mutedRgb);
+      doc.text('CrowAI Media Player Card', marginX, pageH - 22);
+      doc.text('Page ' + p + ' of ' + pages, pageW - marginX, pageH - 22, { align: 'right' });
+    }
+    if (preview.closed) return;
+    const slug = clean(album).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 50) || 'album';
+    this._showPDFPreview(doc, 'crowai-lyrics-' + slug + '-' + new Date().toISOString().slice(0, 10) + '.pdf', preview);
+  }
+
+  // ── Export: Your month in music ──
+  async _exportMonthReport() {
+    if (!this._pdfOn('month')) return;   // switched off in the card editor
+    this._listenDailyRollup();
+    let store = {};
+    try { store = JSON.parse(localStorage.getItem('crow_ai_local_listenDaily') || '{}'); } catch (_) {}
+    const months = [...new Set(Object.keys(store).map(k => k.slice(0, 7)))].sort().reverse();
+    if (!months.length) { this._showToast('Not enough listening history yet — try again tomorrow'); return; }
+    const label = m => new Date(+m.slice(0, 4), +m.slice(5, 7) - 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+    const nowKey = new Date().getFullYear() + '-' + String(new Date().getMonth() + 1).padStart(2, '0');
+    const month = months.length === 1 ? months[0] : await this._iosChoose({
+      title: 'Your Month in Music', message: 'Choose a month.',
+      options: months.slice(0, 6).map(m => ({ label: label(m) + (m === nowKey ? ' (so far)' : ''), value: m })), selected: months[0],
+    });
+    if (month === undefined) return;
+    if (this._pdfBusy) return;
+    this._pdfBusy = true;
+    const preview = this._openPDFPreview();
+    try {
+      let key = null;
+      try { key = 'month|' + month + '|' + new Date().toDateString() + '|' + this._pdfHash(JSON.stringify(store)); } catch (_) {}
+      if (this._pdfFromSession(key, preview)) return;
+      await this._buildMonthReportPDF(month, store, label, preview);
+    }
+    catch (e) { console.warn('[CrowAI] month report failed', e); preview.fail('Couldn’t create the report. Please try again.'); }
+    finally { this._pdfBusy = false; }
+  }
+  async _buildMonthReportPDF(month, store, label, preview) {
+    let JsPDFCtor;
+    try { JsPDFCtor = await this._ensureJsPDF(preview); }
+    catch (e) { preview.fail(e?.message || 'Could not load the PDF library'); return; }
+    preview.status?.('Building pages…');
+    const merge = (days) => {
+      const out = { p: 0, s: 0, a: {}, t: {}, al: {}, e: {}, st: {}, h: [0, 0, 0, 0], days: days.length };
+      const add = (dst, src) => Object.entries(src || {}).forEach(([k, v]) => { dst[k] = (dst[k] || 0) + v; });
+      days.forEach(([, d]) => { out.p += d.p || 0; out.s += d.s || 0; add(out.a, d.a); add(out.t, d.t); add(out.al, d.al); add(out.e, d.e); add(out.st, d.st); (d.h || []).forEach((v, i) => { out.h[i] += v; }); });
+      return out;
+    };
+    const daysOf = m => Object.entries(store).filter(([k]) => k.startsWith(m)).sort((a, b) => a[0].localeCompare(b[0]));
+    const days = daysOf(month);
+    const cur = merge(days);
+    const y0 = +month.slice(0, 4), m0 = +month.slice(5, 7);
+    const prevKey = (m0 === 1 ? (y0 - 1) + '-12' : y0 + '-' + String(m0 - 1).padStart(2, '0'));
+    const prevDays = daysOf(prevKey);
+    const prev = prevDays.length >= 7 ? merge(prevDays) : null;   // only compare with a month that has enough days
+    const earlierArtists = new Set(Object.entries(store).filter(([k]) => k < month).flatMap(([, d]) => Object.keys(d.a || {}).map(a => a.toLowerCase())));
+    const daysInMonth = new Date(y0, m0, 0).getDate();
+    const isCurrent = month === new Date().getFullYear() + '-' + String(new Date().getMonth() + 1).padStart(2, '0');
+
+    const doc = new JsPDFCtor({ unit: 'pt', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth(), pageH = doc.internal.pageSize.getHeight();
+    const marginX = 44, contentW = pageW - marginX * 2, bottom = pageH - 40;
+    const hexToRgb = hex => { const h = String(hex || '#007AFF').replace('#', ''); const n = parseInt(h.length === 3 ? h.split('').map(c => c + c).join('') : h.slice(0, 6), 16); return isNaN(n) ? [0, 122, 255] : [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
+    const inkRgb = [28, 28, 30], mutedRgb = [120, 120, 128], zebraRgb = [244, 244, 247];
+    const accentHex = this._config?.accent_color || '#007AFF';
+    const accentRgb = hexToRgb(accentHex);
+    const theme = { hexToRgb, inkRgb, mutedRgb, zebraRgb, accentRgb,
+      setInk: () => doc.setTextColor(...inkRgb), setMuted: () => doc.setTextColor(...mutedRgb), setAccent: () => doc.setTextColor(...accentRgb) };
+    const PALETTE = [accentHex, '#34C759', '#FF9500', '#AF52DE', '#FF2D55', '#5AC8FA', '#8E8E93'];
+    const clean = s => String(s || '')
+      .replace(/[‘’‚′]/g, "'").replace(/[“”„″]/g, '"')
+      .replace(/[–—−]/g, '-').replace(/…/g, '...').replace(/ /g, ' ')
+      .replace(/[^\u0009\u000A -~ -ÿ]/g, '').replace(/[ \t]+/g, ' ').trim();
+    const fmtDur = sec => { const m = Math.round((sec || 0) / 60); if (m < 60) return m + 'm'; const h = Math.floor(m / 60), r = m % 60; return h + 'h' + (r ? ' ' + r + 'm' : ''); };
+    let y = 44;
+    const newPageIfNeeded = need => { if (y + need > bottom) { doc.addPage(); y = 44; return true; } return false; };
+    const sectionHeader = t => {
+      newPageIfNeeded(40); y += 10;
+      doc.setFillColor(...accentRgb); doc.rect(marginX, y - 10, 3, 13, 'F');
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(...inkRgb); doc.text(t, marginX + 9, y);
+      y += 16;
+    };
+    const ranked = (obj, n) => Object.entries(obj).sort((a, b) => b[1] - a[1]).slice(0, n);
+    const prevRank = (obj, key) => { if (!obj) return null; const i = ranked(obj, 1000).findIndex(([k]) => k === key); return i === -1 ? null : i + 1; };
+    // Ranked bars with an optional cover and a change note (e.g. "up 3", "new")
+    const rankedBars = async (items, { valueLabel = v => String(v), covers = false } = {}) => {
+      if (!items.length) return;
+      let thumbs = [];
+      if (covers) {
+        preview.status?.('Fetching artwork…');
+        const budget = { itunes: 10 };
+        thumbs = await Promise.all(items.map(it => it.art ? this._pdfThumbFor({ art: it.art }, budget).catch(() => null) : null));
+        preview.status?.('Building pages…');
+      }
+      const useThumbs = thumbs.some(Boolean);
+      const rowH = useThumbs ? 24 : 16, off = useThumbs ? 6 : 0, thumbW = useThumbs ? 26 : 0;
+      const max = Math.max(...items.map(i => i.value), 1);
+      const labelW = 190 - thumbW, valW = 54, barX = marginX + thumbW + labelW + 8, barW = contentW - thumbW - labelW - 8 - valW;
+      items.forEach((it, k) => {
+        newPageIfNeeded(rowH);
+        if (useThumbs) {
+          const td = thumbs[k];
+          if (td) { try { doc.addImage(td.data, 'JPEG', marginX, y - 1, 20, 20); } catch (_) {} }
+          else { doc.setFillColor(...zebraRgb); doc.roundedRect(marginX, y - 1, 20, 20, 2, 2, 'F'); }
+        }
+        doc.setFontSize(9);
+        const note = it.note ? '  ' + it.note : '';
+        doc.setFont('helvetica', 'normal');
+        const noteW = note ? doc.getTextWidth(note) : 0;
+        let lab = (k + 1) + '. ' + clean(it.label);
+        const full = lab;
+        while (doc.getTextWidth(lab) > labelW - noteW && lab.length > 4) lab = lab.slice(0, -2);
+        if (lab !== full) lab = lab.trimEnd() + '...';
+        doc.setTextColor(...inkRgb); doc.text(lab, marginX + thumbW, y + 8 + off);
+        const labW = doc.getTextWidth(lab);
+        if (note) { doc.setTextColor(...(it.noteNew ? accentRgb : mutedRgb)); doc.setFontSize(8); doc.text(note, marginX + thumbW + labW, y + 8 + off); }
+        doc.setFillColor(...zebraRgb); doc.roundedRect(barX, y + off, barW, 10, 2, 2, 'F');
+        doc.setFillColor(...accentRgb); doc.roundedRect(barX, y + off, Math.max(3, barW * (it.value / max)), 10, 2, 2, 'F');
+        doc.setTextColor(...mutedRgb); doc.setFontSize(8.5);
+        doc.text(valueLabel(it.value), marginX + contentW, y + 8 + off, { align: 'right' });
+        y += rowH;
+      });
+      y += 4;
+    };
+    const statCards = stats => {
+      newPageIfNeeded(56);
+      const gap = 8, cardW = (contentW - gap * (stats.length - 1)) / stats.length;
+      stats.forEach((st, i) => {
+        const x = marginX + i * (cardW + gap);
+        doc.setFillColor(...zebraRgb); doc.roundedRect(x, y, cardW, 44, 4, 4, 'F');
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(15); doc.setTextColor(...(st.accent ? accentRgb : inkRgb));
+        let v = clean(st.value);
+        while (doc.getTextWidth(v) > cardW - 16 && v.length > 3) v = v.slice(0, -2);
+        doc.text(v, x + 10, y + 20);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...mutedRgb); doc.text(st.label, x + 10, y + 34);
+      });
+      y += 56;
+    };
+
+    // Masthead
+    const heading = 'Your Month in Music';
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(18);
+    doc.setTextColor(...inkRgb); doc.text(heading, marginX, y);
+    doc.setTextColor(...accentRgb); doc.text('  ' + label(month), marginX + doc.getTextWidth(heading), y);
+    y += 7; doc.setDrawColor(...accentRgb); doc.setLineWidth(1.5); doc.line(marginX, y, pageW - marginX, y); y += 14;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(...mutedRgb);
+    const covered = days.length + ' of ' + (isCurrent ? new Date().getDate() : daysInMonth) + ' days';
+    doc.text((isCurrent ? 'Month so far' : 'Whole month') + '  ·  history covers ' + covered, marginX, y);
+    y += 22;
+
+    // Summary
+    const busiest = days.slice().sort((a, b) => (b[1].p || 0) - (a[1].p || 0))[0];
+    const fmtDay = k => new Date(+k.slice(0, 4), +k.slice(5, 7) - 1, +k.slice(8, 10)).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+    statCards([
+      { label: 'Listening time', value: fmtDur(cur.s), accent: true },
+      { label: 'Days listened', value: String(days.filter(([, d]) => d.p > 0).length) },
+      { label: 'Busiest day', value: busiest ? fmtDay(busiest[0]) + ' (' + busiest[1].p + ')' : '-' },
+    ]);
+    // Compared with last month (per day, so a part month compares fairly)
+    if (prev && cur.days) {
+      const perDay = v => v / Math.max(1, cur.days), perDayPrev = v => v / Math.max(1, prev.days);
+      const pct = Math.round((perDay(cur.s) / Math.max(1, perDayPrev(prev.s)) - 1) * 100);
+      const txt = 'Daily listening time ' + (pct === 0 ? 'the same as' : (pct > 0 ? 'up ' : 'down ') + Math.abs(pct) + '% on') + ' ' + label(prevKey).split(' ')[0] + '.';
+      doc.setFont('helvetica', 'italic'); doc.setFontSize(10); doc.setTextColor(...inkRgb);
+      doc.text(txt, marginX, y); y += 18;
+    } else {
+      doc.setFont('helvetica', 'italic'); doc.setFontSize(9.5); doc.setTextColor(...mutedRgb);
+      doc.text('Comparisons with the month before appear once there is enough history to compare.', marginX, y); y += 18;
+    }
+
+    // Where and when — the speaker share, then time of day and day of week
+    const speakers = ranked(cur.e, 6).map(([k, v], i) => ({ label: clean(this._entityDisplayName(k) || k), value: v, color: PALETTE[i % PALETTE.length] }));
+    if (speakers.length > 1) {
+      newPageIfNeeded(110);
+      y = this._pdfDrawDonutWithBars(doc, theme, speakers, marginX, y + 14, pageW, { title: 'Where you listen', newPageIfNeeded });
+    }
+    {
+      // Day of week from the daily totals
+      const dow = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(label => ({ label, value: 0 }));
+      days.forEach(([k, d]) => { const dt = new Date(+k.slice(0, 4), +k.slice(5, 7) - 1, +k.slice(8, 10)); dow[(dt.getDay() + 6) % 7].value += d.p || 0; });
+      newPageIfNeeded(170);
+      const halfW = (contentW - 16) / 2, yStart = y + 14;
+      const y1 = this._pdfDrawCategoryBarChart(doc, theme, ['Morning', 'Afternoon', 'Evening', 'Night'].map((l, i) => ({ label: l, value: cur.h[i] })),
+        marginX, yStart, marginX * 2 + halfW, { title: 'Time of day' });
+      const x2 = marginX + halfW + 16;
+      const y2 = this._pdfDrawCategoryBarChart(doc, theme, dow, x2, yStart, x2 * 2 + halfW, { title: 'Day of the week' });
+      y = Math.max(y1, y2);
+    }
+
+    // Top lists, with movement against last month
+    const move = (key, rank, prevObj) => {
+      if (!prev) return {};
+      const pr = prevRank(prevObj, key);
+      if (pr == null) return { note: 'new', noteNew: true };
+      if (pr === rank) return {};
+      return { note: pr > rank ? 'up ' + (pr - rank) : 'down ' + (rank - pr) };
+    };
+    sectionHeader('Top artists');
+    await rankedBars(ranked(cur.a, 10).map(([k, v], i) => ({ label: k, value: v, ...move(k, i + 1, prev?.a) })),
+      { valueLabel: v => v + (v === 1 ? ' play' : ' plays') });
+    sectionHeader('Top tracks');
+    await rankedBars(ranked(cur.t, 10).map(([k, v], i) => { const [ti, ar, al] = k.split('\u0001'); return { label: ti + (ar ? ' - ' + ar : ''), value: v, art: { artist: ar, album: al, title: ti }, ...move(k, i + 1, prev?.t) }; }),
+      { valueLabel: v => v + (v === 1 ? ' play' : ' plays'), covers: true });
+    const albums = ranked(cur.al, 5);
+    if (albums.length) {
+      sectionHeader('Top albums');
+      await rankedBars(albums.map(([k, v], i) => { const [al, ar] = k.split('\u0001'); return { label: al + (ar ? ' - ' + ar : ''), value: v, art: { artist: ar, album: al }, ...move(k, i + 1, prev?.al) }; }),
+        { valueLabel: v => v + (v === 1 ? ' play' : ' plays'), covers: true });
+    }
+    // New this month: artists not in any earlier summary
+    if (earlierArtists.size) {
+      const fresh = ranked(cur.a, 1000).filter(([k]) => !earlierArtists.has(k.toLowerCase())).slice(0, 10);
+      if (fresh.length) {
+        sectionHeader('New this month');
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(...inkRgb);
+        doc.splitTextToSize(fresh.map(([k]) => clean(k)).join(',  '), contentW).forEach(l => { newPageIfNeeded(14); doc.text(l, marginX, y + 4); y += 14; });
+        y += 6;
+      }
+    }
+    const stations = ranked(cur.st, 5);
+    if (stations.length) {
+      sectionHeader('Radio stations');
+      await rankedBars(stations.map(([k, v]) => ({ label: k, value: v })), { valueLabel: v => v + (v === 1 ? ' song' : ' songs') });
+    }
+
+    const pages = doc.internal.getNumberOfPages();
+    for (let p = 1; p <= pages; p++) {
+      doc.setPage(p);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...mutedRgb);
+      doc.text('CrowAI Media Player Card', marginX, pageH - 22);
+      doc.text('Page ' + p + ' of ' + pages, pageW - marginX, pageH - 22, { align: 'right' });
+    }
+    if (preview.closed) return;
+    this._showPDFPreview(doc, 'crowai-month-in-music-' + month + '.pdf', preview);
+  }
+
+  // Plays per day, time of day and day of week since a time, for the recap PDFs
+  _recapChartData(since) {
+    const recent = this._getListenLogEntries().filter(e => e.ts >= since);
+    const tb = this._pdfTimeBuckets(recent);
+    return { days: this._pdfDailySeries(recent, () => 1, since), tod: tb.tod, dow: tb.dow };
+  }
+
+  // ── Export: a pinned Music Recap snapshot ──
+  _exportRecapSnapshotPDF(recap) {
+    if (!this._pdfOn('recap')) return;   // switched off in the card editor
+    this._exportListPDF(async () => {
+      if (!recap) return null;
+      const artists = recap.topArtists || [], tracks = recap.topTracks || [];
+      return {
+        title: recap.name || 'Music Recap', subtitle: recap.dateRangeLabel || '',
+        rows: [['Artists', String(artists.length)], ['Tracks', String(tracks.length)],
+          ['Pinned', recap.pinnedAt ? new Date(recap.pinnedAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '']],
+        intro: recap.narrative || '',
+        charts: [
+          artists.some(a => a.count) ? { type: 'ranked', title: 'Top artists', items: artists.slice(0, 10).map(a => ({ label: a.name, value: a.count || 0 })),
+            valueLabel: v => v + (v === 1 ? ' play' : ' plays') } : null,
+          tracks.some(t => t.count) ? { type: 'ranked', title: 'Top tracks', covers: true, items: tracks.slice(0, 10).map(t => ({ label: t.title + (t.artist ? ' - ' + t.artist : ''), value: t.count || 0, art: { artist: t.artist, album: t.album, title: t.title } })),
+            valueLabel: v => v + (v === 1 ? ' play' : ' plays') } : null,
+          recap.tod ? { type: 'pair', charts: [{ title: 'Time of day', items: recap.tod }, { title: 'Day of the week', items: recap.dow || [] }] } : null,
+        ],
+        sections: [
+          artists.some(a => a.count) ? null : { heading: 'Top artists', items: artists.map((a, i) => ({ num: i + 1, title: a.name })) },
+          // With play counts the top 10 are in the chart above; any beyond that are listed here
+          (() => {
+            const ranked = tracks.some(t => t.count), from = ranked ? 10 : 0;
+            return { heading: ranked ? 'More top tracks' : 'Top tracks', thumbs: true, items: tracks.slice(from).map((t, i) => ({ num: from + i + 1, title: t.title, sub: [t.artist, t.album].filter(Boolean).join(' · '),
+              right: t.count ? t.count + (t.count === 1 ? ' play' : ' plays') : '', art: { artist: t.artist, album: t.album, title: t.title } })) };
+          })(),
+        ].filter(Boolean),
+        filename: 'recap-' + (recap.name || ''),
+      };
+    });
+  }
+
   // The PDF preview window. It opens straight away with a spinner while the
   // PDF is being made (fetching artwork can take a few seconds), so a tap
   // on Export always gets an immediate response, then shows the finished
@@ -13689,48 +17780,199 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const card = document.createElement('div');
     card.style.cssText = 'background:rgba(40,40,42,0.96);backdrop-filter:blur(30px) saturate(180%);-webkit-backdrop-filter:blur(30px) saturate(180%);border:1px solid rgba(255,255,255,0.15);border-radius:24px;box-shadow:0 24px 64px rgba(0,0,0,0.5);width:100%;max-width:560px;max-height:calc(100vh - 32px);display:flex;flex-direction:column;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,sans-serif;animation:crowPdfUp 0.22s cubic-bezier(0.34,1.4,0.64,1);';
     const headerRow = document.createElement('div');
-    headerRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:20px 20px 0;margin-bottom:16px;flex-shrink:0;';
-    headerRow.innerHTML = '<span class="crow-pdf-close" style="color:#63b3ed;font-size:15px;cursor:pointer;padding:4px 0;flex-shrink:0;">Close</span>'
-      + '<span style="font-size:16px;font-weight:600;color:#fff;flex:1;text-align:center;">PDF Preview</span>'
-      + '<span style="min-width:40px;flex-shrink:0;"></span>';
+    // Close on the left, "Not this one?" (case printables only) on the right
+    headerRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:12px;padding:20px 20px 0;margin-bottom:16px;flex-shrink:0;min-height:32px;';
+    headerRow.innerHTML = '<span class="crow-pdf-close" style="color:#63b3ed;font-size:15px;cursor:pointer;padding:4px 0;flex-shrink:0;">Close</span>';
     const body = document.createElement('div');
     body.style.cssText = 'padding:0 20px 20px;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;flex:1;min-height:0;';
     body.addEventListener('touchmove', e => e.stopPropagation(), { passive: true });
     const frameWrap = document.createElement('div');
     frameWrap.style.cssText = 'width:100%;height:58vh;min-height:340px;border-radius:12px;overflow:hidden;background:#fff;margin-bottom:10px;border:1px solid rgba(255,255,255,0.12);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;';
-    frameWrap.innerHTML = '<div style="width:28px;height:28px;border:2.5px solid rgba(0,122,255,0.2);border-top-color:#007AFF;border-radius:50%;animation:crowPdfSpin 0.8s linear infinite;"></div><div style="font-size:12px;color:#888;">Preparing PDF\u2026</div>';
+    frameWrap.innerHTML = '<div style="width:28px;height:28px;border:2.5px solid rgba(0,122,255,0.2);border-top-color:#007AFF;border-radius:50%;animation:crowPdfSpin 0.8s linear infinite;"></div><div style="font-size:12px;color:#888;">Preparing PDF\u2026</div>'
+      // What it's doing right now, a progress bar for steps that can count,
+      // and a way to skip the artwork if that's taking a while.
+      + '<div class="crow-pdf-status" style="font-size:11px;color:#aaa;min-height:14px;text-align:center;padding:0 24px;"></div>'
+      + '<div class="crow-pdf-bar" style="display:none;width:160px;height:4px;border-radius:2px;background:rgba(0,122,255,0.15);overflow:hidden;"><div style="height:100%;width:0;background:#007AFF;border-radius:2px;transition:width 0.25s ease;"></div></div>'
+      + '<span class="crow-pdf-skip" role="button" style="display:none;font-size:12px;color:#007AFF;cursor:pointer;padding:6px 10px;">Skip artwork</span>';
     body.appendChild(frameWrap);
+    let frameInit = { css: frameWrap.style.cssText, html: frameWrap.innerHTML };
+    let statusEl = frameWrap.querySelector('.crow-pdf-status');
+    let barEl = frameWrap.querySelector('.crow-pdf-bar');
+    let skipEl = frameWrap.querySelector('.crow-pdf-skip');
+    let skipTimer = null;
     const downloadBtn = document.createElement('button');
     downloadBtn.textContent = 'Download';
     downloadBtn.disabled = true;
     downloadBtn.style.cssText = 'width:100%;padding:12px;border-radius:12px;border:none;background:' + (this._config?.accent_color || '#007AFF') + ';color:#fff;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;opacity:0.4;';
+    // "Not this one?" - offered on the case printables so a wrong match can be swapped (see offerMatch / pickMatch)
+    const matchRow = document.createElement('div');
+    matchRow.style.cssText = 'display:none;justify-content:flex-end;flex-shrink:0;';
+    const matchBtn = document.createElement('button');
+    matchBtn.type = 'button';
+    matchBtn.innerHTML = '<svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:currentColor;flex-shrink:0;"><path d="M9.5,3A6.5,6.5 0 0,1 16,9.5C16,11.11 15.41,12.59 14.44,13.73L14.71,14H15.5L20.5,19L19,20.5L14,15.5V14.71L13.73,14.44C12.59,15.41 11.11,16 9.5,16A6.5,6.5 0 0,1 3,9.5A6.5,6.5 0 0,1 9.5,3M9.5,5C7,5 5,7 5,9.5C5,12 7,14 9.5,14C12,14 14,12 14,9.5C14,7 12,5 9.5,5Z"/></svg><span>Not this one?</span>';
+    matchBtn.style.cssText = 'display:inline-flex;align-items:center;gap:5px;padding:6px 12px;border-radius:999px;font-size:13px;font-weight:600;font-family:inherit;cursor:pointer;-webkit-tap-highlight-color:transparent;background:rgba(99,179,237,0.12);border:1px solid rgba(99,179,237,0.3);color:#63b3ed;transition:transform 0.12s ease;';
+    matchBtn.addEventListener('pointerdown', () => { matchBtn.style.transform = 'scale(0.96)'; });
+    ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => matchBtn.addEventListener(ev, () => { matchBtn.style.transform = ''; }));
+    matchRow.appendChild(matchBtn);
+    headerRow.appendChild(matchRow);
+    let matchFn = null, matchAlertLabel = '';
+    const abandoners = [];
+    matchBtn.addEventListener('click', (e) => { e.stopPropagation(); if (matchFn) matchFn(); });
     body.appendChild(downloadBtn);
     card.appendChild(style); card.appendChild(headerRow); card.appendChild(body);
     overlay.appendChild(card);
+    // Glass (card editor → Card Style): the sheet becomes iOS 27 Liquid Glass - a clear, refractive panel
+    // with a bright rim, a glass Download capsule, and a lighter dim so the dashboard shows through.
+    const glassSheet = this._config?.card_liquid_glass !== false;
+    const lightSheet = glassSheet && !!this._panelIsLight;
+    const overlayDim = lightSheet ? 'rgba(255,255,255,0.16)' : (glassSheet || this._panelIsLight) ? 'rgba(0,0,0,0.32)' : 'rgba(0,0,0,0.6)';
+    const overlayBlur = glassSheet ? 'blur(6px)' : 'blur(8px)';
+    if (glassSheet) {
+      overlay.style.background = overlayDim;
+      overlay.style.backdropFilter = overlay.style.webkitBackdropFilter = overlayBlur;
+      card.style.background = lightSheet
+        ? 'linear-gradient(160deg, rgba(255,255,255,0.7), rgba(255,255,255,0.45))'
+        : 'linear-gradient(160deg, rgba(255,255,255,0.15), rgba(255,255,255,0.05))';
+      card.style.backdropFilter = card.style.webkitBackdropFilter = lightSheet ? 'blur(28px) saturate(1.9) brightness(1.04)' : 'blur(28px) saturate(2.1) brightness(0.88)';
+      card.style.border = '1px solid ' + (lightSheet ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.22)');
+      card.style.borderRadius = '30px';
+      card.style.boxShadow = lightSheet
+        ? '0 30px 80px rgba(0,0,0,0.2), inset 0 1px 0 #ffffff, inset 0 -1px 0 rgba(255,255,255,0.4), 0 0 0 0.5px rgba(0,0,0,0.06)'
+        : '0 30px 80px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.36), inset 0 -1px 0 rgba(255,255,255,0.08), inset 0 0 28px rgba(255,255,255,0.05)';
+      card.style.position = 'relative';
+      const sheen = document.createElement('div');
+      sheen.style.cssText = 'position:absolute;inset:0 0 auto 0;height:140px;pointer-events:none;border-radius:30px 30px 0 0;background:linear-gradient(180deg,rgba(255,255,255,' + (lightSheet ? '0.5' : '0.12') + '),rgba(255,255,255,0));';
+      card.insertBefore(sheen, card.firstChild);
+      headerRow.style.position = body.style.position = 'relative';
+      headerRow.querySelector('.crow-pdf-close').style.color = lightSheet ? (this._config?.accent_color || '#007AFF') : '#fff';
+      frameWrap.style.borderRadius = '18px';
+      frameWrap.style.border = '1px solid ' + (lightSheet ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.18)');
+      frameWrap.style.boxShadow = '0 8px 24px rgba(0,0,0,0.25)';
+      const acc = this._config?.accent_color || '#007AFF';
+      downloadBtn.style.borderRadius = '999px';
+      downloadBtn.style.background = 'linear-gradient(180deg,' + this._pdfAlpha(acc, 0.95) + ',' + this._pdfAlpha(acc, 0.78) + ')';
+      downloadBtn.style.boxShadow = '0 8px 22px ' + this._pdfAlpha(acc, 0.35) + ', inset 0 1px 0 rgba(255,255,255,0.45), inset 0 -1px 0 rgba(0,0,0,0.12)';
+      // the "Not this one?" pill becomes a clear glass capsule
+      matchBtn.style.background = lightSheet ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.12)';
+      matchBtn.style.border = '0.5px solid ' + (lightSheet ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.24)');
+      matchBtn.style.boxShadow = lightSheet ? 'inset 0 1px 0 #ffffff, 0 1px 3px rgba(0,0,0,0.08)' : 'inset 0 1px 0 rgba(255,255,255,0.28)';
+      matchBtn.style.backdropFilter = matchBtn.style.webkitBackdropFilter = 'blur(12px) saturate(1.6)';
+      matchBtn.style.color = lightSheet ? acc : '#fff';
+    } else if (this._panelIsLight) {
+      // Classic in light mode: a light iOS sheet, to match its alerts and the chooser
+      const acc = this._config?.accent_color || '#007AFF';
+      overlay.style.background = 'rgba(0,0,0,0.32)';
+      card.style.background = 'rgba(242,242,247,0.97)';
+      card.style.border = '0.5px solid rgba(0,0,0,0.08)';
+      card.style.boxShadow = '0 24px 64px rgba(0,0,0,0.28)';
+      headerRow.querySelector('.crow-pdf-close').style.color = acc;
+      frameWrap.style.border = '1px solid rgba(0,0,0,0.08)';
+      matchBtn.style.background = this._pdfAlpha(acc, 0.1);
+      matchBtn.style.border = '1px solid ' + this._pdfAlpha(acc, 0.22);
+      matchBtn.style.color = acc;
+    }
+    frameInit = { css: frameWrap.style.cssText, html: frameWrap.innerHTML };
     let blobUrl = null, closed = false;
+    const cleanups = [];
     const close = () => {
       if (closed) return;
       closed = true;
       overlay.style.transition = 'opacity 0.18s ease';
       overlay.style.opacity = '0';
-      setTimeout(() => { overlay.remove(); if (blobUrl) URL.revokeObjectURL(blobUrl); }, 180);
+      setTimeout(() => {
+        overlay.remove();
+        if (blobUrl) URL.revokeObjectURL(blobUrl);
+        cleanups.forEach(fn => { try { fn(); } catch (_) {} });
+      }, 180);
     };
     headerRow.querySelector('.crow-pdf-close').addEventListener('click', close);
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
     document.body.appendChild(overlay);
+    const clearSkip = () => { clearTimeout(skipTimer); skipTimer = null; if (skipEl) { skipEl.style.display = 'none'; skipEl.onclick = null; } };
     return {
       get closed() { return closed; },
       close,
+      // run fn when the preview is closed (by any route)
+      onClose: (fn) => { if (closed) { try { fn(); } catch (_) {} } else cleanups.push(fn); },
+      // back to the "Preparing PDF…" state, e.g. after a choice offered on the error card
+      reset: () => {
+        if (closed) return;
+        overlay.querySelector('.crow-pdf-alert')?.remove();
+        card.style.display = '';
+        overlay.style.background = overlayDim;
+        overlay.style.backdropFilter = overlay.style.webkitBackdropFilter = overlayBlur;
+        frameWrap.style.cssText = frameInit.css;
+        frameWrap.innerHTML = frameInit.html;
+        statusEl = frameWrap.querySelector('.crow-pdf-status');
+        barEl = frameWrap.querySelector('.crow-pdf-bar');
+        skipEl = frameWrap.querySelector('.crow-pdf-skip');
+        downloadBtn.style.display = '';
+        matchRow.style.display = 'none';
+      },
+      // Offers "Not this one?" under the finished PDF (and on its error alerts); fn is run when it's tapped
+      offerMatch: (fn, alertLabel = 'Choose Another Match') => { matchFn = fn; matchAlertLabel = alertLabel; },
+      // A build waiting on the person (e.g. the "No Cover Art Yet" alert) can be told to give up, so a new one can start
+      onAbandon: (fn) => { abandoners.push(fn); },
+      abandon: () => { abandoners.splice(0).forEach(fn => { try { fn(); } catch (_) {} }); },
+      // An iOS-style sheet for picking the right match: a search box (filled in with query and searched
+      // straight away) above a list of results. search(text) resolves to
+      // [{ value, label, sub, img, current }] (null when it couldn't search). Resolves to the chosen value,
+      // or undefined if cancelled - and then whatever was showing before comes back.
+      pickMatch: (opts = {}) => this._pdfPickMatchSheet(overlay, card, opts, { isClosed: () => closed, onClose: fn => cleanups.push(fn) }),
+      // A short line under "Preparing PDF…" saying what's happening
+      status: (text) => {
+        if (closed || !statusEl?.isConnected) return;
+        statusEl.textContent = text || '';
+        if (barEl) barEl.style.display = 'none';
+        clearSkip();
+      },
+      // done/total for a step that can count (the bar fills as it goes)
+      progress: (text, done, total) => {
+        if (closed || !statusEl?.isConnected) return;
+        statusEl.textContent = text + (total ? ' ' + done + ' of ' + total : '');
+        if (barEl && total) {
+          barEl.style.display = 'block';
+          barEl.firstChild.style.width = Math.min(100, Math.round(done / total * 100)) + '%';
+        }
+      },
+      // Shows "Skip artwork" after a while; onSkip is called if it's tapped
+      offerSkip: (onSkip, afterMs = 10000, label = 'Skip artwork') => {
+        clearSkip();
+        skipTimer = setTimeout(() => {
+          if (closed || !skipEl?.isConnected) return;
+          skipEl.textContent = label;
+          skipEl.style.display = 'inline-block';
+          skipEl.onclick = () => { clearSkip(); onSkip(); };
+        }, afterMs);
+      },
+      clearSkip,
       show: (doc, filename) => {
         if (closed) return;
+        clearSkip();
+        if (matchFn) matchRow.style.display = 'flex';
+        if (blobUrl) { try { URL.revokeObjectURL(blobUrl); } catch (_) {} }
         blobUrl = doc.output('bloburl');
-        frameWrap.innerHTML = '';
-        frameWrap.style.display = 'block';
-        const iframe = document.createElement('iframe');
-        iframe.src = blobUrl;
-        iframe.title = 'PDF preview';
-        iframe.style.cssText = 'width:100%;height:100%;border:none;';
-        frameWrap.appendChild(iframe);
+        // Every page, drawn by PDF.js (iPhone and iPad only show the first
+        // page of a PDF in a frame). If the viewer can't load, the browser's
+        // own preview is used instead.
+        const showFrame = () => {
+          if (closed) return;
+          frameWrap.innerHTML = '';
+          frameWrap.style.display = 'block';
+          const iframe = document.createElement('iframe');
+          iframe.src = blobUrl;
+          iframe.title = 'PDF preview';
+          iframe.style.cssText = 'width:100%;height:100%;border:none;';
+          frameWrap.appendChild(iframe);
+        };
+        let buf = null;
+        try { buf = doc.output('arraybuffer'); } catch (_) { buf = null; }
+        if (!buf) showFrame();
+        else {
+          if (!window.pdfjsLib && statusEl?.isConnected) statusEl.textContent = 'Loading the page viewer\u2026';
+          this._renderPDFPages(frameWrap, buf, { isClosed: () => closed, onCleanup: fn => cleanups.push(fn) })
+            .catch(e => { console.warn('[CrowAI] page viewer unavailable', e); showFrame(); });
+        }
         downloadBtn.disabled = false;
         downloadBtn.style.opacity = '1';
         downloadBtn.onclick = () => {
@@ -13741,14 +17983,511 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           setTimeout(() => { downloadBtn.textContent = 'Download'; }, 1500);
         };
       },
+      // Something went wrong: the card's own iOS alert (same look as "Remove from History?" etc.)
+      // shown over the dimmed screen while the preview sheet steps aside.
+      // msg is either plain text, or { title, message, actions: [{ label, primary, destructive, href | onClick }] }.
+      // Plain text gets a title picked from what it says. reset() brings the sheet back (e.g. to carry on).
       fail: (msg) => {
         if (closed) return;
-        frameWrap.innerHTML = '<div style="font-size:13px;color:#555;text-align:center;padding:24px;line-height:1.5;">' + String(msg || 'Couldn\u2019t create the PDF.').replace(/</g, '&lt;') + '</div>';
+        clearSkip();
+        const o = (msg && typeof msg === 'object') ? msg : { message: String(msg || '') };
+        const text = String(o.message || 'Something went wrong while making the PDF.');
+        const kind = o.icon || (/internet|connection|reach|network|offline/i.test(text) ? 'offline'
+          : /artwork|cover|poster/i.test(text) ? 'art' : /no lyrics|nothing to export|no track|no tracks|nothing played/i.test(text) ? 'empty' : 'error');
+        const title = o.title || (/lyrics/i.test(text) && kind === 'empty' ? 'No Lyrics Found'
+          : ({ offline: 'You’re Offline', art: 'No Artwork Found', empty: 'Nothing to Show Yet', error: 'Couldn’t Make the PDF' })[kind]);
+        const esc = v => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        const light = !!this._panelIsLight;
+        const ink = light ? '#000000' : '#ffffff', dim = light ? 'rgba(60,60,67,0.62)' : 'rgba(235,235,245,0.62)';
+        const actions = ((o.actions && o.actions.length) ? o.actions : [{ label: 'OK', primary: true, onClick: close }]).slice();
+        // a wrong match is often why nothing was found: offer to choose another
+        if (matchFn && kind !== 'offline' && !o.noMatch) actions.unshift({ label: matchAlertLabel || 'Choose Another Match', onClick: () => matchFn() });
+        // Glass (card editor → Card Style): iOS 27 Liquid Glass - a clear, refractive panel with a bright rim,
+        // glass capsule buttons, and a lighter dim so the dashboard shows through.
+        const glass = this._config?.card_liquid_glass !== false;
+        const accent = this._config?.accent_color || '#007AFF';
+        overlay.querySelector('.crow-pdf-alert')?.remove();
+        card.style.display = 'none';
+        if (glass) {
+          overlay.style.background = light ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.28)';
+          overlay.style.backdropFilter = overlay.style.webkitBackdropFilter = 'blur(6px)';
+        }
+        const al = document.createElement('div');
+        al.className = 'crow-pdf-alert';
+        al.setAttribute('role', 'alertdialog'); al.setAttribute('aria-modal', 'true');
+        al.style.cssText = 'position:relative;overflow:hidden;width:min(320px,100%);box-sizing:border-box;padding:26px 18px 18px;border-radius:34px;'
+          + (glass
+            ? 'background:' + (light ? 'linear-gradient(160deg,rgba(255,255,255,0.62),rgba(255,255,255,0.38))' : 'linear-gradient(160deg,rgba(255,255,255,0.16),rgba(255,255,255,0.05))') + ';'
+              + 'backdrop-filter:blur(26px) saturate(2.1) brightness(' + (light ? '1.05' : '0.92') + ');-webkit-backdrop-filter:blur(26px) saturate(2.1) brightness(' + (light ? '1.05' : '0.92') + ');'
+              + 'border:1px solid ' + (light ? 'rgba(255,255,255,0.75)' : 'rgba(255,255,255,0.22)') + ';'
+              + 'box-shadow:0 30px 70px rgba(0,0,0,' + (light ? '0.22' : '0.5') + '), inset 0 1px 0 rgba(255,255,255,' + (light ? '0.95' : '0.38') + '), inset 0 -1px 0 rgba(255,255,255,' + (light ? '0.35' : '0.08') + '), inset 0 0 24px rgba(255,255,255,' + (light ? '0.25' : '0.05') + ');'
+            : 'background:' + (light ? 'rgba(250,250,252,0.86)' : 'rgba(48,48,52,0.78)') + ';'
+              + 'backdrop-filter:blur(34px) saturate(1.8);-webkit-backdrop-filter:blur(34px) saturate(1.8);'
+              + 'border:0.5px solid ' + (light ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.12)') + ';'
+              + 'box-shadow:0 24px 60px rgba(0,0,0,0.45), inset 0 1px 0 ' + (light ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.08)') + ';')
+          + 'font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;text-align:left;'
+          + 'opacity:0;transform:scale(1.08);transition:opacity 0.2s ease, transform 0.28s cubic-bezier(.2,.9,.3,1.15);';
+        al.innerHTML =
+          // glass: a soft specular sheen across the top of the panel
+          (glass ? '<div style="position:absolute;inset:0 0 auto 0;height:55%;pointer-events:none;border-radius:34px 34px 0 0;background:linear-gradient(180deg,rgba(255,255,255,' + (light ? '0.45' : '0.12') + ') 0%,rgba(255,255,255,0) 100%);"></div>' : '')
+          + '<div style="position:relative;font-size:17px;font-weight:700;line-height:1.3;padding:0 8px;color:' + ink + ';">' + esc(title) + '</div>'
+          + '<div style="position:relative;font-size:15px;line-height:1.42;margin-top:6px;padding:0 8px;color:' + (glass && !light ? 'rgba(235,235,245,0.72)' : dim) + ';">' + esc(text) + '</div>'
+          + '<div class="crow-pdf-alert-btns" style="position:relative;display:flex;flex-direction:column;gap:9px;margin-top:22px;"></div>';
+        const box = al.querySelector('.crow-pdf-alert-btns');
+        // like the card's alerts: the main action is the blue pill at the bottom, the others grey above it
+        [...actions.filter(a => !a.primary), ...actions.filter(a => a.primary)].forEach(a => {
+          const btn = document.createElement('button');
+          btn.textContent = a.label;
+          btn.style.cssText = 'width:100%;padding:14px 16px;margin:0;border:none;border-radius:999px;font-size:17px;font-weight:600;'
+            + 'font-family:inherit;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:transform 0.12s ease, filter 0.12s ease;'
+            + (glass
+              // glass capsules: tinted glass for the main action, clear glass for the rest
+              ? (a.primary
+                ? 'color:#fff;background:linear-gradient(180deg,' + (a.destructive ? 'rgba(255,69,58,0.92),rgba(220,40,30,0.85)' : this._pdfAlpha(accent, 0.95) + ',' + this._pdfAlpha(accent, 0.78)) + ');'
+                  + 'box-shadow:0 8px 22px ' + (a.destructive ? 'rgba(255,59,48,0.35)' : this._pdfAlpha(accent, 0.35)) + ', inset 0 1px 0 rgba(255,255,255,0.45), inset 0 -1px 0 rgba(0,0,0,0.12);'
+                : 'color:' + ink + ';background:' + (light ? 'rgba(255,255,255,0.62)' : 'rgba(255,255,255,0.12)') + ';'
+                  + 'border:0.5px solid ' + (light ? 'rgba(0,0,0,0.07)' : 'rgba(255,255,255,0.2)') + ';'
+                  + 'box-shadow:' + (light ? 'inset 0 1px 0 #ffffff, 0 1px 3px rgba(0,0,0,0.08)' : 'inset 0 1px 0 rgba(255,255,255,0.25)') + ';'
+                  + 'backdrop-filter:blur(12px) saturate(1.6);-webkit-backdrop-filter:blur(12px) saturate(1.6);')
+              : (a.primary ? 'background:' + (a.destructive ? '#FF3B30' : '#4AA8F5') + ';color:#fff;'
+                : 'background:' + (light ? 'rgba(120,120,128,0.16)' : 'rgba(255,255,255,0.12)') + ';color:' + ink + ';'));
+          btn.addEventListener('pointerdown', () => { btn.style.transform = 'scale(0.97)'; btn.style.filter = 'brightness(1.15)'; });
+          ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => btn.addEventListener(ev, () => { btn.style.transform = ''; btn.style.filter = ''; }));
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (a.href) { window.open(a.href, '_blank', 'noopener'); return; }   // the alert stays, so they can still choose
+            try { (a.onClick || close)(); } catch (_) {}
+          });
+          box.appendChild(btn);
+        });
+        al.addEventListener('click', e => e.stopPropagation());
+        overlay.appendChild(al);
+        requestAnimationFrame(() => requestAnimationFrame(() => { al.style.opacity = '1'; al.style.transform = 'scale(1)'; }));
+        downloadBtn.style.display = 'none';
       },
     };
   }
+  // PDF.js (Mozilla's PDF viewer), loaded the first time a preview opens.
+  _ensurePdfJs() {
+    if (window.pdfjsLib?.getDocument) return Promise.resolve(window.pdfjsLib);
+    if (this._pdfJsLoadPromise) return this._pdfJsLoadPromise;
+    const BASE = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
+    this._pdfJsLoadPromise = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = BASE + 'pdf.min.js';
+      const fail = (msg) => { this._pdfJsLoadPromise = null; reject(new Error(msg)); };
+      const t = setTimeout(() => fail('PDF viewer took too long to load'), 15000);
+      script.onload = () => {
+        clearTimeout(t);
+        const lib = window.pdfjsLib;
+        if (!lib?.getDocument) { fail('PDF viewer failed to initialise'); return; }
+        lib.GlobalWorkerOptions.workerSrc = BASE + 'pdf.worker.min.js';
+        resolve(lib);
+      };
+      script.onerror = () => { clearTimeout(t); fail('Could not load the PDF viewer'); };
+      document.head.appendChild(script);
+    });
+    return this._pdfJsLoadPromise;
+  }
+
+  // Draws every page of the PDF into the preview as a scrolling stack, with
+  // a "Page 2 of 5" counter. Pages are only drawn as they scroll near, and
+  // each one is kept as an image (not a live canvas) so long PDFs don't run
+  // the phone out of memory. Pinch to zoom (up to 4x) or double-tap to zoom
+  // in and back out; pages are redrawn sharper once a zoom settles.
+  async _renderPDFPages(frameWrap, buf, { isClosed = () => false, onCleanup = () => {} } = {}) {
+    const lib = await this._ensurePdfJs();
+    if (isClosed()) return;
+    const pdf = await lib.getDocument({ data: new Uint8Array(buf) }).promise;
+    onCleanup(() => pdf.destroy());
+    if (isClosed()) return;
+    const total = pdf.numPages;
+    const first = await pdf.getPage(1);
+    const vp1 = first.getViewport({ scale: 1 });
+    if (isClosed()) return;
+
+    frameWrap.innerHTML = '';
+    frameWrap.style.display = 'block';
+    frameWrap.style.position = 'relative';
+    frameWrap.style.background = '#d1d1d6';
+    const scroller = document.createElement('div');
+    scroller.style.cssText = 'position:absolute;inset:0;overflow:auto;-webkit-overflow-scrolling:touch;padding:10px;box-sizing:border-box;touch-action:pan-x pan-y;';
+    frameWrap.appendChild(scroller);
+    // The zoomable sheet holding the pages — zoom is its width
+    const sheet = document.createElement('div');
+    sheet.style.cssText = 'width:100%;transform-origin:0 0;';
+    scroller.appendChild(sheet);
+    const counter = document.createElement('div');
+    counter.style.cssText = 'position:absolute;bottom:10px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.62);color:#fff;font-size:11px;font-weight:600;padding:4px 11px;border-radius:11px;pointer-events:none;white-space:nowrap;' + (total > 1 ? '' : 'display:none;');
+    frameWrap.appendChild(counter);
+    const GAP = 10;
+
+    const holders = [];
+    for (let i = 1; i <= total; i++) {
+      const h = document.createElement('div');
+      h.dataset.page = String(i);
+      h.style.cssText = 'position:relative;width:100%;aspect-ratio:' + vp1.width + ' / ' + vp1.height + ';background:#fff;border-radius:3px;box-shadow:0 1px 4px rgba(0,0,0,0.18);overflow:hidden;' + (i < total ? 'margin-bottom:' + GAP + 'px;' : '');
+      sheet.appendChild(h);
+      holders.push(h);
+    }
+
+    const urls = new Set();
+    onCleanup(() => urls.forEach(u => URL.revokeObjectURL(u)));
+    const MAX_PX = 2600;            // widest a page is ever drawn (memory)
+    const drawnW = new Map();       // page -> pixel width it was drawn at
+    const busy = new Set();
+    let chain = Promise.resolve();
+    const wantPx = (holder) => {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+      return Math.min(MAX_PX, Math.round((holder.clientWidth || scroller.clientWidth - 20 || 320) * dpr));
+    };
+    const renderPage = (n) => {
+      const holder = holders[n - 1];
+      if (!holder || busy.has(n)) return;
+      const target = wantPx(holder);
+      if ((drawnW.get(n) || 0) >= target * 0.9) return;   // already sharp enough
+      busy.add(n);
+      chain = chain.then(async () => {
+        if (isClosed()) return;
+        const page = n === 1 ? first : await pdf.getPage(n);
+        const base = page.getViewport({ scale: 1 });
+        const px = wantPx(holder);
+        const viewport = page.getViewport({ scale: px / base.width });
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.floor(viewport.width);
+        canvas.height = Math.floor(viewport.height);
+        await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+        if (n !== 1) page.cleanup();
+        if (isClosed()) return;
+        const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
+        canvas.width = 0; canvas.height = 0;   // free the canvas memory
+        if (!blob || isClosed()) return;
+        const url = URL.createObjectURL(blob);
+        urls.add(url);
+        const old = holder.querySelector('img');
+        const img = document.createElement('img');
+        img.alt = 'Page ' + n;
+        img.draggable = false;
+        img.style.cssText = 'display:block;width:100%;height:100%;position:absolute;inset:0;';
+        img.onload = () => {
+          if (old) { const ou = old.src; old.remove(); if (urls.has(ou)) { URL.revokeObjectURL(ou); urls.delete(ou); } }
+        };
+        img.src = url;
+        holder.appendChild(img);
+        drawnW.set(n, canvas.width || px);
+      }).catch(() => {}).finally(() => { busy.delete(n); });
+    };
+    const visiblePages = (margin = 0) => {
+      const top = scroller.scrollTop - margin, bottom = scroller.scrollTop + scroller.clientHeight + margin;
+      return holders.filter(h => h.offsetTop + h.offsetHeight >= top && h.offsetTop <= bottom).map(h => Number(h.dataset.page));
+    };
+
+    // Draw pages as they come near the visible area
+    if ('IntersectionObserver' in window) {
+      const io = new IntersectionObserver(entries => {
+        entries.forEach(en => { if (en.isIntersecting) renderPage(Number(en.target.dataset.page)); });
+      }, { root: scroller, rootMargin: '900px 300px' });
+      holders.forEach(h => io.observe(h));
+      onCleanup(() => io.disconnect());
+    } else {
+      for (let i = 1; i <= total; i++) renderPage(i);
+    }
+    renderPage(1);
+
+    const updateCounter = () => {
+      const mid = scroller.scrollTop + scroller.clientHeight / 2;
+      let cur = 1;
+      for (const h of holders) { if (h.offsetTop <= mid) cur = Number(h.dataset.page); else break; }
+      counter.textContent = 'Page ' + cur + ' of ' + total;
+    };
+    scroller.addEventListener('scroll', updateCounter, { passive: true });
+    updateCounter();
+
+    // ── Zoom ──
+    const MIN_Z = 1, MAX_Z = 4;
+    let zoom = 1;
+    let sharpenTimer = null;
+    const sharpen = () => {
+      clearTimeout(sharpenTimer);
+      sharpenTimer = setTimeout(() => { if (!isClosed()) visiblePages(200).forEach(renderPage); }, 250);
+    };
+    // Set the zoom, keeping the content point under (cx, cy) — coordinates
+    // relative to the scroller's visible box — where it is.
+    const setZoom = (z, cx, cy) => {
+      z = Math.max(MIN_Z, Math.min(MAX_Z, z));
+      const pad = 10;
+      const ratio = z / zoom;
+      const contentX = scroller.scrollLeft + cx - pad;
+      const contentY = scroller.scrollTop + cy - pad;
+      // Page gaps don't scale, so vertical position is mapped page by page
+      const pageIdx = Math.max(0, Math.min(total - 1, Math.floor(contentY / (holders[0].offsetHeight + GAP))));
+      const gapsAbove = pageIdx * GAP;
+      zoom = z;
+      sheet.style.width = (z * 100) + '%';
+      scroller.scrollLeft = contentX * ratio - cx + pad;
+      scroller.scrollTop = (contentY - gapsAbove) * ratio + gapsAbove - cy + pad;
+      updateCounter();
+      sharpen();
+    };
+
+    const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    const rel = (x, y) => { const r = scroller.getBoundingClientRect(); return [x - r.left, y - r.top]; };
+    let pinch = null;          // { d0, z0, cx, cy, scale }
+    let lastTap = 0;
+    const onStart = (e) => {
+      if (e.touches.length === 2) {
+        const [cx, cy] = rel((e.touches[0].clientX + e.touches[1].clientX) / 2, (e.touches[0].clientY + e.touches[1].clientY) / 2);
+        // Live preview with a transform (smooth), committed on release
+        const ox = scroller.scrollLeft + cx - 10, oy = scroller.scrollTop + cy - 10;
+        sheet.style.transformOrigin = ox + 'px ' + oy + 'px';
+        pinch = { d0: dist(e.touches), z0: zoom, cx, cy, scale: 1 };
+        e.preventDefault();
+      } else if (e.touches.length === 1) {
+        const now = Date.now();
+        if (now - lastTap < 300) {
+          const [cx, cy] = rel(e.touches[0].clientX, e.touches[0].clientY);
+          setZoom(zoom > 1.05 ? 1 : 2.5, cx, cy);
+          lastTap = 0;
+          e.preventDefault();
+        } else lastTap = now;
+      }
+    };
+    const onMove = (e) => {
+      if (!pinch || e.touches.length < 2) return;
+      e.preventDefault();
+      const z = Math.max(MIN_Z, Math.min(MAX_Z, pinch.z0 * dist(e.touches) / pinch.d0));
+      pinch.scale = z / pinch.z0;
+      sheet.style.transform = 'scale(' + pinch.scale + ')';
+    };
+    const onEnd = (e) => {
+      if (!pinch || e.touches.length >= 2) return;
+      const { z0, scale, cx, cy } = pinch;
+      pinch = null;
+      sheet.style.transform = '';
+      sheet.style.transformOrigin = '0 0';
+      if (Math.abs(scale - 1) > 0.01) setZoom(z0 * scale, cx, cy);
+    };
+    scroller.addEventListener('touchstart', onStart, { passive: false });
+    scroller.addEventListener('touchmove', e => { onMove(e); e.stopPropagation(); }, { passive: false });
+    scroller.addEventListener('touchend', onEnd);
+    scroller.addEventListener('touchcancel', onEnd);
+    // Safari's own page-zoom gesture would zoom the whole dashboard instead
+    ['gesturestart', 'gesturechange'].forEach(ev => scroller.addEventListener(ev, e => e.preventDefault(), { passive: false }));
+    // Ctrl/trackpad pinch on a computer
+    scroller.addEventListener('wheel', (e) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      const [cx, cy] = rel(e.clientX, e.clientY);
+      setZoom(zoom * Math.exp(-e.deltaY / 200), cx, cy);
+    }, { passive: false });
+    scroller.addEventListener('dblclick', (e) => {
+      const [cx, cy] = rel(e.clientX, e.clientY);
+      setZoom(zoom > 1.05 ? 1 : 2.5, cx, cy);
+    });
+  }
+
   _showPDFPreview(doc, filename, preview = null) {
     (preview || this._openPDFPreview()).show(doc, filename);
+  }
+
+  // The "Not this one?" chooser inside the PDF preview (it sits over the dashboard, so it can't use the
+  // card's own sheets). Same look as the preview's alerts: Liquid Glass with Glass on, light or dark.
+  _pdfPickMatchSheet(overlay, card, { title = 'Not This One?', message = '', query = '', placeholder = 'Search', search, thumb = 'square' } = {}, { isClosed, onClose }) {
+    return new Promise(resolve => {
+      if (isClosed() || typeof search !== 'function') { resolve(undefined); return; }
+      const esc = v => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      const light = !!this._panelIsLight;
+      const glass = this._config?.card_liquid_glass !== false;
+      const accent = this._config?.accent_color || '#007AFF';
+      const ink = light ? '#000000' : '#ffffff';
+      const dim = light ? 'rgba(60,60,67,0.62)' : 'rgba(235,235,245,0.62)';
+      const field = light ? 'rgba(120,120,128,0.12)' : 'rgba(255,255,255,0.1)';
+      // what was showing before (the finished case or an error alert) steps aside, and comes back on Cancel
+      const prevAlert = overlay.querySelector('.crow-pdf-alert');
+      const prevCard = card.style.display;
+      if (prevAlert) prevAlert.style.display = 'none';
+      card.style.display = 'none';
+      const sh = document.createElement('div');
+      sh.className = 'crow-pdf-match';
+      sh.setAttribute('role', 'dialog'); sh.setAttribute('aria-modal', 'true');
+      sh.style.cssText = 'position:relative;overflow:hidden;width:min(400px,100%);max-height:min(600px,calc(100vh - 160px));box-sizing:border-box;display:flex;flex-direction:column;padding:22px 16px 16px;border-radius:34px;'
+        + (glass
+          ? 'background:' + (light ? 'linear-gradient(160deg,rgba(255,255,255,0.66),rgba(255,255,255,0.42))' : 'linear-gradient(160deg,rgba(255,255,255,0.16),rgba(255,255,255,0.05))') + ';'
+            + 'backdrop-filter:blur(26px) saturate(2.1) brightness(' + (light ? '1.05' : '0.9') + ');-webkit-backdrop-filter:blur(26px) saturate(2.1) brightness(' + (light ? '1.05' : '0.9') + ');'
+            + 'border:1px solid ' + (light ? 'rgba(255,255,255,0.75)' : 'rgba(255,255,255,0.22)') + ';'
+            + 'box-shadow:0 30px 70px rgba(0,0,0,' + (light ? '0.22' : '0.5') + '), inset 0 1px 0 rgba(255,255,255,' + (light ? '0.95' : '0.38') + '), inset 0 -1px 0 rgba(255,255,255,' + (light ? '0.35' : '0.08') + ');'
+          : 'background:' + (light ? 'rgba(250,250,252,0.94)' : 'rgba(44,44,48,0.94)') + ';'
+            + 'backdrop-filter:blur(34px) saturate(1.8);-webkit-backdrop-filter:blur(34px) saturate(1.8);'
+            + 'border:0.5px solid ' + (light ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.12)') + ';'
+            + 'box-shadow:0 24px 60px rgba(0,0,0,0.45), inset 0 1px 0 ' + (light ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.08)') + ';')
+        + 'font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;text-align:left;'
+        + 'opacity:0;transform:scale(1.06);transition:opacity 0.2s ease, transform 0.28s cubic-bezier(.2,.9,.3,1.15);';
+      const pill = 'border:none;border-radius:999px;font-size:16px;font-weight:600;font-family:inherit;cursor:pointer;-webkit-tap-highlight-color:transparent;';
+      sh.innerHTML =
+        (glass ? '<div style="position:absolute;inset:0 0 auto 0;height:120px;pointer-events:none;border-radius:34px 34px 0 0;background:linear-gradient(180deg,rgba(255,255,255,' + (light ? '0.45' : '0.12') + '),rgba(255,255,255,0));"></div>' : '')
+        + '<div style="position:relative;font-size:17px;font-weight:700;line-height:1.3;padding:0 6px;color:' + ink + ';text-align:center;">' + esc(title) + '</div>'
+        + (message ? '<div style="position:relative;font-size:14px;line-height:1.4;margin-top:4px;padding:0 6px;color:' + dim + ';text-align:center;">' + esc(message) + '</div>' : '')
+        + '<form class="crow-match-form" style="position:relative;display:flex;gap:8px;margin:14px 0 10px;">'
+        +   '<input class="crow-match-q" type="search" enterkeyhint="search" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="' + esc(placeholder) + '" value="' + esc(query) + '"'
+        +     ' style="flex:1;min-width:0;box-sizing:border-box;padding:10px 14px;border-radius:999px;border:none;outline:none;background:' + field + ';color:' + ink + ';font-size:16px;font-family:inherit;-webkit-appearance:none;">'
+        +   '<button type="submit" style="' + pill + 'padding:0 16px;font-size:15px;color:#fff;background:' + (glass ? 'linear-gradient(180deg,' + this._pdfAlpha(accent, 0.95) + ',' + this._pdfAlpha(accent, 0.78) + ')' : accent) + ';">Search</button>'
+        + '</form>'
+        + '<div class="crow-match-list" style="position:relative;flex:1;min-height:120px;overflow-y:auto;-webkit-overflow-scrolling:touch;margin:0 -4px;padding:0 4px;"></div>'
+        + '<button class="crow-match-cancel" type="button" style="position:relative;' + pill + 'width:100%;padding:13px 16px;margin-top:12px;color:' + ink + ';'
+        +   (glass ? 'background:' + (light ? 'rgba(255,255,255,0.62)' : 'rgba(255,255,255,0.12)') + ';border:0.5px solid ' + (light ? 'rgba(0,0,0,0.07)' : 'rgba(255,255,255,0.2)') + ';' : 'background:' + (light ? 'rgba(120,120,128,0.16)' : 'rgba(255,255,255,0.12)') + ';')
+        +   '">Cancel</button>';
+      overlay.appendChild(sh);
+      sh.addEventListener('click', e => e.stopPropagation());
+      sh.addEventListener('touchmove', e => e.stopPropagation(), { passive: true });
+      requestAnimationFrame(() => requestAnimationFrame(() => { sh.style.opacity = '1'; sh.style.transform = 'scale(1)'; }));
+      const list = sh.querySelector('.crow-match-list');
+      const input = sh.querySelector('.crow-match-q');
+      let done = false, seq = 0;
+      const finish = (v) => {
+        if (done) return; done = true;
+        document.removeEventListener('keydown', onKey, true);
+        sh.remove();
+        if (v === undefined && !isClosed()) { card.style.display = prevCard; if (prevAlert) prevAlert.style.display = ''; }
+        resolve(v);
+      };
+      const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); finish(undefined); } };
+      document.addEventListener('keydown', onKey, true);
+      onClose(() => finish(undefined));
+      sh.querySelector('.crow-match-cancel').addEventListener('click', () => finish(undefined));
+      const note = (txt, spin) => {
+        list.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;gap:10px;padding:26px 12px;text-align:center;font-size:13px;color:' + dim + ';">'
+          + (spin ? '<div style="width:22px;height:22px;border:2.5px solid ' + this._pdfAlpha(accent, 0.2) + ';border-top-color:' + accent + ';border-radius:50%;animation:crowPdfSpin 0.8s linear infinite;"></div>' : '')
+          + esc(txt) + '</div>';
+      };
+      const tw = thumb === 'poster' ? 34 : 42, th = thumb === 'poster' ? 50 : 42;
+      const icon = thumb === 'poster'
+        ? 'M18,4L20,8H17L15,4H13L15,8H12L10,4H8L10,8H7L5,4H4A2,2 0 0,0 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V4H18Z'
+        : 'M12,2A10,10 0 1,1 12,22A10,10 0 1,1 12,2Z M12,7.5A4.5,4.5 0 1,0 12,16.5A4.5,4.5 0 1,0 12,7.5Z M12,10.8A1.2,1.2 0 1,1 12,13.2A1.2,1.2 0 1,1 12,10.8Z';
+      const run = async () => {
+        const q = (input.value || '').trim();
+        if (!q) { note('Type a name to search for.'); return; }
+        const my = ++seq;
+        note('Searching…', true);
+        let opts = null;
+        try { opts = await search(q); } catch (_) { opts = null; }
+        if (done || my !== seq) return;
+        if (opts == null) { note('Can’t search right now. Check your connection and try again.'); return; }
+        if (!opts.length) { note('Nothing found for “' + q + '”. Try a different name.'); return; }
+        list.innerHTML = '';
+        opts.forEach((o, i) => {
+          const row = document.createElement('button');
+          row.type = 'button';
+          row.style.cssText = 'display:flex;align-items:center;gap:12px;width:100%;box-sizing:border-box;padding:6px 8px;margin:0;border:none;border-radius:16px;background:' + (o.current ? this._pdfAlpha(accent, light ? 0.12 : 0.2) : 'transparent') + ';'
+            + 'text-align:left;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;transition:background 0.12s ease;'
+            + (i ? 'margin-top:2px;' : '');
+          row.innerHTML =
+            '<div style="position:relative;width:' + tw + 'px;height:' + th + 'px;flex-shrink:0;border-radius:' + (thumb === 'poster' ? 6 : 8) + 'px;overflow:hidden;background:' + field + ';display:flex;align-items:center;justify-content:center;">'
+            +   '<svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:' + dim + ';"><path fill-rule="evenodd" d="' + icon + '"/></svg>'
+            +   (o.img ? '<img alt="" loading="lazy" src="' + esc(o.img) + '" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;" onerror="this.remove()">' : '')
+            + '</div>'
+            + '<div style="flex:1;min-width:0;">'
+            +   '<div style="font-size:15px;font-weight:600;line-height:1.25;color:' + ink + ';overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;">' + esc(o.label) + '</div>'
+            +   (o.sub ? '<div style="font-size:12.5px;line-height:1.3;margin-top:2px;color:' + dim + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(o.sub) + '</div>' : '')
+            + '</div>'
+            + (o.current
+              ? '<svg viewBox="0 0 24 24" style="width:20px;height:20px;flex-shrink:0;fill:' + accent + ';" aria-label="Current match"><path d="M21,7L9,19L3.5,13.5L4.91,12.09L9,16.17L19.59,5.59L21,7Z"/></svg>'
+              : '<svg viewBox="0 0 24 24" style="width:16px;height:16px;flex-shrink:0;fill:' + dim + ';"><path d="M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z"/></svg>');
+          row.addEventListener('pointerdown', () => { row.style.background = this._pdfAlpha(accent, light ? 0.16 : 0.26); });
+          ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => row.addEventListener(ev, () => { row.style.background = o.current ? this._pdfAlpha(accent, light ? 0.12 : 0.2) : 'transparent'; }));
+          // the current match: nothing to change, so it just closes the sheet
+          row.addEventListener('click', () => finish(o.current ? undefined : o.value));
+          list.appendChild(row);
+        });
+      };
+      sh.querySelector('.crow-match-form').addEventListener('submit', (e) => { e.preventDefault(); input.blur(); run(); });
+      run();
+    });
+  }
+
+  // '#4AA8F5' or 'rgb(…)' → 'rgba(r,g,b,a)' (for tinted glass)
+  _pdfAlpha(col, a) {
+    const c = String(col || '').trim();
+    let m = c.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+    if (m) {
+      let h = m[1]; if (h.length === 3) h = h.split('').map(x => x + x).join('');
+      return 'rgba(' + parseInt(h.slice(0, 2), 16) + ',' + parseInt(h.slice(2, 4), 16) + ',' + parseInt(h.slice(4, 6), 16) + ',' + a + ')';
+    }
+    m = c.match(/^rgba?\(([^)]+)\)$/i);
+    if (m) { const p = m[1].split(',').map(x => x.trim()); return 'rgba(' + p[0] + ',' + p[1] + ',' + p[2] + ',' + a + ')'; }
+    return 'rgba(10,132,255,' + a + ')';
+  }
+
+  // ── Which PDF exports are on (card editor → Export & PDF) ───────────────
+  // pdf_enabled is the master switch; each type is on unless switched off. Types:
+  //   lyrics (song + album lyrics) · cd (CD case) · disc (DVD / Blu-ray case) · info (info panels, episode guides)
+  //   history (listening / watch reports) · month (Month in Music) · recent (Recently Played)
+  //   recap (recap summaries) · pins (pinned items) · lists (queue, albums, playlists, artists, search results, podcasts)
+  _pdfOn(type) {
+    if (this._config?.pdf_enabled === false) return false;
+    if (!type) return true;
+    // every PDF type is on unless switched off
+    return this._config?.['pdf_' + type] !== false;
+  }
+  // Buttons tagged data-pdf="type" in the card are hidden by CSS when their type is off (see :host rules).
+  _applyPdfVisibility() {
+    const off = ['lyrics', 'cd', 'disc', 'info', 'history', 'month', 'recent', 'recap', 'pins', 'lists'].filter(t => !this._pdfOn(t));
+    if (off.length) this.setAttribute('data-pdf-off', off.join(' '));
+    else this.removeAttribute('data-pdf-off');
+  }
+
+  // ── Session caches for PDF reports ──────────────────────────────────────
+  // Kept in page memory only (on window, so every card on the dashboard shares them):
+  // closing or reloading the page, or closing the Home Assistant app, clears them and the next report fetches fresh.
+
+  // Finished PDFs, by report + the inputs it was built from.
+  _pdfSession() { return window.__crowaiPdfSession || (window.__crowaiPdfSession = new Map()); }
+  _pdfHash(str) {
+    let h = 0x811c9dc5;
+    str = String(str || '');
+    for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+    return (h >>> 0).toString(16) + ':' + str.length;
+  }
+  // If this report was already made this session, shows it straight away and returns true.
+  // Otherwise returns false and keeps the finished PDF when the preview shows it.
+  _pdfFromSession(key, preview) {
+    if (!key || !preview) return false;
+    const cache = this._pdfSession();
+    const hit = cache.get(key);
+    if (hit) {
+      cache.delete(key); cache.set(key, hit);   // most recently used last
+      (preview._baseShow || preview.show)({
+        output: t => t === 'arraybuffer' ? hit.buf.slice(0)
+          : t === 'bloburl' ? URL.createObjectURL(new Blob([hit.buf], { type: 'application/pdf' })) : null,
+      }, hit.filename);
+      return true;
+    }
+    const show = preview._baseShow || (preview._baseShow = preview.show);
+    preview.show = (doc, filename) => {
+      try {
+        const buf = doc.output('arraybuffer');
+        if (buf?.byteLength) {
+          cache.set(key, { buf, filename });
+          // keep memory in check on phones: at most ~80 MB of PDFs, oldest dropped first
+          let total = 0; cache.forEach(v => { total += v.buf.byteLength; });
+          for (const [k, v] of cache) { if (total <= 80e6 || cache.size <= 1) break; total -= v.buf.byteLength; cache.delete(k); }
+        }
+      } catch (_) {}
+      show(doc, filename);
+    };
+    return false;
+  }
+
+  // Fetched data used by the reports (artwork, TMDB, iTunes, Wikidata, MusicBrainz), by request.
+  // Empty / failed results aren't kept, so they are tried again next time.
+  _sessionMemo(ns, key, fn, { keep = v => v != null, max = 200 } = {}) {
+    const all = window.__crowaiDataSession || (window.__crowaiDataSession = new Map());
+    const m = all.get(ns) || (all.set(ns, new Map()), all.get(ns));
+    const k = String(key);
+    if (m.has(k)) { const p = m.get(k); m.delete(k); m.set(k, p); return p; }
+    const p = Promise.resolve().then(fn).then(v => { if (!keep(v)) m.delete(k); return v; }, e => { m.delete(k); throw e; });
+    m.set(k, p);
+    while (m.size > max) m.delete(m.keys().next().value);
+    return p;
   }
 
   _showMtContextMenu(anchor, item, menuOpts = {}) {
@@ -13762,6 +18501,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     menu.innerHTML =
       '<div class="queue-dropdown-item' + (isPinned ? ' danger' : '') + '" id="mtPin" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg><span class="queue-dropdown-label">' + (isPinned ? 'Unpin' : 'Pin') + '</span></div>' +
       // Find Soundtrack runs through AI Search — hidden when AI features are off
+      (!this._pdfOn('disc') ? '' : '<div class="queue-dropdown-item" id="mtDiscCase" data-pdf="disc" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M12,2A10,10 0 1,1 12,22A10,10 0 1,1 12,2Z M12,7.5A4.5,4.5 0 1,0 12,16.5A4.5,4.5 0 1,0 12,7.5Z M12,10.8A1.2,1.2 0 1,1 12,13.2A1.2,1.2 0 1,1 12,10.8Z"/></svg><span class="queue-dropdown-label">DVD / Blu-ray Case Printables (PDF)</span></div>') +
       (!this._aiFeatureOn('discover') ? '' : '<div class="queue-dropdown-item" id="mtSoundtrack" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6zm0 16c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3-7.82V5h2v4.18l-2 2z"/><path d="M19 3l-4.5 4.5 1.42 1.42 3.08-3.09V11h2V4.41L19 3z"/></svg><span class="queue-dropdown-label">Find Soundtrack</span></div>') +
       // Remove from History — Watch History rows only. Destructive, so it
       // sits last and in red, same as the drill-in's ⋮ menu.
@@ -13784,6 +18524,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       this._updatePinnedIndicator();
       if (this._maCurrentTab === 'movie_tv') this._loadMATab('movie_tv');
       if (this._pinnedDetailActive && this._pinnedDetailCategory === 'movies_tv') this._openPinnedCategoryDetail('movies_tv');
+    });
+    menu.querySelector('#mtDiscCase')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
+      this._exportDiscCaseFor(item.title, item.kind === 'tv', item.artworkUrl100 || '');
     });
     menu.querySelector('#mtSoundtrack')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
       this._showAISearchPanel(`Music from ${item.title}`);
@@ -14119,6 +18862,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         '<button class="ma-drill-action-btn" data-action="pin"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"' + (isPinned ? ' style="fill:#FFD60A"' : '') + '><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg></div><span class="ma-drill-btn-label">' + (isPinned ? 'Unpin' : 'Pin') + '</span></button>' +
         // Soundtrack runs through AI Search — hidden when AI features are off
         (!this._aiFeatureOn('discover') ? '' : '<button class="ma-drill-action-btn" data-action="soundtrack"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg></div><span class="ma-drill-btn-label">Soundtrack</span></button>') +
+      '<button class="ma-drill-action-btn" data-action="pdf" data-pdf="history"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20M12,19L8,15H10.5V12H13.5V15H16L12,19Z"/></svg></div><span class="ma-drill-btn-label">Export</span></button>' +
       '</div>' +
       '<div id="watchDetailList"></div>';
 
@@ -14131,6 +18875,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       this._updatePinnedIndicator();
       this._openWatchGroupDetail(g.key, { keepScroll: true });
     });
+    actions?.querySelector('[data-action="pdf"]')?.addEventListener('click', () => this._exportWatchTitlePDF(g, this._mtArtCache?.[artKey] || art));
     actions?.querySelector('[data-action="soundtrack"]')?.addEventListener('click', () => {
       this._showAISearchPanel(`Music from ${g.title}`);
     });
@@ -14274,9 +19019,15 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // ⋮ menu while inside a title's drill-in.
   _showWatchDetailMenu(anchorEl, g) {
     const trash = '<svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M9,3V4H4V6H5V19A2,2 0 0,0 7,21H17A2,2 0 0,0 19,19V6H20V4H15V3H9M7,6H17V19H7V6M9,8V17H11V8H9M13,8V17H15V8H13Z"/></svg>';
+    const disc = '<svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M12,2A10,10 0 1,1 12,22A10,10 0 1,1 12,2Z M12,7.5A4.5,4.5 0 1,0 12,16.5A4.5,4.5 0 1,0 12,7.5Z M12,10.8A1.2,1.2 0 1,1 12,13.2A1.2,1.2 0 1,1 12,10.8Z"/></svg>';
     this._showWatchDropdown(anchorEl,
-      '<div class="queue-dropdown-item danger" id="watchDetailRemoveAll" role="button">' + trash + '<span class="queue-dropdown-label">Remove from History</span></div>',
+      (!this._pdfOn('disc') ? '' : '<div class="queue-dropdown-item" id="watchDetailDiscCase" data-pdf="disc" role="button">' + disc + '<span class="queue-dropdown-label">DVD / Blu-ray Case Printables (PDF)</span></div>')
+      + '<div class="queue-dropdown-item danger" id="watchDetailRemoveAll" role="button">' + trash + '<span class="queue-dropdown-label">Remove from History</span></div>',
       (menu, closeMenu) => {
+        menu.querySelector('#watchDetailDiscCase')?.addEventListener('click', () => {
+          closeMenu();
+          this._exportDiscCaseFor(g.title, g.kind === 'tv', this._mtArtCache?.[g.kind + '|' + g.title.toLowerCase()] || '');
+        });
         menu.querySelector('#watchDetailRemoveAll')?.addEventListener('click', () => {
           closeMenu();
           this._confirmRemoveWatchGroup(g);
@@ -14710,6 +19461,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     this._playMediaDirect(entity, episodeUrl, 'music', title);
     // Track that a podcast episode is playing so the badge can show
     this._pcNowPlaying = { url: episodeUrl, title, ts: Date.now(), collectionId: pod?.collectionId || null, pod: pod || null };
+    // A podcast replaces whatever audiobook was playing — forget it straight
+    // away so taps and the info panel follow the podcast, not the book.
+    this._abClearNowPlaying();
     try { localStorage.setItem('crow_pc_now_playing', JSON.stringify({ url: episodeUrl, title, ts: Date.now(), collectionId: pod?.collectionId || null })); } catch(_) {}
     // Cache the pod object keyed by episode URL — same pattern as _rbCacheStation
     if (!this._pcEpisodeCache) this._pcEpisodeCache = new Map();
@@ -14748,7 +19502,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const _pcShare = r.getElementById('infoShareBtn');
     if (_pcShare) {
       _pcShare.classList.remove('hidden');
-      _pcShare.onclick = () => this._showInfoShareMenu(_pcShare, null);   // Export only
+      _pcShare.onclick = () => this._showInfoShareMenu(_pcShare, null, {   // Export only
+        extraItems: [{ label: 'Export Episodes to PDF', pdf: 'lists', onClick: () => this._exportPodcastPDF(pod) }],
+      });
     }
 
     const _pcYt = r.getElementById('infoYoutubeBtn');
@@ -15275,6 +20031,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     menu.className = 'queue-dropdown-menu';
     menu.innerHTML =
       '<div class="queue-dropdown-item" id="recapRename" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M3,17.25V21H6.75L17.81,9.94L14.06,6.19L3,17.25M20.71,7.04C21.1,6.65 21.1,6 20.71,5.63L18.37,3.29C18,2.9 17.35,2.9 16.96,3.29L15.13,5.12L18.88,8.87L20.71,7.04Z"/></svg><span class="queue-dropdown-label">Rename</span></div>' +
+      '<div class="queue-dropdown-item" id="recapExport" data-pdf="recap" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20M12,19L8,15H10.5V12H13.5V15H16L12,19Z"/></svg><span class="queue-dropdown-label">Export to PDF</span></div>' +
       '<div class="queue-dropdown-item danger" id="recapDelete" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg><span class="queue-dropdown-label">Unpin</span></div>';
     const anchorRect = anchor.getBoundingClientRect();
     const cardRect = r.host.getBoundingClientRect();
@@ -15296,6 +20053,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         if (this._pinnedDetailActive && this._pinnedDetailCategory === 'recaps') this._openPinnedCategoryDetail('recaps');
       });
     });
+    menu.querySelector('#recapExport')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu(); this._exportRecapSnapshotPDF(recap); });
     menu.querySelector('#recapDelete')?.addEventListener('click', async e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
       if (!(await this._confirmUnpin('recap', recap.name || recap.title || '', { snapshot: true }))) return;
       const list = this._getPinnedRecaps().filter(rc => rc.id !== recap.id);
@@ -15380,6 +20138,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           <button class="ma-drill-action-btn" id="pinnedRecapPlayAll"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div><span class="ma-drill-btn-label">Play All</span></button>
           <button class="ma-drill-action-btn" id="pinnedRecapAdd"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M19 11h-6V5h-2v6H5v2h6v6h2v-6h6z"/></svg></div><span class="ma-drill-btn-label">Add</span></button>
           <button class="ma-drill-action-btn" id="pinnedRecapPlayNext"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M16,18H18V6H16M6,18L14.5,12L6,6V18Z"/></svg></div><span class="ma-drill-btn-label">Play Next</span></button>
+          <button class="ma-drill-action-btn" id="pinnedRecapExport" data-pdf="recap"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20M12,19L8,15H10.5V12H13.5V15H16L12,19Z"/></svg></div><span class="ma-drill-btn-label">Export</span></button>
           <button class="ma-drill-action-btn" id="pinnedRecapUnpin"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg></div><span class="ma-drill-btn-label">Unpin</span></button>
         </div>` : ''}
         ${recap.dateRangeLabel ? `<div style="font-size:11px;color:${this._pt('dim')};margin-bottom:10px;">${esc(recap.dateRangeLabel)}</div>` : ''}
@@ -15395,6 +20154,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     content.querySelector('#pinnedRecapPlayAll')?.addEventListener('click', () => this._playRecapTracks(topTracks, 'replace'));
     content.querySelector('#pinnedRecapAdd')?.addEventListener('click', () => this._playRecapTracks(topTracks, 'add'));
     content.querySelector('#pinnedRecapPlayNext')?.addEventListener('click', () => this._playRecapTracks(topTracks, 'next'));
+    content.querySelector('#pinnedRecapExport')?.addEventListener('click', () => this._exportRecapSnapshotPDF(recap));
     content.querySelector('#pinnedRecapUnpin')?.addEventListener('click', async () => {
       if (!(await this._confirmUnpin('recap', recap.name || recap.title || '', { snapshot: true }))) return;
       const list = this._getPinnedRecaps().filter(rc => rc.id !== recap.id);
@@ -15662,8 +20422,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       bar.innerHTML =
         '<button class="ma-drill-action-btn" id="pinnedSongsPlayAll"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div><span class="ma-drill-btn-label">Play All</span></button>' +
         '<button class="ma-drill-action-btn" id="pinnedSongsAdd"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M19 11h-6V5h-2v6H5v2h6v6h2v-6h6z"/></svg></div><span class="ma-drill-btn-label">Add</span></button>' +
-        '<button class="ma-drill-action-btn" id="pinnedSongsNext"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M16,18H18V6H16M6,18L14.5,12L6,6V18Z"/></svg></div><span class="ma-drill-btn-label">Play Next</span></button>';
+        '<button class="ma-drill-action-btn" id="pinnedSongsNext"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M16,18H18V6H16M6,18L14.5,12L6,6V18Z"/></svg></div><span class="ma-drill-btn-label">Play Next</span></button>' +
+        '<button class="ma-drill-action-btn" id="pinnedSongsExport" data-pdf="pins"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20M12,19L8,15H10.5V12H13.5V15H16L12,19Z"/></svg></div><span class="ma-drill-btn-label">Export</span></button>';
       content.appendChild(bar);
+      bar.querySelector('#pinnedSongsExport')?.addEventListener('click', () => this._exportPinnedSongsPDF(items));
 
       const _getQueueLength = async (targetEntity) => {
         try {
@@ -15789,6 +20551,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     menu.innerHTML =
       '<div class="queue-dropdown-item" id="sqPlay" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg><span class="queue-dropdown-label">Play</span></div>' +
       '<div class="queue-dropdown-item" id="sqRename" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M3,17.25V21H6.75L17.81,9.94L14.06,6.19L3,17.25M20.71,7.04C21.1,6.65 21.1,6 20.71,5.63L18.37,3.29C18,2.9 17.35,2.9 16.96,3.29L15.13,5.12L18.88,8.87L20.71,7.04Z"/></svg><span class="queue-dropdown-label">Rename</span></div>' +
+      '<div class="queue-dropdown-item" id="sqExport" data-pdf="lists" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20M12,19L8,15H10.5V12H13.5V15H16L12,19Z"/></svg><span class="queue-dropdown-label">Export to PDF</span></div>' +
       '<div class="queue-dropdown-item danger" id="sqDelete" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg><span class="queue-dropdown-label">Unpin</span></div>';
     const anchorRect = anchor.getBoundingClientRect();
     const cardRect = r.host.getBoundingClientRect();
@@ -15833,6 +20596,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         }
       });
     });
+    menu.querySelector('#sqExport')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu(); this._exportSavedQueuePDF(sq); });
     menu.querySelector('#sqDelete')?.addEventListener('click', async e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
       if (!(await this._confirmUnpin('queue', sq.name || '', { snapshot: true }))) return;
       const list = this._getSavedQueues().filter(s => s.id !== sq.id);
@@ -15933,6 +20697,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         '<button class="ma-drill-action-btn" id="sqDetailPlayAll"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div><span class="ma-drill-btn-label">Play All</span></button>' +
         '<button class="ma-drill-action-btn" id="sqDetailAdd"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M19 11h-6V5h-2v6H5v2h6v6h2v-6h6z"/></svg></div><span class="ma-drill-btn-label">Add</span></button>' +
         '<button class="ma-drill-action-btn" id="sqDetailRename"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M3,17.25V21H6.75L17.81,9.94L14.06,6.19L3,17.25M20.71,7.04C21.1,6.65 21.1,6 20.71,5.63L18.37,3.29C18,2.9 17.35,2.9 16.96,3.29L15.13,5.12L18.88,8.87L20.71,7.04Z"/></svg></div><span class="ma-drill-btn-label">Rename</span></button>' +
+        '<button class="ma-drill-action-btn" id="sqDetailExport" data-pdf="lists"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20M12,19L8,15H10.5V12H13.5V15H16L12,19Z"/></svg></div><span class="ma-drill-btn-label">Export</span></button>' +
         '<button class="ma-drill-action-btn" id="sqDetailDelete"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg></div><span class="ma-drill-btn-label">Unpin</span></button>' +
       '</div>' +
       '<div id="sqDetailList"></div>';
@@ -15996,6 +20761,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         this._openSavedQueueDetail(updatedSq, true);
       });
     });
+    content.querySelector('#sqDetailExport')?.addEventListener('click', () => this._exportSavedQueuePDF(sq));
     content.querySelector('#sqDetailDelete')?.addEventListener('click', async () => {
       if (!(await this._confirmUnpin('queue', sq.name || '', { snapshot: true }))) return;
       const list2 = this._getSavedQueues().filter(s => s.id !== sq.id);
@@ -16413,6 +21179,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     this._playMediaDirect(entity, chapterUrl, 'music', title);
     this._abNowPlaying = { url: chapterUrl, title, ts: Date.now() };
     try { localStorage.setItem('crow_ab_now_playing', JSON.stringify(this._abNowPlaying)); } catch(_) {}
+    // …and the other way round
+    this._pcClearNowPlaying();
     if (book) {
       if (!this._abChapterCache) this._abChapterCache = new Map();
       this._abChapterCache.set(chapterUrl, book);
@@ -16427,6 +21195,24 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     this._closeInfoPopup();
     this._closeMABrowser(true);
     setTimeout(() => { this._updateAudiobookBadge(); }, 300);
+  }
+
+  // Forget the card's own "an audiobook / podcast is playing" flags — used
+  // when something else starts so the info panel, pills and pin follow what's
+  // actually playing instead of what was playing before.
+  _abClearNowPlaying() {
+    if (!this._abNowPlaying) return;
+    this._abNowPlaying = null;
+    try { localStorage.removeItem('crow_ab_now_playing'); } catch (_) {}
+    const b = this.shadowRoot?.getElementById('audiobookBadge');
+    if (b) b.style.display = 'none';
+  }
+  _pcClearNowPlaying() {
+    if (!this._pcNowPlaying) return;
+    this._pcNowPlaying = null;
+    try { localStorage.removeItem('crow_pc_now_playing'); } catch (_) {}
+    const b = this.shadowRoot?.getElementById('podcastBadge');
+    if (b) b.style.display = 'none';
   }
 
   _abCachedBook(chapterUrl) {
@@ -16670,6 +21456,11 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           '<div style="width:22px;text-align:center;flex-shrink:0;font-size:12px;font-weight:700;color:rgba(255,255,255,0.25);">' + ch.num + '</div>' +
           '<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:600;color:' + _pt('text') + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + ch.title + '</div>' + metaHtml + '</div>' +
           '<div style="flex-shrink:0;width:30px;height:30px;border-radius:50%;background:rgba(255,149,0,0.15);border:1px solid rgba(255,149,0,0.3);display:flex;align-items:center;justify-content:center;"><svg viewBox="0 0 24 24" style="width:12px;height:12px;fill:#FF9500;margin-left:1px;"><path d="M8 5v14l11-7z"/></svg></div>';
+        // Read as one line by Export Info to PDF
+        row.dataset.pdfRow = '1';
+        row.dataset.pdfNum = String(ch.num ?? '');
+        row.dataset.pdfTitle = String(ch.title ?? '');
+        row.dataset.pdfSub = String(ch.duration ?? '');
         row.addEventListener('click', () => { this._abPlayChapter(ch.url, ch.title, entity, book); });
         chList.appendChild(row);
       });
@@ -17707,6 +22498,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         <button class="ma-drill-action-btn" data-action="replace"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div><span class="ma-drill-btn-label">Play All</span></button>
         <button class="ma-drill-action-btn" data-action="add"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M19 11h-6V5h-2v6H5v2h6v6h2v-6h6z"/></svg></div><span class="ma-drill-btn-label">Add All</span></button>
         <button class="ma-drill-action-btn" data-action="next"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M16,18H18V6H16M6,18L14.5,12L6,6V18Z"/></svg></div><span class="ma-drill-btn-label">Play Next</span></button>
+        <button class="ma-drill-action-btn" data-action="pdf" data-pdf="lists"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20M12,19L8,15H10.5V12H13.5V15H16L12,19Z"/></svg></div><span class="ma-drill-btn-label">Export</span></button>
       </div>
       <div id="aiLibSearchList"></div>`;
 
@@ -17829,6 +22621,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       btn.addEventListener('click', async () => {
         const action = btn.dataset.action;
         if (!items.length) return;
+        if (action === 'pdf') {
+          self._exportResultsPDF('AI Search', '"' + query + '"', items.map(it => ({ title: it.title || it.name, artist: it.artist || (it.artists || []).map(a => a?.name || a).join(', '), reason: it.reason })));
+          return;
+        }
         self._maBatchLoading = true;
         clearTimeout(self._maBatchLoadingTimer);
         self._maBatchLoadingTimer = setTimeout(() => { self._maBatchLoading = false; }, 20000);
@@ -17929,7 +22725,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             type: 'call_service', domain: 'music_assistant', service: 'play_media',
             service_data: { entity_id: targetEntity, media_id: _mediaId, media_type: _mediaType, enqueue: mode === 'replace' ? 'replace' : mode }
           });
-          if (mode === 'replace') { this._closeMABrowser(true); }
+          if (mode === 'replace') {
+            if (this.shadowRoot?.getElementById('infoPopup')?.classList.contains('visible')) this._closeInfoPopup();
+            this._closeMABrowser(true);
+          }
           else this._showToast(mode === 'next' ? 'Playing next' : 'Added to queue', 2500);
         } catch (_) {
           this._showToast('Could not play — check Music Assistant');
@@ -18669,6 +23468,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       // ── Cache queue as stable URI list ──────────────────────────────────────
       // URIs are stable MA library identifiers — unlike queue_item_ids which
       // rotate as MA processes state updates. Reordering rebuilds from URIs only.
+      content._queueItemsFull = { current, before, after };
       content._queueCache = {
         entity:  this._entity,
         current: current ? (current.uri || null) : null,
@@ -19030,6 +23830,20 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // duration — e.g. internet radio, live streams. Discogs and lyrics are not
   // meaningful for streams so both features gate on this check.
   // Clear podcast now-playing tracking when media changes away from our episode
+  // Something else is playing now (a podcast, music, a station — started from
+  // anywhere): once the start-up grace period is over, if the player's
+  // content isn't this audiobook, or another chapter of it, forget it. Runs
+  // on every update, whether or not the AUDIOBOOK pill is switched on.
+  _abCheckNowPlaying(state) {
+    if (!this._abNowPlaying || !state) return;
+    if (this._abNowPlaying.ts && Date.now() - this._abNowPlaying.ts < 8000) return;
+    if (state.state !== 'playing') return;   // a paused player can report a different id
+    const cid = state.attributes?.media_content_id || '';
+    if (!cid || cid === this._abNowPlaying.url) return;
+    if (this._abCachedBook(cid)) this._abNowPlaying = { ...this._abNowPlaying, url: cid };   // next chapter
+    else { this._abClearNowPlaying(); this._updatePinnedIndicator?.(); }
+  }
+
   _pcCheckNowPlaying(state) {
     if (!this._pcNowPlaying) return;
     // Grace period — ignore state changes for 8s after episode starts (buffering/idle transitions)
@@ -19037,7 +23851,11 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // Clear only when player settles to idle/off, or switches to radio/flow
     const attrs = state?.attributes || {};
     const isRadio = attrs.mass_media_type === 'radio' || attrs.mass_media_type === 'flow';
-    if (state?.state === 'idle' || state?.state === 'off' || isRadio) {
+    // Moved on to something that isn't this podcast (an audiobook, music…)
+    const _cid = attrs.media_content_id || '';
+    // Only while actually playing — a paused player can report a different id
+    const movedOn = state?.state === 'playing' && !!_cid && _cid !== this._pcNowPlaying.url && !this._pcCachedPod(_cid) && attrs.mass_media_type !== 'podcast';
+    if (state?.state === 'idle' || state?.state === 'off' || isRadio || movedOn) {
       this._pcNowPlaying = null;
       try { localStorage.removeItem('crow_pc_now_playing'); } catch(_) {}
       this._updatePodcastBadge();
@@ -20027,9 +24845,20 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const state = this._hass?.states[this._entity];
     const rawState = state?.state;
     const contentId = state?.attributes?.media_content_id || '';
+    const title = state?.attributes?.media_title || '';
     const key = this._entity + '|' + contentId;
-    if (!this._pillAttempt || this._pillAttempt.key !== key) {
-      this._pillAttempt = { key, startTs: Date.now(), confirmed: rawState === 'playing' };
+    // Pausing isn't a new attempt. Some players blank or change the content
+    // id while paused (Music Assistant often does for podcasts); treating that
+    // as something new restarted the check, and once its grace window ran
+    // out the paused podcast lost its pill. So while paused, if the entity
+    // and title are the same as a confirmed attempt, keep that attempt.
+    const prev = this._pillAttempt;
+    const sameItemPaused = prev && prev.confirmed && rawState !== 'playing'
+      && prev.entity === this._entity && (!contentId || (title && prev.title === title));
+    if (sameItemPaused) {
+      // keep the confirmed attempt as it is
+    } else if (!prev || prev.key !== key) {
+      this._pillAttempt = { key, entity: this._entity, title, startTs: Date.now(), confirmed: rawState === 'playing' };
       // Force a re-check once the grace window elapses, even if no further hass update
       // arrives in the meantime — otherwise a stream stuck in 'buffering' forever (e.g.
       // geo-blocked) would keep showing the pill it was optimistically given at the start.
@@ -20044,6 +24873,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       }
     } else if (rawState === 'playing') {
       this._pillAttempt.confirmed = true;
+      if (title) this._pillAttempt.title = title;
     }
     const elapsed = Date.now() - this._pillAttempt.startTs;
     const attemptOk = this._pillAttempt.confirmed || elapsed < this._pillGraceMs();
@@ -21011,7 +25841,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       // sources that don't report them simply omit the fields.
       if (Number.isFinite(meta.season))  store[entryKey].data.season  = meta.season;
       if (Number.isFinite(meta.episode)) store[entryKey].data.episode = meta.episode;
-      if (meta.watchedMs > 0) store[entryKey].data.watchedMs = Math.round(meta.watchedMs);
+      if (meta.watchedMs > 0) store[entryKey].data.watchedMs = Math.round(Math.min(meta.watchedMs, this._watchMsCap(store[entryKey].data.durationMs)));
       const cutoff = Date.now() - 90 * 24 * 3600 * 1000;
       Object.keys(store).forEach(k => { if ((store[k].ts || 0) < cutoff) delete store[k]; });
       const keys = Object.keys(store);
@@ -21046,8 +25876,21 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       // rest of the log.
       return Object.entries(store)
         .filter(([, entry]) => entry && entry.data && !_looksLikeBareDate(entry.data.title) && !_looksLikeBareDate(entry.data.seriesTitle))
-        .map(([k, entry]) => ({ ...entry.data, ts: entry.ts, _key: k }));
+        .map(([k, entry]) => {
+          const d = { ...entry.data, ts: entry.ts, _key: k };
+          if (d.watchedMs > 0) d.watchedMs = Math.min(d.watchedMs, this._watchMsCap(d.durationMs));
+          return d;
+        });
     } catch (_) { return []; }
+  }
+
+  // The most one watch can count as: a little over the title's running time
+  // when that's known, otherwise three hours. A watch's time is measured
+  // from when it started to when the player moved on, which can include
+  // long pauses or a TV left on — this keeps those from counting as hours
+  // of viewing.
+  _watchMsCap(durationMs) {
+    return durationMs > 0 ? Math.max(durationMs * 1.25, 10 * 60000) : 3 * 3600 * 1000;
   }
 
   // Known announcement/system "artists" that HA automations produce when
@@ -21310,7 +26153,23 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
         let prevMeta = null, prevStartTs = null, prevKind = null;
         for (const entry of normalized) {
-          if (entry.state !== 'playing') continue;
+          if (entry.state !== 'playing') {
+            // Paused, stopped or off: whatever was playing ends here, so its
+            // time isn't stretched to whenever the next thing started.
+            if (prevMeta) {
+              const elapsedMs = entry.ts - (prevStartTs || entry.ts);
+              const durMs = (prevMeta.duration || 0) * 1000;
+              const qualifies = prevKind === 'music'
+                ? (elapsedMs >= 30000 || (durMs > 0 && elapsedMs >= durMs * 0.5))
+                : (elapsedMs >= 10000);
+              if (qualifies) {
+                if (prevKind === 'music') this._logListenEntry(prevMeta, prevStartTs);
+                else this._logWatchEntry({ ...prevMeta, watchedMs: elapsedMs }, prevStartTs);
+              }
+              prevMeta = null; prevStartTs = null; prevKind = null;
+            }
+            continue;
+          }
           const artist = entry.attrs.media_artist || '';
           const title  = entry.attrs.media_title  || '';
           if (!title) continue;
@@ -21423,6 +26282,11 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       }
       localStorage.setItem(lsKey, JSON.stringify(store));
       this._haStorageSaveAIImmediate('listenLog');
+      // Keep the daily summaries (Your month in music) up to date — at most every 10 minutes
+      if (!this._dailyRollupAt || Date.now() - this._dailyRollupAt > 600000) {
+        this._dailyRollupAt = Date.now();
+        setTimeout(() => this._listenDailyRollup(), 2000);
+      }
     } catch (_) { /* localStorage unavailable — silently skip logging */ }
   }
 
@@ -21490,6 +26354,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const entries = this._getListenLogEntries();
     const cutoff = Date.now() - 7 * 24 * 3600 * 1000; // last 7 days
     const recent = entries.filter(e => e.ts >= cutoff);
+    // The history keeps a limited number of plays — with heavy listening
+    // it may not reach back a full week, so say where it actually starts.
+    const _recapSince = Math.max(cutoff, entries.reduce((m, e) => Math.min(m, e.ts || Infinity), Infinity));
+    const _recapSpan = _recapSince > cutoff + 3600000
+      ? 'since ' + new Date(_recapSince).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
+      : 'last 7 days';
 
     if (!recent.length) {
       content.innerHTML = this._psEmpty(
@@ -21555,7 +26425,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // Stashed so the shared "⋮" menu (built separately, on demand) can
     // access the current snapshot data without needing this whole render
     // function to re-run.
-    this._lastRecapData = { narrative, topArtists, topTracks };
+    this._lastRecapData = { narrative, topArtists, topTracks, since: _recapSince };
 
     const esc = s => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     content.innerHTML = `
@@ -21574,13 +26444,24 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         ${topTracks.length ? `
         <div style="font-size:10px;font-weight:700;color:rgba(99,179,237,0.8);letter-spacing:0.6px;text-transform:uppercase;margin-bottom:8px;">Top Tracks</div>
         <div id="recapTrackList"></div>
-        <div style="font-size:11px;color:${this._pt('dim')};margin-top:10px;text-align:center;">Top ${_recapCap} · last 7 days</div>` : ''}
+        <div style="font-size:11px;color:${this._pt('dim')};margin-top:10px;text-align:center;">Top ${_recapCap} · ${_recapSpan}</div>` : ''}
       </div>`;
 
     content.querySelector('#recapHeroPlayAll')?.addEventListener('click', () => this._playRecapTracks(topTracks, 'replace'));
     content.querySelector('#recapHeroAdd')?.addEventListener('click', () => this._playRecapTracks(topTracks, 'add'));
     content.querySelector('#recapHeroPlayNext')?.addEventListener('click', () => this._playRecapTracks(topTracks, 'next'));
     content.querySelector('#recapHeroPin')?.addEventListener('click', () => this._promptPinRecap());
+    content.querySelector('#recapHeroExport')?.addEventListener('click', () => {
+      const d = this._lastRecapData || {};
+      const fmt = t => new Date(t).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+      this._exportRecapSnapshotPDF({
+        name: 'Music Recap', dateRangeLabel: fmt(d.since || cutoff) + ' - ' + fmt(Date.now()),
+        narrative: d.narrative || '',
+        topArtists: (d.topArtists || []).map(([name, count]) => ({ name, count })),
+        topTracks: (d.topTracks || []).map(t => ({ title: t.title, artist: t.artist, album: t.album || '', count: t.count || 0 })),
+        ...this._recapChartData(d.since || cutoff),
+      });
+    });
 
     // ── Top Artists — tap opens the AI bio panel, same one used elsewhere
     // in the app (_showCastBio). Passing a custom onBack re-renders the
@@ -21794,6 +26675,11 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const topShows  = top(showCounts, _watchCap);
     const topMovies = top(movieCounts, _watchCap);
     const totalPlays = recent.length;
+    // Time watched per title, for the PDF
+    const _wMs = {};
+    recent.forEach(e => { const k = e.mediaType === 'tv' ? e.seriesTitle : e.title; if (k) _wMs[k] = (_wMs[k] || 0) + (e.watchedMs > 0 ? e.watchedMs : (e.durationMs || 0)); });
+    const _wSince = Math.max(cutoff, entries.reduce((m, e) => Math.min(m, e.ts || Infinity), Infinity));
+    this._lastWatchRecapData = { narrative: '', topShows, topMovies, ms: _wMs, since: _wSince, total: totalPlays, entries: recent };
 
     content.innerHTML = this._psLoading('Building your watch recap…');
 
@@ -21812,6 +26698,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       } catch (_) { /* narrative is optional — stats still render below */ }
     }
     if (_stale()) return;
+    if (this._lastWatchRecapData) this._lastWatchRecapData.narrative = narrative;
 
     const esc = s => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     content.innerHTML = `
@@ -21871,6 +26758,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     menu.id = 'queueDropdownMenu';
     menu.innerHTML =
       '<div class="queue-dropdown-item" id="watchRecapMenuExpand" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M3,18H21V16H3V18M3,13H21V11H3V13M3,6V8H21V6H3Z"/></svg><span class="queue-dropdown-label">' + (this._watchRecapShowExpanded ? 'Show Top 10' : 'Show Top 50') + '</span></div>' +
+      '<div class="queue-dropdown-item" id="watchRecapMenuExportRecap" data-pdf="recap" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20M12,19L8,15H10.5V12H13.5V15H16L12,19Z"/></svg><span class="queue-dropdown-label">Export Recap to PDF</span></div>' +
+      '<div class="queue-dropdown-item" id="watchRecapMenuExportReport" data-pdf="history" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M19 3H5C3.9 3 3 3.9 3 5V19C3 20.1 3.9 21 5 21H19C20.1 21 21 20.1 21 19V5C21 3.9 20.1 3 19 3M9 17H7V10H9V17M13 17H11V7H13V17M17 17H15V13H17V17Z"/></svg><span class="queue-dropdown-label">Export Report to PDF</span></div>' +
       '<div class="queue-dropdown-item danger" id="watchRecapMenuClear" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/></svg><span class="queue-dropdown-label">Clear Watch History</span></div>';
 
     const anchorRect = anchor.getBoundingClientRect();
@@ -21888,6 +26777,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     menu.querySelector('#watchRecapMenuExpand')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
       this._watchRecapShowExpanded = !this._watchRecapShowExpanded;
       this._showWatchRecap();
+    });
+    menu.querySelector('#watchRecapMenuExportRecap')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
+      this._exportWatchRecapPDF();
+    });
+    menu.querySelector('#watchRecapMenuExportReport')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
+      this._exportHistoryReport('watch', 7);
     });
     menu.querySelector('#watchRecapMenuClear')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
       this._confirmClearWatchHistory();
@@ -21965,6 +26860,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       '<div class="queue-dropdown-item" id="recapMenuAdd" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M19 11h-6V5h-2v6H5v2h6v6h2v-6h6z"/></svg><span class="queue-dropdown-label">Add</span></div>' +
       '<div class="queue-dropdown-item" id="recapMenuPlayNext" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M16,18H18V6H16M6,18L14.5,12L6,6V18Z"/></svg><span class="queue-dropdown-label">Play Next</span></div>' +
       '<div class="queue-dropdown-item" id="recapMenuPin" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"/></svg><span class="queue-dropdown-label">Pin This Music Recap</span></div>' +
+      '<div class="queue-dropdown-item" id="recapMenuExportRecap" data-pdf="recap" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20M12,19L8,15H10.5V12H13.5V15H16L12,19Z"/></svg><span class="queue-dropdown-label">Export Recap to PDF</span></div>' +
+      '<div class="queue-dropdown-item" id="recapMenuExportReport" data-pdf="history" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M19 3H5C3.9 3 3 3.9 3 5V19C3 20.1 3.9 21 5 21H19C20.1 21 21 20.1 21 19V5C21 3.9 20.1 3 19 3M9 17H7V10H9V17M13 17H11V7H13V17M17 17H15V13H17V17Z"/></svg><span class="queue-dropdown-label">Export Report to PDF</span></div>' +
       '<div class="queue-dropdown-item danger" id="recapMenuClear" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/></svg><span class="queue-dropdown-label">Clear Listening History</span></div>';
 
     const anchorRect = anchor.getBoundingClientRect();
@@ -21994,6 +26891,22 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     });
     menu.querySelector('#recapMenuPin')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
       this._promptPinRecap();
+    });
+    menu.querySelector('#recapMenuExportRecap')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
+      const d = this._lastRecapData;
+      if (!d) { this._showToast('Nothing to export yet'); return; }
+      const since = d.since || (Date.now() - 7 * 24 * 3600 * 1000);
+      const fmt = t => new Date(t).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+      this._exportRecapSnapshotPDF({
+        name: 'Music Recap', dateRangeLabel: fmt(since) + ' - ' + fmt(Date.now()),
+        narrative: d.narrative || '',
+        topArtists: (d.topArtists || []).map(([name, count]) => ({ name, count })),
+        topTracks: (d.topTracks || []).map(t => ({ title: t.title, artist: t.artist, album: t.album || '', count: t.count || 0 })),
+        ...this._recapChartData(since),
+      });
+    });
+    menu.querySelector('#recapMenuExportReport')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
+      this._exportHistoryReport('music', 7);
     });
     menu.querySelector('#recapMenuClear')?.addEventListener('click', e => { e.stopPropagation(); if (!_menuReady()) return; closeMenu();
       this._confirmClearRecapHistory();
@@ -22057,7 +26970,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       this._showToast('Nothing to pin yet');
       return;
     }
-    const startDate = new Date(Date.now() - 7 * 24 * 3600 * 1000);
+    const startDate = new Date(data.since || (Date.now() - 7 * 24 * 3600 * 1000));
     const endDate   = new Date();
     const fmt = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     const dateRangeLabel = `${fmt(startDate)} \u2013 ${fmt(endDate)}`;
@@ -22068,7 +26981,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       dateRangeLabel,
       narrative: data.narrative,
       topArtists: data.topArtists.map(([name, count]) => ({ name, count })),
-      topTracks: data.topTracks.map(t => ({ title: t.title, artist: t.artist, album: t.album || '' })),
+      topTracks: data.topTracks.map(t => ({ title: t.title, artist: t.artist, album: t.album || '', count: t.count || 0 })),
+      // Small chart data for the PDF (plays per day, time of day, day of week)
+      ...this._recapChartData(startDate.getTime()),
       pinnedAt: Date.now(),
     };
     this._showSaveRecapNameSheet(snapshot);
@@ -22194,16 +27109,50 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   }
 
 
+  // Works out the title to look up. A trailing " (1995)" always goes. A " : subtitle" / " - subtitle" is cut off
+  // (it is usually an episode name, e.g. "Doctor Who: Twice Upon a Time") - unless the full title is itself a real
+  // show or film, e.g. "Star Trek: Strange New Worlds" or "Mission: Impossible", checked on TVmaze and the iTunes Store.
+  // Returns { title, isSeries } - isSeries turns true when the full title turned out to be a show.
+  async _videoLookupTitle(title, isSeries) {
+    // emoji (e.g. "Finish the Lyrics \uD83D\uDCDD ...") never help a lookup and look odd on screen
+    const noEmoji = String(title || '').replace(/[\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}\u{FE0F}\u{200D}\u{20E3}]/gu, '').replace(/\s{2,}/g, ' ').trim();
+    const full = noEmoji.replace(/\s*\(\d{4}\)\s*$/, '').trim() || noEmoji || String(title || '');
+    // a subtitle starts at the last ": " or spaced dash (" - ", " \u2013 ", " | ") - not at the hyphen in "1960-2024"
+    const SUB = /\s*(?::\s|\s[-\u2013\u2014|]\s)\s*(?:(?!:\s|\s[-\u2013\u2014|]\s).)+$/;
+    if (isSeries || !SUB.test(full)) return { title: full, isSeries: !!isSeries };
+    let cut = full.replace(SUB, '').trim() || full;
+    // never leave a bracket open, e.g. "One Song From Each Year (1960"
+    while ((cut.match(/\(/g) || []).length > (cut.match(/\)/g) || []).length && /\(/.test(cut)) cut = cut.replace(/\s*\([^()]*$/, '').trim() || cut;
+    if (!this._videoWholeTitleCache) this._videoWholeTitleCache = new Map();
+    const key = full.toLowerCase();
+    let kind = this._videoWholeTitleCache.get(key);
+    if (kind === undefined) {
+      const norm = v => String(v || '').toLowerCase().replace(/^the\s+/, '').replace(/&/g, 'and').replace(/[^a-z0-9]+/g, ' ').trim();
+      const want = norm(full);
+      const get = async url => {
+        const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 6000);
+        try { const r = await fetch(url, { signal: ctrl.signal }); return r.ok ? await r.json() : null; }
+        catch (_) { return null; } finally { clearTimeout(t); }
+      };
+      const [show, films] = await Promise.all([
+        get('https://api.tvmaze.com/singlesearch/shows?q=' + encodeURIComponent(full)),
+        get('https://itunes.apple.com/search?term=' + encodeURIComponent(full) + '&media=movie&entity=movie&limit=10&country=gb'),
+      ]);
+      kind = norm(show?.name) === want ? 'tv'
+        : (films?.results || []).some(x => norm(x.trackName) === want) ? 'movie' : '';
+      this._videoWholeTitleCache.set(key, kind);
+    }
+    if (kind === 'tv') return { title: full, isSeries: true };
+    if (kind === 'movie') return { title: full, isSeries: false };
+    return { title: cut, isSeries: false };
+  }
+
   // Silently pre-warm the video info cache so long-press on artwork is instant
   async _prefetchVideoInfo(title) {
     if (!title) return;
     // Use title verbatim if it came from media_series_title (already the clean show name).
     // Only strip colon-subtitles when falling back to media_title (episode titles).
-    const _isSeriesTitle = !!(this._hass?.states[this._entity]?.attributes?.media_series_title);
-    const cleanTitle = title
-      .replace(/\s*\(\d{4}\)\s*$/, '')                          // always strip trailing year
-      .replace(_isSeriesTitle ? /(?!)/ : /\s*[-:]\s*[^-:]+$/, '') // only strip colon if not series title
-      .trim() || title;
+    const { title: cleanTitle } = await this._videoLookupTitle(title, !!(this._hass?.states[this._entity]?.attributes?.media_series_title));
     const cacheKey = ('videoinfo5|' + cleanTitle).toLowerCase(); // v5: TV lookups can return multiple candidates again, invalidates old forced-single-entry cache
     if (!this._aiVideoInfoCache) this._aiVideoInfoCache = new Map();
     if (this._aiVideoInfoCache.has(cacheKey)) return;
@@ -22321,6 +27270,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const _myGen = ++this._aiPanelGeneration;
     const _stale = () => this._aiPanelGeneration !== _myGen;
 
+    this._setResultsExport(null);
     const cacheKey = ('videorecs|' + mediaType + '|' + displayTitle).toLowerCase();
     if (!this._aiRecsCache) this._aiRecsCache = new Map();
 
@@ -22365,6 +27315,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // Filter out currently watching
     const _norm = s => (s||'').toLowerCase().replace(/[^a-z0-9]/g,'');
     recs = recs.filter(rec => _norm(rec.title) !== _norm(displayTitle));
+    this._setResultsExport(() => this._exportResultsPDF('Recommendations', 'Similar to ' + displayTitle,
+      recs.map(rec => ({ ...rec, type: rec.type || (isTv ? 'tv' : 'movie'), reason: [rec.genre, rec.reason].filter(Boolean).join(' · ') }))));
 
     r?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
     content.innerHTML = `
@@ -22425,6 +27377,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           // Fresh single-title lookup — clear any leftover picker state so
           // "Not this one?" refers to this title, not a stale candidate list.
           self._videoInfoPickerState = null;
+          self._videoInfoRootTitles = null;
           if (detailRaw) {
             const di1 = detailRaw.indexOf('{'), di2 = detailRaw.lastIndexOf('}');
             const detailData = JSON.parse(di1 !== -1 && di2 !== -1 ? detailRaw.slice(di1, di2 + 1) : detailRaw);
@@ -23608,7 +28561,9 @@ Include ALL tracks. Use null for unknown fields.`;
             });
             if (_act === 'replace') { this._closeInfoPopup(); this._closeMABrowser(true); }
           } catch(_) {
+            // Music Assistant couldn't take it: play directly instead - and still return to the main screen on Play Now
             this._playMediaDirect(_fbTarget, _fb.title, 'music', _fb.title);
+            if (_act === 'replace') { this._closeInfoPopup(); this._closeMABrowser(true); }
           }
         });
       });
@@ -23997,7 +28952,25 @@ Include ALL tracks. Use null for unknown fields.`;
         const _shareText = trackTitle + ' by ' + artistName + _alb;
         const _shareUrl = this._buildShareUrl(trackTitle, artistName);
         _self._copyToClipboard(_shareText + '\n' + _shareUrl, this._shareServiceLabel());
-      }, { lyrics: { artist: artistName, title: trackTitle, album: data.album || '' } });
+      }, {
+        lyrics: { artist: artistName, title: trackTitle, album: data.album || '' },
+        extraItems: [{
+          label: 'CD Case Printables (PDF)', pdf: 'cd',
+          icon: 'M12,2A10,10 0 1,1 12,22A10,10 0 1,1 12,2Z M12,7.5A4.5,4.5 0 1,0 12,16.5A4.5,4.5 0 1,0 12,7.5Z M12,10.8A1.2,1.2 0 1,1 12,13.2A1.2,1.2 0 1,1 12,10.8Z',
+          onClick: () => {
+            // The album for this panel (AI or Discogs), else the live one when
+            // this is the track that's playing. Without one, the track itself
+            // is looked up.
+            let _cdAlbum = String(context.overrideAlbum || data.album || '').trim();
+            if (!_cdAlbum && !(context.fromSearch || context.overrideArt)) {
+              const _n = v => String(v || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+              const _at = _self._hass?.states[_self._entity]?.attributes || {};
+              if (_n(_at.media_title) === _n(trackTitle) && _n(_at.media_album_name) !== _n(trackTitle)) _cdAlbum = String(_at.media_album_name || '').trim();
+            }
+            _self._exportCdPrintables({ artist: artistName, title: trackTitle, album: _cdAlbum });
+          },
+        }],
+      });
     }
 
     // Wire "Open on YouTube" button
@@ -24657,6 +29630,18 @@ Include ALL tracks. Use null for unknown fields.`;
     cardOuter.appendChild(backdrop);
   }
 
+  // Header Export button for a results list (Recommendations, AI Search,
+  // video suggestions). Pass null to hide it while results are loading.
+  _setResultsExport(onExport) {
+    if (!this._pdfOn('lists')) onExport = null;
+    this._resultsExportFn = typeof onExport === 'function' ? onExport : null;
+    const btn = this.shadowRoot?.getElementById('infoShareBtn');
+    if (!btn) return;
+    if (typeof onExport !== 'function') { btn.classList.add('hidden'); btn.onclick = null; return; }
+    btn.classList.remove('hidden');
+    btn.onclick = () => this._showInfoShareMenu(btn, null, { onExport, exportLabel: 'Export Results to PDF', exportPdf: 'lists' });
+  }
+
   async _showAIRecommendations() {
     const r = this.shadowRoot;
     const state = this._hass?.states[this._entity];
@@ -24693,6 +29678,7 @@ Include ALL tracks. Use null for unknown fields.`;
     const _rbo = r.getElementById('queueMenuBtn');
     if (_rbo) _rbo.classList.add('hidden');
     if (title) title.textContent = 'Recommendations';
+    this._setResultsExport(null);
 
     // Claim ownership of the panel generation counter — every other AI panel function
     // (_showAITrackInfo, _showAISearchPanel, etc.) does this so it can detect being
@@ -24787,6 +29773,7 @@ Include ALL tracks. Use null for unknown fields.`;
       || _recsBarAllMA[0]
       || this._entity;
 
+    this._setResultsExport(() => this._exportResultsPDF('Recommendations', 'Similar to ' + (track ? track + (artist ? ' by ' + artist : '') : artist), recs));
     r?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
     content.innerHTML = `
       <div id="ai-recs-action-bar" class="ma-drill-actions" style="margin-bottom:12px;">
@@ -25134,6 +30121,7 @@ Include ALL tracks. Use null for unknown fields.`;
         <button class="ma-drill-action-btn ai-album-action-btn" data-action="replace"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div><span class="ma-drill-btn-label">Play All</span></button>
         <button class="ma-drill-action-btn ai-album-action-btn" data-action="add"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M19 11h-6V5h-2v6H5v2h6v6h2v-6h6z"/></svg></div><span class="ma-drill-btn-label">Add</span></button>
         <button class="ma-drill-action-btn ai-album-action-btn" data-action="next"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zm2-8.14L11.03 12 8 14.14V9.86zM16 6h2v12h-2z"/></svg></div><span class="ma-drill-btn-label">Play Next</span></button>
+        <button class="ma-drill-action-btn" id="ai-album-export"><div class="ma-drill-btn-circle"><svg viewBox="0 0 24 24"><path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20M12,19L8,15H10.5V12H13.5V15H16L12,19Z"/></svg></div><span class="ma-drill-btn-label">Export</span></button>
       </div>
       <div style="display:flex;gap:12px;align-items:flex-start;margin-bottom:12px;">
         <div style="width:64px;height:64px;border-radius:10px;overflow:hidden;flex-shrink:0;background:${this._pt("bg")};border:1px solid ${this._pt("border")};cursor:${artUrl ? 'zoom-in' : 'default'};" id="ai-album-art-thumb">
@@ -25182,6 +30170,33 @@ Include ALL tracks. Use null for unknown fields.`;
 
     // Action bar — plays/queues the album by name via MA, entirely
     // independent of the AI tracklist below, so it works immediately.
+    if (!['lists', 'lyrics', 'cd'].some(t => this._pdfOn(t))) body.querySelector('#ai-album-export')?.remove();
+    body.querySelector('#ai-album-export')?.addEventListener('click', async () => {
+      let _ready = false;
+      try { _ready = tracks.length > 0; } catch (_) { /* tracklist not reached yet */ }
+      if (!_ready) { this._showToast('Still loading the tracklist'); return; }
+      const _albOpts = [{ label: 'Tracklist', value: 'tracks', pdf: 'lists' }, { label: 'Lyrics booklet', value: 'lyrics', pdf: 'lyrics' }, { label: 'CD case printables', value: 'cd', pdf: 'cd' }]
+        .filter(o => this._pdfOn(o.pdf));
+      if (!_albOpts.length) return;
+      const which = _albOpts.length === 1 ? _albOpts[0].value
+        : await this._iosChoose({ title: 'Export Album', message: 'What would you like in the PDF?', options: _albOpts, selected: _albOpts[0].value });
+      if (which === 'cd') { this._exportCdPrintables({ artist: artistName, title: tracks[0]?.title || albumName, album: albumName }); return; }
+      if (which === 'lyrics') {
+        this._exportAlbumLyricsPDF({ album: albumName, artist: artistName, heroSrc: artUrl || null,
+          tracks: tracks.map((t, i) => ({ title: t.title || '', artist: artistName, num: t.position || i + 1 })) });
+        return;
+      }
+      if (which !== 'tracks') return;
+      this._exportListPDF(async () => ({
+        title: albumName, subtitle: artistName, heroSrc: artUrl || null,
+        rows: [['Year', albumMeta.year ? String(albumMeta.year) : ''], ['Label', albumMeta.label || ''],
+          ['Genre', (Array.isArray(albumMeta.genre) ? albumMeta.genre : [albumMeta.genre]).filter(Boolean).slice(0, 3).join(', ')],
+          ['Tracks', String(tracks.length)]],
+        intro: albumMeta.fact || '',
+        sections: [{ heading: 'Tracklist', items: tracks.map((t, i) => ({ num: t.position || i + 1, title: t.title || '' })) }],
+        filename: 'album-' + albumName,
+      }));
+    });
     body.querySelectorAll('.ai-album-action-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         if (!_albumBarAllMA.length && !isMa) { this._showToast('Music Assistant required'); return; }
@@ -28229,6 +33244,7 @@ Include ALL tracks. Use null for unknown fields.`;
     const _qsrSearch = r.getElementById('queueSearchRow');
     if (_qsrSearch) _qsrSearch.classList.add('hidden');
     if (titleEl) titleEl.textContent = 'AI Search';
+    this._setResultsExport(null);
 
     if (!this._aiPanelGeneration) this._aiPanelGeneration = 0;
     this._aiPanelGeneration++;
@@ -28243,6 +33259,7 @@ Include ALL tracks. Use null for unknown fields.`;
     let _doLibrarySearchFn = null; // same, for the plain-MA-search button
     const _renderSearch = (query = '', results = null, loading = false, error = '') => {
       const _inputVal = query.replace(/"/g, '&quot;');
+      if (!_stale()) this._setResultsExport(results?.length ? () => this._exportResultsPDF('AI Search', query, results) : null);
       r?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
       content.innerHTML = `
         <div style="display:flex;flex-direction:column;gap:0;height:100%;">
@@ -29330,6 +34347,9 @@ Include ALL tracks. Use null for unknown fields.`;
     // leaves it null and can never touch the watch log.
     this._videoInfoWatchKey = this._pendingWatchInfoKey || null;
     this._pendingWatchInfoKey = null;
+    // set only by a row tapped in the "Not this one?" search (see _renderVideoInfoSearchInline)
+    const _carry = this._videoChoiceCarry;
+    this._videoChoiceCarry = null;
     const r       = this.shadowRoot;
     const content = r.getElementById('infoContent');
     if (!content || !title) return;
@@ -29372,13 +34392,12 @@ Include ALL tracks. Use null for unknown fields.`;
     // shows with a colon in their own name (e.g. "Star Trek: The Next
     // Generation" vs "Star Trek: Voyager") to both get stripped down to
     // "Star Trek" and collide on the same cached result.
-    const _isSeriesTitle = isKnownSeriesTitle !== undefined
+    // a full title that is a real show or film (e.g. "Star Trek: Strange New Worlds") is kept whole - see _videoLookupTitle
+    const _lookup = await this._videoLookupTitle(title, isKnownSeriesTitle !== undefined
       ? isKnownSeriesTitle
-      : !!(this._hass?.states[this._entity]?.attributes?.media_series_title);
-    let cleanTitle = title
-      .replace(/\s*\(\d{4}\)\s*$/, '')                          // always strip trailing year
-      .replace(_isSeriesTitle ? /(?!)/ : /\s*[-:]\s*[^-:]+$/, '') // only strip colon if not series title
-      .trim() || title;
+      : !!(this._hass?.states[this._entity]?.attributes?.media_series_title));
+    const _isSeriesTitle = _lookup.isSeries;
+    let cleanTitle = _lookup.title;
 
     // No artwork came from the caller (override) or the currently-playing
     // entity — likely opened from a context that never had artwork to pass
@@ -29425,11 +34444,26 @@ Include ALL tracks. Use null for unknown fields.`;
       };
     }
 
+    // "Not this one?" choices. The title this panel was opened for is its root: a match picked for it
+    // (here, or on a DVD / Blu-ray case) is remembered and shown straight away next time. A search
+    // started from "Not this one?" comes back through here carrying the root it was started from.
+    const _carried = !!(_carry && Date.now() < _carry.until);
+    this._videoInfoRootTitles = _carried ? _carry.titles : [title, cleanTitle];
+    this._videoChoiceSaveNext = _carried;
+    if (!_carried) {
+      const _chosen = this._videoChoiceGet(title, cleanTitle);
+      if (_chosen && (isKnownSeriesTitle === undefined || (_chosen.type === 'tv') === !!isKnownSeriesTitle)) {
+        r?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
+        this._renderVideoInfoDetail(content, _chosen, _chosen._tmdbPoster || artUrl);
+        return;
+      }
+    }
+
     r?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
     content.innerHTML = `
-      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:10px;padding:24px;">
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:12px;padding:24px 32px;text-align:center;">
         <div style="width:28px;height:28px;border:2.5px solid rgba(99,179,237,0.25);border-top-color:#63b3ed;border-radius:50%;animation:ma-spin 0.8s linear infinite;"></div>
-        <div style="font-size:12px;color:${this._pt("dim")};">Looking up "${cleanTitle}"…</div>
+        <div style="font-size:12px;line-height:1.5;color:${this._pt("dim")};max-width:300px;">Looking up \u201C${cleanTitle}\u201D\u2026</div>
       </div>`;
 
     // ── TMDB priority / AI-off fallback ── when the user has flipped Movie/TV
@@ -29658,7 +34692,7 @@ Include ALL tracks. Use null for unknown fields.`;
         content.innerHTML = `
           <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:16px;padding:32px;text-align:center;">
             <svg viewBox="0 0 24 24" style="width:40px;height:40px;fill:${this._pt("icon")}"><path d="M18,4L20,8H17L15,4H13L15,8H12L10,4H8L10,8H7L5,4H4A2,2 0 0,0 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V4H18Z"/></svg>
-            <div style="font-size:15px;font-weight:600;color:${this._pt("text")}">Nothing found for<br>"${cleanTitle}"</div>
+            <div style="font-size:15px;font-weight:600;line-height:1.4;color:${this._pt("text")};max-width:300px;">Nothing found for<br>\u201C${cleanTitle}\u201D</div>
             <div style="font-size:13px;color:${this._pt("dim")};line-height:1.5">Try tapping the artwork again in a moment, or check your AI agent is set up in the card editor.</div>
           </div>`;
         return;
@@ -29727,6 +34761,7 @@ Include ALL tracks. Use null for unknown fields.`;
           // a way back to reconsider, without re-running the AI artwork
           // query or re-fetching every option's poster again.
           this._videoInfoPickerState = { results, artUrls, artUrl, cacheKey };
+          if (this._videoInfoRootTitles) this._videoChoiceSet(this._videoInfoRootTitles, results[idx]);
           self._renderVideoInfoDetail(content, results[idx], selectedArt);
         });
       });
@@ -29788,6 +34823,7 @@ Include ALL tracks. Use null for unknown fields.`;
           this._aiVideoInfoSelectedCache.set(cacheKey, idx);
         }
         const selectedArt = artUrls[idx] || artUrl;
+        if (this._videoInfoRootTitles) this._videoChoiceSet(this._videoInfoRootTitles, results[idx]);
         self._renderVideoInfoDetail(content, results[idx], selectedArt);
       });
     });
@@ -29808,7 +34844,7 @@ Include ALL tracks. Use null for unknown fields.`;
   // so it stays within the panel's own bounds and matches its look.
   // `restoreFn` re-renders whatever was on screen before this was opened,
   // wired to the back button.
-  _renderVideoInfoSearchInline(content, initialTitle, restoreFn) {
+  _renderVideoInfoSearchInline(content, initialTitle, restoreFn, rootTitles = null) {
     const _pt = (k) => this._pt(k);
     content.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
     this.shadowRoot?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
@@ -29832,6 +34868,9 @@ Include ALL tracks. Use null for unknown fields.`;
 
     const _input    = content.querySelector('#videoSearchInlineInput');
     const _resultsEl = content.querySelector('#videoSearchInlineResults');
+    // Tapping a result opens it through _fetchVideoInfo; tell it which title this search is fixing,
+    // so the pick is remembered for that title. Runs before the row's own click handler.
+    if (rootTitles) _resultsEl?.addEventListener('click', () => { this._videoChoiceCarry = { titles: rootTitles, until: Date.now() + 2000 }; }, true);
 
     const _runSearch = async () => {
       const q = (_input?.value || '').trim();
@@ -29869,6 +34908,9 @@ Include ALL tracks. Use null for unknown fields.`;
     content.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
     if (!data) return;
     this._videoPdfData = data;   // used by Export Info to PDF
+    // the first title shown after a "Not this one?" search is the choice for the root title
+    if (this._videoChoiceSaveNext && this._videoInfoRootTitles) { this._videoChoiceSet(this._videoInfoRootTitles, data); this._videoChoiceSaveNext = false; }
+    const _rootTitles = this._videoInfoRootTitles ? this._videoInfoRootTitles.slice() : null;
     // TV show with missing details (no cast, no overview…)? Top it up from
     // TVmaze in the background and redraw — but only if this same panel is
     // still showing and none of its Ask / Mood / Trivia panels are open.
@@ -30092,7 +35134,8 @@ Include ALL tracks. Use null for unknown fields.`;
       if (_hasMultiCandidates) {
         this._renderVideoInfoPicker(content, _pickerState.results, _pickerState.artUrl, _pickerState.cacheKey, _pickerState.artUrls || null);
       } else {
-        this._renderVideoInfoSearchInline(content, data.title || '', () => this._renderVideoInfoDetail(content, data, artUrl));
+        // a title picked in this search becomes the choice for the root title (see _fetchVideoInfo)
+        this._renderVideoInfoSearchInline(content, data.title || '', () => this._renderVideoInfoDetail(content, data, artUrl), _rootTitles);
       }
     });
 
@@ -30161,6 +35204,7 @@ Include ALL tracks. Use null for unknown fields.`;
           // Show loading
           content.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;"><div style="width:28px;height:28px;border:2.5px solid rgba(99,179,237,0.25);border-top-color:#63b3ed;border-radius:50%;animation:ma-spin 0.8s linear infinite;"></div></div>`;
           _self._videoInfoPickerState = null;
+          _self._videoInfoRootTitles = null;
           // Respect the same source preference as the main lookup: skip
           // the AI round-trip entirely when AI is off, or the user has
           // set TMDB First and a key is configured — go straight to TMDB
@@ -30278,6 +35322,12 @@ Include ALL tracks. Use null for unknown fields.`;
         const _vShareText = (data.title || '') + _yr + (data.director ? ' - Dir. ' + data.director : '') + (_ov ? '\n' + _ov : '');
         const _vShareUrl = 'https://www.themoviedb.org/search?query=' + encodeURIComponent(data.title || '');
         _vSelf._copyToClipboard(_vShareText + '\n' + _vShareUrl);
+      }, {
+        extraItems: [{
+          label: 'DVD / Blu-ray Case Printables (PDF)', pdf: 'disc',
+          icon: 'M12,2A10,10 0 1,1 12,22A10,10 0 1,1 12,2Z M12,7.5A4.5,4.5 0 1,0 12,16.5A4.5,4.5 0 1,0 12,7.5Z M12,10.8A1.2,1.2 0 1,1 12,13.2A1.2,1.2 0 1,1 12,10.8Z',
+          onClick: () => _vSelf._exportDiscCase(data, artUrl, { origTitles: _rootTitles || [data.title] }),
+        }],
       });
     }
 
@@ -31024,11 +36074,18 @@ Include ALL tracks. Use null for unknown fields.`;
           <div style="font-size:15px;font-weight:700;color:${this._pt("text")};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${showTitle}</div>
           <div style="font-size:11px;color:${this._pt("dim")};">${totalSeasons} Season${totalSeasons !== 1 ? 's' : ''}</div>
         </div>
+        ${totalSeasons ? `<button id="tv-seasons-pdf" data-pdf="info" aria-label="Export episode guide to PDF" title="Export episode guide to PDF" style="height:28px;padding:0 11px;border-radius:14px;background:${this._pt("btnBg")};border:none;cursor:pointer;display:flex;align-items:center;gap:5px;flex-shrink:0;color:${this._pt("text")};font-size:11px;font-weight:600;-webkit-tap-highlight-color:transparent;">
+          <svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:${this._pt("text")}"><path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20M12,19L8,15H10.5V12H13.5V15H16L12,19Z"/></svg>Export
+        </button>` : ''}
       </div>
       <div style="display:flex;flex-direction:column;gap:6px;">${seasonRows}</div>`;
 
     content.querySelector('#tv-seasons-back').addEventListener('click', () => {
       this._renderVideoInfoDetail(content, data, artUrl);
+    });
+    content.querySelector('#tv-seasons-pdf')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this._exportEpisodeGuidePDF(data, artUrl);
     });
 
     const self = this;
@@ -32010,6 +37067,7 @@ Include ALL tracks. Use null for unknown fields.`;
               // Fresh single-title lookup — clear any leftover picker
               // state so "Not this one?" refers to this title.
               _self._videoInfoPickerState = null;
+              _self._videoInfoRootTitles = null;
               if (_kRaw) {
                 const _ki1 = _kRaw.indexOf('{'), _ki2 = _kRaw.lastIndexOf('}');
                 if (_ki1 !== -1 && _ki2 !== -1) {
@@ -33953,7 +39011,7 @@ Include ALL tracks. Use null for unknown fields.`;
     // Sections: find & browse · this queue · discover & build · share · clear.
     const ORDER = [
       'qmSearch', 'qmAISearch', 'qmLibrary', '|',
-      'qmReorder', 'qmJumpCurrent', 'qmPinTrack', 'qmSaveQueue', 'qmTransfer', '|',
+      'qmReorder', 'qmJumpCurrent', 'qmPinTrack', 'qmSaveQueue', 'qmTransfer', 'qmExportPdf', '|',
       'qmMood', 'qmAIRecs', 'qmArtistRadio', '@addq', 'qmRadioMode', '|',
       '@share', '|',
       'qmClear',
@@ -34092,7 +39150,7 @@ Include ALL tracks. Use null for unknown fields.`;
       const text = light ? '#000000' : '#ffffff';
       const dim  = light ? 'rgba(60,60,67,0.62)' : 'rgba(235,235,245,0.62)';
       const back = document.createElement('div');
-      back.className = 'crow-ios-backdrop';
+      back.className = 'crow-ios-backdrop' + (light ? ' light' : '');
       back.style.setProperty('--crow-ios-bg',    light ? 'rgba(250,250,252,0.86)' : 'rgba(48,48,52,0.78)');
       back.style.setProperty('--crow-ios-edge',  light ? 'rgba(0,0,0,0.08)'      : 'rgba(255,255,255,0.12)');
       back.style.setProperty('--crow-ios-shine', light ? 'rgba(255,255,255,0.7)'  : 'rgba(255,255,255,0.08)');
@@ -37787,7 +42845,8 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
 
         <!-- ── Search filter ────────────────────────────────── -->
         <div style="position:sticky;top:0;z-index:10;background:var(--ha-card-background,var(--card-background-color,#1c1c1e));padding:4px 0 10px;">
-          <input type="text" id="editor-search" placeholder="🔍  Filter settings…" style="width:100%;box-sizing:border-box;padding:9px 12px;border-radius:10px;border:1px solid var(--divider-color,rgba(128,128,128,0.2));background:rgba(128,128,128,0.08);color:var(--primary-text-color,#111);font-size:13px;font-family:inherit;outline:none;">
+          <ha-icon icon="mdi:magnify" style="position:absolute;left:10px;top:12px;--mdc-icon-size:18px;width:18px;height:18px;display:inline-flex;color:var(--secondary-text-color,#888);pointer-events:none;z-index:1;"></ha-icon>
+          <input type="text" id="editor-search" placeholder="Filter settings…" style="width:100%;box-sizing:border-box;padding:9px 12px 9px 36px;border-radius:10px;border:1px solid var(--divider-color,rgba(128,128,128,0.2));background:rgba(128,128,128,0.08);color:var(--primary-text-color,#111);font-size:13px;font-family:inherit;outline:none;">
         </div>
 
         <!-- ── Reset to Defaults ─────────────────────────────── -->
@@ -37797,7 +42856,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
             Reset All Settings to Defaults
           </button>
           <div id="editor-reset-confirm" style="display:none;margin-top:8px;padding:10px 12px;background:rgba(255,69,58,0.1);border:1px solid rgba(255,69,58,0.3);border-radius:10px;">
-            <div style="font-size:12px;color:#ff453a;margin-bottom:8px;font-weight:500;">⚠️ This will clear all customisations. Are you sure?</div>
+            <div style="font-size:12px;color:#ff453a;margin-bottom:8px;font-weight:500;"><ha-icon icon="mdi:alert-outline" style="--mdc-icon-size:15px;width:15px;height:15px;display:inline-flex;vertical-align:-3px;margin-right:4px;"></ha-icon>This will clear all customisations. Are you sure?</div>
             <div style="display:flex;gap:8px;">
               <button id="editor-reset-confirm-btn" style="flex:1;padding:7px;border-radius:8px;border:1px solid rgba(255,69,58,0.5);background:rgba(255,69,58,0.2);color:#ff453a;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;">Yes, Reset</button>
               <button id="editor-reset-cancel-btn" style="flex:1;padding:7px;border-radius:8px;border:1px solid rgba(128,128,128,0.2);background:transparent;color:#888;font-size:12px;cursor:pointer;font-family:inherit;">Cancel</button>
@@ -37901,7 +42960,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
         </div>
 
         <div>
-          <div class="section-title">🔊 Play on This Device</div>
+          <div class="section-title"><ha-icon icon="mdi:speaker" style="--mdc-icon-size:14px;width:14px;height:14px;display:inline-flex;vertical-align:-2px;margin-right:6px;"></ha-icon>Play on This Device</div>
           <div class="card-block" style="padding:12px;">
             <div class="toggle-item" style="align-items:flex-start;gap:12px;">
               <div style="flex:1;">
@@ -38308,7 +43367,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                   <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="show_pins_in_sections"><span class="toggle-track"></span></label>
                 </div>
                 <div id="pins-rows"></div>
-                <button id="clear-all-pins-btn" style="width:100%;padding:9px;font-size:13px;font-weight:600;color:#ff453a;background:rgba(255,69,58,0.08);border:1px solid rgba(255,69,58,0.25);border-radius:10px;cursor:pointer;font-family:inherit;margin-top:10px;">&#x1F4CC; Clear All Pins</button>
+                <button id="clear-all-pins-btn" style="width:100%;padding:9px;font-size:13px;font-weight:600;color:#ff453a;background:rgba(255,69,58,0.08);border:1px solid rgba(255,69,58,0.25);border-radius:10px;cursor:pointer;font-family:inherit;margin-top:10px;"><ha-icon icon="mdi:pin-off-outline" style="--mdc-icon-size:15px;width:15px;height:15px;display:inline-flex;vertical-align:-3px;margin-right:4px;"></ha-icon>Clear All Pins</button>
                 <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.07);">
                   <div>
                     <div style="font-size:13px;font-weight:500;margin-bottom:2px;">Pinned Radio Stations</div>
@@ -38326,11 +43385,11 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                 </div>
 
                 <!-- Clear All -->
-                <button id="clear-all-caches-btn" style="width:100%;padding:10px;font-size:13px;font-weight:600;color:#ff453a;background:rgba(255,69,58,0.08);border:1px solid rgba(255,69,58,0.25);border-radius:10px;cursor:pointer;font-family:inherit;margin-top:16px;">&#x1F5D1; Clear All Caches</button>
+                <button id="clear-all-caches-btn" style="width:100%;padding:10px;font-size:13px;font-weight:600;color:#ff453a;background:rgba(255,69,58,0.08);border:1px solid rgba(255,69,58,0.25);border-radius:10px;cursor:pointer;font-family:inherit;margin-top:16px;"><ha-icon icon="mdi:delete-outline" style="--mdc-icon-size:15px;width:15px;height:15px;display:inline-flex;vertical-align:-3px;margin-right:4px;"></ha-icon>Clear All Caches</button>
 
                 <div style="margin-top:10px;padding:10px 0 2px;border-top:1px solid rgba(255,255,255,0.07);">
                   <div style="font-size:11px;color:#888;line-height:1.5;margin-bottom:8px;">Persistent storage is saved to Home Assistant's database and survives app restarts and cache clears. Pins, AI info cache and lyrics are only included here if their toggles above are turned on — this also always includes iTunes artwork, Wikipedia photos and vibe history.</div>
-                  <button id="clear-ha-storage-btn" style="width:100%;padding:10px;font-size:13px;font-weight:600;color:#ff453a;background:rgba(255,69,58,0.08);border:1px solid rgba(255,69,58,0.25);border-radius:10px;cursor:pointer;font-family:inherit;">&#x1F5D1; Clear Persistent Storage</button>
+                  <button id="clear-ha-storage-btn" style="width:100%;padding:10px;font-size:13px;font-weight:600;color:#ff453a;background:rgba(255,69,58,0.08);border:1px solid rgba(255,69,58,0.25);border-radius:10px;cursor:pointer;font-family:inherit;"><ha-icon icon="mdi:delete-outline" style="--mdc-icon-size:15px;width:15px;height:15px;display:inline-flex;vertical-align:-3px;margin-right:4px;"></ha-icon>Clear Persistent Storage</button>
                 </div>
 
               </div>
@@ -38424,7 +43483,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
 
         <!-- AI Settings -->
         <div>
-          <div class="section-title">✨ AI Settings</div>
+          <div class="section-title"><ha-icon icon="mdi:creation" style="--mdc-icon-size:14px;width:14px;height:14px;display:inline-flex;vertical-align:-2px;margin-right:6px;"></ha-icon>AI Settings</div>
           <div class="card-block" style="padding:12px;">
             <div class="toggle-item" style="align-items:flex-start;gap:12px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid rgba(255,255,255,0.07);">
               <div style="flex:1;">
@@ -38449,8 +43508,8 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
               <div style="font-size:13px;font-weight:500;margin-bottom:6px;color:var(--primary-text-color, #111);">Info Panel Priority</div>
               <div style="font-size:11px;color:#888;margin-bottom:8px;line-height:1.4;">Which source the track info panel tries first. The other source is still used as a fallback if the first one has nothing.</div>
               <select id="info_panel_priority" style="width:100%;background:var(--card-background-color,rgba(255,255,255,0.07));border:1px solid var(--divider-color,rgba(128,128,128,0.2));border-radius:10px;color:var(--primary-text-color,#fff);font-size:13px;font-family:inherit;padding:10px 12px;outline:none;-webkit-appearance:none;cursor:pointer;">
-                <option value="ai">✨ AI Info First</option>
-                <option value="discogs">💿 Discogs First</option>
+                <option value="ai">AI Info First</option>
+                <option value="discogs">Discogs First</option>
               </select>
             </div>
             <div class="ai-dep" style="margin-bottom:12px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.07);">
@@ -38496,8 +43555,8 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
               <div style="font-size:13px;font-weight:500;margin-bottom:6px;color:var(--primary-text-color, #111);">Library Search</div>
               <div style="font-size:11px;color:#888;margin-bottom:8px;line-height:1.4;">Whether pressing Enter/Search in the library browser (Songs, Artists, Albums) runs a normal keyword search or interprets it as natural language with AI (e.g. "upbeat 90s rock"). The dedicated AI search button next to the search box always works either way.</div>
               <select id="library_search_mode" style="width:100%;background:var(--card-background-color,rgba(255,255,255,0.07));border:1px solid var(--divider-color,rgba(128,128,128,0.2));border-radius:10px;color:var(--primary-text-color,#fff);font-size:13px;font-family:inherit;padding:10px 12px;outline:none;-webkit-appearance:none;cursor:pointer;">
-                <option value="normal">🔎 Normal Search</option>
-                <option value="ai">✨ AI Enhanced Search</option>
+                <option value="normal">Normal Search</option>
+                <option value="ai">AI Enhanced Search</option>
               </select>
             </div>
             <div class="ai-dep" style="margin-top:10px;padding:8px 10px;background:rgba(99,179,237,0.06);border:1px solid rgba(99,179,237,0.12);border-radius:8px;">
@@ -38541,21 +43600,124 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
 
         <!-- Movies & TV -->
         <div>
-          <div class="section-title">🎬 Movies &amp; TV</div>
+          <div class="section-title"><ha-icon icon="mdi:movie-open-outline" style="--mdc-icon-size:14px;width:14px;height:14px;display:inline-flex;vertical-align:-2px;margin-right:6px;"></ha-icon>Movies &amp; TV</div>
           <div class="card-block" style="padding:12px;">
             <div style="margin-bottom:12px;">
               <div style="font-size:13px;font-weight:500;margin-bottom:6px;color:var(--primary-text-color, #111);">TMDB API Key</div>
               <div style="font-size:11px;color:#888;margin-bottom:8px;line-height:1.4;">Optional. Adds TMDB (The Movie Database) as a source for movie/TV info panels — posters, ratings, cast and episode details. Works whether AI Features above is on or off. Get a free key at <strong style="color:rgba(99,179,237,0.8)">themoviedb.org/settings/api</strong> (either a v3 API key or a v4 Bearer token both work).</div>
               <input type="text" id="tmdb_api_key" placeholder="TMDB API key…" autocomplete="off" spellcheck="false"
                 style="width:100%;background:var(--card-background-color,rgba(255,255,255,0.07));border:1px solid var(--divider-color,rgba(128,128,128,0.2));border-radius:10px;color:var(--primary-text-color,#fff);font-size:13px;font-family:inherit;padding:10px 12px;outline:none;box-sizing:border-box;">
+              <div style="font-size:10px;color:#888;margin-top:6px;line-height:1.4;opacity:0.85;">This product uses the TMDB API but is not endorsed or certified by TMDB.</div>
             </div>
             <div class="ai-dep">
               <div style="font-size:13px;font-weight:500;margin-bottom:6px;color:var(--primary-text-color, #111);">Movie/TV Info Priority</div>
               <div style="font-size:11px;color:#888;margin-bottom:8px;line-height:1.4;">Which source the movie/TV info panel tries first when AI Features is on. The other source is still used as a fallback. With AI Features off, TMDB is always used (a key is required in that case).</div>
               <select id="video_info_priority" style="width:100%;background:var(--card-background-color,rgba(255,255,255,0.07));border:1px solid var(--divider-color,rgba(128,128,128,0.2));border-radius:10px;color:var(--primary-text-color,#fff);font-size:13px;font-family:inherit;padding:10px 12px;outline:none;-webkit-appearance:none;cursor:pointer;">
-                <option value="ai">✨ AI Info First</option>
-                <option value="tmdb">🎬 TMDB First</option>
+                <option value="ai">AI Info First</option>
+                <option value="tmdb">TMDB First</option>
               </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Export & PDF (collapsible) -->
+        <div>
+          <div class="section-title">Export &amp; PDF</div>
+          <div class="card-block" style="padding:12px;">
+            <div id="pdfHeader" style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;-webkit-tap-highlight-color:transparent;padding-bottom:2px;">
+              <div style="display:flex;align-items:center;gap:10px;">
+                <div style="width:28px;height:28px;border-radius:8px;background:rgba(99,179,237,0.15);border:1px solid rgba(99,179,237,0.25);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                  <ha-icon icon="mdi:file-pdf-box" style="--mdc-icon-size:17px;width:17px;height:17px;display:inline-flex;color:rgba(99,179,237,0.9);"></ha-icon>
+                </div>
+                <div>
+                  <div style="font-size:14px;font-weight:600;color:var(--primary-text-color, #111);">Export &amp; PDF</div>
+                  <div style="font-size:11px;color:#888;margin-top:1px;">PDF exports · Reports · Case printables</div>
+                </div>
+              </div>
+              <svg id="pdfChevron" viewBox="0 0 24 24" style="width:18px;height:18px;fill:var(--secondary-text-color, rgba(0,0,0,0.5));transition:transform 0.25s ease;flex-shrink:0;"><path d="M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z"/></svg>
+            </div>
+            <div id="pdfBody" style="display:none;flex-direction:column;margin-top:10px;">
+            <div class="toggle-item" style="align-items:flex-start;gap:12px;margin-bottom:14px;padding:0 0 12px;border-bottom:1px solid rgba(255,255,255,0.07);">
+              <div style="flex:1;">
+                <div class="toggle-label">Enable PDF Exports</div>
+                <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Master switch for every PDF the card can make. Off: no Export or PDF options appear anywhere in the card.</div>
+              </div>
+              <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="pdf_enabled" checked><span class="toggle-track"></span></label>
+            </div>
+            <div class="pdf-dep">
+              <div style="font-size:13px;font-weight:500;margin-bottom:2px;color:var(--primary-text-color, #111);">PDF Types</div>
+              <div style="font-size:11px;color:#888;margin-bottom:4px;line-height:1.4;">Turn off the PDFs you don't use. Anything switched off is removed from the three-dot menus, Export buttons and action bars.</div>
+                <div class="toggle-item" style="align-items:flex-start;gap:12px;padding:8px 0;">
+                  <div style="flex:1;">
+                    <div class="toggle-label">Lyrics</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Song lyrics and album lyrics booklets.</div>
+                  </div>
+                  <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="pdf_lyrics" checked><span class="toggle-track"></span></label>
+                </div>
+                <div class="toggle-item" style="align-items:flex-start;gap:12px;padding:8px 0;">
+                  <div style="flex:1;">
+                    <div class="toggle-label">CD Case Printables</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Front, back tray and disc label for a CD jewel case.</div>
+                  </div>
+                  <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="pdf_cd" checked><span class="toggle-track"></span></label>
+                </div>
+                <div class="toggle-item" style="align-items:flex-start;gap:12px;padding:8px 0;">
+                  <div style="flex:1;">
+                    <div class="toggle-label">DVD / Blu-ray Case Printables</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Full case wrap and disc label for films and TV shows.</div>
+                  </div>
+                  <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="pdf_disc" checked><span class="toggle-track"></span></label>
+                </div>
+                <div class="toggle-item" style="align-items:flex-start;gap:12px;padding:8px 0;">
+                  <div style="flex:1;">
+                    <div class="toggle-label">Info Panels</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">The music, movie, TV and podcast info panels, and TV episode guides.</div>
+                  </div>
+                  <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="pdf_info" checked><span class="toggle-track"></span></label>
+                </div>
+                <div class="toggle-item" style="align-items:flex-start;gap:12px;padding:8px 0;">
+                  <div style="flex:1;">
+                    <div class="toggle-label">Listening &amp; Watch Reports</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Reports from Music History and Watch History, including a single title's watch history.</div>
+                  </div>
+                  <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="pdf_history" checked><span class="toggle-track"></span></label>
+                </div>
+                <div class="toggle-item" style="align-items:flex-start;gap:12px;padding:8px 0;">
+                  <div style="flex:1;">
+                    <div class="toggle-label">Your Month in Music</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">The monthly listening summary.</div>
+                  </div>
+                  <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="pdf_month" checked><span class="toggle-track"></span></label>
+                </div>
+                <div class="toggle-item" style="align-items:flex-start;gap:12px;padding:8px 0;">
+                  <div style="flex:1;">
+                    <div class="toggle-label">Recently Played</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Songs played on a speaker in the last 24 hours.</div>
+                  </div>
+                  <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="pdf_recent" checked><span class="toggle-track"></span></label>
+                </div>
+                <div class="toggle-item" style="align-items:flex-start;gap:12px;padding:8px 0;">
+                  <div style="flex:1;">
+                    <div class="toggle-label">Recaps</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Music Recap and Video Recap snapshots, including pinned recaps.</div>
+                  </div>
+                  <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="pdf_recap" checked><span class="toggle-track"></span></label>
+                </div>
+                <div class="toggle-item" style="align-items:flex-start;gap:12px;padding:8px 0;">
+                  <div style="flex:1;">
+                    <div class="toggle-label">Pinned Items</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Your pinned songs, albums, shows and more.</div>
+                  </div>
+                  <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="pdf_pins" checked><span class="toggle-track"></span></label>
+                </div>
+                <div class="toggle-item" style="align-items:flex-start;gap:12px;padding:8px 0;">
+                  <div style="flex:1;">
+                    <div class="toggle-label">Lists &amp; Results</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">The queue, saved queues, album tracklists, playlists, artists, AI Search and Recommendations results, and podcast episodes.</div>
+                  </div>
+                  <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="pdf_lists" checked><span class="toggle-track"></span></label>
+                </div>
+            </div>
             </div>
           </div>
         </div>
@@ -38581,7 +43743,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
               </div>
               <div id="moodPromptBody" style="display:none;flex-direction:column;margin-top:10px;">
                 <div style="font-size:11px;color:var(--secondary-text-color, rgba(0,0,0,0.5));margin-bottom:10px;line-height:1.5;">Enter artist names separated by commas. When a mood is triggered, these artists are searched in your local library first, then used as radio seeds.</div>
-                <button id="moodResetAllBtn" style="align-self:flex-start;margin-bottom:12px;padding:6px 14px;border-radius:20px;border:1px solid rgba(99,179,237,0.4);background:rgba(99,179,237,0.1);color:rgba(99,179,237,0.9);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;">↺ Reset All to Defaults</button>
+                <button id="moodResetAllBtn" style="align-self:flex-start;margin-bottom:12px;padding:6px 14px;border-radius:20px;border:1px solid rgba(99,179,237,0.4);background:rgba(99,179,237,0.1);color:rgba(99,179,237,0.9);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;"><ha-icon icon="mdi:restore" style="--mdc-icon-size:14px;width:14px;height:14px;display:inline-flex;vertical-align:-2px;margin-right:4px;"></ha-icon>Reset All to Defaults</button>
                 <div id="moodPromptCategories"></div>
               </div>
             </div>
@@ -38613,7 +43775,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                 <div id="preview-artist" style="flex:2;background:#aaa;border-radius:4px;"></div>
               </div>
               <div id="ha-theme-colour-warn" style="display:none;margin-bottom:12px;padding:10px 14px;background:rgba(255,149,0,0.10);border:1px solid rgba(255,149,0,0.25);border-radius:10px;font-size:12px;color:rgba(255,180,50,0.95);line-height:1.5;">
-                ⚠ <strong>Follow HA Theme</strong> is enabled above — text, background and icon colours are driven by your HA theme. <strong>Accent</strong> and <strong>Volume Accent</strong> colours are still customisable.
+                <ha-icon icon="mdi:alert-outline" style="--mdc-icon-size:15px;width:15px;height:15px;display:inline-flex;vertical-align:-3px;margin-right:4px;"></ha-icon><strong>Follow HA Theme</strong> is enabled above — text, background and icon colours are driven by your HA theme. <strong>Accent</strong> and <strong>Volume Accent</strong> colours are still customisable.
               </div>
               <!-- Controls Theme Picker -->
               <div style="margin-bottom:16px;">
@@ -38722,7 +43884,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
             <div class="colour-dot" style="background:${swatchVal}"></div>
             <input class="colour-hex" type="text" value="${savedVal}"
               maxlength="${field.maxlen}" placeholder="${field.default}" spellcheck="false">
-            <span class="colour-edit-icon">✎</span>
+            <span class="colour-edit-icon"><ha-icon icon="mdi:pencil" style="--mdc-icon-size:14px;width:14px;height:14px;display:inline-flex;"></ha-icon></span>
           </div>
         </div>`;
       const nativePicker = card.querySelector('input[type=color]');
@@ -39421,6 +44583,35 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       updateAISessionCacheStatus();
     };
 
+    // ── Export & PDF: master switch + one switch per PDF type (all on unless switched off) ──
+    const _applyPdfDepState = (on) => {
+      root.querySelectorAll('.pdf-dep').forEach(el => { el.style.opacity = on ? '' : '0.35'; el.style.pointerEvents = on ? '' : 'none'; });
+    };
+    const pdfEnabledEl = root.getElementById('pdf_enabled');
+    if (pdfEnabledEl) {
+      pdfEnabledEl.checked = this._config?.pdf_enabled !== false;
+      _applyPdfDepState(pdfEnabledEl.checked);
+      pdfEnabledEl.onchange = (e) => { this._updateConfig('pdf_enabled', e.target.checked); _applyPdfDepState(e.target.checked); };
+    }
+    ['lyrics', 'cd', 'disc', 'info', 'history', 'month', 'recent', 'recap', 'pins', 'lists'].forEach(k => {
+      const el = root.getElementById('pdf_' + k);
+      if (!el) return;
+      el.checked = this._config?.['pdf_' + k] !== false;
+      el.onchange = (e) => this._updateConfig('pdf_' + k, e.target.checked);
+    });
+    // ── Export & PDF collapsible ─────────────────────────────────────────────
+    const _pdfHeader = root.getElementById('pdfHeader');
+    const _pdfBody = root.getElementById('pdfBody');
+    const _pdfChevron = root.getElementById('pdfChevron');
+    if (_pdfHeader && _pdfBody) {
+      _pdfHeader.addEventListener('click', () => {
+        const open = _pdfBody.style.display !== 'none';
+        _pdfBody.style.display = open ? 'none' : 'flex';
+        _pdfBody.style.flexDirection = 'column';
+        if (_pdfChevron) _pdfChevron.style.transform = open ? '' : 'rotate(90deg)';
+      });
+    }
+
     // ── Per-feature AI switches (all on unless switched off) ─────────────────
     ['info', 'prefetch', 'discover', 'ask', 'recap'].forEach(k => {
       const el = root.getElementById('ai_feature_' + k);
@@ -39953,7 +45144,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
           const cardEl = document.querySelector('crowai-media-player-card') || document.querySelector('crow-media-player-card');
           if (cardEl?._castBioCache) cardEl._castBioCache.clear();
           if (bioCacheStatus) bioCacheStatus.textContent = 'No bios cached';
-          bioCacheClearBtn.textContent = '✓ Cleared';
+          bioCacheClearBtn.innerHTML = '<ha-icon icon="mdi:check" style="--mdc-icon-size:14px;width:14px;height:14px;display:inline-flex;vertical-align:-2px;margin-right:4px;"></ha-icon>Cleared';
           setTimeout(() => { bioCacheClearBtn.textContent = 'Clear'; }, 2000);
         } catch(_) {}
       });
@@ -39974,7 +45165,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
     if (wtwCacheClearBtn) wtwCacheClearBtn.addEventListener('click', () => {
       _clearLocalCache('wtw', '_aiWtwCache');
       if (wtwCacheStatus) wtwCacheStatus.textContent = 'No entries cached';
-      wtwCacheClearBtn.textContent = '✓'; setTimeout(() => { wtwCacheClearBtn.textContent = 'Clear'; }, 2000);
+      wtwCacheClearBtn.innerHTML = '<ha-icon icon="mdi:check" style="--mdc-icon-size:14px;width:14px;height:14px;display:inline-flex;vertical-align:-2px;margin-right:0px;"></ha-icon>'; setTimeout(() => { wtwCacheClearBtn.textContent = 'Clear'; }, 2000);
     });
 
     // ── Trivia & Meanings cache ──────────────────────────────────────────────────
@@ -39989,7 +45180,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       const ce = _getCardEl();
       if (ce) { ['_aiTriviaCache','_aiMusicTriviaCache','_aiBioTriviaCache','_aiMeaningCache'].forEach(k => { if (ce[k]) ce[k] = new Map(); }); }
       if (triviaCacheStatus) triviaCacheStatus.textContent = 'No entries cached';
-      triviaCacheClearBtn.textContent = '✓'; setTimeout(() => { triviaCacheClearBtn.textContent = 'Clear'; }, 2000);
+      triviaCacheClearBtn.innerHTML = '<ha-icon icon="mdi:check" style="--mdc-icon-size:14px;width:14px;height:14px;display:inline-flex;vertical-align:-2px;margin-right:0px;"></ha-icon>'; setTimeout(() => { triviaCacheClearBtn.textContent = 'Clear'; }, 2000);
     });
 
     // ── Content Warnings cache ───────────────────────────────────────────────────
@@ -40001,7 +45192,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
     if (cwCacheClearBtn) cwCacheClearBtn.addEventListener('click', () => {
       _clearLocalCache('cw', '_aiCwCache');
       if (cwCacheStatus) cwCacheStatus.textContent = 'No entries cached';
-      cwCacheClearBtn.textContent = '✓'; setTimeout(() => { cwCacheClearBtn.textContent = 'Clear'; }, 2000);
+      cwCacheClearBtn.innerHTML = '<ha-icon icon="mdi:check" style="--mdc-icon-size:14px;width:14px;height:14px;display:inline-flex;vertical-align:-2px;margin-right:0px;"></ha-icon>'; setTimeout(() => { cwCacheClearBtn.textContent = 'Clear'; }, 2000);
     });
 
     // ── Year in Music cache ──────────────────────────────────────────────────────
@@ -40013,7 +45204,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
     if (dayMusicCacheClearBtn) dayMusicCacheClearBtn.addEventListener('click', () => {
       _clearLocalCache('dayMusic', '_aiDayMusicCache');
       if (dayMusicCacheStatus) dayMusicCacheStatus.textContent = 'No entries cached';
-      dayMusicCacheClearBtn.textContent = '✓'; setTimeout(() => { dayMusicCacheClearBtn.textContent = 'Clear'; }, 2000);
+      dayMusicCacheClearBtn.innerHTML = '<ha-icon icon="mdi:check" style="--mdc-icon-size:14px;width:14px;height:14px;display:inline-flex;vertical-align:-2px;margin-right:0px;"></ha-icon>'; setTimeout(() => { dayMusicCacheClearBtn.textContent = 'Clear'; }, 2000);
     });
 
     // ── Clear Caches ──────────────────────────────────────────────────────────
@@ -40075,10 +45266,10 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
           const _regStatus = root.getElementById('registry-cache-status');
           if (_regStatus) _regStatus.textContent = 'Not yet cached';
 
-          clearAllBtn.textContent = `✓ Cleared ${n} cache entries`;
+          clearAllBtn.innerHTML = `<ha-icon icon="mdi:check" style="--mdc-icon-size:14px;width:14px;height:14px;display:inline-flex;vertical-align:-2px;margin-right:4px;"></ha-icon>Cleared ${n} cache entries`;
           clearAllBtn.style.cssText += ';color:#30d158;border-color:rgba(48,209,88,0.3);background:rgba(48,209,88,0.1);';
           setTimeout(() => {
-            clearAllBtn.textContent = '🗑 Clear Caches';
+            clearAllBtn.innerHTML = '<ha-icon icon="mdi:delete-outline" style="--mdc-icon-size:15px;width:15px;height:15px;display:inline-flex;vertical-align:-3px;margin-right:4px;"></ha-icon>Clear All Caches';
             clearAllBtn.style.color = '';
             clearAllBtn.style.borderColor = '';
             clearAllBtn.style.background = '';
@@ -40092,7 +45283,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
     if (clearHaStorageBtn) {
       clearHaStorageBtn.addEventListener('click', async () => {
         const conn = this._hass?.connection;
-        if (!conn) { this._showToast('⚠️ Not connected to Home Assistant'); return; }
+        if (!conn) { this._showToast('Not connected to Home Assistant'); return; }
         try {
           clearHaStorageBtn.textContent = 'Clearing…';
           clearHaStorageBtn.disabled = true;
@@ -40105,17 +45296,17 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
           this._wikiThumbUrlCache = new Map();
           this._lyricsCache       = new Map();
           this._haStorageLoaded   = false; // allow reload on next hass set
-          clearHaStorageBtn.textContent = '✓ Cleared';
+          clearHaStorageBtn.innerHTML = '<ha-icon icon="mdi:check" style="--mdc-icon-size:14px;width:14px;height:14px;display:inline-flex;vertical-align:-2px;margin-right:4px;"></ha-icon>Cleared';
           clearHaStorageBtn.style.cssText += ';color:#30d158;border-color:rgba(48,209,88,0.3);background:rgba(48,209,88,0.1);';
           setTimeout(() => {
-            clearHaStorageBtn.textContent = '🗑 Clear Persistent Storage';
+            clearHaStorageBtn.innerHTML = '<ha-icon icon="mdi:delete-outline" style="--mdc-icon-size:15px;width:15px;height:15px;display:inline-flex;vertical-align:-3px;margin-right:4px;"></ha-icon>Clear Persistent Storage';
             clearHaStorageBtn.disabled = false;
             clearHaStorageBtn.style.color = '';
             clearHaStorageBtn.style.borderColor = '';
             clearHaStorageBtn.style.background = '';
           }, 2500);
         } catch(_) {
-          clearHaStorageBtn.textContent = '⚠️ Failed — try again';
+          clearHaStorageBtn.innerHTML = '<ha-icon icon="mdi:alert-outline" style="--mdc-icon-size:15px;width:15px;height:15px;display:inline-flex;vertical-align:-3px;margin-right:4px;"></ha-icon>Failed — try again';
           clearHaStorageBtn.disabled = false;
         }
       });
@@ -40318,7 +45509,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
           const queryResetBtn = document.createElement('button');
           queryResetBtn.title = 'Reset playlist search to default';
           queryResetBtn.style.cssText = 'flex-shrink:0;width:22px;height:22px;border-radius:50%;border:none;background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:0.5;padding:0;font-size:13px;color:var(--primary-text-color,#111);-webkit-tap-highlight-color:transparent;';
-          queryResetBtn.textContent = '↺';
+          queryResetBtn.innerHTML = '<ha-icon icon="mdi:restore" style="--mdc-icon-size:15px;width:15px;height:15px;display:inline-flex;"></ha-icon>';
           queryResetBtn.addEventListener('click', () => {
             queryInp.value = defQuery;
             queryInp.style.borderColor = '';
@@ -40363,7 +45554,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
           const resetBtn = document.createElement('button');
           resetBtn.title = 'Reset fallback to default';
           resetBtn.style.cssText = 'flex-shrink:0;width:22px;height:22px;border-radius:50%;border:none;background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:0.4;padding:0;font-size:13px;color:var(--primary-text-color,#111);-webkit-tap-highlight-color:transparent;';
-          resetBtn.textContent = '↺';
+          resetBtn.innerHTML = '<ha-icon icon="mdi:restore" style="--mdc-icon-size:15px;width:15px;height:15px;display:inline-flex;"></ha-icon>';
           resetBtn.addEventListener('click', () => {
             inp.value = defVal;
             inp.style.borderColor = '';
@@ -40411,7 +45602,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
           const resetBtn = document.createElement('button');
           resetBtn.title = 'Reset to default';
           resetBtn.style.cssText = 'flex-shrink:0;width:22px;height:22px;border-radius:50%;border:none;background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:0.5;padding:0;font-size:13px;color:var(--primary-text-color,#111);-webkit-tap-highlight-color:transparent;';
-          resetBtn.textContent = '↺';
+          resetBtn.innerHTML = '<ha-icon icon="mdi:restore" style="--mdc-icon-size:15px;width:15px;height:15px;display:inline-flex;"></ha-icon>';
           resetBtn.addEventListener('click', () => {
             inp.value = defVal;
             inp.style.borderColor = '';
@@ -40456,6 +45647,8 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
     // Only spread the original config (without injected defaults) plus the new key.
     // This prevents default values from being permanently written into the user's YAML.
     const DEFAULTS = {
+      pdf_enabled: true, pdf_lyrics: true, pdf_cd: true, pdf_disc: true, pdf_info: true, pdf_history: true,
+      pdf_month: true, pdf_recent: true, pdf_recap: true, pdf_pins: true, pdf_lists: true, song_intro_enabled: false,
       auto_switch: true, show_entity_selector: true, show_vol_pct: true,
       scroll_text: false, use_ha_theme: false, remember_view: false,
       remember_last_entity: false, lyrics_persist: false, lyrics_cache_enabled: true,
@@ -40500,6 +45693,8 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
   _updateConfigMulti(updates) {
     if (!this._config || !updates) return;
     const DEFAULTS = {
+      pdf_enabled: true, pdf_lyrics: true, pdf_cd: true, pdf_disc: true, pdf_info: true, pdf_history: true,
+      pdf_month: true, pdf_recent: true, pdf_recap: true, pdf_pins: true, pdf_lists: true, song_intro_enabled: false,
       auto_switch: true, show_entity_selector: true, show_vol_pct: true,
       scroll_text: false, use_ha_theme: false, remember_view: false,
       remember_last_entity: false, lyrics_persist: false, lyrics_cache_enabled: true,
