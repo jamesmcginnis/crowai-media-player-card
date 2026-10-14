@@ -6,7 +6,7 @@ CrowAI is about **discovery** as much as playback — AI-powered info panels, re
 
 > **Music Assistant is required** for Discover (the music library browser), queue management, Vibe Queue Builder, AI Artist Radio, multi-room multicast playback and all MA-specific features.
 
-> **Music Assistant Queue Actions is required** for the Recommended tab, full queue browsing and library drill-in. See [Music Assistant Queue Actions](https://github.com/droans/mass_queue) below.
+> **Music Assistant Queue Actions is required** for the Recommended tab, full queue browsing and library drill-in. See Music Assistant Queue Actions below.
 
 > **AI features are optional and off by default.** Turn on **Enable AI Features** in the editor's AI section to unlock them — they need a conversation agent such as Google Gemini (see [AI Features Setup](#ai-features-setup-optional) below). With AI off, the music info panel shows **Discogs** data, the movie/TV info panel uses **TMDB** if you add a free key, and everything else in the card works as normal.
 
@@ -74,7 +74,7 @@ In the card's visual editor, open **AI**, turn on **Enable AI Features**, and ch
 
 ### Rate limits
 
-Free-tier limits vary by model and change over time, so check Google AI Studio for your current quota. The card caches AI answers (track info, bios, recommendations, search and panel results) for up to 30 days, so repeat lookups don't ask the agent again, and turning on **AI Info** under **Keep in Home Assistant** (Caches & Data) keeps them through app restarts. Music Recap and Video Recap summaries are the exception: they're written fresh each time you open them. You're unlikely to reach the limit in normal use. If you do see a quota message, it resets the next day.
+Free-tier limits vary by model and change over time, so check Google AI Studio for your current quota. The card caches AI answers (track info, bios, recommendations, search and panel results) for up to 30 days, so repeat lookups don't ask the agent again, and turning on **AI Info** under **Keep in Home Assistant** (Caches, Data & Support) keeps them through app restarts. Music Recap and Video Recap summaries are the exception: they're written fresh each time you open them. You're unlikely to reach the limit in normal use. If you do see a quota message, it resets the next day.
 
 ---
 
@@ -99,7 +99,7 @@ GitHub: [github.com/music-assistant](https://github.com/music-assistant) · Full
 
 ### Music Assistant Queue Actions Integration — Required
 
-The Recommended tab, Queue Browser and Library drill-in all require the [**Music Assistant Queue Actions**](https://github.com/droans/mass_queue) (`mass_queue`) integration. When installed it enables:
+The Recommended tab, Queue Browser and Library drill-in all require the **Music Assistant Queue Actions** (`mass_queue`) integration. When installed it enables:
 
 - Personalised recommendations in the Recommended tab
 - Full queue history and upcoming tracks in the Queue Browser
@@ -110,12 +110,10 @@ The Recommended tab, Queue Browser and Library drill-in all require the [**Music
 
 **Installation:**
 
-1. Open **HACS** in Home Assistant → click ⋮ → **Custom repositories**
-2. Add `https://github.com/droans/mass_queue` as an **Integration** repository, then close
-3. Search for **Music Assistant Queue Actions**, click **Download**
-4. Restart Home Assistant — the card detects it automatically, no further configuration needed
+1. Open **HACS** in Home Assistant
+2. Search for **Music Assistant Queue Actions** and click **Download** (if it isn't listed, add its repository under ⋮ → **Custom repositories** as an **Integration**)
+3. Restart Home Assistant — the card detects it automatically, no further configuration needed
 
-Repository: [github.com/droans/mass_queue](https://github.com/droans/mass_queue)
 
 ---
 
@@ -131,6 +129,7 @@ Repository: [github.com/droans/mass_queue](https://github.com/droans/mass_queue)
 - **Double-tap to seek** — double-tap left or right of artwork to seek −15s or +15s
 - **Double-tap to pin** — double-tap the *center* of the artwork to pin whatever's currently playing — a song, movie, TV show, or radio station — with a burst of red hearts floating up from the tap point (grey for unpinning; the heart burst can be turned off with the **Pin Hearts** toggle in Appearance, the pin itself always works). For radio, this uses the same station identification as the LIVE pill, so it only works once the station's been resolved (usually near-instant, but a station that's never been looked up this session may need a moment, or a tap of the LIVE pill first)
 - **Pinned indicator** — a small pin badge appears in the bottom-left corner of the artwork whenever the currently playing track/movie/show/radio station is pinned, and updates live regardless of which of the card's several pin buttons was used. Tap it to unpin — shows an iOS-style confirmation first, then the same grey heart-burst as unpinning via double-tap
+- **App-aware AI Info** — with AI Features on, tapping the artwork while something that isn't a film or series is playing opens AI Info shaped for the app: YouTube, Vimeo, TikTok and Dailymotion videos (the video, the channel, topics, a fun fact and more to try), Twitch streams (the streamer, the game or category, similar streamers), sport (the event and background on the teams, with no live scores), news channels (the channel and programme only, with no live headlines), workouts in Apple Fitness+, Peloton and the like (the workout, the instructor or tips, what it works), podcasts (the episode and the show), and apps and games open on the Apple TV, including Netflix and others when they aren't saying what's on (what it is and tips). The app's icon sits where a poster would, and tapping it offers to open the app's website. Pills open a short note at the bottom of the screen. YouTube, Twitch, Vimeo and TikTok have a Find on button for the app's own search. Personal videos (Photos, or a file name like IMG_2041.mov) get a simple panel instead of a wrong film match, and music apps on the Apple TV (Apple Music, Spotify and others) open the song's own AI Info. Films and series in Netflix, iPlayer, Disney+, Prime Video and the like keep Media Info. Home Assistant doesn't pass video IDs, so the AI goes by the title and channel and says when it's guessing. Answers are kept like the other AI answers. While something plays in one of these apps the film tools stay out of the way: no Trivia, Mood Match, Find Soundtrack or case printables, no pinning it as a film, and no LIVE radio pill. When an app shares no artwork, the player shows the app's icon instead of the plain TV. An Apple TV that's idle, asleep, off, or paused for half an hour or more shows as nothing playing rather than the last show it played
 - **Artwork tap actions** — single-tap opens the info panel (music: AI Info or Discogs; TV/movies: Media Info; live radio with track metadata: that track's info); double-tap the left or right edge to seek −15s/+15s, double-tap the center to pin; long-press opens lyrics for music, or the Apple TV remote while a show, movie or video app is playing (or when nothing is showing on an Apple TV)
 - **Artwork zoom** — tap the mini album art in the AI Info panel or album view to see a larger version
 - **Glass throughout** — with Style set to Glass, the card's confirmations, choosers, toasts and PDF preview use Liquid Glass too, with light and dark versions to match the theme
@@ -144,7 +143,7 @@ Repository: [github.com/droans/mass_queue](https://github.com/droans/mass_queue)
 - **Album artwork** — automatic iTunes artwork lookup when no artwork is provided
 - **Artwork Crossfade** — optional cinematic fade-to-black transition between tracks
 - **Player Icon Themes** — eight icon sets: Standard, Modern, Robot, Chunky, Retro, Sharp, Pixel and LCD
-- **Button Icons** — choose the icon for the Discover button and the Apple TV remote button from a set of ready-made icons, or use any Home Assistant icon (e.g. `mdi:bookshelf`). In Appearance, or `library_button_icon` / `remote_button_icon` in YAML
+- **Button Icons** — choose the icon for the Discover button and the Apple TV remote button from a set of ready-made icons, or use any Home Assistant icon (e.g. `mdi:bookshelf`). In Appearance, or `discover_icon` / `remote_icon` in YAML
 - **Ambient glow** — extracts dominant colour from artwork and applies a subtle glow
 - **Radio mode indicator** — tap the radio icon to turn radio mode off immediately
 - **Live station identification** — a LIVE pill appears on the artwork while a radio stream plays, on any speaker type (MA or native); tap it to see the station's format, country, votes, website and description, and the artwork automatically resolves to the station's own logo when available. Stations played straight from the Music Assistant library are identified from MA itself, so their panel opens (fully playable and pinnable) even when radio-browser.info doesn't know them. When a station broadcasts real track metadata (artist + title), tapping the *artwork* opens that track's own info panel with the station shown as a badge — the LIVE pill itself always opens the station panel
@@ -156,17 +155,30 @@ Repository: [github.com/droans/mass_queue](https://github.com/droans/mass_queue)
 - **Audio quality** — tap the artwork while a song plays on a Music Assistant speaker: the info panel shows an Audio Quality box under the details, e.g. **Lossless**, **Hi-Res Lossless** or the lossy format (AAC 256 kbps), with the bit depth, sample rate and source. Needs Music Assistant Queue Actions
 - **Sleep timer** — **Sleep Timer** in the quick menu pauses after 15, 30, 45 or 60 minutes, or at the end of the song, turning the volume down gently over the last half a minute and putting it back afterwards. The time left shows in a pill at the top of the artwork (a small moon on the mini artwork in compact mode); tap it to change or turn off the timer. The dashboard needs to stay open for it to run
 - **Visualiser** *(start it from **Visualiser** in the quick menu, or have it start by itself with **Start Automatically** in the editor's Visualiser & Screensaver section)* — in place of the album artwork while music plays, visuals that move in time with the song, in the album's own colours. Eleven styles, or **Shuffle Each Song**: **Spectrum Equaliser** (LED bars with falling peaks), **Radial Equaliser** (bars in a ring around the spinning cover), **VU Meters** (a pair of backlit analogue meters), **Waveform** (glowing oscilloscope lines), **Vinyl Turntable** (the cover as the record label, with a tonearm that moves across the record through the song), **Cassette Deck** (the tape winding from one reel to the other), **Pulse Particles** (sparks bursting out on the beat), **Synthwave Grid** (a neon horizon rolling in time with the tempo), **Synced Lyrics** (the current synced lyric line, large, with the lines before and after it faded), **Liquid Colour** (slow blobs of the album's colours swelling with the music) and **Code Rain** (columns of glowing green characters streaming down a dark screen, falling faster and brighter the busier the music). Speakers don't send their sound to the dashboard, so the visuals follow each song's tempo (looked up on Deezer), where the song is up to and its synced lyrics; with **Play on This Device** they follow the actual sound. It shows while music is playing, and pausing or stopping goes back to the artwork. Chosen from the quick menu, the artwork then stays when the music resumes; started by itself, it comes back after the same time left alone. Radio streams get the visualiser too; movies, TV, podcasts and audiobooks keep their artwork, tap the visualiser to go back to the artwork (until the page is refreshed or closed), and **Visualiser** in the quick menu switches style, or back to the artwork, on that device until the page is refreshed or closed (it can be hidden from the quick menu in the editor)
-- **Screensaver** *(start it from **Screensaver** in the quick menu, or have it start by itself with **Start Automatically** in the editor's Visualiser & Screensaver section)* — a screensaver over the full-size player's artwork. Start any style from **Screensaver** in the quick menu, or let it start by itself in the style chosen in the editor after a chosen time (30 seconds to 1 hour) with the card left alone, whether or not music is playing; it stays until tapped. Tap anywhere on it to close it. Seven styles, or **Shuffle** to change style every five minutes: **Album Wall** (a grid of recent album covers, flipping over one tile at a time), **Rain on Glass** (raindrops gathering and running down a window over a blurred album cover, each drop showing the cover upside down like a little lens), **Ambient Aurora** (an aurora that slowly shifts through greens, teals, blues, violets, pinks and ambers, with curtains of light swaying across a starry sky), **Lava Lamp** (glossy blobs rising, merging and sinking in a glowing lamp, in the colours of the last song's album cover, drifting gently around them; a cover with no real colour gets slowly changing colours instead), **Clock & Weather** (a big clock and the date, over an animated sky with drifting clouds, sun, moon, stars, rain, snow or lightning to match the weather when a weather entity is chosen), **Flip Clock** (split-flap digits that flip over as the minutes change) and **Analogue Clock** (a dial with a smoothly sweeping second hand, in any of twelve faces chosen in the editor, Luxury by default). A small clock and the date (and the weather) can sit in the corner of the styles that don't show the time themselves. No account or key needed
+- **Screensaver** *(start it from **Screensaver** in the quick menu, or have it start by itself with **Start Automatically** in the editor's Visualiser & Screensaver section)* — a screensaver over the full-size player's artwork, or over the whole screen with **Full Screen** switched on (see [Full-Screen Screensaver](#full-screen-screensaver)). Start any style from **Screensaver** in the quick menu, or let it start by itself in the style chosen in the editor after a chosen time (30 seconds to 1 hour) with the card left alone, whether or not music is playing; it stays until tapped (or until music starts, unless it was set to start by itself as a screensaver). Tap anywhere on it to close it. Eleven styles, or **Shuffle** to change style every five minutes: **Album Wall** (a grid of recent album covers, flipping over one tile at a time), **Rain on Glass** (raindrops gathering and running down a window over a blurred album cover, each drop showing the cover upside down like a little lens), **Ambient Aurora** (an aurora that slowly shifts through greens, teals, blues, violets, pinks and ambers, with curtains of light swaying across a starry sky), **Lava Lamp** (glossy blobs rising, merging and sinking in a glowing lamp, in the colours of the last song's album cover, drifting gently around them; a cover with no real colour gets slowly changing colours instead), **Night Sky** (thousands of twinkling stars and the Milky Way flowing slowly up across the sky over hazy hills and pine trees, the odd shooting star and tonight's moon in its real phase), **Fireplace** (flames licking up in the dark, white-hot at the base and cooling through yellow and orange to red at the tips, with sparks rising and the darkness around them warmed by the firelight), **Ocean** (a rippling sea under a sky that follows Home Assistant's sun: dawn pink, midday blue, dusk orange and deep blue with the moon and stars at night, with a sparkling path of light under the sun or moon. Now and then something happens, one thing at a time: a small boat crosses the horizon (a yacht, sailing boat, ferry or container ship, showing its navigation lights and lit windows at night), dolphins leap alone or in a pod, seabirds glide over, or a whale spouts far out and lifts its tail. The screensaver's weather entity sets the clouds and the sea: glassy when it's still, choppier with white caps in the wind, with a rain shower hanging out on the horizon when it's raining and silent lightning in a storm), **Clock & Weather** (a big clock and the date, over an animated sky with drifting clouds, sun, moon, stars, rain, snow or lightning to match the weather when a weather entity is chosen), **Flip Clock** (split-flap digits that flip over as the minutes change), **Analogue Clock** (a dial with a smoothly sweeping second hand, in any of twelve faces chosen in the editor, Luxury by default) and **Word Clock** (the time spelled out in a grid of letters, such as "IT IS TWENTY PAST TEN", lit in the album's colour when there is one). A small clock and the date (and the weather) can sit in the corner of the styles that don't show the time themselves. No account or key needed
 - **In-card notifications** — toast alerts appear inside the card
 - **Controls Theme** — 12 colour presets for the control icons (Classic, Vivid, Warm, Ocean, Rose, Forest, Neon, Soft, Midnight, Gold, Retro, Ember)
 
+### Full-Screen Screensaver
+
+Turn on **Full Screen** in the editor's **Visualiser & Screensaver** section (under Screensaver) to have the screensaver cover the whole screen, Home Assistant's header and sidebar included, rather than just the album artwork. It's off by default.
+
+- **Every style is made for full screen** — the clocks, digits and dials scale with the screen, the Album Wall keeps its covers square (more rows on an upright phone, more columns on a wide screen, laid out again when a tablet is rotated), the Lava Lamp, Fireplace and Rain on Glass stay in proportion, and the Aurora keeps its glows round and fills the sky with stars
+- **Notches and home bars** — the clock and text stay clear of them on iPhones and iPads
+- **Any tap on the dashboard counts as using it** — so it won't appear while someone is using a different card on the same screen
+- **Works from a compact player too** — the card doesn't need to be showing its artwork
+- **Tap anywhere to close** — the tap doesn't fall through to whatever is underneath. Escape closes it on a computer
+- **One at a time** — with several CrowAI cards on a dashboard, only one goes full screen. It never starts by itself from the card editor's preview, and it closes when you switch to another view
+- **Light on the processor** — on very large or high-density screens the animated styles cap how sharply they draw, and Night Sky and Rain on Glass cap how many stars and drops they draw, so wall panels and Raspberry Pi kiosks stay cool
+- **Keeping the screen on** — the card can't keep an iPhone or iPad awake inside the Home Assistant app. For a wall or bedside tablet, turn on **Keep screen on** in the Home Assistant app's own **Kiosk mode** (Settings, Kiosk mode), or set the device's Auto-Lock to Never
+
 ### AI Features
 
-- **AI Info Panel** — tap the artwork while music plays: year, label, length, fun fact, genre tags, band members / artist section, similar tracks; all AI-generated and cached per track. The header reads "AI Info" for an AI answer and "Discogs Info" when Discogs filled in. **Info Panel Priority** in the AI section chooses whether AI or Discogs is tried first
+- **AI Info Panel** — tap the artwork while music plays: year, label, length, fun fact, genre tags, band members / artist section, similar tracks; all AI-generated and cached per track. The header reads "AI Info" for an AI answer and "Discogs Info" when Discogs filled in. **Try First** in the editor's **Info Panels** section chooses whether AI or Discogs is tried first
 - **Ask, Meaning and Trivia** — buttons in the music info panel: ask your own question about the song ("Who wrote this? Is there a live version?"), read what it means, or try a quiz. Movie and TV panels have **Ask**, **Mood Match** and **Trivia**, episode pages have **Ask**, **Trivia** and **Soundtrack**, and person pages have **Ask** and **Trivia**
 - **Discogs Panel** — the default info panel when AI features are off, and the automatic fallback when AI can't identify a track: year, label, length, tappable genre tags, artist section and a full tracklist with community rating, in the same panel layout. The header reads "Discogs Info" so it's clear where the data came from; tapping a tracklist row opens that track's own info, same as everywhere else in the card, and the row for the track you're viewing is highlighted. Built-in rate-limit protection backs off automatically for 10 seconds whenever Discogs asks the card to slow down.
 - **Song Intro** — a short, intriguing one-line fact about the playing track appears below the artist name a few seconds after it starts, then fades away; off by default, toggle in the editor's AI section
-- **Vibe Queue Builder** — 100+ vibes across Energy, Calm, Focus, Mood, Social, Decades, Genre, Time, Seasons and Binaural & Noise; builds a themed MA queue instantly
+- **Vibe Queue Builder** — 100+ vibes across Energy, Calm, Focus, Mood, Social, Activity, Decades, Genre, Time, Seasons and Binaural & Noise; builds a themed MA queue instantly
 - **Add Songs from Same Year / Genre / Genre & Year** — quick-menu actions that add AI-picked songs matching what's playing to the queue
 - **Working indicator** — while the card is building or adding to a queue (Add Similar Songs, Same Year / Genre, AI Artist Radio, Vibe), a small spinner shows inside the mini artwork and the speaker pill on the artwork pulses. Both stop as soon as the songs are in. The first few songs are added straight away so the queue starts filling while the rest are found. The queue can't be opened mid-build: tapping it says your songs are still being added, and a message tells you when they're ready to see. If the queue is already open it shows "Building your queue" until they are
 - **Friendly error messages** — if the AI or Music Assistant can't help, a short toast says why in plain English: the AI's usage limit has been reached, it took too long, it couldn't sign in, the model has been retired, no AI agent is chosen, its answer didn't make sense, or the songs couldn't be found in Music Assistant (including "Added 12 of 18 songs" when only some were found)
@@ -183,7 +195,7 @@ Repository: [github.com/droans/mass_queue](https://github.com/droans/mass_queue)
 - **Audiobook search** — find free, public-domain audiobooks via LibriVox/Archive.org, with AI-assisted query refinement when AI features are enabled (plain search works without)
 - **Podcast search** — search iTunes for podcasts and pin your favourites
 - **Find Soundtrack** — available from the media player's quick menu while watching on Apple TV, the long-press menu on any Movie/TV Show in Discover, the Soundtrack button on a Watch History title or an episode page — opens an AI-powered search for "Music from [title]"
-- **Watch on YouTube / Watch Trailer** — the first item in the Info panel's 3-dot menu: Watch on YouTube opens a YouTube search for the song, and Watch Trailer opens the trailer for a movie or TV show (also a round Trailer button next to Pin under the poster). Always searches YouTube specifically regardless of your configured Share service. Toggle in **Appearance & Behaviour**
+- **Watch on YouTube / Watch Trailer** — the first item in the Info panel's 3-dot menu: Watch on YouTube opens a YouTube search for the song, and Watch Trailer opens the trailer for a movie or TV show (also a round Trailer button next to Pin under the poster). Always searches YouTube specifically regardless of your configured Share service. Turn it off with **Watch on YouTube** in the editor's **Info Panels** section (Extras)
 - **Music Recap** — a personal weekly snapshot: top artists and tracks (last 7 days, top 10 each, expandable to 50) plus a short AI-written summary that regenerates fresh every time you open it
 - **Video Recap** — the same idea as Music Recap, but for movies and TV shows: top shows and top movies over the last 7 days plus a fresh AI-written summary every time you open it
 
@@ -197,14 +209,16 @@ Every AI option (Search, Vibe, Recommendations, AI Artist Radio, the Add to Queu
 | Album view (tracklist, year, label, genres) | Discogs |
 | Movie and TV info | TMDB (with a key), then TVmaze for TV shows, then Wikipedia |
 | TV seasons and episodes (counts, titles, air dates, summaries) | TVmaze |
-| TV Tonight (UK) | The Freeview guide from [Freeview-EPG](https://github.com/dp247/Freeview-EPG), with channel logos from [tv-logos](https://github.com/tv-logo/tv-logos) |
+| TV Tonight (UK) | The Freeview programme guide, with channel logos, from free community-maintained listings |
 | Artist, band member, cast and director bios | Wikipedia |
 | Genre pill descriptions | Wikipedia |
 
 None of these need an account or key apart from TMDB. Wikipedia results are kept for the session only, so turning AI back on gets the richer AI version next time; TVmaze lists are saved for 2 days while a show is airing and 7 days once it's ended, so new episodes and seasons appear quickly. TVmaze also fills in any details missing from an AI or TMDB TV panel, such as cast or overview, and a panel built entirely from TVmaze reads "TVmaze Info". The Year box in the music info panel opens "This year in music" only when AI is on; with AI off it shows the year as plain text.
 
 **When the AI is struggling.** If the AI runs out of quota, keeps timing out, can't sign in or has no agent, the card pauses it and goes straight to the fallbacks above instead of waiting for each request to fail. A usage-limit pause lasts 2 minutes, then 10, then 30 if it keeps happening; two timeouts in a row pause it for 2 minutes; sign-in, model and agent problems pause it until the AI settings change or the page reloads. You get a single message when a pause starts, and the editor's **AI** section shows the current state with a **Try AI Again** button. Panels with a fallback give the AI 25 seconds to answer before using it. If the AI misses a particular track, tapping that track's artwork again later in the session opens the Discogs panel straight away, while the card quietly retries the AI once in the background so the full AI panel can return next time.
-**Choosing which AI features run.** Under the master switch, the **AI** section has an **AI Features** list so you can turn individual features off to save quota: **Info Panels**, **Look Up in Advance** (fetching AI info in the background before you tap; *off by default*), **Search and Recommendations**, **Ask, Meaning and Trivia**, and **Recap Summaries**. Anything switched off is hidden or falls back to the card's normal behaviour. When Ask, Meaning, Trivia or Mood Match can't get an answer, the panel shows a short reason ("Limit reached", "Busy right now", "No reply"…) with a **Try Again** button. A "busy" answer from the AI service is retried once automatically, identical requests already on their way are shared rather than sent twice, and every prompt tells the AI to treat titles, descriptions and web text strictly as data. If AI is on but no usable agent is chosen, the AI section shows a warning under the AI Agent box.
+**Choosing which AI features run.** Under the master switch, the **AI** section has an **AI Features** list so you can turn individual features off to save quota: **Look Up in Advance** (fetching AI info in the background before you tap; *off by default*), **Search and Recommendations**, **Ask, Meaning and Trivia**, and **Recap Summaries**. AI in the info panels is switched with **AI Details** in the **Info Panels** section (Extras). Anything switched off is hidden or falls back to the card's normal behaviour. When Ask, Meaning, Trivia or Mood Match can't get an answer, the panel shows a short reason ("Limit reached", "Busy right now", "No reply"…) with a **Try Again** button. A "busy" answer from the AI service is retried once automatically, identical requests already on their way are shared rather than sent twice, and every prompt tells the AI to treat titles, descriptions and web text strictly as data. If AI is on but no usable agent is chosen, the AI section shows a warning under the AI Agent box.
+
+> **Recommended:** in the editor's **Info Panels** section, set **Try First** to **Discogs with AI Extras** for songs and **TMDB with AI Extras** for movies and TV (TMDB needs a free API key). You get the accuracy of Discogs's and TMDB's own records (the right year, label, cast, poster and rating) together with the AI's extras on top: Ask, Meaning or Mood Match, Trivia and fun facts. It usually uses less AI quota than AI First too, since the facts come from Discogs and TMDB rather than the AI.
 
 ### Movies & TV (TMDB)
 
@@ -238,29 +252,30 @@ Turn the browser showing the card — your iPhone, a tablet or a computer — in
 
 ### Persistent Storage
 
-By default, pins, AI lookups, iTunes artwork, Wikipedia photos and lyrics are cached in the browser only, which means they can be lost to WKWebView cache evictions or app restarts. Each of these can individually be switched to **persistent storage** in **Caches & Data** (lyrics in **Lyrics**), which saves them to Home Assistant's own database instead:
+By default, pins, AI lookups, iTunes artwork, Wikipedia photos and lyrics are cached in the browser only, which means they can be lost to WKWebView cache evictions or app restarts. Each of these can be kept in Home Assistant as well, under **Keep in Home Assistant** in the editor's **Caches, Data & Support** section, which saves them to your Home Assistant user so they survive app restarts and are on your other devices:
 
-- **iTunes Artwork**, **Wikipedia Artwork**, **Pinned Items**, **AI Info** (track info, bios, recommendations, etc.) and **Lyrics** each have their own Persistent Storage toggle
+- **Pins**, **Lyrics**, **AI Info** (track info, bios, recommendations, listening and watch history, etc.), **iTunes Artwork** and **Wikipedia Artwork** each have their own switch
 - Persistent data is loaded once per session and merged with the on-device cache — Home Assistant's copy always wins on conflict
 - A **Clear Persistent Storage** button (separate from the regular cache-clear buttons) removes everything saved this way
-- **Wikipedia photos** (cast, artists and band members) are also kept on the device after their first download, so they appear almost instantly on later visits, even after the app restarts. This needs Home Assistant to be opened over https (for example through Nabu Casa); over plain http they're downloaded again each session. Photos already cached show straight away, and up to three new ones load at a time
+- **Wikipedia photos** (cast, artists and band members) are also kept on the device after their first download, so they appear almost instantly on later visits, even after the app restarts. This needs Home Assistant to be opened over https (for example through remote access); over plain http they're downloaded again each session. Photos already cached show straight away, and up to three new ones load at a time
 
 ### Vibe Queue Builder
 
-100+ vibes across 10 categories:
+100+ vibes across 11 categories:
 
 | Category | Examples |
 |----------|---------|
-| Energy | Hype, Workout, Epic, Chill Drive |
-| Calm | Meditate, Sleep, Rainy Day, Wind Down |
+| Energy | Energetic, Workout, Hype, Beast Mode |
+| Calm | Chill, Meditate, Sleep, Bath / Spa |
 | Focus | Study, Deep Work, Coding, Flow State |
-| Vibe | Happy, Melancholy, Nostalgic, Romantic |
+| Mood | Happy, Melancholic, Nostalgic, Romantic |
 | Social | Party, Pub Night, BBQ, Pre-Drinks |
+| Activity | Sunday Morning, Cooking, Holiday |
 | Decades | 50s through 2020s |
 | Genre | Rock, Jazz, Classical, Hip Hop, Electronic, and 20+ more |
-| Time | Morning, Evening, Late Night, Midnight |
+| Time | Morning, Evening, Late Night |
 | Seasons | Summer, Autumn, Winter, Spring |
-| Binaural & Noise | White Noise, Pink Noise, Delta Waves, Focus Waves |
+| Binaural & Noise | White, Pink, Brown and Green Noise; Delta, Theta, Alpha, Beta and Gamma Waves |
 
 Decade moods search your MA library for chart compilations first, then fall back to streaming with one track per seed artist. Genre and Social moods search for curated playlists, falling back to radio mode. All seeds and search terms are fully customisable in the visual editor.
 
@@ -271,31 +286,33 @@ Related actions are grouped into sub-menus so the menu fits on a phone screen: t
 | Item | Notes |
 |------|-------|
 | **Find & browse** | |
-| Search | AI natural language search, up to 18 results |
-| Discover | Opens Discover, the library browser |
 | Queue | MA speakers only |
+| Search | Searches your Music Assistant library |
+| AI Search | Natural language search, up to 18 results |
+| Discover | Opens Discover, the library browser |
 | **Discover & build** | |
 | Vibe | Opens Vibe Queue Builder |
-| Recommendations | AI track/movie/show suggestions, up to 18 results |
+| AI Recommendations | AI track/movie/show suggestions, up to 18 results |
 | AI Artist Radio | Builds an artist radio queue |
+| Add to Queue › | Add Similar Songs, Add Songs from Same Genre, Same Year, or Same Genre & Year, and Add Album (MA speakers) |
 | Radio Mode | Toggles MA radio mode |
-| Add to Queue › | Similar Songs, Same Genre, Same Year, Same Genre & Year, This Album (MA speakers) |
 | **What's playing** | |
 | Lyrics | Toggles lyrics panel |
 | Sleep Timer | Pause after a set time or at the end of the song; shows the time left while it runs |
 | Visualiser | Album Artwork, or any visualiser style or Shuffle Each Song, for music on this device until the page is refreshed or closed; the current choice is highlighted |
-| Screensaver | Pick a screensaver style to start over the artwork: Album Wall, Rain on Glass, Ambient Aurora, Lava Lamp, Clock & Weather, Flip Clock, Analogue Clock or Shuffle (can be hidden from the quick menu in the editor) |
-| More Info | Opens AI/Media Info panel |
+| Screensaver | Pick a screensaver style to start over the artwork (or the whole screen, with **Full Screen** on): Album Wall, Rain on Glass, Ambient Aurora, Lava Lamp, Night Sky, Fireplace, Ocean, Clock & Weather, Flip Clock, Analogue Clock, Word Clock or Shuffle (can be hidden from the quick menu in the editor) |
 | Pin / Unpin | Pins whatever's playing (song, radio, podcast or audiobook) |
-| Mood Match / Trivia | While a movie or show is playing |
+| AI Mood Match / AI Trivia | While a movie or show is playing |
 | Remote Control | Apple TV only — opens or closes the remote |
+| Open App | Apple TV only — the remote's Apps grid |
 | Find Soundtrack | While watching on Apple TV |
 | **Recaps, export & sharing** | |
 | Recaps › | Music Recap, Video Recap |
 | Export › | For what's playing: Lyrics (when the song has them), then CD Case Printables for a song or DVD / Blu-ray Case Printables for a show or film. Then Listening Report, Your Month in Music, Recently Played, Watch Report and Pinned Items. See [Export to PDF](#export-to-pdf) |
 | Share & Announce › | Share (track info plus a link to your chosen music service, see [Sharing](#sharing)), Announce, Send Message |
+| More Info | At the bottom: opens the AI or Media Info panel |
 
-> The AI entries (Search, Vibe, Recommendations, AI Artist Radio, the Add to Queue songs, Mood Match, Trivia, Find Soundtrack) only appear when **Enable AI Features** is on. The same goes for the AI entries in the queue's 3-dot menu and in every long-press menu.
+> The AI entries (AI Search, Vibe, AI Recommendations, AI Artist Radio, the Add to Queue songs, AI Mood Match, AI Trivia, Find Soundtrack) only appear when **Enable AI Features** is on. The same goes for the AI entries in the queue's 3-dot menu and in every long-press menu.
 
 ### Multi-Room Multicast
 
@@ -315,9 +332,10 @@ Pin your favourites for one-tap access. All pins also live together in a consoli
 - **What can be pinned** — radio stations, podcasts, audiobooks, movies and TV shows, saved queues (see [Pin Queue as Playlist](#pin-queue-as-playlist)), recap snapshots (see [Music Recap](#music-recap)), and MA library tracks, artists, albums and playlists
 - **How to pin** — long-press any item and choose Pin/Unpin, or tap **Pin** in the row of round buttons under the artwork in its info panel (it turns yellow and reads Unpin once pinned); for whatever's currently playing (a song, movie, TV show, or radio station), double-tapping the center of the artwork does the same thing instantly, with a heart-burst animation to confirm it. Unpin shows in red in every menu, and unpinning anything asks first with an iOS-style confirmation; pinned queues and recaps also warn that the snapshot can't be recreated
 - **Show Pins in Sections** *(on by default)* — when enabled, pinned items also still appear inline at the top of their own tab (e.g. Pinned Songs in the Songs tab); turn it off in the editor's **Discover** section so pins only appear in the consolidated Pins section
-- **Management** — view and clear pins individually or all at once from **Caches & Data → Pinned Items** in the visual editor
+- **Management** — view and clear pins individually or all at once from **Caches, Data & Support** in the visual editor (Clear All Pins)
 - Pins are stored on-device only by default and aren't synced between browsers or devices
-- Enable **Persistent Pin Storage** in **Caches & Data** to also save pins to Home Assistant's database, so they survive app restarts and cache clears
+- Turn on **Pins** under **Keep in Home Assistant** in **Caches, Data & Support** to also save pins to Home Assistant, so they survive app restarts and cache clears
+- **Apple TV App Icons** keeps the icons for the remote's Apps grid and the app Info panel, the images themselves, on this device and in Home Assistant, so they appear straight away after the companion app is closed and reopened and on your other devices. Apps the App Store doesn't have, or that haven't come back yet, show their website's logo. **Clear** removes them everywhere and they're fetched again (Clear All Caches clears them too)
 - **Clear All Caches** clears every cache but leaves your own things alone: pins, saved stations and queues, Music and Watch History, muted artists, favourite announcements and remembered choices. Use **Clear All Pins** to remove pins, and **Clear Persistent Storage** to also remove the copy kept in Home Assistant
 
 ### Pin Queue as Playlist
@@ -339,7 +357,7 @@ Open from the quick menu for a personal snapshot of your recent listening.
 - **Shared across rooms on the same device** — logging is scoped to whatever entities a card is configured with, but the Recap panel itself doesn't filter by entity when displaying results. If you run separate cards per room on the same phone/browser, they all read from one shared history, so every card's Recap shows the combined total of everything any of your cards have logged — not a breakdown per room
 - **Catches up on missed plays** — each time a card loads, it also pulls that entity's own state history from Home Assistant (not just what it observes live) to backfill anything played while that card wasn't open — e.g. a different room's tab was active at the time. This needs Home Assistant's recorder to actually be tracking the entity; it looks back up to 48 hours on a card's first-ever load, then only as far as its last check after that
 - **Per-user** — if you and other household members use separate Home Assistant accounts, each person's Recap is tracked and stored separately, the same way Pins are
-- **Clear Listening History** — in the 3-dot menu (with an iOS-style confirmation); permanently deletes your history and resets the history-backfill checkpoint, so cleared plays don't get silently reinstated the next time a card loads; turn on **AI Info** under **Keep in Home Assistant** in **Caches & Data** so this history survives app restarts and WKWebView cache evictions. This is the same history [Music History](#discover-music-assistant-library-browser) reads from, so clearing either one clears both
+- **Clear Listening History** — in the 3-dot menu (with an iOS-style confirmation); permanently deletes your history and resets the history-backfill checkpoint, so cleared plays don't get silently reinstated the next time a card loads; turn on **AI Info** under **Keep in Home Assistant** in **Caches, Data & Support** so this history survives app restarts and WKWebView cache evictions. This is the same history [Music History](#discover-music-assistant-library-browser) reads from, so clearing either one clears both
 
 ### Video Recap
 
@@ -351,7 +369,7 @@ The same idea as Music Recap, but for movies and TV shows, reachable the same wa
 - **AI summary** — a fresh, warm write-up of the week's viewing, regenerated every time the panel opens; requires AI features to be enabled — the stats themselves work without AI
 - **Tap a title** to open its Media Info panel — poster, synopsis, cast, Similar Movies/Shows, all the same navigation used elsewhere in the card
 - **What's excluded** — entries that turn out to just be a bare date (some sources report a recording's date instead of a real title when no title metadata is available) are filtered out automatically, both going forward and retroactively from anything already logged
-- **Clear Watch History** — in the 3-dot menu, with the same iOS-style confirmation; turn on **AI Info** under **Keep in Home Assistant** in **Caches & Data** so this history survives app restarts. Same history [Watch History](#discover-music-assistant-library-browser) reads from, so clearing either one clears both
+- **Clear Watch History** — in the 3-dot menu, with the same iOS-style confirmation; turn on **AI Info** under **Keep in Home Assistant** in **Caches, Data & Support** so this history survives app restarts. Same history [Watch History](#discover-music-assistant-library-browser) reads from, so clearing either one clears both
 
 ### Synced Lyrics
 
@@ -365,7 +383,7 @@ Long-press the artwork while music plays to open the full-screen lyrics panel.
 - **Translate Lyrics** — tap **⋯** in the top-left corner of the lyrics, then **Translate Lyrics**: a translation under each line, with pronunciation for scripts such as Japanese, Korean or Russian. Uses the AI (needs AI Features on); each translation is kept, so it's instant next time. **Hide Translation** turns it off
 - **New Releases** — at the bottom of the music info panel (tap the artwork): albums, EPs and singles the artist playing has put out in the last year, or that are due soon, from MusicBrainz. Dated by when each record first came out, so reissues and remasters of old albums don't count, and the section stays hidden when there's nothing new. Tap one for its songs, long-press to play or queue it
 - **Charts** *(off by default — switch it on in the editor's Discover section)* — a **Charts** section in Discover. Under **Apple Music**: **Top Songs** and **Top Albums** (each opens its songs), for your country (the one set in Home Assistant). Below Apple Music are the charts on Deezer's front page, each its own section: **Official Charts** (UK), **Charts** (Top Worldwide, your country, USA), **Trending**, **Popular Playlists**, **Most-streamed Artists** (their top songs) and **Most-streamed Albums**. Each chart opens on the Top 10, with Top 50 and Top 100 in the ⋯ menu, and the usual **Play All**, **Add**, **Play Next**, **Pin** and **Export** buttons. Tap a song for its info panel, long-press for Play Next, Add to Queue and the rest. Songs are found through Music Assistant, and any it can't find are skipped and counted. Everything you open in Charts is fetched once a day and kept on your device until midnight, even if you reload or close and reopen the app. While a chart loads, the line under the spinner says what it's doing. Apple Music and Deezer each have their own switch under Charts in the editor; switching both off turns Charts off. A pinned chart sits in **Pins → Charts** and always opens the latest version. No account or key needed
-- **Movie & TV Charts** — a **Charts** row at the top of Discover's **Movies & TV** section. Inside: **Apple TV** (Top Movies, Top TV Shows), **TVmaze** (TV Tonight, New on Streaming) and, when a TMDB key is added in the editor, **TMDB** (Trending This Week, Popular Movies, Now in Cinemas, Coming Soon, Top Rated Movies, Popular TV). Titles open the usual Info panel and long-press pins a title; each chart has **Pin** (live, named, in Pins → Charts) and **Export**. Kept until midnight. On by default — switch it off in the editor's Discover section. In the UK, **TV Tonight** comes from the free Freeview guide, channel by channel with each channel's logo: what's on now with a progress bar, then the rest of the evening, with more behind **more tonight**. Tap a programme for its picture, times, episode, synopsis, an **Info** button and a **Watch on** button for the broadcaster's live page or app; the ✕ closes it and takes you back to the list. To show your own channels (a regional BBC One or ITV1, say), list their guide channel IDs under `tv_tonight_channels` in the card's YAML. Outside the UK, or if the guide can't be reached, TV Tonight uses TVmaze as before. The TV guide has its own **TV Guide** switch under Movie & TV Charts in the editor (the editor's Discover section); with it off, TV Tonight shows TVmaze's listings instead.
+- **Movie & TV Charts** — a **Charts** row at the top of Discover's **Movies & TV** section. Inside: **Apple TV** (Top Movies, Top TV Shows), **TVmaze** (TV Tonight, New on Streaming) and, when a TMDB key is added in the editor, **TMDB** (Trending This Week, Popular Movies, Now in Cinemas, Coming Soon, Top Rated Movies, Popular TV). Titles open the usual Info panel and long-press pins a title; each chart has **Pin** (live, named, in Pins → Charts) and **Export**. Kept until midnight. On by default — switch it off in the editor's Discover section. In the UK, **TV Tonight** comes from the free Freeview guide, channel by channel with each channel's logo: what's on now with a progress bar, then the rest of the evening, with more behind **more tonight**. Tap a programme for its picture, times, episode, synopsis, an **Info** button and a **Watch on** button for the broadcaster's live page or app; the X closes it and takes you back to the list. To show your own channels (a regional BBC One or ITV1, say), list their guide channel IDs under `tv_tonight_channels` in the card's YAML. Outside the UK, or if the guide can't be reached, TV Tonight uses TVmaze as before. The TV guide has its own **TV Guide** switch under Movie & TV Charts in the editor (the editor's Discover section); with it off, TV Tonight shows TVmaze's listings instead.
 - **Podcast Charts** — at the top of Discover's **Podcasts** section: Apple Podcasts' **Top Podcasts** for your country. A podcast opens its usual info panel with episodes and Pin. Refreshed once a day. On by default — switch it off in the editor's Discover section
 
 ### Sharing
@@ -400,7 +418,7 @@ Almost everything in the card can be saved as a PDF. A preview opens straight aw
 | Listening Report | Quick menu **Export ›**, Music History ⋮ → **Export to PDF**, the Music History hero bar's **Export**, Music Recap ⋮ → **Export Report to PDF** |
 | Your Month in Music | Quick menu **Export ›**, Music History ⋮ → **Export to PDF** |
 | Recently Played | Quick menu **Export ›**, Music History ⋮ → **Export to PDF** (choose a speaker) |
-| Watch Report | Quick menu **Export ›**, Watch History ⋮ → **Export Report to PDF**, Video Recap ⋮ → **Export Report to PDF**, and a title's **Export** button for that title's history |
+| Watch Report | Quick menu **Export ›**, Watch History ⋮ → **Export Report to PDF**, Video Recap ⋮ → **Export Report to PDF**, and a title's **Export** button for that title's history. Includes a YouTube section (videos, time, top channels, when you watch and the videos themselves) whenever YouTube was watched in the period, kept apart from the films and shows |
 | Recaps | Music Recap and Video Recap ⋮ → **Export Recap to PDF**, and **Export** on a pinned recap |
 | Pinned Items | Pins ⋮ → **Export Pins to PDF**, and **Export** on pinned songs |
 | Lists & Results | Queue ⋮ → **Export Queue to PDF**, saved queues, album tracklists, playlists and artists, AI Search and Recommendations (**Export Results to PDF**), podcast episodes (**Export Episodes to PDF**) |
@@ -424,6 +442,7 @@ Print-and-cut inserts for a standard CD jewel case:
 - **No back cover?** — the card makes a tracklist back from MusicBrainz in one to three columns, numbered by disc (D1-1) for multi-disc albums
 - **Album artist** — taken from the album itself, not the song playing. Compilations credited to Various Artists leave out the artist line and spine name
 - **No artwork anywhere** — a **No Cover Art Yet** alert offers **Make with Title Cards**, **Add Cover on MusicBrainz** (or **Find It on MusicBrainz**) and **Not Now**
+- **Format marks** — a made tracklist back gets a small CD mark at the foot of each spine and a strip along the bottom with a Compact Disc mark, the label, year and running time; a disc label made from the front cover (or a plain one) gets a small CD mark near the edge. Scanned artwork is left as it is. The marks are the card's own design, not any official logo, and can be switched off with **Format Marks** under Export & PDF
 
 #### DVD / Blu-ray Case Printables
 
@@ -436,6 +455,7 @@ Print-and-cut wraps for a standard DVD or Blu-ray case, for both films and TV sh
 - **Where the details come from** — the info panel if you've opened it, then TMDB, TVmaze, Wikipedia and Wikidata, and the iTunes Store. A TMDB key isn't needed, but it fills in more. Dates are written day, month, year
 - **Titles with a colon** — such as Star Trek: Strange New Worlds or Mission: Impossible — are matched in full, so you get the right show or film
 - **Show or film?** — when the player doesn't say a title is an episode, an exact match decides. Breaking Bad is a show on TVmaze and not a film, so it gets the series case rather than El Camino
+- **Format marks** — a small DVD or Blu-ray mark at the foot of the spine, a DVD Video or Blu-ray Disc mark at the right-hand end of the strip on the back, and a small mark below the title on the disc label. They're the card's own design, not any official logo, and can be switched off with **Format Marks** under Export & PDF
 
 The PDF library (jsPDF) loads from a CDN the first time you export, and the preview uses PDF.js. Artwork that a site won't let the card copy is fetched through the images.weserv.nl image proxy; if that fails too, the PDF is made without it. The PDF's built-in fonts only cover Western characters, so non-Latin text is left out. In the Home Assistant app on iPhone the Download button may not save the file, depending on the app version; it works in Safari. When printing a case, choose **Actual size** (100%), not Fit to page.
 
@@ -481,6 +501,22 @@ The PDF library (jsPDF) loads from a CDN the first time you export, and the prev
 - Long-press also offers **Reorder Queue** to switch into drag-to-reorder mode
 - Queue 3-dot menu, grouped like the quick menu: Reorder, Jump to Current Track, Pin Song, **Pin Queue**, **Transfer Queue** (move the queue to another MA speaker) · Search, Discover · Vibe, Recommendations, AI Artist Radio, Radio Mode, **Add to Queue ›** (Similar Songs, Same Genre, Same Year, Same Genre & Year, This Album) · **Share & Announce ›** (Announce, Send Message) · **Export Queue to PDF** · Clear Queue
 
+### Announce
+
+- Speaker search grouped by Home Assistant area
+- Global and per-speaker volume control
+- Pause and resume playing speakers automatically
+- Announcement history with favourites
+- AI improve button (shown only when AI features are enabled)
+
+### Send Message
+
+Push notifications to iPhones running the Home Assistant Companion App:
+
+- Multi-device selection with live search
+- Custom subject/heading
+- AI improve button (shown only when AI features are enabled)
+
 ### Discover (Music Assistant Library Browser)
 
 Categories: Recent Searches, Music History, Watch History, Recently Added, Pins, Favourites, Charts (when switched on), Made for You (Recommended), Playlists, Artists, Albums, Songs, Radio, Podcasts, Audiobooks, Movies & TV. Discover opens from **Discover** in the quick menu on any speaker, MA or not — several categories (Movies & TV, Radio, Podcasts, Audiobooks) don't need Music Assistant at all.
@@ -491,7 +527,7 @@ Categories: Recent Searches, Music History, Watch History, Recently Added, Pins,
 - **AI Search** — a box at the top of Discover for natural-language search; the Songs, Artists and Albums tabs also each have their own AI search button next to the regular search bar, returning matching tracks, artists or albums specifically
 - **Recent Searches** — every search you've run, MA and AI alike, most-recent-first, capped at 50; tap to re-run, with an iOS-style Clear confirmation
 - **Music History** — a plain chronological list of your last 10 songs played; the 3-dot menu expands the same view to your last 50, or clears history entirely (iOS-style confirmation). A hero bar (Play All / Add All / Play Next) acts on exactly whichever count is currently showing. Tap a song for its AI Info, long-press for the same context menu used throughout Discover (Play Now/Next, Add to Queue, Pin, AI Artist Radio, Share), plus **Remove from History**, **Remove All Plays** (every play of that song; only shown when it's been played more than once) and **Never Log This Artist**, each with an iOS-style confirmation. Muted artists are listed under **Muted Artists** in the 3-dot menu, where you can unmute them. Pinning here lands in the same Pinned → Songs category as pinning anywhere else. This reads from the same history log as [Music Recap](#music-recap) — just as a list instead of weekly stats — so clearing history from either one clears it for both. The 3-dot menu's **Export to PDF** offers a Listening report, Your month in music or Recently played on a speaker, and the hero bar's **Export** makes a listening report
-- **Watch History** — the movie/TV equivalent, same shape: last 10 (expandable to 50), 3-dot menu with Clear History. Long-press a title for Pin, Find Soundtrack and **Remove from History** (removes every watch of it, with an iOS-style confirmation), or open a title and long-press a viewing to remove just that one (also confirmed). Reads from the same history as [Video Recap](#video-recap). The 3-dot menu has **Export Report to PDF**. Long-press any title for **DVD / Blu-ray Case Printables (PDF)**, which also works on Movies & TV rows in Video Recap, search and Pins. A title's own page has an **Export** button for its watch history, and its ⋮ menu has DVD / Blu-ray Case Printables (PDF) and Remove from History
+- **Watch History** — the movie/TV equivalent, same shape: last 10 (expandable to 50), 3-dot menu with Clear History. Long-press a title for Pin, Find Soundtrack and **Remove from History** (removes every watch of it, with an iOS-style confirmation), or open a title and long-press a viewing to remove just that one (also confirmed). Reads from the same history as [Video Recap](#video-recap). The 3-dot menu has **Export Report to PDF**. Long-press any title for **DVD / Blu-ray Case Printables (PDF)**, which also works on Movies & TV rows in Video Recap, search and Pins. A title's own page has an **Export** button for its watch history, and its ⋮ menu has DVD / Blu-ray Case Printables (PDF) and Remove from History. Videos watched in the YouTube app get their own **YouTube** section below Movies & TV, showing the channel and how many times you've watched each video, and they never appear in Music History, Video Recap or the reports. Tap a video for AI Info (or a YouTube search when AI Info is off), or long-press it to remove it
 - **Album, playlist and artist pages** — **Export** on an album page (library or AI) offers Tracklist, Lyrics booklet or CD case printables; playlists and artists export their tracklist
 - **Podcasts tab** — search iTunes directly; pin favourites
 - **Audiobooks tab** — search free, public-domain titles on LibriVox via the Archive.org catalogue, with AI-assisted query refinement and chapter-by-chapter playback; pin favourites
@@ -500,19 +536,25 @@ Categories: Recent Searches, Music History, Watch History, Recently Added, Pins,
 - **Pins** — everything you've pinned, grouped into Songs, Artists, Albums, Playlists, Queues, Radio, Podcasts, Audiobooks, Music Recap, Video Recap, Movies & TV and Charts. The 3-dot menu has **Export Pins to PDF**
 - **Remembers where you left off** — reopening Discover returns to whichever tab you were last in, even after fully closing and reopening the app (within a few hours; a deliberate close resets it back to the top)
 
+**Auto Switch to Playing Device** — the card follows whichever player starts playing, but holds on the player on screen while you're using it: while the Apple TV remote, the Info panel, the Library, lyrics or a menu is open, and after you pause or stop it (it only moves on when something starts playing after that, never to a speaker that was already playing in the background).
+
 ### Apple TV Remote
 
 **Opening the remote** — tap the **Remote** button on the left of the controls bar, long-press the artwork while a show or movie is playing on an Apple TV (or when nothing is showing), or choose **Remote Control** from the quick menu. In compact mode the card expands first. Music keeps its own long-press for lyrics. Anything playing in a video app such as YouTube, Netflix or iPlayer counts as video, even when the app reports a channel name as the artist, so long-press opens the remote rather than lyrics.
 
-**Back to the artwork** — tap the **✕** in the top-left corner of the remote, swipe down on the remote, long-press an empty part of it, or choose **Remote Control** in the quick menu again. Swipes that start on the clickpad or the apps list are ignored, and upward swipes still scroll the dashboard.
+**Back to the artwork** — tap the **X** in the top-left corner of the remote, swipe down on the remote, long-press an empty part of it, or choose **Remote Control** in the quick menu again. Swipes that start on the touchpad or the apps list are ignored, and upward swipes still scroll the dashboard. A short hint about the touchpad and the holds shows the first three times the remote opens.
 
 | Button | Action |
 |--------|--------|
-| **Back** | Navigate back / menu |
-| **TV** | Home screen / wakes from sleep |
-| **Power Off** | Sends `suspend` to sleep the Apple TV |
+| **Touchpad** | Swipe to move (a longer swipe moves further, and resting your finger at the end of a swipe keeps moving), tap to select, hold to open the options menu in most apps. The whole pad is the touch surface, with a soft glow along the edge you swipe toward |
+| **Back** | Navigate back / menu. Hold for the Home screen |
+| **TV** | Home screen / wakes from sleep. Hold for Control Centre |
+| **Apps** | A grid of the Apple TV's apps over the touchpad, like its own Home screen, with the app that's open highlighted and the apps you open most first. Tap one to open it; close with the X or a swipe down. A search box at the top filters the apps by name, and Return opens the app when only one is left. Real icons come from the iTunes Store (looked up once and kept), with a coloured letter tile until then. Shows only when the Apple TV shares its app list with Home Assistant, which on tvOS 26 needs Home Assistant 2026.7 or later. Also in the quick menu as **Open App**, and can be turned off with **Apps Button** in the editor |
+| **Sleep / Wake** | Follows the Apple TV: Sleep (red, with a confirmation) when it's awake, Wake (green) when it's asleep. Home Assistant can't always tell whether the Apple TV is on, so the label shows the last state it knows |
 
-**Keyboard Panel** — while the remote is open, the moment an Apple TV's on-screen keyboard becomes active (searching in an app, entering a password, etc.), a text input automatically appears over the card. Type on your phone's own keyboard and tap Send to push the text straight to the TV, instead of the actual remote's slow letter-by-letter D-pad entry. Detected via Home Assistant's own entity registry (finds whichever `binary_sensor` shares the same device as your Apple TV entity, so it works regardless of how entities happen to be named) — no setup needed beyond having the Apple TV integration configured. Toggle in **Appearance & Behaviour**.
+**Play Trailer on Apple TV** — in a movie or TV show's Info panel, the 3-dot menu has **Play Trailer on** your Apple TV: the official trailer (found on TMDB, so it needs a TMDB key) opens in the YouTube app on the Apple TV that's playing, or the first Apple TV in the card's players.
+
+**Keyboard Panel** — while the remote is open, the moment an Apple TV's on-screen keyboard becomes active (searching in an app, entering a password, etc.), a text input automatically appears over the card. Type on your phone's own keyboard and tap Send to push the text straight to the TV, instead of the actual remote's slow letter-by-letter D-pad entry. Detected via Home Assistant's own entity registry (finds whichever `binary_sensor` shares the same device as your Apple TV entity, so it works regardless of how entities happen to be named) — no setup needed beyond having the Apple TV integration configured. Toggle **Apple TV Keyboard Panel** in **Player & Controls**.
 
 ---
 
@@ -523,15 +565,15 @@ The editor includes a filter box at the top that searches the editor's own text:
 | Section | Settings |
 |---------|---------|
 | Manage & Reorder Media Players | Drag-and-drop reorder; enable/disable; tap a speaker's name to open its own dedicated settings page (Display Name, Startup Volume, Volume Entity, MA Speaker toggle) |
-| Player & Controls *(collapsible)* | **Startup & Navigation:** Auto Switch to Playing Device, Remember Last Selected Speaker, Show Media Player Selector, Startup View, Retain Current View. **Buttons:** Always Show Discover Button. **Apple TV:** Apple TV Remote Button, Remote Button Row Position, Apple TV Keyboard Panel. **Display:** Scroll Long Track / Artist Text, iTunes Artwork Fallback, Show Vibe, Show Live/Podcast/Audiobook Pill. **Volume:** Show Volume HUD, Use Volume Buttons, Show Volume Percentage. **Now Playing:** Sleep Timer, Ghost-Skip Healer |
+| Player & Controls *(collapsible)* | **Startup & Navigation:** Auto Switch to Playing Device, Remember Last Selected Speaker, Show Media Player Selector, Startup View, Retain Current View. **Buttons:** Always Show Discover Button. **Apple TV:** Apple TV Remote Button, Remote Button Row Position, Apple TV Keyboard Panel, Apps Button. **Display:** Scroll Long Track / Artist Text, iTunes Artwork Fallback, Show Vibe, Show Live/Podcast/Audiobook Pill. **Volume:** Show Volume HUD, Use Volume Buttons, Show Volume Percentage. **Now Playing:** Sleep Timer, Ghost-Skip Healer |
 | Music Assistant *(collapsible)* | **Play on This Device:** Show "Play on this device", Music Assistant server URL. **Radio:** Default Radio Mode on Startup (off by default). **Vibe:** Vibe Artist Seeds (playlist search terms and radio fallback artists per vibe, fully customisable) |
 | Discover *(collapsible)* | **Search & Pins:** Library Search (Normal or AI Enhanced), Show Pins in Sections, Share Track Service. **Charts:** Charts (off by default) with its Apple Music and Deezer switches, Movie & TV Charts with its TV Guide switch, Podcast Charts |
-| Info Panels *(collapsible)* | A summary at the top of where each panel's info will come from with the current settings. **Songs:** Try First (AI First, Discogs First, or Discogs with AI Extras), New Releases, Audio Quality. **Movies & TV:** TMDB API Key (with TMDB's attribution notice and a note once a key is added), Try First (AI First, TMDB First, or TMDB with AI Extras), Movie & TV Matching (Best Guess or Exact Match, shown once a TMDB key is added). **Extras:** AI Details, Watch on YouTube. The AI choices say so when AI Features is off |
+| Info Panels *(collapsible)* | A summary at the top of where each panel's info will come from with the current settings. **Songs:** Try First (AI First, Discogs First, or Discogs with AI Extras, which is recommended), New Releases, Audio Quality. **Movies & TV:** TMDB API Key (with TMDB's attribution notice and a note once a key is added), Try First (AI First, TMDB First, or TMDB with AI Extras, which is recommended), Movie & TV Matching (Best Guess or Exact Match, shown once a TMDB key is added). **Extras:** AI Details, Watch on YouTube. The AI choices say so when AI Features is off |
 | Lyrics *(collapsible)* | Synced Lyric Line Style, Keep Lyrics Open Between Tracks, Translate Lyrics, Cache Lyrics, Save Lyrics For |
-| AI *(collapsible)* | **Enable AI Features** master switch (off by default), AI Agent, AI Features (turn individual AI features on or off). **Announcements & Song Intros:** Announce TTS Service, Song Intro |
-| Visualiser & Screensaver *(collapsible)* | Start Automatically switch, then Start (Visualiser or Screensaver, one or the other), After (Immediately for the visualiser, or 30 seconds to 1 hour), Visualiser Style or Screensaver Style. **Quick Menu:** Visualiser in Quick Menu, Screensaver in Quick Menu. **Screensaver:** Analogue Clock Face (Luxury by default), Show Clock, Weather |
-| Export & PDF *(collapsible)* | **Enable PDF Exports** master switch, then **PDF Types**: Lyrics, CD Case Printables, DVD / Blu-ray Case Printables, Info Panel PDFs, Listening & Watch Reports, Your Month in Music, Recently Played, Recaps, Pinned Items, and Lists & Results (queue, saved queues, album tracklists, playlists, artists, AI Search and Recommendations results, podcast episodes). All are on by default |
-| Caches & Data *(collapsible)* | **Keep in Home Assistant:** Pins, Lyrics, AI Info, iTunes Artwork and Wikipedia Artwork, each saved to your Home Assistant user as well as the device so it survives app restarts and is on your other devices. Then AI caches (bios, trivia, where-to-watch, content warnings, year-in-music, vibe history, AI response cache, Discogs info, already added songs), artwork caches (iTunes, Wikipedia links and photos, report and PDF covers), library & radio caches (MA library, radio stations, today's charts, podcast episodes and audiobook chapters, HA registry), announcement history (favourites kept), icon lookups, song tempos, pinned items (Clear All Pins), TV Episode Cache (season counts, episode lists and episode details from the AI and TVmaze), Clear All Caches and Clear Persistent Storage |
+| AI *(collapsible)* | **Enable AI Features** master switch (off by default), AI Agent, AI Features (Look Up in Advance, Search and Recommendations, Ask, Meaning and Trivia, Recap Summaries). **Announcements & Song Intros:** Announce TTS Service, Song Intro |
+| Visualiser & Screensaver *(collapsible)* | Start Automatically switch, then Start (Visualiser or Screensaver, one or the other), After (Immediately for the visualiser, or 30 seconds to 1 hour), Visualiser Style or Screensaver Style. **Quick Menu:** Visualiser in Quick Menu, Screensaver in Quick Menu. **Screensaver:** Full Screen (off by default), Analogue Clock Face (Luxury by default), Show Clock, Weather |
+| Export & PDF *(collapsible)* | **Enable PDF Exports** master switch, then **PDF Types**: Lyrics, CD Case Printables, DVD / Blu-ray Case Printables, Format Marks (on the case printables), Info Panel PDFs, Listening & Watch Reports, Your Month in Music, Recently Played, Recaps, Pinned Items, and Lists & Results (queue, saved queues, album tracklists, playlists, artists, AI Search and Recommendations results, podcast episodes). All are on by default |
+| Caches, Data & Support *(collapsible)* | **Health & Support:** Run Health Check, Test AI and Report a Problem (see [Health Check and Reporting a Problem](#health-check-and-reporting-a-problem)). **Enjoying Crow Media Player?:** Ask for a Star After Updates, and a Star on GitHub button (see [Enjoying Crow Media Player?](#enjoying-crow-media-player)). **Keep in Home Assistant:** Pins, Lyrics, AI Info, iTunes Artwork and Wikipedia Artwork, each saved to your Home Assistant user as well as the device so it survives app restarts and is on your other devices. Then AI caches (bios, trivia, where-to-watch, content warnings, year-in-music, vibe history, AI response cache, Discogs info, already added songs), artwork caches (iTunes, Wikipedia links and photos, report and PDF covers), library & radio caches (MA library, radio stations, today's charts, podcast episodes and audiobook chapters, HA registry), announcement history (favourites kept), icon lookups, song tempos, pinned items (Clear All Pins), TV Episode Cache (season counts, episode lists and episode details from the AI and TVmaze), Clear All Caches and Clear Persistent Storage |
 | Appearance *(collapsible)* | **Theme & Colours:** Style (Classic or Glass), Theme (Auto, Light or Dark), Follow Home Assistant Theme, Controls Theme (12 presets), Player Icon Theme (8 sets), Button Icons (Discover and Apple TV remote buttons: ready-made icons or any Home Assistant icon), Accent Preset, accent, volume accent, title, artist, button, +Add pill, volume %, custom background and lyrics colours, with live preview. **Glass & Glow:** Remote Liquid Glass, Volume HUD Liquid Glass, Ambient Glow, Row Glow. **Animations:** Artwork Crossfade, Pin Hearts, Resize Button Spin |
 ---
 
@@ -572,6 +614,26 @@ show_pins_in_sections: true
 > **Note:** `ma_entities` should list your MA speaker entities (e.g. `media_player.mass_kitchen_homepod`). These do **not** need to also appear in `entities`. AI features are **off by default** — the example above enables them; leave `ai_features_enabled` out (or set it `false`) for a Discogs-powered card with no AI. `tmdb_api_key` is optional; leave it out if you don't use movie/TV info without AI. Song Intro is off by default. Every PDF type is on by default; `pdf_enabled: false` turns them all off, and `cd_paper_size` can be `a4` or `letter` (leave it out to match your region).
 
 ---
+
+## Enjoying Crow Media Player?
+
+Once after the card has been updated, a friendly note may ask whether you'd like to star the card on GitHub. It never appears on a brand-new install.
+
+- **When** — only after a real update, once per version, at a calm moment after the card has been used (a tap, or about 30 seconds of music). Never over an open panel, the screensaver, a visualiser or the menu, never in the card editor's preview, and only one card on the page asks
+- **Once per person** — it's remembered in each person's Home Assistant user, so a phone, a tablet and a wall panel don't each ask
+- **Star on GitHub** opens the repository and it never asks again. **Maybe Later** (or tapping outside the note) asks again after the next update. **Don't ask again** stops it for good
+- **Looks** — it follows the card's Glass setting and light or dark theme, with the main button in your accent colour
+- **Switch it off** — turn off **Ask for a Star After Updates** in the editor's **Caches, Data & Support** section. A **Star on GitHub** button is always there too
+
+## Health Check and Reporting a Problem
+
+In the visual editor, open **Caches, Data & Support**. At the top are three buttons:
+
+- **Run Health Check** — sends one small, known request to each service the card uses (Home Assistant and Music Assistant, MusicBrainz, the Cover Art Archive, Discogs, the iTunes Store, LRCLIB, Deezer, Apple's charts, Wikipedia, Wikidata, Radio Browser, the Internet Archive, the Apple TV's app list, TMDB, TVmaze, the UK TV guide, the image proxy, the relay and the PDF library) and checks both that it answers in time and that its answer still has what the card reads. Each service gets a coloured dot and a plain line such as Working, Slow, Not reachable from this device, Key not accepted, or Its answer has changed (the card may need an update). Features that are switched off show as off rather than failing. The checks run from your device, the same way the card reaches each service, and the results are kept for 10 minutes
+- **Test AI** — asks your AI agent one tiny question to confirm it answers, and how quickly. It uses a little of your AI quota, so it's separate from the Health Check
+- **Report a Problem** — explains what helps most in a report, runs the Health Check in the background, and offers **Open GitHub Issue** (a new issue on the [issues page](https://github.com/jamesmcginnis/crowai-media-player-card/issues) with the card and Home Assistant versions, your device, which features are on and the Health Check results filled in) or **Copy Report**. API keys, entity names, addresses and anything personal are never included. GitHub needs a free account to open an issue
+
+If Apple's chart feeds can't be reached from your device or network, the card falls back to Deezer's charts on its own: Top Songs and Top Albums come from Deezer, and Top Podcasts uses Deezer's podcast chart matched to Apple Podcasts so the shows still open and play. The card remembers for three hours that Apple was unreachable, so charts open straight away instead of waiting. MusicBrainz sometimes answers "busy" (HTTP 503) when it's been asked too often; the Health Check retries once and shows this as amber rather than red, and it usually clears within a minute. The Relays row always tests the relays, since Apple TV app icons use them whenever Apple refuses lookups for being too many, and says which relays are working.
 
 ## Troubleshooting
 
@@ -622,7 +684,7 @@ show_pins_in_sections: true
 - Print at **Actual size** (100%), not Fit to page. If you're on A4 but got US Letter (or the reverse), set `cd_paper_size` to `a4` or `letter`.
 
 **Where's the remote button?**
-- It's on the left of the controls bar for Apple TVs. If it's missing, turn on **Apple TV Remote Button** in Player & Controls. You can also long-press the artwork while a show or movie plays, or use **Remote Control** in the quick menu. Tap the **✕** or swipe down to return to the artwork.
+- It's on the left of the controls bar for Apple TVs. If it's missing, turn on **Apple TV Remote Button** in Player & Controls. You can also long-press the artwork while a show or movie plays, or use **Remote Control** in the quick menu. Tap the **X** or swipe down to return to the artwork.
 
 **AI info has stopped appearing and the panels show Discogs, TVmaze or Wikipedia instead**
 - The card pauses the AI after it hits its usage limit or stops answering, and uses the fallbacks meanwhile. Open **AI** in the editor and tap **Try AI Again**, or wait for the pause to end. Reopening the Home Assistant app also starts afresh.
@@ -633,8 +695,8 @@ show_pins_in_sections: true
 **An AI option I used to see has disappeared**
 - AI options are hidden everywhere while **Enable AI Features** is off. Turn it on in **AI** to bring them back.
 
-**Apple TV won't turn on from Power Off**
-- Use the **TV button** instead — it wakes Apple TV from sleep reliably.
+**Apple TV won't wake**
+- Use **Wake** on the remote, or the **TV** button, which also wakes the Apple TV from sleep. Home Assistant can't always tell whether the Apple TV is on, so the Sleep / Wake button shows the last state it knows.
 
 **Movie/TV info is empty with AI off**
 - Add a free TMDB API key in the editor's **Info Panels** section for the full panel. Without one, the card falls back to the title's Wikipedia summary.
@@ -661,7 +723,6 @@ show_pins_in_sections: true
 
 ## Credits & Acknowledgements
 
-- The [Home Assistant](https://www.home-assistant.io) team
 - Music data from [Discogs](https://www.discogs.com), TV episode data from [TVmaze](https://www.tvmaze.com) (CC BY-SA), movie and TV data from [TMDB](https://www.themoviedb.org), biographies and photos from [Wikipedia](https://www.wikipedia.org), artwork, film blurbs and certificates from the iTunes Store, CD cover art from [MusicBrainz](https://musicbrainz.org) and the [Cover Art Archive](https://coverartarchive.org), film facts from [Wikidata](https://www.wikidata.org), radio stations from [radio-browser.info](https://www.radio-browser.info) and audiobooks from [LibriVox](https://librivox.org)
 - PDFs made with [jsPDF](https://github.com/parallax/jsPDF) and previewed with [PDF.js](https://mozilla.github.io/pdf.js/)
 - This product uses the TMDB API but is not endorsed or certified by TMDB.
@@ -679,6 +740,6 @@ MIT License — free to use, modify and distribute.
 
 ## Support
 
-If this card is useful to you, please **star the repository** and share it with the community!
+If this card is useful to you, please **star the repository** and share it with the community. There's a **Star on GitHub** button in the card editor's Caches, Data & Support section too.
 
 For bugs or feature requests, use the [GitHub Issues](../../issues) page.

@@ -2149,38 +2149,84 @@ class CrowAIVisualiser {
     ctx.fillStyle = hz; ctx.fillRect(0, hy - 2, w, h * 0.08);
   }
 
-  // 9. Synced Lyrics: the current synced line, large, with the lines either side faded
+  // 9. Synced Lyrics: the lyrics scroll smoothly and continuously up like a teleprompter — the current line large and bright
+  //    in the middle, the lines around it smaller and fading, each line growing as it reaches the middle
   _d_lyrics(ctx, w, h) {
     if (!this.lyrics || !this.lyrics.length) { this._d_particles(ctx, w, h); return; }
     this._bg(ctx, w, h, 0.72);
     const cx = w / 2, cy = h / 2, m = Math.min(w, h);
-    const L = this.lyrics, i = this.lyricIdx;
-    const cur = i >= 0 ? L[i].text : '', prev = i > 0 ? L[i - 1].text : '', next = i + 1 < L.length ? L[i + 1].text : '';
-    const age = Math.min(1, (this.t - this.lyricSince) / 0.4), ease = 1 - Math.pow(1 - age, 3);
-    const font = (px, wgt) => wgt + ' ' + Math.round(px) + 'px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
-    const wrap = (text, px, wgt, maxW) => {
-      ctx.font = font(px, wgt);
-      const out = []; let line = '';
-      String(text).split(/\s+/).forEach(word => { const t = line ? line + ' ' + word : word; if (ctx.measureText(t).width > maxW && line) { out.push(line); line = word; } else line = t; });
+    const L = this.lyrics, idx = this.lyricIdx;
+    // the scroll never stops: it drifts gently up through each line and glides into the next as it comes,
+    // arriving exactly as the next line starts, so the words move continuously like a teleprompter
+    let target = Math.max(0, idx);
+    if (idx >= 0 && idx < L.length - 1) {
+      const s0 = L[idx].time, s1 = L[idx + 1].time, span = Math.max(0.3, s1 - s0);
+      const f = Math.max(0, Math.min(1, (this.pos + 0.25 - s0) / span));
+      const gs = Math.max(0.35, 1 - 1.4 / span), g = f <= gs ? 0 : (f - gs) / (1 - gs), ge = g * g * (3 - 2 * g);
+      target = idx + 0.14 * f + 0.86 * ge;
+    }
+    const dt = Math.min(0.05, this.dt || 1 / 60);
+    // the scroll follows the current line on a soft spring: it eases off, glides and settles without
+    // any jolt, even when the next line comes before the last move has finished (it jumps if the song is skipped)
+    if (this._lyPos == null || Math.abs(target - this._lyPos) > 4 || this._lyFor !== L) { this._lyPos = target; this._lyVel = 0; this._lyFor = L; this._lyWrap = new Map(); }
+    const K = 90, D = 2 * Math.sqrt(K) * 1.05;   // stiffness, and just over critical damping so it never overshoots
+    for (let i = 0, n = Math.ceil(dt / 0.008); i < n; i++) {
+      const h2 = dt / n;
+      this._lyVel += ((target - this._lyPos) * K - this._lyVel * D) * h2;
+      this._lyPos += this._lyVel * h2;
+    }
+    const pos = this._lyPos;
+    const font = (px, wgt) => wgt + ' ' + px + 'px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
+    const BIG = Math.round(m * 0.085), SMALL = m * 0.044, maxW = w * 0.84;
+    // each line is wrapped once, at the big size, and only ever scaled: so it never re-flows while it grows
+    // or shrinks, and the size changes smoothly instead of in whole-pixel steps
+    const wrap = (k) => {
+      let out = this._lyWrap.get(k);
+      if (out) return out;
+      ctx.font = font(BIG, '700');
+      out = []; let line = '';
+      String(L[k].text || '♪').split(/\s+/).forEach(word => { const t = line ? line + ' ' + word : word; if (ctx.measureText(t).width > maxW && line) { out.push(line); line = word; } else line = t; });
       if (line) out.push(line);
+      if (this._lyWrap.size > 400) this._lyWrap.clear();
+      this._lyWrap.set(k, out);
       return out;
     };
+    // the size a line is drawn at, by how far it is from the middle (0 = the current line)
+    const sizeAt = (dist) => { const d = Math.min(1, Math.abs(dist)); const e = d * d * (3 - 2 * d); return BIG + (SMALL - BIG) * e; };
+    const gap = m * 0.035;
+    const hOf = (k, dist) => wrap(k).length * sizeAt(dist) * 1.18;
+    // every line's place worked out from the scroll position directly, so it moves continuously
+    const c0 = Math.round(pos);
+    const ys = new Map();
+    // the line nearest the middle sits where the scroll puts it, the rest stack above and below it
+    let yc0;
+    {
+      const f = pos - c0;   // -0.5 .. 0.5
+      const hNow = hOf(c0, c0 - pos);
+      const hNext = f >= 0 ? hOf(c0 + 1 < L.length ? c0 + 1 : c0, c0 + 1 - pos) : hOf(c0 - 1 >= 0 ? c0 - 1 : c0, c0 - 1 - pos);
+      yc0 = cy - f * (hNow / 2 + gap + hNext / 2);
+    }
+    ys.set(c0, yc0);
+    let y = yc0 - hOf(c0, c0 - pos) / 2;
+    for (let k = c0 - 1; k >= Math.max(0, c0 - 4); k--) { const hk = hOf(k, k - pos); y -= gap + hk; ys.set(k, y + hk / 2); }
+    y = yc0 + hOf(c0, c0 - pos) / 2;
+    for (let k = c0 + 1; k <= Math.min(L.length - 1, c0 + 4); k++) { const hk = hOf(k, k - pos); ys.set(k, y + gap + hk / 2); y += gap + hk; }
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    let px = m * 0.085, lines = wrap(cur || '♪', px, '700', w * 0.84);
-    while (lines.length > 4 && px > m * 0.04) { px *= 0.88; lines = wrap(cur, px, '700', w * 0.84); }
-    const lh = px * 1.18, top = cy - (lines.length - 1) * lh / 2;
-    ctx.save();
-    ctx.globalAlpha = ease;
-    ctx.translate(cx, cy); ctx.scale(0.94 + 0.06 * ease + this.beat * 0.015, 0.94 + 0.06 * ease + this.beat * 0.015); ctx.translate(-cx, -cy);
-    ctx.font = font(px, '700'); ctx.fillStyle = '#ffffff';
-    ctx.shadowColor = this._rgba(this.pal[0], 0.6); ctx.shadowBlur = m * 0.03;
-    lines.forEach((l, k) => ctx.fillText(l, cx, top + k * lh + (1 - ease) * px * 0.4));
-    ctx.restore();
-    ctx.font = font(m * 0.042, '600');
-    ctx.fillStyle = 'rgba(255,255,255,0.32)';
-    if (prev) ctx.fillText(wrap(prev, m * 0.042, '600', w * 0.84)[0] + (wrap(prev, m * 0.042, '600', w * 0.84).length > 1 ? '…' : ''), cx, top - lh * 0.5 - m * 0.07);
-    ctx.fillStyle = 'rgba(255,255,255,0.22)';
-    if (next) ctx.fillText(wrap(next, m * 0.042, '600', w * 0.84)[0] + (wrap(next, m * 0.042, '600', w * 0.84).length > 1 ? '…' : ''), cx, top + (lines.length - 0.5) * lh + m * 0.07);
+    for (const [k, yc] of ys) {
+      const dist = k - pos, ad = Math.abs(dist);
+      if (ad > 3.4) continue;
+      const alpha = ad < 1 ? 1 - ad * 0.68 : ad < 2 ? 0.32 - (ad - 1) * 0.18 : Math.max(0, 0.14 - (ad - 2) * 0.1);
+      if (alpha <= 0.01) continue;
+      const sc = sizeAt(dist) / BIG, lines = wrap(k), lh = BIG * 1.18;
+      const near = Math.max(0, 1 - ad * 1.6);
+      ctx.save();
+      ctx.translate(cx, yc); ctx.scale(sc, sc);
+      if (near > 0) { ctx.shadowColor = this._rgba(this.pal[0], 0.6 * near); ctx.shadowBlur = m * 0.03 * near; }
+      ctx.globalAlpha = alpha; ctx.fillStyle = '#ffffff'; ctx.font = font(BIG, '700');
+      const top = -(lines.length - 1) * lh / 2;
+      lines.forEach((l, j) => ctx.fillText(l, 0, top + j * lh));
+      ctx.restore();
+    }
   }
 
   // 10. Liquid Colour: slow blobs of the album's colours, swelling with the music
@@ -2250,7 +2296,157 @@ class CrowAIVisualiser {
 
 // Start Automatically (editor → Visualiser & Screensaver): 'off' (the default), 'visualiser' or 'screensaver',
 // the time the card is left alone first (minutes; 0 = straight away, visualiser only) and the style each uses.
-const CROWAI_SAVER_STYLES = ['aurora', 'clock', 'wall', 'flip', 'analog', 'lava', 'rain'];
+const CROWAI_SAVER_STYLES = ['aurora', 'clock', 'wall', 'flip', 'analog', 'lava', 'rain', 'night', 'words', 'fire', 'ocean'];
+
+// ── Screensaver styles ─────────────────────────────────────────────────────
+// One copy, used in two places: the card's own styles (the screensaver over
+// the artwork) and the full-screen screensaver's sealed-off layer on the page
+// (CROWAI_SAVER_FULL_CSS adds the full-screen sizing on top). Keeping one copy
+// means the two can never drift apart.
+const CROWAI_SAVER_CSS = `
+        /* ── Screensaver: a layer of its own, so taps on it never reach what's underneath. Over the artwork
+           it's sized to the artwork; full screen it fills the window (CROWAI_SAVER_FULL_CSS on top). Tap
+           anywhere on it to close. ── */
+        .crow-saver {
+          position: absolute; z-index: 26; overflow: hidden; background: #000; color: #fff;
+          opacity: 0; transition: opacity 0.9s ease; cursor: pointer; -webkit-tap-highlight-color: transparent;
+          user-select: none; -webkit-user-select: none; touch-action: manipulation; -webkit-touch-callout: none;
+        }
+        .crow-saver img { -webkit-touch-callout: none; -webkit-user-drag: none; pointer-events: none; }
+        .crow-saver.on { opacity: 1; }
+        .crow-saver .cs-stage, .crow-saver .cs-stage > * { position: absolute; inset: 0; }
+        .crow-saver canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+        /* Ken Burns: slow pan and zoom, crossfading between pictures */
+        /* Ambient aurora: colour glows that drift and fade in turn, so the colour keeps changing, under
+           soft aurora curtains swaying across a starry night sky. Only movement and fading are animated. */
+        .crow-saver .cs-aurora { background: radial-gradient(ellipse at 50% 120%, #0b1430 0%, #04060f 70%); overflow: hidden; }
+        .crow-saver .cs-stars { position: absolute; inset: 0; opacity: 0.55;
+          background-image: radial-gradient(1px 1px at 12% 18%, #fff 50%, transparent 51%), radial-gradient(1px 1px at 33% 9%, #fff 50%, transparent 51%),
+            radial-gradient(1.4px 1.4px at 58% 22%, #fff 50%, transparent 51%), radial-gradient(1px 1px at 76% 12%, #fff 50%, transparent 51%),
+            radial-gradient(1px 1px at 88% 31%, #fff 50%, transparent 51%), radial-gradient(1.2px 1.2px at 22% 40%, #fff 50%, transparent 51%),
+            radial-gradient(1px 1px at 47% 36%, #fff 50%, transparent 51%), radial-gradient(1px 1px at 67% 44%, #fff 50%, transparent 51%),
+            radial-gradient(1.3px 1.3px at 8% 62%, #fff 50%, transparent 51%), radial-gradient(1px 1px at 93% 58%, #fff 50%, transparent 51%); }
+        .crow-saver .cs-glow { position: absolute; width: 85%; height: 85%; border-radius: 50%; mix-blend-mode: screen; opacity: 0;
+          will-change: transform, opacity; animation: cs-glowmove 26s ease-in-out infinite alternate, cs-glowfade 21s ease-in-out infinite; }
+        .crow-saver .cs-glow.g0 { left: -20%; top: -15%; background: radial-gradient(circle, rgba(61,255,138,0.85) 0%, transparent 62%); animation-delay: 0s, 0s; }
+        .crow-saver .cs-glow.g1 { right: -25%; top: -5%; background: radial-gradient(circle, rgba(0,229,192,0.8) 0%, transparent 62%); animation-delay: -6s, -3s; animation-duration: 31s, 23s; }
+        .crow-saver .cs-glow.g2 { left: 10%; top: 20%; background: radial-gradient(circle, rgba(34,199,255,0.8) 0%, transparent 62%); animation-delay: -11s, -6s; animation-duration: 28s, 19s; }
+        .crow-saver .cs-glow.g3 { right: -10%; bottom: -25%; background: radial-gradient(circle, rgba(61,107,255,0.85) 0%, transparent 62%); animation-delay: -4s, -9s; animation-duration: 34s, 25s; }
+        .crow-saver .cs-glow.g4 { left: -25%; bottom: -20%; background: radial-gradient(circle, rgba(155,92,255,0.85) 0%, transparent 62%); animation-delay: -15s, -12s; animation-duration: 29s, 22s; }
+        .crow-saver .cs-glow.g5 { left: 25%; top: -30%; background: radial-gradient(circle, rgba(255,79,216,0.75) 0%, transparent 62%); animation-delay: -9s, -15s; animation-duration: 33s, 27s; }
+        .crow-saver .cs-glow.g6 { right: 5%; top: 35%; background: radial-gradient(circle, rgba(255,179,71,0.65) 0%, transparent 62%); animation-delay: -19s, -18s; animation-duration: 37s, 29s; }
+        @keyframes cs-glowmove {
+          0% { transform: translate(0,0) scale(1); } 33% { transform: translate(18%,10%) scale(1.15); }
+          66% { transform: translate(-12%,16%) scale(0.92); } 100% { transform: translate(10%,-14%) scale(1.1); } }
+        @keyframes cs-glowfade { 0%, 100% { opacity: 0.08; } 30% { opacity: 0.85; } 55% { opacity: 0.35; } 75% { opacity: 0.75; } }
+        .crow-saver .cs-curtain { position: absolute; top: -20%; width: 38%; height: 130%; opacity: 0; mix-blend-mode: screen; will-change: transform, opacity;
+          -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 35%, #000 65%, transparent 100%); mask-image: linear-gradient(90deg, transparent 0%, #000 35%, #000 65%, transparent 100%);
+          animation: cs-sway 19s ease-in-out infinite alternate, cs-curtainfade 15s ease-in-out infinite; }
+        .crow-saver .cs-curtain.c0 { left: 8%; background: linear-gradient(180deg, transparent 0%, rgba(61,255,138,0.55) 38%, rgba(0,229,192,0.25) 62%, transparent 92%); }
+        .crow-saver .cs-curtain.c1 { left: 38%; background: linear-gradient(180deg, transparent 0%, rgba(34,199,255,0.5) 34%, rgba(155,92,255,0.28) 64%, transparent 92%); animation-delay: -7s, -5s; animation-duration: 23s, 17s; }
+        .crow-saver .cs-curtain.c2 { left: 62%; background: linear-gradient(180deg, transparent 0%, rgba(255,79,216,0.42) 36%, rgba(61,107,255,0.25) 64%, transparent 92%); animation-delay: -13s, -10s; animation-duration: 27s, 21s; }
+        @keyframes cs-sway { 0% { transform: translateX(-14%) skewX(-16deg); } 50% { transform: translateX(10%) skewX(-6deg); } 100% { transform: translateX(22%) skewX(-20deg); } }
+        @keyframes cs-curtainfade { 0%, 100% { opacity: 0; } 35% { opacity: 0.9; } 60% { opacity: 0.45; } 80% { opacity: 0.8; } }
+        .crow-saver .cs-vignette { background: radial-gradient(ellipse at center, transparent 45%, rgba(0,0,0,0.45) 100%); pointer-events: none; }
+        /* Clock & Weather */
+        .crow-saver .cs-clockbg { background: linear-gradient(160deg, #10172a 0%, #1d2b4a 55%, #2a1f3d 100%); }
+        .crow-saver .cs-stage > .cs-big, .crow-saver .cs-big { position: absolute; left: 0; right: 0; top: 50%; bottom: auto; text-align: center; transform: translateY(-50%); transition: transform 2s ease;
+          text-shadow: 0 2px 14px rgba(0,0,0,0.35); font-variant-numeric: tabular-nums; }
+        .crow-saver .cs-big .t { font-size: min(26vw, 108px); font-weight: 200; letter-spacing: -2px; line-height: 1; }
+        .crow-saver .cs-big .d { font-size: 15px; font-weight: 500; opacity: 0.92; margin-top: 10px; }
+        .crow-saver .cs-big .w { font-size: 14px; font-weight: 500; opacity: 0.9; margin-top: 6px; }
+        /* the small clock (top left) and the caption (bottom right) over the other styles */
+        .crow-saver .cs-mini { position: absolute; left: 16px; top: 14px; text-shadow: 0 1px 8px rgba(0,0,0,0.55); font-variant-numeric: tabular-nums; pointer-events: none; }
+        .crow-saver .cs-mini .t { font-size: 34px; font-weight: 300; line-height: 1; letter-spacing: -0.5px; }
+        .crow-saver .cs-mini .d { font-size: 12px; font-weight: 500; opacity: 0.9; margin-top: 4px; }
+        .crow-saver .cs-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 24px; font-size: 13px; opacity: 0.75; }
+        /* Album Wall: a grid of covers, a tile at a time flipping to another */
+        .crow-saver .cs-wall { display: grid; gap: 2px; background: #000; animation: cs-walldrift 60s ease-in-out infinite alternate; }
+        @keyframes cs-walldrift { from { transform: scale(1.04) translate(-1%, -1%); } to { transform: scale(1.1) translate(1%, 1%); } }
+        .crow-saver .cs-tile { position: relative; perspective: 600px; overflow: hidden; }
+        .crow-saver .cs-tile .in { position: absolute; inset: 0; transform-style: preserve-3d; transition: transform 0.9s cubic-bezier(.4,.2,.2,1); }
+        .crow-saver .cs-tile.flipped .in { transform: rotateY(180deg); }
+        .crow-saver .cs-tile img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; backface-visibility: hidden; -webkit-backface-visibility: hidden; }
+        .crow-saver .cs-tile img.b { transform: rotateY(180deg); }
+        /* Flip Clock: split-flap digits */
+        .crow-saver .cs-flipbg { background: radial-gradient(ellipse at 50% 35%, #23232b 0%, #0b0b0f 75%); }
+        .crow-saver .cs-flip { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-58%); display: flex; align-items: center; justify-content: center; gap: 2.2%; }
+        .crow-saver .cs-fd { position: relative; width: 19%; aspect-ratio: 0.68; perspective: 500px; font-weight: 600; font-variant-numeric: tabular-nums; }
+        .crow-saver .cs-fd .h { position: absolute; left: 0; right: 0; height: 50%; overflow: hidden; background: linear-gradient(180deg, #2c2c33, #1f1f25); color: #f2f2f5; }
+        .crow-saver .cs-fd .h.t { top: 0; border-radius: 10px 10px 0 0; }
+        .crow-saver .cs-fd .h.b { bottom: 0; border-radius: 0 0 10px 10px; background: linear-gradient(180deg, #1c1c22, #26262d); }
+        .crow-saver .cs-fd .h span { position: absolute; left: 0; right: 0; height: 200%; display: flex; align-items: center; justify-content: center; font-size: var(--cs-fd, 64px); line-height: 1; }
+        .crow-saver .cs-fd .h.t span { top: 0; } .crow-saver .cs-fd .h.b span { bottom: 0; }
+        .crow-saver .cs-fd::after { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 2px; margin-top: -1px; background: rgba(0,0,0,0.75); z-index: 3; }
+        .crow-saver .cs-fd .flap { position: absolute; left: 0; right: 0; height: 50%; overflow: hidden; z-index: 2; backface-visibility: hidden; -webkit-backface-visibility: hidden; }
+        .crow-saver .cs-fd .flap.t { top: 0; transform-origin: 50% 100%; border-radius: 10px 10px 0 0; background: linear-gradient(180deg, #2c2c33, #1f1f25); animation: cs-flapt 0.32s ease-in forwards; }
+        .crow-saver .cs-fd .flap.b { bottom: 0; transform-origin: 50% 0; border-radius: 0 0 10px 10px; background: linear-gradient(180deg, #1c1c22, #26262d); transform: rotateX(90deg); animation: cs-flapb 0.32s ease-out 0.32s forwards; }
+        .crow-saver .cs-fd .flap span { position: absolute; left: 0; right: 0; height: 200%; display: flex; align-items: center; justify-content: center; font-size: var(--cs-fd, 64px); line-height: 1; color: #f2f2f5; }
+        .crow-saver .cs-fd .flap.t span { top: 0; } .crow-saver .cs-fd .flap.b span { bottom: 0; }
+        @keyframes cs-flapt { from { transform: rotateX(0); } to { transform: rotateX(-90deg); } }
+        @keyframes cs-flapb { from { transform: rotateX(90deg); } to { transform: rotateX(0); } }
+        .crow-saver .cs-colon { display: flex; flex-direction: column; gap: 14px; }
+        .crow-saver .cs-colon i { width: 9px; height: 9px; border-radius: 50%; background: #d8d8de; opacity: 0.85; }
+        .crow-saver .cs-ampm { position: absolute; right: 7%; top: 18%; font-size: 13px; font-weight: 600; opacity: 0.7; letter-spacing: 1px; }
+        .crow-saver .cs-under { position: absolute; left: 0; right: 0; bottom: 13%; text-align: center; font-size: 14px; font-weight: 500; opacity: 0.9; line-height: 1.55; text-shadow: 0 1px 8px rgba(0,0,0,0.5); }
+        /* Analogue Clock */
+        .crow-saver .cs-anbg { background: radial-gradient(ellipse at 50% 40%, #1f222b 0%, #08090c 78%); }
+        .crow-saver .cs-dial { position: absolute; left: 50%; top: 44%; transform: translate(-50%, -50%); filter: drop-shadow(0 10px 24px rgba(0,0,0,0.55)); }
+        /* Lava Lamp and Rain on Glass are drawn on canvases */
+        .crow-saver .cs-lava { background: #050507; }
+        .crow-saver .cs-lava canvas { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: auto; }
+        .crow-saver .cs-rainbg { background: #0d1118; }
+        /* Night Sky, Fireplace and Ocean are drawn on canvases; Word Clock is a grid of letters */
+        .crow-saver .cs-night { background: #02030a; }
+        .crow-saver .cs-firebg { background: #060302; }
+        .crow-saver .cs-oceanbg { background: #0c1a3c; }
+        .crow-saver .cs-wordbg { background: radial-gradient(ellipse at 50% 40%, #15161c 0%, #060608 80%); }
+        .crow-saver .cs-word { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); transition: transform 3s ease; padding: 0.9em 1.1em;
+          font-size: var(--cs-wf, 22px); font-weight: 600; line-height: 1; letter-spacing: 0; font-variant-numeric: tabular-nums; }
+        .crow-saver .cs-word .r { display: flex; justify-content: center; }
+        .crow-saver .cs-word .r span { width: 1em; height: 1.04em; display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,0.09); transition: color 1.2s ease, text-shadow 1.2s ease; }
+        .crow-saver .cs-word .r span.on { color: var(--cs-wc, #fff6e6); text-shadow: 0 0 0.5em var(--cs-wc, #fff6e6); }
+        .crow-saver .cs-rainbg img { position: absolute; inset: -8%; width: 116%; height: 116%; object-fit: cover; filter: blur(16px) saturate(1.1) brightness(0.62); }
+        @media (prefers-reduced-motion: reduce) {
+            .crow-saver .cs-fd .flap.b { transform: none; }
+          .crow-saver .cs-tile .in { transition: none; }
+          .crow-saver .cs-glow, .crow-saver .cs-curtain { opacity: 0.55; }
+        }
+`;
+
+// Full-screen screensaver: the layer fills the window, and each style is
+// sized from the screen (container units: cqw / cqh / cqmin / cqmax) instead
+// of the fixed sizes that suit the artwork. Notches and home bars are kept
+// clear with the safe-area insets.
+const CROWAI_SAVER_FULL_CSS = `
+  :host { all: initial; }
+  .crow-saver.cs-full { position: absolute; inset: 0; z-index: auto; container-type: size; font-family: var(--cs-font, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif); }
+  /* Clock & Weather */
+  .cs-full .cs-big .t { font-size: min(18cqw, 30cqh); letter-spacing: -0.02em; white-space: nowrap; }
+  .cs-full .cs-big .d { font-size: clamp(15px, 3.4cqmin, 40px); margin-top: 1.4cqmin; }
+  .cs-full .cs-big .w { font-size: clamp(14px, 3cqmin, 34px); margin-top: 0.8cqmin; }
+  /* the small clock over the other styles */
+  .cs-full .cs-mini { left: calc(max(20px, 3.2cqmin) + env(safe-area-inset-left, 0px)); top: calc(max(18px, 3.2cqmin) + env(safe-area-inset-top, 0px)); }
+  .cs-full .cs-mini .t { font-size: clamp(34px, 7.5cqmin, 96px); letter-spacing: -0.02em; }
+  .cs-full .cs-mini .d { font-size: clamp(12px, 2.3cqmin, 28px); margin-top: 0.6cqmin; }
+  .cs-full .cs-msg { font-size: clamp(13px, 2.6cqmin, 28px); }
+  /* Aurora: round glows (not stretched ovals) and a full sky of stars */
+  .cs-full .cs-glow { width: 85cqmax; height: 85cqmax; }
+  .cs-full .cs-stars { background-size: 46cqmin 46cqmin; }
+  .cs-full .cs-stars::after { content: ''; position: absolute; inset: 0; background-image: inherit; background-size: 31cqmin 31cqmin; background-position: 17% 41%; opacity: 0.7; }
+  /* Flip Clock: digits sized from the screen (--cs-fdw, set by the code), everything else in step */
+  .cs-full .cs-flip { gap: calc(var(--cs-fdw, 19cqw) * 0.1); left: 50%; right: auto; transform: translate(-50%, -58%); }
+  .cs-full .cs-fd { width: var(--cs-fdw, 19cqw); }
+  .cs-full .cs-fd .h.t, .cs-full .cs-fd .flap.t { border-radius: calc(var(--cs-fdw, 80px) * 0.08) calc(var(--cs-fdw, 80px) * 0.08) 0 0; }
+  .cs-full .cs-fd .h.b, .cs-full .cs-fd .flap.b { border-radius: 0 0 calc(var(--cs-fdw, 80px) * 0.08) calc(var(--cs-fdw, 80px) * 0.08); }
+  .cs-full .cs-fd::after { height: max(2px, calc(var(--cs-fdw, 80px) * 0.02)); }
+  .cs-full .cs-colon { gap: calc(var(--cs-fdw, 80px) * 0.2); }
+  .cs-full .cs-colon i { width: calc(var(--cs-fdw, 80px) * 0.08); height: calc(var(--cs-fdw, 80px) * 0.08); }
+  .cs-full .cs-flip .cs-ampm { position: absolute; left: auto; top: auto; right: 0; bottom: 100%; margin-bottom: calc(var(--cs-fdw, 80px) * 0.1); font-size: max(12px, calc(var(--cs-fdw, 80px) * 0.14)); }
+  .cs-full .cs-under { bottom: calc(12% + env(safe-area-inset-bottom, 0px)); font-size: clamp(14px, 2.8cqmin, 32px); }
+  @media (prefers-reduced-motion: reduce) { .cs-full .cs-stars::after { display: none; } }
+`;
+
 function crowaiAutoStart(cfg) {
   cfg = cfg || {};
   let mode = cfg.auto_start, after = cfg.auto_start_after;
@@ -2269,6 +2465,597 @@ function crowaiAutoStart(cfg) {
   const saverStyle = [cfg.auto_start_saver_style, cfg.screensaver_style].find(saverOk) || 'wall';
   return { mode, after, vizStyle, saverStyle };
 }
+
+// ══════════════════════════════════════════════════════════════════════
+// HEALTH CHECK, TEST AI AND REPORT A PROBLEM (editor → Caches, Data & Support)
+// One small, known request to each service the card uses (only the ones that are switched on),
+// checking it answers in time AND still answers in the shape the card reads. Run from the browser,
+// the same way the card reaches each service, so it shows what works on this device.
+// ══════════════════════════════════════════════════════════════════════
+const CROWAI_VERSION = '0.6.3';
+const CROWAI_ISSUES_URL = 'https://github.com/jamesmcginnis/crowai-media-player-card/issues';
+const CROWAI_REPO_URL = 'https://github.com/jamesmcginnis/crowai-media-player-card';
+// Did this device already have CrowAI's data when the card's file loaded (before any card saves
+// anything)? Used to tell an update from a brand-new install for the star request.
+const CROWAI_HAD_DATA = (() => {
+  try { return Object.keys(localStorage).some(k => /^crow/i.test(k) && k !== 'crowai_star_prompt'); } catch (_) { return false; }
+})();
+// The "Enjoying CrowAI?" dialog: the card's iOS-style alert (rounded card, stacked pill buttons) with a
+// gold star, in its plain and Glass looks, each for dark and light panels. Lives in its own sealed-off
+// layer on the page, so dashboard themes can't change it.
+const CROWAI_STAR_CSS = `
+  :host { all: initial; }
+  .bd { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; padding: 20px; box-sizing: border-box;
+    background: rgba(0,0,0,0); transition: background 0.22s ease, backdrop-filter 0.22s ease;
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif; -webkit-tap-highlight-color: transparent; }
+  .bd.visible { background: rgba(0,0,0,0.42); }
+  .al { position: relative; overflow: hidden; box-sizing: border-box; width: min(340px, 100%); border-radius: 34px; padding: 26px 18px 12px; text-align: center;
+    color: #fff; background: rgba(48,48,52,0.82); border: 0.5px solid rgba(255,255,255,0.12);
+    backdrop-filter: blur(34px) saturate(1.8); -webkit-backdrop-filter: blur(34px) saturate(1.8);
+    box-shadow: 0 24px 60px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.08);
+    opacity: 0; transform: scale(1.08); transition: opacity 0.2s ease, transform 0.28s cubic-bezier(.2,.9,.3,1.15); }
+  .bd.visible .al { opacity: 1; transform: scale(1); }
+  .al > * { position: relative; }
+  .star { width: 72px; height: 72px; margin: 0 auto 12px; display: flex; align-items: center; justify-content: center; border-radius: 50%;
+    background: radial-gradient(circle, rgba(255,204,0,0.30) 0%, rgba(255,204,0,0.10) 45%, rgba(255,204,0,0) 70%); }
+  .star svg { width: 46px; height: 46px; fill: #FFCC00; filter: drop-shadow(0 4px 12px rgba(255,170,0,0.5));
+    transform: scale(0.4) rotate(-30deg); opacity: 0; }
+  .bd.visible .star svg { animation: st-pop 0.6s 0.12s cubic-bezier(.2,.9,.3,1.35) forwards, st-twinkle 3.6s 1.2s ease-in-out infinite; }
+  @keyframes st-pop { to { transform: scale(1) rotate(0); opacity: 1; } }
+  @keyframes st-twinkle { 0%, 100% { transform: scale(1) rotate(0); } 50% { transform: scale(1.08) rotate(6deg); } }
+  .t { font-size: 19px; font-weight: 700; line-height: 1.3; letter-spacing: -0.2px; }
+  .m { font-size: 15px; line-height: 1.45; margin-top: 8px; padding: 0 6px; color: rgba(235,235,245,0.68); }
+  .btns { display: flex; flex-direction: column; gap: 9px; margin-top: 22px; }
+  .btns button { width: 100%; margin: 0; border: none; border-radius: 999px; padding: 14px 16px; font: inherit; font-size: 17px; font-weight: 600;
+    cursor: pointer; -webkit-tap-highlight-color: transparent; transition: transform 0.12s ease, filter 0.12s ease; display: flex; align-items: center; justify-content: center; gap: 8px; }
+  .btns button:active { transform: scale(0.97); filter: brightness(1.12); }
+  .btns button:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+  .ok { background: var(--acc); color: #fff; box-shadow: 0 8px 22px color-mix(in srgb, var(--acc) 32%, transparent); }
+  .ok svg { width: 19px; height: 19px; fill: #FFD60A; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.25)); }
+  .later { background: rgba(255,255,255,0.12); color: #fff; }
+  .never { background: none !important; color: rgba(235,235,245,0.55); font-size: 14px !important; font-weight: 500 !important; padding: 8px 16px 6px !important; }
+  /* light panels */
+  .light .al { color: #000; background: rgba(250,250,252,0.88); border-color: rgba(0,0,0,0.08);
+    box-shadow: 0 24px 60px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.7); }
+  .light .m { color: rgba(60,60,67,0.68); }
+  .light .later { background: rgba(120,120,128,0.16); color: #000; }
+  .light .never { color: rgba(60,60,67,0.6); }
+  /* Glass: Liquid Glass card and buttons */
+  .glass.visible { background: rgba(0,0,0,0.24); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
+  .glass .al { background: linear-gradient(160deg, rgba(255,255,255,0.16), rgba(255,255,255,0.05)); border: 1px solid rgba(255,255,255,0.22);
+    backdrop-filter: blur(26px) saturate(2.1) brightness(0.92); -webkit-backdrop-filter: blur(26px) saturate(2.1) brightness(0.92);
+    box-shadow: 0 30px 70px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.38), inset 0 -1px 0 rgba(255,255,255,0.08), inset 0 0 24px rgba(255,255,255,0.05); }
+  .glass .al::before { content: ''; position: absolute; inset: 0 0 auto 0; height: 55%; pointer-events: none; border-radius: 34px 34px 0 0;
+    background: linear-gradient(180deg, rgba(255,255,255,0.12), rgba(255,255,255,0)); }
+  .glass .m { color: rgba(235,235,245,0.75); }
+  .glass .ok { background: linear-gradient(180deg, color-mix(in srgb, var(--acc) 95%, transparent), color-mix(in srgb, var(--acc) 78%, transparent));
+    box-shadow: 0 8px 22px color-mix(in srgb, var(--acc) 35%, transparent), inset 0 1px 0 rgba(255,255,255,0.45), inset 0 -1px 0 rgba(0,0,0,0.12); }
+  .glass .later { background: rgba(255,255,255,0.12); border: 0.5px solid rgba(255,255,255,0.2); box-shadow: inset 0 1px 0 rgba(255,255,255,0.25);
+    backdrop-filter: blur(12px) saturate(1.6); -webkit-backdrop-filter: blur(12px) saturate(1.6); }
+  .glass.light.visible { background: rgba(255,255,255,0.14); }
+  .glass.light .al { background: linear-gradient(160deg, rgba(255,255,255,0.62), rgba(255,255,255,0.38)); border-color: rgba(255,255,255,0.75);
+    backdrop-filter: blur(26px) saturate(2.1) brightness(1.05); -webkit-backdrop-filter: blur(26px) saturate(2.1) brightness(1.05);
+    box-shadow: 0 30px 70px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.95), inset 0 -1px 0 rgba(255,255,255,0.35), inset 0 0 24px rgba(255,255,255,0.25); }
+  .glass.light .al::before { background: linear-gradient(180deg, rgba(255,255,255,0.45), rgba(255,255,255,0)); }
+  .glass.light .m { color: rgba(60,60,67,0.72); }
+  .glass.light .later { background: rgba(255,255,255,0.62); border-color: rgba(0,0,0,0.07); box-shadow: inset 0 1px 0 #ffffff, 0 1px 3px rgba(0,0,0,0.08); color: #000; }
+  @media (prefers-reduced-motion: reduce) {
+    .al { transition: opacity 0.2s ease; transform: none; }
+    .star svg { transform: none; opacity: 1; }
+    .bd.visible .star svg { animation: none; }
+  }
+`;
+
+// Websites for well-known Apple TV apps: what the Info panel's app icon opens, and where the
+// Apps grid takes a quick logo from while the App Store icon is on its way.
+const CROWAI_APP_SITES = {
+      'netflix': 'https://www.netflix.com', 'youtube': 'https://www.youtube.com', 'youtube kids': 'https://www.youtubekids.com',
+      'disney+': 'https://www.disneyplus.com', 'prime video': 'https://www.primevideo.com', 'amazon prime video': 'https://www.primevideo.com',
+      'bbc iplayer': 'https://www.bbc.co.uk/iplayer', 'iplayer': 'https://www.bbc.co.uk/iplayer', 'itvx': 'https://www.itv.com',
+      'channel 4': 'https://www.channel4.com', 'my5': 'https://www.channel5.com', 'now': 'https://www.nowtv.com', 'now tv': 'https://www.nowtv.com',
+      'max': 'https://www.max.com', 'hbo max': 'https://www.max.com', 'paramount+': 'https://www.paramountplus.com', 'hulu': 'https://www.hulu.com',
+      'peacock': 'https://www.peacocktv.com', 'crunchyroll': 'https://www.crunchyroll.com', 'twitch': 'https://www.twitch.tv', 'vimeo': 'https://vimeo.com',
+      'tiktok': 'https://www.tiktok.com', 'plex': 'https://www.plex.tv', 'infuse': 'https://firecore.com/infuse', 'jellyfin': 'https://jellyfin.org',
+      'spotify': 'https://open.spotify.com', 'apple music': 'https://music.apple.com', 'music': 'https://music.apple.com', 'podcasts': 'https://podcasts.apple.com',
+      'apple tv': 'https://tv.apple.com', 'tv': 'https://tv.apple.com', 'dazn': 'https://www.dazn.com', 'sky sports': 'https://www.skysports.com',
+      'tnt sports': 'https://www.tntsports.co.uk', 'pluto tv': 'https://pluto.tv', 'emby': 'https://emby.media', 'mubi': 'https://mubi.com',
+      'rakuten tv': 'https://www.rakuten.tv', 'rte player': 'https://www.rte.ie/player', 'rté player': 'https://www.rte.ie/player',
+      'global player': 'https://www.globalplayer.com', 'earthcam tv': 'https://www.earthcam.com', 'pac-man 256': 'https://www.bandainamcoent.com',
+      'u': 'https://u.co.uk', 'uktv play': 'https://u.co.uk', 'stv player': 'https://player.stv.tv', 's4c clic': 'https://www.s4c.cymru/clic',
+      'apple tv+': 'https://tv.apple.com', 'disney plus': 'https://www.disneyplus.com', 'britbox': 'https://www.britbox.co.uk',
+      'acorn tv': 'https://acorn.tv', 'shudder': 'https://www.shudder.com', 'curiositystream': 'https://curiositystream.com',
+      'amazon music': 'https://music.amazon.co.uk', 'tidal': 'https://tidal.com', 'deezer': 'https://www.deezer.com', 'soundcloud': 'https://soundcloud.com',
+      'bbc sounds': 'https://www.bbc.co.uk/sounds', 'tunein radio': 'https://tunein.com', 'tunein': 'https://tunein.com', 'audible': 'https://www.audible.co.uk',
+      'sky go': 'https://www.sky.com/watch/sky-go', 'sky news': 'https://news.sky.com', 'bbc news': 'https://www.bbc.co.uk/news',
+      'fubotv': 'https://www.fubo.tv', 'sling tv': 'https://www.sling.com', 'tubi': 'https://tubitv.com', 'rumble': 'https://rumble.com',
+      'zwift': 'https://www.zwift.com', 'peloton': 'https://www.onepeloton.co.uk', 'f1 tv': 'https://f1tv.formula1.com',
+};
+
+// Saves to this device's storage, and if it's full, clears out caches (never your own things: pins,
+// histories, saved queues…) until it fits. Without this, a full store silently stopped Watch History
+// and Music History recording anything new.
+function crowaiSafeSet(key, value) {
+  try { localStorage.setItem(key, value); return true; } catch (e) {
+    if (!/quota|exceed|full/i.test(String(e?.name) + ' ' + String(e?.message))) return false;
+  }
+  try {
+    // 1. app icon pictures kept in normal storage by an earlier version (they belong in their own database)
+    try {
+      const ic = JSON.parse(localStorage.getItem('crow_atv_app_icons') || '{}') || {};
+      let changed = false;
+      Object.keys(ic).forEach(k => { if (/^data:/.test(ic[k] || '')) { try { crowaiAppIconDb.put(k, ic[k]); } catch (_) {} ic[k] = 'data'; changed = true; } });
+      if (changed) localStorage.setItem('crow_atv_app_icons', JSON.stringify(ic));
+      localStorage.setItem(key, value); return true;
+    } catch (_) {}
+    // 2. then the largest caches, one by one
+    const KEEP = /^(crow_pin_|crow_starred_|crow_saved_queues|crow_ai_local_(listenLog|watchLog|listenDaily|historyCheckpoint|mutedArtists|recapClearedAt|maRecapState)|crow_announce_history|crow_last_entity_|crow_view_|crow_atv_app_icons)/;
+    const big = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || k === key || !/^crow[_-]/.test(k) || KEEP.test(k)) continue;
+      big.push([k, (localStorage.getItem(k) || '').length]);
+    }
+    big.sort((a, b) => b[1] - a[1]);
+    for (const [k] of big) {
+      try { localStorage.removeItem(k); } catch (_) {}
+      try { localStorage.setItem(key, value); console.info('[CrowAI] storage was full; cleared the cache ' + k); return true; } catch (_) {}
+    }
+  } catch (_) {}
+  return false;
+}
+
+// Apple TV app icon pictures live in their own small browser database (this device's normal storage
+// is too small to hold fifty-odd pictures alongside everything else); their addresses are kept in
+// normal storage and in Home Assistant.
+const crowaiAppIconDb = {
+  _db: null,
+  open() {
+    if (this._db) return this._db;
+    this._db = new Promise((res) => {
+      try {
+        const rq = indexedDB.open('crowai-appicons', 1);
+        rq.onupgradeneeded = () => { try { rq.result.createObjectStore('icons'); } catch (_) {} };
+        rq.onsuccess = () => res(rq.result);
+        rq.onerror = () => res(null);
+      } catch (_) { res(null); }
+    });
+    return this._db;
+  },
+  async all() {
+    const db = await this.open(); if (!db) return {};
+    return new Promise(res => {
+      try {
+        const out = {}, tx = db.transaction('icons', 'readonly'), st = tx.objectStore('icons');
+        const rq = st.openCursor();
+        rq.onsuccess = () => { const c = rq.result; if (c) { out[c.key] = c.value; c.continue(); } else res(out); };
+        rq.onerror = () => res(out);
+      } catch (_) { res({}); }
+    });
+  },
+  async put(k, v) { const db = await this.open(); if (!db) return; try { db.transaction('icons', 'readwrite').objectStore('icons').put(v, k); } catch (_) {} },
+  async clear() { const db = await this.open(); if (!db) return; try { db.transaction('icons', 'readwrite').objectStore('icons').clear(); } catch (_) {} },
+};
+
+// The relays the card falls back to when a site doesn't let the browser read it directly (Apple's chart
+// feeds, for one). Shared by the charts and the Health Check, so the check tests exactly what the charts use.
+const CROWAI_RELAYS = [
+  { name: 'AllOrigins', url: u => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u) },
+  { name: 'CodeTabs', url: u => 'https://api.codetabs.com/v1/proxy/?quest=' + encodeURIComponent(u) },
+  { name: 'corsproxy.io', url: u => 'https://corsproxy.io/?url=' + encodeURIComponent(u) },
+  { name: 'cors.lol', url: u => 'https://api.cors.lol/?url=' + encodeURIComponent(u) },
+  { name: 'cors.eu.org', url: u => 'https://cors.eu.org/' + u },
+  { name: 'thingproxy', url: u => 'https://thingproxy.freeboard.io/fetch/' + u },
+  { name: 'AllOrigins (wrapped)', url: u => 'https://api.allorigins.win/get?url=' + encodeURIComponent(u), unwrap: j => JSON.parse(j?.contents || 'null') },
+];
+
+// Apple's older iTunes Store feeds carry the same charts and answer browsers directly, so they're tried
+// when the newer feed can't be read without a relay. Mapped to the newer feed's shape.
+function crowaiAppleLegacyUrl(path, n) {
+  const m = String(path).match(/^([a-z]{2})\/(music\/most-played|podcasts\/top)\/\{n\}\/([a-z-]+)\.json$/i);
+  if (!m) return '';
+  const kind = m[2].startsWith('music') ? (m[3] === 'albums' ? 'topalbums' : m[3] === 'songs' ? 'topsongs' : '') : (m[3] === 'podcasts' ? 'toppodcasts' : '');
+  return kind ? 'https://itunes.apple.com/' + m[1].toLowerCase() + '/rss/' + kind + '/limit=' + Math.min(200, n) + '/json' : '';
+}
+function crowaiAppleLegacyMap(j) {
+  let e = j?.feed?.entry;
+  if (!e) return null;
+  if (!Array.isArray(e)) e = [e];
+  const results = e.map(x => {
+    const imgs = x?.['im:image'] || [];
+    return {
+      id: x?.id?.attributes?.['im:id'] || '',
+      name: x?.['im:name']?.label || '',
+      artistName: x?.['im:artist']?.label || '',
+      artworkUrl100: imgs.length ? imgs[imgs.length - 1].label : '',
+      genres: x?.category?.attributes?.label ? [{ name: x.category.attributes.label }] : [],
+    };
+  }).filter(r => r.name);
+  return results.length ? { feed: { results, updated: j?.feed?.updated?.label || '', legacy: true } } : null;
+}
+
+// Friendly AI errors, shared by the card and the editor's Test AI: what kind of problem an AI answer or error is, and a plain-English title and explanation for it
+const crowaiAiKind = (text) => {
+  const t = String(text || '').toLowerCase();
+  // "Busy" (overloaded / high demand) clears within seconds, so it's kept
+  // apart from "quota": it's retried once and never starts a long pause.
+  if (/\b503\b|overload|high demand|unavailable|try again later|temporarily/.test(t) && !/quota|exhaust/.test(t)) return 'busy';
+  if (/429|quota|resource_exhausted|rate.?limit|too many requests|exceeded/.test(t)) return 'quota';
+  if (/api.?key|unauthori[sz]ed|unauthenticated|permission|forbidden|\b403\b|invalid.?key/.test(t)) return 'auth';
+  if (/not found|\b404\b|is not supported|deprecated|no longer available|unknown model/.test(t) && /model|gemini|gpt|claude/.test(t)) return 'model';
+  if (/agent/.test(t) && /not found|unknown|invalid|no /.test(t)) return 'agent';
+  if (/timeout|timed out|deadline/.test(t)) return 'timeout';
+  if (/connection|network|offline|lost|socket/.test(t)) return 'offline';
+  return 'error';
+};
+const crowaiAiReason = (kind) => {
+  switch (kind) {
+    case 'busy':     return ['Busy right now', 'The AI service is getting a lot of requests. This usually clears up within a few minutes.'];
+    case 'quota':    return ['Limit reached', 'The AI\u2019s free allowance is used up for the moment. If it keeps happening, the daily limit resets tomorrow.'];
+    case 'auth':     return ['The AI needs attention', 'Its sign-in wasn\u2019t accepted. Check the AI integration in Home Assistant\u2019s settings.'];
+    case 'model':    return ['The AI needs attention', 'Its model isn\u2019t available any more. Choose a current model in the AI integration\u2019s settings.'];
+    case 'agent':    return ['No AI agent', 'Choose a conversation agent under AI in this card\u2019s editor.'];
+    case 'timeout':  return ['No reply', 'The AI took too long to answer.'];
+    case 'offline':  return ['Couldn\u2019t connect', 'Check the connection to Home Assistant, then try again.'];
+    case 'disabled': return ['Switched off', 'This AI feature is turned off in the card\u2019s AI Settings.'];
+    case 'unreadable': return ['No answer', 'The AI\u2019s reply couldn\u2019t be read.'];
+    default:         return ['No answer', 'Something went wrong. Please try again in a moment.'];
+  }
+};
+
+const crowaiHealth = {
+  // a value by path, e.g. 'results.0.artworkUrl100'
+  get(o, path) { return String(path).split('.').reduce((v, k) => (v == null ? v : v[k]), o); },
+  missing(o, paths) { return paths.filter(p => { const v = crowaiHealth.get(o, p); return v == null || v === ''; }); },
+  async timed(fn, ms = 10000) {
+    const t0 = performance.now();
+    let timer;
+    try {
+      const v = await Promise.race([fn(), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('timeout')), ms); })]);
+      return { v, ms: performance.now() - t0 };
+    } catch (e) { return { err: e, ms: performance.now() - t0 }; } finally { clearTimeout(timer); }
+  },
+  async json(url, opts = {}) {
+    const r = await fetch(url, opts);
+    if (!r.ok) { const e = new Error('HTTP ' + r.status); e.status = r.status; throw e; }
+    return r.json();
+  },
+  jsonp(url) {
+    return new Promise((resolve, reject) => {
+      const cb = '__crowHealthCb' + Math.random().toString(36).slice(2);
+      const s = document.createElement('script');
+      const done = () => { try { delete window[cb]; } catch (_) { window[cb] = undefined; } s.remove(); };
+      window[cb] = d => { done(); resolve(d); };
+      s.onerror = () => { done(); reject(new Error('blocked')); };
+      s.src = url + (url.includes('?') ? '&' : '?') + 'output=jsonp&callback=' + cb;
+      document.head.appendChild(s);
+    });
+  },
+  // direct first, then the relays the card falls back to
+  async jsonRelayed(url, valid = null) {
+    const withTimeout = (pr, ms) => Promise.race([pr, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
+    const ok = j => { if (!j || typeof j !== 'object' || (valid && !valid(j))) throw new Error('bad'); return j; };
+    try { return { j: ok(await withTimeout(crowaiHealth.json(url), 6000)), relayed: false }; } catch (_) {}
+    try {
+      return await Promise.any(CROWAI_RELAYS.map(r => withTimeout(crowaiHealth.json(r.url(url)), 9000)
+        .then(j => ({ j: ok(r.unwrap ? r.unwrap(j) : j), relayed: r.name }))));
+    } catch (_) { throw new Error('unreachable'); }
+  },
+  secs(ms) { return (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + 's'; },
+
+  // The checks. Each: group, name, on(cfg, hass) (or 'off reason' string), run(ctx) → { j, relayed, need, note, status }
+  list() {
+    const H = crowaiHealth;
+    const tmdbFetch = (cfg, url) => {
+      const key = String(cfg.tmdb_api_key || '').trim(), bearer = key.startsWith('ey');
+      return H.json(bearer ? url : url + (url.includes('?') ? '&' : '?') + 'api_key=' + encodeURIComponent(key), bearer ? { headers: { Authorization: 'Bearer ' + key } } : {});
+    };
+    return [
+      // Home Assistant
+      { id: 'ha', group: 'Home Assistant', name: 'Home Assistant', run: async ({ hass }) => {
+        if (!hass?.connection) return { status: 'fail', note: 'Not connected' };
+        const v = hass.config?.version || '';
+        return { status: 'ok', note: 'Connected' + (v ? ' (' + v + ')' : '') };
+      } },
+      { id: 'players', group: 'Home Assistant', name: 'Media players', run: async ({ hass, cfg }) => {
+        const ents = (cfg.entities || []).map(e => typeof e === 'string' ? e : e?.entity).filter(Boolean);
+        const found = ents.filter(e => hass?.states?.[e]);
+        const away = found.filter(e => hass.states[e].state === 'unavailable');
+        if (!ents.length) return { status: 'warn', note: 'No media players chosen' };
+        if (found.length < ents.length) return { status: 'warn', note: (ents.length - found.length) + ' of ' + ents.length + ' chosen players no longer exist in Home Assistant' };
+        if (away.length) return { status: 'warn', note: away.length + ' of ' + ents.length + ' unavailable right now' };
+        return { status: 'ok', note: ents.length + ' found' };
+      } },
+      { id: 'ma', group: 'Home Assistant', name: 'Music Assistant', on: (cfg, hass) => !!hass?.services?.music_assistant || (cfg.ma_entities || []).length > 0 || 'Not installed (optional)', run: async ({ hass }) => {
+        const ma = hass?.services?.music_assistant || {};
+        const need = ['search', 'get_queue', 'play_media'].filter(s => !ma[s]);
+        if (need.length) return { status: 'changed', note: 'Missing services the card uses: ' + need.join(', ') };
+        if (!hass?.services?.mass_queue) return { status: 'warn', note: 'Working; the Music Assistant Queue integration isn’t installed, so queue reordering and audio quality aren’t available' };
+        return { status: 'ok', note: 'Working, with queue features' };
+      } },
+      { id: 'ai', group: 'Home Assistant', name: 'AI agent', on: cfg => cfg.ai_features_enabled === true || 'AI Features is off', run: async ({ hass, cfg }) => {
+        const agent = cfg.ai_conversation_agent || '';
+        if (!agent || agent === 'conversation.home_assistant') return { status: 'warn', note: 'No AI agent chosen (the built-in assistant can’t answer music or film questions)' };
+        const r = await hass.connection.sendMessagePromise({ type: 'conversation/agent/list' });
+        const ids = (r?.agents || []).map(a => a.id);
+        if (!ids.includes(agent) && !hass.states?.[agent]) return { status: 'fail', note: 'The chosen agent no longer exists' };
+        return { status: 'ok', note: 'Agent found (use Test AI to check it answers)' };
+      } },
+      { id: 'tts', group: 'Home Assistant', name: 'Announcements (TTS)', on: cfg => !!cfg.announce_tts_service || 'Not set', run: async ({ hass, cfg }) => {
+        const svc = String(cfg.announce_tts_service || ''), [d, s] = svc.includes('.') ? svc.split('.') : ['tts', svc];
+        return hass?.services?.[d]?.[s] || hass?.states?.[svc] ? { status: 'ok', note: 'Found' } : { status: 'fail', note: 'The chosen TTS service no longer exists' };
+      } },
+      { id: 'sendspin', group: 'Home Assistant', name: 'Play on This Device server', on: cfg => (cfg.sendspin_enabled === true && !!cfg.sendspin_url) || 'Off', run: async ({ cfg }) => {
+        await fetch(String(cfg.sendspin_url).replace(/\/+$/, '') + '/', { mode: 'no-cors' });
+        return { status: 'ok', note: 'Reachable' };
+      } },
+      // Music
+      { id: 'mb', group: 'Music', name: 'MusicBrainz', run: async (ctx) => {
+        const u = 'https://musicbrainz.org/ws/2/release-group/?query=' + encodeURIComponent('releasegroup:"A Night at the Opera" AND artist:Queen') + '&fmt=json&limit=1';
+        // MusicBrainz answers 503 when it's asked too often (it allows about one request a second): wait and ask once more
+        let j;
+        try { j = await H.json(u); }
+        catch (e) {
+          if (e.status !== 503) throw e;
+          await new Promise(r => setTimeout(r, 2500));
+          try { j = await H.json(u); }
+          catch (e2) { if (e2.status === 503) return { status: 'warn', note: 'Busy - MusicBrainz limits how often it can be asked. The card waits and tries again when it needs it; run the check again in a minute' }; throw e2; }
+        }
+        ctx.mbid = j?.['release-groups']?.[0]?.id || '';
+        return { j, need: ['release-groups.0.id', 'release-groups.0.title'] };
+      } },
+      { id: 'caa', group: 'Music', name: 'Cover Art Archive', run: async (ctx) => {
+        if (!ctx.mbid) return { status: 'skip', note: 'Skipped (needs MusicBrainz)' };
+        const j = await H.json('https://coverartarchive.org/release-group/' + ctx.mbid);
+        return { j, need: ['images.0.image'] };
+      } },
+      { id: 'discogs', group: 'Music', name: 'Discogs', run: async () => {
+        const j = await H.json('https://api.discogs.com/database/search?artist=Queen&release_title=' + encodeURIComponent('A Night at the Opera') + '&type=release&per_page=1', { headers: { 'User-Agent': 'CrowAIMediaPlayerCard/1.0' } });
+        return { j, need: ['results.0.id', 'results.0.title'] };
+      } },
+      { id: 'itunes', group: 'Music', name: 'iTunes Store', run: async () => {
+        const j = await H.json('https://itunes.apple.com/search?term=' + encodeURIComponent('Queen Bohemian Rhapsody') + '&entity=musicTrack&limit=1');
+        return { j, need: ['results.0.artworkUrl100', 'results.0.trackName'] };
+      } },
+      { id: 'lrclib', group: 'Music', name: 'LRCLIB (lyrics)', run: async () => {
+        const j = await H.json('https://lrclib.net/api/search?track_name=' + encodeURIComponent('Bohemian Rhapsody') + '&artist_name=Queen');
+        return { j, need: ['0.trackName', '0.plainLyrics'] };
+      } },
+      { id: 'deezer', group: 'Music', name: 'Deezer (charts and tempos)', run: async () => {
+        const j = await H.jsonp('https://api.deezer.com/chart/0/tracks?limit=1');
+        if (j?.error) return { status: 'fail', note: 'Answered with an error: ' + (j.error.message || 'unknown') };
+        return { j, need: ['data.0.id', 'data.0.title', 'data.0.artist.name'] };
+      } },
+      { id: 'applecharts', timeout: 26000, group: 'Music', name: 'Apple Music and Podcasts charts', on: cfg => (cfg.feat_charts === true && cfg.charts_apple !== false) || cfg.feat_podcast_charts !== false || 'Charts are off', run: async ({ hass }) => {
+        const cc = String(hass?.config?.country || 'gb').toLowerCase();
+        const path = cc + '/music/most-played/{n}/songs.json';
+        const within = (pr, ms) => Promise.race([pr, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
+        try { const j = await within(H.json('https://rss.marketingtools.apple.com/api/v2/' + path.replace('{n}', 10)), 5000); if (j?.feed?.results) return { j, need: ['feed.results.0.name', 'feed.results.0.artworkUrl100'] }; } catch (_) {}
+        try {
+          const mapped = crowaiAppleLegacyMap(await within(H.json(crowaiAppleLegacyUrl(path, 10)), 5000));
+          if (mapped) return { j: mapped, need: ['feed.results.0.name', 'feed.results.0.artworkUrl100'], note: 'Working (using Apple\u2019s older iTunes feed)' };
+        } catch (_) {}
+        try {
+          const { j, relayed } = await H.jsonRelayed('https://rss.marketingtools.apple.com/api/v2/' + path.replace('{n}', 10), j => Array.isArray(j?.feed?.results));
+          return { j, relayed, need: ['feed.results.0.name', 'feed.results.0.artworkUrl100'] };
+        } catch (_) {
+          return { status: 'warn', note: 'Apple\u2019s charts can\u2019t be reached from this device, so Deezer\u2019s charts are used instead (Top Songs, Top Albums and Top Podcasts)' };
+        }
+      } },
+      { id: 'wiki', group: 'Music', name: 'Wikipedia', run: async () => {
+        const j = await H.json('https://en.wikipedia.org/api/rest_v1/page/summary/Queen_(band)');
+        return { j, need: ['title', 'extract', 'thumbnail.source'] };
+      } },
+      { id: 'wikidata', group: 'Music', name: 'Wikidata', run: async () => {
+        const j = await H.json('https://www.wikidata.org/w/api.php?format=json&origin=*&action=wbgetentities&ids=Q15862&props=labels&languages=en');
+        return { j, need: ['entities.Q15862.labels.en.value'] };
+      } },
+      { id: 'radio', group: 'Music', name: 'Radio Browser', run: async () => {
+        const j = await H.json('https://de1.api.radio-browser.info/json/stations/search?name=bbc&limit=1&hidebroken=true&order=votes&reverse=true');
+        return { j, need: ['0.name', '0.url_resolved', '0.stationuuid'] };
+      } },
+      { id: 'archive', group: 'Music', name: 'Internet Archive (audiobooks)', run: async () => {
+        const j = await H.json('https://archive.org/advancedsearch.php?q=' + encodeURIComponent('collection:librivoxaudio') + '&fl%5B%5D=identifier&fl%5B%5D=title&rows=1&output=json');
+        return { j, need: ['response.docs.0.identifier'] };
+      } },
+      // Movies & TV
+      { id: 'tmdb', group: 'Movies & TV', name: 'TMDB', on: cfg => !!String(cfg.tmdb_api_key || '').trim() || 'No key added (optional)', run: async ({ cfg }) => {
+        try {
+          const j = await tmdbFetch(cfg, 'https://api.themoviedb.org/3/search/movie?query=Heat&year=1995');
+          return { j, need: ['results.0.id', 'results.0.title', 'results.0.poster_path'], note: 'Working, key accepted' };
+        } catch (e) {
+          if (e.status === 401) return { status: 'fail', note: 'Key not accepted - check it in Info Panels' };
+          throw e;
+        }
+      } },
+      { id: 'tvmaze', group: 'Movies & TV', name: 'TVmaze', run: async () => {
+        const j = await H.json('https://api.tvmaze.com/search/shows?q=' + encodeURIComponent('Breaking Bad'));
+        return { j, need: ['0.show.id', '0.show.name'] };
+      } },
+      { id: 'epg', group: 'Movies & TV', name: 'UK TV guide (Freeview)', on: cfg => (cfg.feat_video_charts !== false && cfg.feat_tv_guide !== false) || 'TV Guide is off', run: async () => {
+        const ctrl = new AbortController();
+        const r = await fetch('https://raw.githubusercontent.com/dp247/Freeview-EPG/master/epg.xml', { signal: ctrl.signal, headers: { Range: 'bytes=0-4095' } });
+        if (!r.ok) { const e = new Error('HTTP ' + r.status); e.status = r.status; throw e; }
+        // just the start of the file: enough to see it's still the guide
+        const rd = r.body?.getReader?.();
+        let head = '';
+        if (rd) { const { value } = await rd.read(); head = new TextDecoder().decode(value || new Uint8Array()); ctrl.abort(); }
+        else head = (await r.text()).slice(0, 4096);
+        return /<tv[\s>]/.test(head) && /<channel\b|<programme\b/.test(head) ? { status: 'ok', note: 'Working' } : { status: 'changed', note: 'The guide file has changed' };
+      } },
+      { id: 'atvapps', group: 'Home Assistant', name: 'Apple TV apps', on: (cfg, hass) => {
+          if (cfg.atv_apps_button === false) return 'Apps Button is off';
+          const ents = (cfg.entities || []).map(e => typeof e === 'string' ? e : e?.entity).filter(Boolean);
+          const atv = ents.filter(e => { const st = hass?.states?.[e]; const n = (st?.attributes?.friendly_name || e).toLowerCase(); return st && (st.attributes?.device_class === 'tv' || /apple.?tv/.test(e) || n.includes('apple tv')); });
+          return atv.length ? true : 'No Apple TV chosen';
+        }, run: async ({ hass, cfg }) => {
+          const ents = (cfg.entities || []).map(e => typeof e === 'string' ? e : e?.entity).filter(Boolean);
+          const atv = ents.filter(e => { const st = hass?.states?.[e]; const n = (st?.attributes?.friendly_name || e).toLowerCase(); return st && (st.attributes?.device_class === 'tv' || /apple.?tv/.test(e) || n.includes('apple tv')); });
+          const withApps = atv.map(e => ({ e, n: (hass.states[e]?.attributes?.source_list || []).length, name: hass.states[e]?.attributes?.friendly_name || e }));
+          const ok = withApps.filter(x => x.n > 0);
+          if (ok.length) return { status: 'ok', note: ok.map(x => x.name + ': ' + x.n + ' apps').join(', ') };
+          const v = String(hass?.config?.version || ''), [yy, mm] = v.split('.').map(Number);
+          const old = yy && (yy < 2026 || (yy === 2026 && mm < 7));
+          return { status: 'warn', note: 'The Apple TV isn\u2019t sharing its app list' + (old ? ' - update Home Assistant to 2026.7 or later' : ' - check the Apple TV is awake, then reload its integration') };
+        } },
+      // Behind the scenes
+      { id: 'weserv', group: 'Behind the Scenes', name: 'Image proxy (artwork in PDFs)', on: cfg => cfg.pdf_enabled !== false || 'PDF exports are off', run: async () => {
+        const r = await fetch('https://images.weserv.nl/?url=' + encodeURIComponent('upload.wikimedia.org/wikipedia/commons/thumb/4/47/PNG_transparency_demonstration_1.png/120px-PNG_transparency_demonstration_1.png') + '&w=40');
+        if (!r.ok) { const e = new Error('HTTP ' + r.status); e.status = r.status; throw e; }
+        return /^image\//.test(r.headers.get('content-type') || '') ? { status: 'ok', note: 'Working' } : { status: 'changed', note: 'Didn’t return an image' };
+      } },
+      { id: 'relay', group: 'Behind the Scenes', name: 'Relays (Apple TV app icons, and sites that block the card)', run: async ({ hass }) => {
+        const test = 'https://itunes.apple.com/search?term=queen&entity=musicTrack&limit=1';
+        const cc = String(hass?.config?.country || 'gb').toLowerCase();
+        // What would fall back to a relay if it couldn't be read directly (Apple Music charts aren't here: they fall back to Deezer)
+        const direct = [
+          { name: 'Apple TV charts', go: async () => { const j = await H.json('https://itunes.apple.com/' + cc + '/rss/topmovies/limit=1/json'); if (!j?.feed) throw new Error('bad'); } },
+          { name: 'TVmaze listings', go: async () => { const j = await H.json('https://api.tvmaze.com/schedule?country=' + cc.toUpperCase()); if (!Array.isArray(j)) throw new Error('bad'); } },
+        ];
+        const [res, dres] = await Promise.all([
+          Promise.all(CROWAI_RELAYS.map(r => crowaiHealth.timed(async () => {
+            const j0 = await H.json(r.url(test)); const j = r.unwrap ? r.unwrap(j0) : j0;
+            if (!j?.results?.[0]?.trackName) throw new Error('bad');
+            return true;
+          }, 9000).then(t => !t.err))),
+          Promise.all(direct.map(d => crowaiHealth.timed(d.go, 6000).then(t => !t.err))),
+        ]);
+        const n = res.filter(Boolean).length, names = CROWAI_RELAYS.filter((r, i) => res[i]).map(r => r.name);
+        // Always worth testing: Apple TV app icons fall back to the relays whenever Apple refuses
+        // lookups for being too many, even on a device that reaches Apple fine.
+        const blocked = direct.filter((d, i) => !dres[i]).map(d => d.name);
+        if (n) return { status: n >= 2 ? 'ok' : 'warn', note: n + ' of ' + CROWAI_RELAYS.length + ' working (' + names.join(', ') + ')' + (blocked.length ? '. Used here for ' + blocked.join(' and ') + ', which this device can\u2019t read directly' : '') };
+        return { status: 'warn', note: 'None of the ' + CROWAI_RELAYS.length + ' relays answered, so Apple TV app icons may stay as letters when Apple is busy' + (blocked.length ? ', and ' + blocked.join(' and ') + ' can\u2019t be read from this device' : '') };
+      } },
+      { id: 'jspdf', group: 'Behind the Scenes', name: 'PDF library', on: cfg => cfg.pdf_enabled !== false || 'PDF exports are off', run: async () => {
+        const r = await fetch('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js', { method: 'HEAD' });
+        return r.ok ? { status: 'ok', note: 'Working' } : { status: 'fail', note: 'Not reachable (HTTP ' + r.status + ')' };
+      } },
+    ];
+  },
+
+  // Runs every check (in parallel), calling onRow as each finishes. Results are kept for 10 minutes.
+  async run({ hass, cfg }, onRow, { force = false } = {}) {
+    const memo = window.__crowHealthMemo;
+    if (!force && memo && Date.now() - memo.at < 600000) { memo.rows.forEach(r => onRow?.(r)); return memo; }
+    const ctx = { hass, cfg: cfg || {} };
+    const checks = crowaiHealth.list();
+    const rows = [];
+    const runOne = async c => {
+      const on = c.on ? c.on(ctx.cfg, hass) : true;
+      let row;
+      if (on !== true) row = { id: c.id, group: c.group, name: c.name, status: 'off', note: on || 'Off' };
+      else {
+        const t = await crowaiHealth.timed(() => c.run(ctx), c.timeout || 12000);
+        if (t.err) {
+          const e = t.err, msg = String(e?.message || e);
+          row = { id: c.id, group: c.group, name: c.name, status: 'fail', ms: t.ms,
+            note: msg === 'timeout' ? 'No answer within ' + Math.round((c.timeout || 12000) / 1000) + ' seconds'
+              : e?.status === 429 ? 'Busy (too many requests) - try again in a minute'
+              : e?.status ? 'Answered with an error (HTTP ' + e.status + ')'
+              : 'Not reachable from this device' };
+        } else {
+          const v = t.v || {};
+          let status = v.status, note = v.note;
+          if (!status) {
+            const miss = v.need ? crowaiHealth.missing(v.j, v.need) : [];
+            if (miss.length) { status = 'changed'; note = 'Its answer has changed (missing ' + miss.join(', ') + ') - the card may need an update'; }
+            else { status = t.ms > 5000 && !v.relayed ? 'slow' : 'ok'; note = (note || 'Working') + (v.relayed ? ' through a relay (' + v.relayed + ')' : ''); }
+          }
+          if (v.soft && status === 'fail') status = 'warn';
+          row = { id: c.id, group: c.group, name: c.name, status, ms: t.ms, note: note + (t.ms >= 50 && ['ok', 'slow'].includes(status) ? ' (' + crowaiHealth.secs(t.ms) + ')' : '') };
+        }
+      }
+      rows.push(row); onRow?.(row);
+      return row;
+    };
+    // MusicBrainz first (Cover Art Archive needs its answer); everything else at once
+    const mbFirst = checks.filter(c => c.id === 'mb'), after = checks.filter(c => c.id === 'caa'), rest = checks.filter(c => c.id !== 'mb' && c.id !== 'caa');
+    await Promise.all([...rest.map(runOne), (async () => { for (const c of [...mbFirst, ...after]) await runOne(c); })()]);
+    const order = checks.map(c => c.id);
+    rows.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+    const res = { at: Date.now(), rows };
+    window.__crowHealthMemo = res;
+    return res;
+  },
+
+  summary(rows) {
+    const active = rows.filter(r => r.status !== 'off' && r.status !== 'skip');
+    const ok = active.filter(r => r.status === 'ok').length, slow = active.filter(r => r.status === 'slow').length;
+    const bad = active.filter(r => ['fail', 'changed', 'warn'].includes(r.status)).length;
+    return ok + slow + ' of ' + active.length + ' working' + (slow ? ', ' + slow + ' slow' : '') + (bad ? ', ' + bad + ' need' + (bad === 1 ? 's' : '') + ' attention' : '');
+  },
+
+  async testAI(hass, cfg) {
+    if (cfg?.ai_features_enabled !== true) return { status: 'off', note: 'AI Features is off' };
+    const agent = cfg.ai_conversation_agent || '';
+    if (!agent || agent === 'conversation.home_assistant') return { status: 'warn', note: 'No AI agent chosen' };
+    const say = (kind) => { const [title, text] = crowaiAiReason(kind); return title + ' - ' + text; };
+    const t = await crowaiHealth.timed(() => hass.connection.sendMessagePromise({ type: 'conversation/process', text: 'Reply with the single word OK and nothing else.', agent_id: agent, language: navigator.language || 'en' }), 30000);
+    if (t.err) {
+      const msg = String(t.err?.message || t.err?.code || t.err);
+      const kind = msg === 'timeout' ? 'timeout' : crowaiAiKind(msg);
+      console.warn('[Crow AI] Test AI:', msg);
+      return { status: 'fail', note: say(kind === 'error' ? 'offline' : kind), kind };
+    }
+    const resp = t.v?.response || {}, speech = String(resp?.speech?.plain?.speech || '');
+    if (resp.response_type === 'error' || /^(sorry, i had a problem|error talking to|unexpected error during intent)/i.test(speech.trim())) {
+      const kind = crowaiAiKind(speech + ' ' + (resp?.data?.code || ''));
+      console.warn('[Crow AI] Test AI error answer:', speech);
+      return { status: kind === 'busy' ? 'warn' : 'fail', note: say(kind), kind };
+    }
+    if (!speech.trim()) return { status: 'fail', note: say('unreadable'), kind: 'unreadable' };
+    return { status: t.ms > 8000 ? 'slow' : 'ok', note: 'Answered in ' + crowaiHealth.secs(t.ms) + (/\bok\b/i.test(speech) ? '' : ' (with an unexpected reply: "' + speech.slice(0, 60) + '")') };
+  },
+
+  device() {
+    const ua = navigator.userAgent || '';
+    const os = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1) ? 'iPad' : /Android/.test(ua) ? 'Android' : /Mac OS X/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : /Linux/.test(ua) ? 'Linux' : 'Unknown';
+    const iosV = (ua.match(/OS (\d+)[_.](\d+)/) || []).slice(1, 3).join('.');
+    const app = /Home Assistant\//i.test(ua) ? 'Home Assistant app' : /CriOS|Chrome\//.test(ua) && !/Edg\//.test(ua) ? 'Chrome' : /Edg\//.test(ua) ? 'Edge' : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
+    return os + (iosV && /iPhone|iPad/.test(os) ? ' (iOS ' + iosV + ')' : '') + ', ' + app;
+  },
+
+  // The report: versions, device and settings in general terms (never keys, entity names or addresses)
+  report(hass, cfg, health, ai) {
+    cfg = cfg || {};
+    const yes = v => (v ? 'on' : 'off');
+    const auto = (typeof crowaiAutoStart === 'function') ? crowaiAutoStart(cfg) : { mode: 'off' };
+    const lines = [
+      '**Card:** v' + CROWAI_VERSION,
+      '**Home Assistant:** ' + (hass?.config?.version || 'unknown'),
+      '**Device:** ' + crowaiHealth.device(),
+      '**Players:** ' + ((cfg.entities || []).length) + ' chosen, ' + ((cfg.ma_entities || []).length) + ' Music Assistant',
+      '**Settings:** AI ' + yes(cfg.ai_features_enabled === true)
+        + ', TMDB key ' + (String(cfg.tmdb_api_key || '').trim() ? 'added' : 'not added')
+        + ', songs try first: ' + (cfg.info_panel_priority || 'ai')
+        + ', movies & TV try first: ' + (cfg.video_info_priority || 'ai')
+        + ', matching: ' + (cfg.video_match === 'exact' || cfg.video_match === 'jellyfin' ? 'exact' : 'best guess')
+        + ', charts ' + yes(cfg.feat_charts === true)
+        + ', start automatically: ' + auto.mode
+        + ', PDF exports ' + yes(cfg.pdf_enabled !== false)
+        + ', Play on This Device ' + yes(cfg.sendspin_enabled === true),
+    ];
+    const mark = s => ({ ok: 'OK', slow: 'SLOW', warn: 'CHECK', changed: 'CHANGED', fail: 'FAILED', off: 'off', skip: 'skipped' }[s] || s);
+    if (ai) lines.push('**Test AI:** ' + mark(ai.status) + ' - ' + ai.note);
+    if (health?.rows?.length) {
+      lines.push('', '**Health check** (' + new Date(health.at).toLocaleString() + '): ' + crowaiHealth.summary(health.rows));
+      health.rows.forEach(r => lines.push('- ' + mark(r.status) + ' - ' + r.name + ': ' + r.note));
+    }
+    return lines.join('\n');
+  },
+  issueBody(details) {
+    return '### What happened\n<!-- What were you doing, and what went wrong? -->\n\n\n### What I expected\n\n\n### Steps to make it happen\n1. \n\n### Screenshot\n<!-- Drag a screenshot in here if you can. -->\n\n---\n' + details + '\n';
+  },
+  issueUrl(details) {
+    const make = d => CROWAI_ISSUES_URL + '/new?title=' + encodeURIComponent('Problem: ') + '&body=' + encodeURIComponent(crowaiHealth.issueBody(d));
+    let url = make(details);
+    if (url.length <= 7500) return { url, cut: false };
+    // too long for a link: keep the versions, settings and anything that isn't working
+    const short = details.split('\n').filter(l => !/^- (OK|off|skipped|SLOW) - /.test(l)).join('\n') + '\n\n_(Full report copied to the clipboard - paste it here.)_';
+    url = make(short);
+    return { url: url.length <= 7500 ? url : make('_(Report copied to the clipboard - paste it here.)_'), cut: true };
+  },
+};
 
 const CROWAI_VIZ_ICONS = {
   artwork: 'M19,19H5V5H19M19,3H5A2,2 0 0,0 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V5A2,2 0 0,0 19,3M13.96,12.29L11.21,15.83L9.25,13.47L6.5,17H17.5L13.96,12.29Z',
@@ -2823,7 +3610,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   }
 
   static getStubConfig() {
-    return { entities: [], auto_switch: true, show_vibe: false, accent_color: '#007AFF', volume_accent: '#007AFF', title_color: '#ffffff', artist_color: '#ffffff', button_color: '#ffffff', player_bg: '#1c1c1e', player_bg_opacity: 100, show_entity_selector: true, volume_control: 'slider', startup_mode: 'compact', remember_view: false, volume_entity: {}, entity_names: {}, ma_entities: [], show_vol_pct: true, vol_pct_color: 'rgba(255,255,255,0.45)', scroll_text: false, remember_last_entity: false, entity_startup_volumes: {}, lyrics_bg: '#0a0a0c', lyrics_text_color: '#ffffff', lyrics_scroll_mode: 'highlight', lyrics_persist: false, lyrics_cache_ttl: 7, lyrics_cache_enabled: true, lyrics_persistent_storage: false, pins_persistent_storage: false, show_pins_in_sections: true, ai_info_persistent_storage: false, itunes_persistent_storage: false, wiki_persistent_storage: false, ma_library_cache_enabled: true, ma_library_cache_ttl: 1, ma_radio_mode: false, show_ma_library_button: true, use_ha_theme: false, remote_buttons_position: 'bottom', ambient_glow: false, announce_tts_service: '', row_glow: false, show_remote_button: true, artwork_crossfade: false, icon_theme: 'robot', resize_btn_spin: true, pin_hearts: true, remote_art_blur: true, volume_hud: true, itunes_art: true, controls_theme: 'classic', add_pill_color: '', card_liquid_glass: true, appearance: 'auto', volume_hud_glass: false, ai_features_enabled: false, ai_conversation_agent: '', info_panel_priority: 'ai', library_search_mode: 'normal', tmdb_api_key: '', video_info_priority: 'ai', share_service: 'youtube_music', song_intro_enabled: false, show_media_type_pill: false, show_youtube_button: true, atv_keyboard_panel: true, ghost_skip_heal: true };
+    return { entities: [], auto_switch: true, show_vibe: false, accent_color: '#007AFF', volume_accent: '#007AFF', title_color: '#ffffff', artist_color: '#ffffff', button_color: '#ffffff', player_bg: '#1c1c1e', player_bg_opacity: 100, show_entity_selector: true, volume_control: 'slider', startup_mode: 'compact', remember_view: false, volume_entity: {}, entity_names: {}, ma_entities: [], show_vol_pct: true, vol_pct_color: 'rgba(255,255,255,0.45)', scroll_text: false, remember_last_entity: false, entity_startup_volumes: {}, lyrics_bg: '#0a0a0c', lyrics_text_color: '#ffffff', lyrics_scroll_mode: 'highlight', lyrics_persist: false, lyrics_cache_ttl: 7, lyrics_cache_enabled: true, lyrics_persistent_storage: false, pins_persistent_storage: false, show_pins_in_sections: true, ai_info_persistent_storage: false, itunes_persistent_storage: false, wiki_persistent_storage: false, ma_library_cache_enabled: true, ma_library_cache_ttl: 1, ma_radio_mode: false, show_ma_library_button: true, use_ha_theme: false, remote_buttons_position: 'bottom', ambient_glow: false, announce_tts_service: '', row_glow: false, show_remote_button: true, artwork_crossfade: false, icon_theme: 'robot', resize_btn_spin: true, pin_hearts: true, remote_art_blur: true, volume_hud: true, itunes_art: true, controls_theme: 'classic', add_pill_color: '', card_liquid_glass: true, appearance: 'auto', volume_hud_glass: false, ai_features_enabled: false, ai_conversation_agent: '', info_panel_priority: 'ai', library_search_mode: 'normal', tmdb_api_key: '', video_info_priority: 'ai', share_service: 'youtube_music', song_intro_enabled: false, show_media_type_pill: false, show_youtube_button: true, atv_keyboard_panel: true, atv_apps_button: true, ghost_skip_heal: true };
   }
 
   setConfig(config) {
@@ -3011,6 +3798,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if ((this._busyJobs || 0) > 0) this.shadowRoot?.getElementById('cardOuter')?.classList.add('crow-busy');
     if (this._loadingFrom) setTimeout(() => this._checkLoadingToast(), 0);
     this._hass = hass;
+    // "Enjoying CrowAI?": checked once per page, a few seconds after loading (see _starCheck)
+    if (!this._starChecked && hass?.connection) { this._starChecked = true; setTimeout(() => { try { this._starCheck(); } catch (_) {} }, 5000); }
 
     // ── Sendspin "this device" player ────────────────────────────────────
     if (this._config?.sendspin_enabled) {
@@ -3061,10 +3850,15 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           const _durMs = (prev.meta.duration || 0) * 1000;
           const _qualifies = prev.kind === 'music'
             ? (_elapsedMs >= 30000 || (_durMs > 0 && _elapsedMs >= _durMs * 0.5))
+            : prev.kind === 'youtube' ? true      // any YouTube video watched counts, however briefly
             : (_elapsedMs >= 10000); // TV/movie — just needs a genuine start, not a full watch
+          if (prev.kind !== 'music') this._watchDiag(entId, prev.meta?.title, prev.meta?.channel, _qualifies ? 'ended - recorded (' + Math.round(_elapsedMs / 1000) + 's)' : 'stopped after ' + Math.round(_elapsedMs / 1000) + 's - not counted yet');
+          // a video that stops for a moment (the Apple TV briefly reporting paused or idle) carries on
+          // from where it was if the same one comes back within two minutes
+          if (!_qualifies && prev.kind !== 'music') (this._watchRecentStops = this._watchRecentStops || {})[entId] = { key: prev.key, kind: prev.kind, meta: prev.meta, startTs: prev.startTs, at: Date.now() };
           if (_qualifies) {
             if (prev.kind === 'music') this._logListenEntry(prev.meta);
-            else this._logWatchEntry({ ...prev.meta, watchedMs: _elapsedMs });
+            else this._logWatchEntry({ ...prev.meta, watchedMs: _elapsedMs }, prev.logged ? prev.startTs : undefined);
             // Advance this entity's backfill checkpoint to now — otherwise
             // the next time any card reloads and runs the history backfill,
             // it would re-fetch this same time window from HA and log this
@@ -3095,12 +3889,40 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           const attrs = st.attributes || {};
           const artist = attrs.media_artist || '';
           const title  = attrs.media_title  || '';
-          if (!title) return;
+          if (!title) {
+            // The Apple TV's YouTube app often reports a video's title only as it starts, then plays on
+            // with no title at all. A video that's already being followed carries on counting through
+            // that, and goes into Watch History once it has played long enough.
+            let prev = this._maRecapState[entId];
+            const _rs = this._watchRecentStops?.[entId];
+            if (!prev && _rs && Date.now() - _rs.at < 120000 && (attrs.app_name || attrs.app_id)) {
+              // it stopped for a moment and came back without its title: the same video, carrying on
+              prev = this._maRecapState[entId] = { key: _rs.key, kind: _rs.kind, startTs: _rs.startTs, meta: _rs.meta };
+              delete this._watchRecentStops[entId];
+              _maRecapStateChanged = true;
+              this._watchDiag(entId, _rs.meta?.title, _rs.meta?.channel || '', 'carried on (no title reported)');
+            }
+            if (prev && prev.kind !== 'music') {
+              if (this._watchCheckEarly(entId)) _maRecapStateChanged = true;
+              return;
+            }
+            if (prev) return;   // already counted, or a song carrying on: nothing new to note
+            this._watchDiag(entId, '', attrs.app_name || '', 'playing with no title' + (attrs.app_name ? ' in ' + attrs.app_name : '') + ' - nothing to record');
+            return;
+          }
 
           let kind = null, key = null, entryMeta = null;
 
-          if (artist) {
-            if (this._recapShouldExclude(artist, title, attrs, st, entId)) return;
+          if (this._looksLikeYouTube(attrs, entId)) {
+            // YouTube: its own list under Watch History, never Music History
+            kind = 'youtube';
+            key = 'youtube|' + title;
+            entryMeta = this._youTubeMeta(attrs, entId);
+          } else if (artist) {
+            if (this._recapShouldExclude(artist, title, attrs, st, entId)) {
+              this._watchDiag(entId, title, artist, 'not recorded: ' + (attrs.app_name || attrs.app_id ? 'playing in ' + (attrs.app_name || attrs.app_id) + ', not YouTube or a song' : 'no app reported, so it couldn\u2019t tell this was YouTube'));
+              return;
+            }
             kind = 'music';
             key = 'music|' + artist + '|||' + title + '|||' + (attrs.media_album_name || '');
             entryMeta = {
@@ -3117,7 +3939,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             // No artist — only path left is TV/movie (Watch Recap). Music
             // always has an artist; this branch never applies to songs.
             const cls = this._classifyWatchMedia(attrs, st);
-            if (!cls.kind) return;
+            if (!cls.kind) { this._watchDiag(entId, title, '', 'not recorded: not a film or show'); return; }
             kind = cls.kind;
             key = kind + '|' + cls.seriesTitle + '|||' + cls.title;
             entryMeta = {
@@ -3132,13 +3954,26 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           }
 
           if (prev && prev.key !== key) _qualifyAndLog(prev, entId);
+          // A film, show or YouTube video goes into Watch History as soon as it has played long
+          // enough to count, so it's there while it's still on (and if the phone goes to sleep
+          // before it ends); its watched time is brought up to date when it finishes.
+          if (prev && prev.key === key && prev.kind !== 'music' && !prev.logged) {
+            if (this._watchCheckEarly(entId)) _maRecapStateChanged = true;
+          }
           if (!prev || prev.key !== key) {
-            this._maRecapState[entId] = { key, kind, startTs: Date.now(), meta: entryMeta };
+            const _rs = this._watchRecentStops?.[entId];
+            const _resume = _rs && _rs.key === key && Date.now() - _rs.at < 120000;
+            if (_rs) delete this._watchRecentStops[entId];
+            this._watchDiag(entId, entryMeta.title, entryMeta.channel || entryMeta.artist || '', (_resume ? 'carried on - ' : 'started - ') + (kind === 'youtube' ? 'YouTube video' : kind === 'music' ? 'song' : kind === 'tv' ? 'TV episode' : 'film'));
+            this._maRecapState[entId] = { key, kind, startTs: _resume ? _rs.startTs : Date.now(), meta: entryMeta };
             _maRecapStateChanged = true;
+            // a YouTube video goes into Watch History as soon as it starts; how long it was watched is
+            // filled in as it plays and when it ends
+            if (kind === 'youtube') this._watchCheckEarly(entId);
           }
         });
         if (_maRecapStateChanged) {
-          try { localStorage.setItem('crow_ai_local_maRecapState', JSON.stringify(this._maRecapState)); } catch (_) {}
+          crowaiSafeSet('crow_ai_local_maRecapState', JSON.stringify(this._maRecapState));
           this._haStorageSaveAIImmediate('maRecapState');
         }
       }
@@ -3240,8 +4075,11 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       for (const ent of this._config.entities) {
         const isPlayingNow = (hass.states[ent]?.state === 'playing' || hass.states[ent]?.state === 'buffering');
         if (isPlayingNow && !this._wasPlayingMap[ent]) this._becamePlayingAt[ent] = now;
+        // the player on screen pausing or stopping: noted, so the card stays on it (see _autoSwitchHold)
+        if (ent === this._entity && !isPlayingNow && this._wasPlayingMap[ent]) this._curStoppedAt = { ent, at: now };
         this._wasPlayingMap[ent] = isPlayingNow;
       }
+      if (this._curStoppedAt && (this._curStoppedAt.ent !== this._entity || ['playing', 'buffering'].includes(hass.states[this._entity]?.state))) this._curStoppedAt = null;
 
       // ── Stop MA speaker when non-MA entity starts playing ─────────────────
       // When Apple TV or Alexa (non-MA entity) starts playing, stop any MA
@@ -3264,7 +4102,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         this._manualSelectPlayingSet = null;
         // Directly switch to the non-MA entity — don't wait for auto-switch
         // since _isGrouped() on the MA entity would block it
-        if (_nonMANowPlaying !== this._entity) {
+        if (_nonMANowPlaying !== this._entity && !this._autoSwitchHold(_nonMANowPlaying)) {
           this._entity = _nonMANowPlaying;
           this._confirmedArtUrls = new Map();
           this._failedArtUrls    = new Set();
@@ -3373,6 +4211,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             activeEntity = null; // hold — current entity just stopped, likely a skip
           }
         }
+        if (activeEntity && activeEntity !== this._entity && this._autoSwitchHold(activeEntity)) activeEntity = null;
         if (activeEntity && activeEntity !== this._entity) {
           const _prevEntity = this._entity;
           const _prevIsMA = !!(this._knownMaEntities?.has(_prevEntity) || this._maEntityIds?.has(_prevEntity) ||
@@ -3906,6 +4745,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   }
 
   connectedCallback() {
+    try { localStorage.removeItem('crow_watch_diag'); } catch (_) {}
+    try { this._appIconCacheReady(); } catch (_) {}   // also moves any icon pictures out of normal storage
     if (this._config?.sendspin_enabled && !this._ssUnsub) this._ssUnsub = crowaiSendspin().subscribe(() => this._ssOnManagerChange());
     // Reset any expanded panel left open from a previous visit — navigating
     // away from the dashboard page and back reconnects the card without
@@ -4043,6 +4884,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       }
       // Restore intervals when page becomes visible again
       if (!this._timer)      this._timer      = setInterval(() => this.updateLiveProgress(), 1000);
+      // pick up what played while the app was in the background
+      if (this._historyBackfillDone) setTimeout(() => this._catchUpHistory(() => { this._refreshWatchHistoryView?.(); }), 1500);
       if (!this._alexaPulse) this._alexaPulse = setInterval(() => {
         try {
           if (!this._hass?.connected || !this._entity) return;
@@ -4159,6 +5002,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
   disconnectedCallback() {
     try { this._saverStop(true); } catch (_) {}
+    clearInterval(this._starTimer);
+    if (window.__crowStarCheck === this) window.__crowStarCheck = null;
+    this._starChecked = false;
+    if (this._saverDocAct) {
+      ['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach(t => document.removeEventListener(t, this._saverDocAct, { capture: true }));
+      this._saverDocAct = null; this._saverActWired = false;
+    }
     try { this._vizStop(true); if (this._vizIO) { this._vizIO.disconnect(); this._vizIO = null; } } catch (_) {}
     clearInterval(this._ssUiInterval); this._ssUiInterval = null;
     // Only stop listening — the shared player keeps playing across views.
@@ -4784,7 +5634,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       if (blurBg)    blurBg.style.backgroundImage    = bg;
       if (padBlurBg) padBlurBg.style.backgroundImage = bg;
     } else {
-      if (blurBg)    blurBg.style.backgroundImage    = 'none';
+      const glow = 'radial-gradient(circle at 18% 12%, var(--accent, #0A84FF) 0%, transparent 55%), radial-gradient(circle at 88% 88%, #5E5CE6 0%, transparent 55%), radial-gradient(circle at 70% 30%, rgba(100,210,255,0.6) 0%, transparent 50%)';
+      if (blurBg)    blurBg.style.backgroundImage    = glow;
       if (padBlurBg) padBlurBg.style.backgroundImage = 'none';
     }
   }
@@ -4808,7 +5659,59 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (state) this.updateContent(state);
   }
 
+  // An Apple TV keeps reporting the last show it played long after it's finished: while it's idle,
+  // asleep or off, and while paused on the Home screen for half an hour or more. The card shows it
+  // as nothing playing then, instead of an old show's artwork and title.
+  _atvNothingPlaying(state) {
+    if (!state?.entity_id?.startsWith('media_player.')) return state;
+    const remoteId = state.entity_id.replace('media_player.', 'remote.');
+    if (!this._hass?.states?.[remoteId]) return state;              // not an Apple TV
+    const a = state.attributes || {};
+    if (!(a.media_title || a.media_series_title || a.entity_picture)) return state;
+    const st = state.state;
+    let stale = ['idle', 'standby', 'off', 'unknown', 'unavailable'].includes(st);
+    if (!stale && st === 'paused') {
+      const since = Date.now() - new Date(state.last_changed || 0).getTime();
+      const LIMIT = 30 * 60 * 1000;
+      stale = since >= LIMIT;
+      if (!stale) {
+        // look again when the half hour is up, in case nothing else changes before then
+        clearTimeout(this._atvStaleTimer);
+        this._atvStaleTimer = setTimeout(() => {
+          const cur = this._hass?.states?.[this._entity];
+          if (cur && cur.entity_id === state.entity_id) { this._lastArtKey = null; this.updateContent(cur); }
+        }, LIMIT - since + 1000);
+      }
+    }
+    if (!stale) return state;
+    const keep = {};
+    ['friendly_name', 'supported_features', 'volume_level', 'is_volume_muted', 'source_list', 'device_class']
+      .forEach(k => { if (k in a) keep[k] = a[k]; });
+    return { ...state, attributes: keep };
+  }
+
   getDeviceIcon(stateObj) {
+    // An app open on the Apple TV with no artwork of its own (Netflix not saying what's on, a
+    // game…): show the app's icon instead of the plain TV, the same icon the Info panel uses.
+    const _app = String(stateObj?.attributes?.app_name || '').trim();
+    const _appId = String(stateObj?.attributes?.app_id || '');
+    if (_app && ['playing', 'paused', 'buffering', 'on'].includes(stateObj?.state) && !/^com\.apple\.headboard/i.test(_appId)) {
+      const icon = this._appIconCache?.[_app];
+      if (icon) return '<img class="ph-app-icon" src="' + icon.replace(/"/g, '&quot;') + '" alt="" width="120" height="120" style="border-radius:22%;object-fit:cover;display:block;box-shadow:0 8px 28px rgba(0,0,0,0.35);">';
+      const _missed = this._appIconMiss?.[_app] && Date.now() - this._appIconMiss[_app] < 24 * 3600 * 1000;
+      if (!this._appIconAskedAt) this._appIconAskedAt = {};
+      if (!icon && !_missed && !this._appIconAsking?.has(_app) && Date.now() - (this._appIconAskedAt[_app] || 0) > 60000) {
+        this._appIconAskedAt[_app] = Date.now();
+        (this._appIconAsking = this._appIconAsking || new Set()).add(_app);
+        this._atvAppIcon(_app).then(url => {
+          this._appIconAsking.delete(_app);
+          if (!url) return;
+          this._lastArtKey = null;          // redraw the artwork spot with the icon
+          const st = this._hass?.states?.[this._entity];
+          if (st) this.updateContent(st);
+        }).catch(() => this._appIconAsking.delete(_app));
+      }
+    }
     const name = (stateObj?.attributes?.friendly_name || "").toLowerCase();
     if (name.includes('tv')) return `<svg viewBox="0 0 24 24" width="120" height="120" fill="rgba(255,255,255,0.3)"><path d="M21,3H3C1.89,3 1,3.89 1,5V17A2,2 0 0,0 3,19H8V21H16V19H21A2,2 0 0,0 23,17V5C23,3.89 22.1,3 21,3M21,17H3V5H21V17Z"/></svg>`;
     return `<svg viewBox="0 0 24 24" width="120" height="120" fill="rgba(255,255,255,0.3)"><path d="M12,3V13.55C11.41,13.21 10.73,13 10,13C7.79,13 6,14.79 6,17C6,19.21 7.79,21 10,21C12.21,21 14,19.21 14,17V7H18V3H12Z"/></svg>`;
@@ -4818,6 +5721,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (document.hidden) return;            // no point updating a hidden page
     try { this._saverTick(); } catch (_) {}
     try { this._vizTick(); } catch (_) {}
+    try { this._watchTick(); } catch (_) {}
     const state = this._hass?.states[this._entity];
     if (!state || (state.state !== 'playing' && state.state !== 'buffering')) return;
     const r = this.shadowRoot;
@@ -4856,6 +5760,27 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     }
   }
 
+  // Auto Switch to Playing Device holds the card on the player on screen while you're using it:
+  //  - the Apple TV remote is open, or a panel is open over the player (Info, Library, Queue, lyrics, the sleep timer)
+  //  - the player on screen was just paused or stopped: it only moves on when something starts playing
+  //    after that, never to a speaker that was already playing in the background
+  _autoSwitchHold(target) {
+    const r = this.shadowRoot;
+    if (this._remoteMode) return true;
+    if (r) {
+      if (r.getElementById('infoPopup')?.classList.contains('visible') || r.getElementById('maPopup')?.classList.contains('visible')) return true;
+      if (r.getElementById('cardOuter')?.classList.contains('lyrics-open') || this._lyricsOpen) return true;
+      // a menu open on the card (the quick menu, a 3-dot menu, the queue)
+      if ([...r.querySelectorAll('.queue-dropdown-menu')].some(m => m.isConnected && m.offsetParent !== null)) return true;
+    }
+    const cs = this._curStoppedAt;
+    if (cs && cs.ent === this._entity) {
+      const started = this._becamePlayingAt?.[target] || 0;
+      if (started <= cs.at) return true;
+    }
+    return false;
+  }
+
   _toggleRemote() {
     this._remoteMode = !this._remoteMode;
     this._checkAppleTVKeyboard(this._isAppleTV);
@@ -4867,11 +5792,23 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
     if (this._remoteMode) {
       overlay.classList.remove('hidden');
+      // get the app icons ready for the Apps grid
+      try { if (this._atvApps().list.length) this._atvAppIconsPrefetch(); } catch (_) {}
+      // how to use the touchpad and the holds, the first three times the remote opens
+      try {
+        const seen = +(localStorage.getItem('crow_remote_hint') || 0);
+        const hint = r.getElementById('rHint');
+        if (hint && seen < 3) {
+          localStorage.setItem('crow_remote_hint', String(seen + 1));
+          hint.classList.remove('gone');
+          clearTimeout(this._rHintT); this._rHintT = setTimeout(() => hint.classList.add('gone'), 7000);
+        }
+      } catch (_) {}
       albumImg.classList.add('hidden');
       mainPh.classList.add('hidden');
       remoteBtn.classList.add('remote-btn-active');
       // Apply glass effect to clickpad based on config
-      const clickpad = r.getElementById('clickpad');
+      const clickpad = r.querySelector('.clickpad');
       if (clickpad) clickpad.classList.add('cp-glass');
       const remotePanel = r.querySelector('.remote-panel');
       if (remotePanel) remotePanel.classList.add('rp-glass');
@@ -4906,6 +5843,473 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       const viewMode  = this._remoteMode ? 'remote' : (isCompact ? 'compact' : 'maximised');
       localStorage.setItem('crow_view_' + (this._config.entities?.[0] || ''), viewMode);
     }
+  }
+
+  // ── Apple TV apps ─────────────────────────────────────────────────────────
+  // The Apple TV's own app list (Home Assistant's source list for it, which needs Home Assistant
+  // 2026.7 or later on tvOS 26), shown as a grid of icons over the remote's touchpad. The apps you
+  // open most come first; icons come from the iTunes Store, looked up once and kept.
+  _atvApps(entity = this._entity) {
+    const a = this._hass?.states[entity]?.attributes || {};
+    return { list: Array.isArray(a.source_list) ? a.source_list.filter(Boolean) : [], current: a.source || a.app_name || '' };
+  }
+  _atvAppUse() {
+    try { return JSON.parse(localStorage.getItem('crow_atv_app_use') || '{}') || {}; } catch (_) { return {}; }
+  }
+  _atvAppUsed(name) {
+    const u = this._atvAppUse();
+    u[name] = { n: ((u[name] && u[name].n) || 0) + 1, t: Date.now() };
+    try { localStorage.setItem('crow_atv_app_use', JSON.stringify(u)); } catch (_) {}
+  }
+  _atvAppsSorted(list) {
+    const u = this._atvAppUse();
+    // most used first; apps never opened keep the Apple TV's own order after them
+    return list.map((name, i) => ({ name, i, n: (u[name] && u[name].n) || 0, t: (u[name] && u[name].t) || 0 }))
+      .sort((p, q) => (q.n - p.n) || (q.t - p.t) || (p.i - q.i)).map(x => x.name);
+  }
+  // An app's icon from the App Store, kept for next time. Lookups go one at a time (a burst of
+  // forty for the Apps grid gets refused by Apple), a few apps that search badly — Apple's own and
+  // some big names — are looked up directly, and an app that isn't found is tried again a day later
+  // rather than never.
+  // The icon list lives on this device and in Home Assistant, so it survives the companion app
+  // clearing its storage and is shared with your other devices: icons are only ever looked up once.
+  _appIconCacheReady() {
+    if (this._appIconReadyP) return this._appIconReadyP;
+    if (!this._appIconCache) {
+      let saved = {};
+      try { saved = JSON.parse(localStorage.getItem('crow_atv_app_icons') || '{}') || {}; } catch (_) {}
+      this._appIconCache = {}; this._appIconUrls = {};
+      const moved = {};
+      Object.entries(saved).forEach(([k, v]) => {
+        if (!v) return;
+        if (v === 'data') { this._appIconUrls[k] = 'data'; return; }   // the picture is in the database
+        this._appIconCache[k] = v;
+        if (/^data:/.test(v)) moved[k] = v; else this._appIconUrls[k] = v;
+      });
+      // an earlier version kept the pictures in normal storage: move them to the database
+      if (Object.keys(moved).length) {
+        Object.entries(moved).forEach(([k, v]) => crowaiAppIconDb.put(k, v));
+        Object.keys(moved).forEach(k => { this._appIconUrls[k] = this._appIconUrls[k] || 'data'; });
+        this._appIconSaveLocal();
+      }
+    }
+    this._appIconReadyP = (async () => {
+      // the pictures themselves, from the database
+      try {
+        const pics = await Promise.race([crowaiAppIconDb.all(), new Promise(r => setTimeout(() => r({}), 2000))]);
+        Object.entries(pics || {}).forEach(([k, v]) => { if (v) { this._appIconCache[k] = v; if (!this._appIconUrls[k]) this._appIconUrls[k] = 'data'; } });
+      } catch (_) {}
+      try {
+        const conn = this._hass?.connection;
+        if (!conn) return;
+        const res = await Promise.race([
+          conn.sendMessagePromise({ type: 'frontend/get_user_data', key: 'crow_atv_app_icons' }),
+          new Promise(r => setTimeout(() => r(null), 2500)),
+        ]);
+        const ha = res?.value && typeof res.value === 'object' ? res.value : null;
+        setTimeout(() => this._appIconUpgradeAll(), 4000);
+        if (!ha) return;
+        let added = false;
+        Object.entries(ha).forEach(([k, v]) => { if (v && !/^data:/.test(v) && !this._appIconCache[k]) { this._appIconCache[k] = v; this._appIconUrls[k] = v; added = true; } });
+        if (added) this._appIconSaveLocal();
+      } catch (_) {}
+    })();
+    return this._appIconReadyP;
+  }
+  // A quick logo for an app from its website (Google's favicon service: fast, and no App Store
+  // limit), used while the App Store icon is on its way, or when the App Store doesn't have it.
+  // Not for Apple's own apps, whose site logo is just the Apple logo.
+  _appFavicon(name) {
+    const k = String(name || '').trim().toLowerCase();
+    let site = CROWAI_APP_SITES[k];
+    if (!site) { try { site = (JSON.parse(localStorage.getItem('crow_atv_app_sites') || '{}') || {})[name]; } catch (_) {} }
+    if (!site) return null;
+    let host = '';
+    try { host = new URL(site).hostname; } catch (_) { return null; }
+    if (/(^|\.)apple\.com$/.test(host)) return null;
+    return 'https://www.google.com/s2/favicons?domain=' + encodeURIComponent(host) + '&sz=128';
+  }
+  // Keeps the icon itself, not just its address, so the Apps grid shows straight away after the
+  // companion app is closed and reopened, even before the network is back. Small (120 pixels).
+  async _appIconToData(url) {
+    if (!url || /^data:/.test(url)) return url;
+    const src = url.replace(/\/\d+x\d+bb\./, '/120x120bb.');
+    const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = setTimeout(() => ctl?.abort(), 6000);
+    try {
+      const res = await fetch(src, ctl ? { signal: ctl.signal } : undefined);
+      if (!res.ok) return url;
+      const blob = await res.blob();
+      if (!/^image\//.test(blob.type) || blob.size > 60000) return url;
+      return await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(String(fr.result || url)); fr.onerror = () => r(url); fr.readAsDataURL(blob); });
+    } catch (_) { return url; }
+    finally { clearTimeout(timer); }
+  }
+  // normal storage and Home Assistant hold each icon's address only (small); the picture goes in
+  // the database
+  _appIconSaveLocal() {
+    try {
+      const out = {};
+      Object.entries(this._appIconUrls || {}).forEach(([k, v]) => { if (v) out[k] = v; });
+      localStorage.setItem('crow_atv_app_icons', JSON.stringify(out));
+    } catch (_) {}
+  }
+  _appIconStore(name, icon, url) {
+    this._appIconCache[name] = icon;
+    if (!this._appIconUrls) this._appIconUrls = {};
+    this._appIconUrls[name] = url || (/^data:/.test(icon) ? (this._appIconUrls[name] || 'data') : icon);
+    if (/^data:/.test(icon)) crowaiAppIconDb.put(name, icon);
+    this._appIconSaveLocal();
+    this._appIconSaveHA();
+  }
+  async _appIconUpgradeAll() {
+    if (this._appIconUpgrading) return;
+    this._appIconUpgrading = true;
+    try {
+      for (const [k, v] of Object.entries(this._appIconCache || {})) {
+        if (!v || /^data:/.test(v)) continue;
+        const d = await this._appIconToData(v);
+        if (d && d !== v) this._appIconStore(k, d, v);
+      }
+    } finally { this._appIconUpgrading = false; }
+  }
+  _appIconSaveHA() {
+    clearTimeout(this._appIconHATimer);
+    this._appIconHATimer = setTimeout(() => { try { this._hass?.connection?.sendMessagePromise({ type: 'frontend/set_user_data', key: 'crow_atv_app_icons', value: Object.fromEntries(Object.entries(this._appIconUrls || {}).filter(([, v]) => v && /^https?:/.test(v))) }).catch(() => {}); } catch (_) {} }, 3000);
+  }
+  // Apple allows about twenty App Store lookups a minute; going over gets every lookup refused for
+  // a while. This hands out turns so the card stays under that, and waits a minute if Apple says no.
+  async _appIconTurn() {
+    if (!this._appIconTimes) this._appIconTimes = [];
+    for (;;) {
+      const now = Date.now();
+      if (this._appIconPauseUntil && now < this._appIconPauseUntil) { await new Promise(r => setTimeout(r, this._appIconPauseUntil - now)); continue; }
+      this._appIconTimes = this._appIconTimes.filter(t => now - t < 60000);
+      if (this._appIconTimes.length < 18) { this._appIconTimes.push(now); return; }
+      await new Promise(r => setTimeout(r, 60000 - (now - this._appIconTimes[0]) + 50));
+    }
+  }
+  // Starts looking up every app's icon in the background (most-used first), so the Apps grid is
+  // ready by the time it's opened.
+  _atvAppIconsPrefetch() {
+    if (this._appIconPrefetchAt && Date.now() - this._appIconPrefetchAt < 10 * 60000) return;
+    this._appIconPrefetchAt = Date.now();
+    this._appIconCacheReady().then(() => {
+      const { list } = this._atvApps();
+      this._atvAppsSorted(list).forEach(n => { if (!this._appIconCache?.[n]) this._atvAppIcon(n).catch(() => {}); });
+    });
+  }
+
+  async _atvAppIcon(name) {
+    await this._appIconCacheReady();
+    if (!this._appIconMiss) {
+      try { this._appIconMiss = JSON.parse(localStorage.getItem('crow_atv_app_icon_miss2') || '{}') || {}; } catch (_) { this._appIconMiss = {}; }
+    }
+    if (this._appIconCache[name]) {
+      let siteAt = 0;
+      try { siteAt = (JSON.parse(localStorage.getItem('crow_atv_app_icon_site') || '{}') || {})[name] || 0; } catch (_) {}
+      if (!siteAt || Date.now() - siteAt < 7 * 24 * 3600 * 1000) return this._appIconCache[name];
+    }
+    if (this._appIconMiss[name] && Date.now() - this._appIconMiss[name] < 6 * 3600 * 1000) return null;
+    if (!this._appIconInflight) this._appIconInflight = {};
+    if (this._appIconInflight[name]) return this._appIconInflight[name];
+    const job = async () => {
+      const k = String(name || '').trim().toLowerCase();
+      // App Store ids for apps whose name alone finds the wrong thing (or nothing)
+      const ids = { 'netflix': 363590051, 'youtube': 544007664, 'podcasts': 525463029, 'apple podcasts': 525463029,
+        'tv': 1174078549, 'apple tv': 1174078549, 'music': 1108187390, 'apple music': 1108187390 };
+      // better search words for some names
+      const alias = { 'music': 'Apple Music', 'tv': 'Apple TV', 'podcasts': 'Apple Podcasts', 'fitness': 'Apple Fitness',
+        'photos': 'Apple Photos', 'arcade': 'Apple Arcade', 'itvx': 'ITVX', 'bbc iplayer': 'BBC iPlayer', 'my5': 'My5', 'now': 'NOW TV' };
+      const cc = String(this._hass?.config?.country || 'gb').toLowerCase();
+      const art = x => x ? String(x.artworkUrl512 || x.artworkUrl100 || x.artworkUrl60 || '').replace(/\/\d+x\d+bb\./, '/200x200bb.') || null : null;
+      let transient = false;
+      const tfetch = async (url, ms = 8000) => {
+        const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        const timer = setTimeout(() => ctl?.abort(), ms);
+        try { return await fetch(url, ctl ? { signal: ctl.signal } : undefined); }
+        finally { clearTimeout(timer); }
+      };
+      const stat = (this._appIconStats = this._appIconStats || { direct: 0, relay: 0, refused: 0, failed: 0, last: '' });
+      // Straight from Apple while it's answering; when Apple refuses (too many lookups) or can't be
+      // reached from this device, through one of the card's relays instead, which aren't counted
+      // against this device's limit.
+      const get = async (url) => {
+        const paused = this._appIconPauseUntil && Date.now() < this._appIconPauseUntil;
+        if (!paused) {
+          await this._appIconTurn();
+          try {
+            const res = await tfetch(url);
+            if (res.ok) { const j = await res.json(); stat.direct++; this._appIconDirectFails = 0; return j; }
+            if (res.status === 403 || res.status === 429) { this._appIconPauseUntil = Date.now() + 60000; stat.refused++; stat.last = 'Apple refused lookups (too many) - using relays'; }
+            else stat.last = 'Apple answered HTTP ' + res.status;
+          } catch (e) {
+            stat.last = 'Apple couldn\u2019t be reached from this device - using relays';
+            // blocked or offline twice in a row: go straight to the relays for ten minutes
+            this._appIconDirectFails = (this._appIconDirectFails || 0) + 1;
+            if (this._appIconDirectFails >= 2) { this._appIconPauseUntil = Date.now() + 10 * 60000; this._appIconDirectFails = 0; }
+          }
+        }
+        // relays that keep failing on this device are skipped for a while, the rest are asked at
+        // the same time and the first good answer wins (one stuck relay can't hold everything up)
+        if (!this._appIconRelayBad) this._appIconRelayBad = {};
+        const now2 = Date.now();
+        const live = CROWAI_RELAYS.map((r, i) => i).filter(i => !(this._appIconRelayBad[i] > now2));
+        const pref = this._appIconRelay ?? -1;
+        const pick = (pref >= 0 && live.includes(pref) ? [pref, ...live.filter(i => i !== pref)] : live).slice(0, 3);
+        if (pick.length) {
+          try {
+            const j = await Promise.any(pick.map(async i => {
+              const r = CROWAI_RELAYS[i];
+              try {
+                const res = await tfetch(r.url(url), 6000);
+                if (!res.ok) throw new Error('http');
+                const j0 = await res.json(); const jj = r.unwrap ? r.unwrap(j0) : j0;
+                if (!jj || !Array.isArray(jj.results)) throw new Error('shape');
+                this._appIconRelay = i;
+                return jj;
+              } catch (e) { this._appIconRelayBad[i] = Date.now() + 5 * 60000; throw e; }
+            }));
+            stat.relay++;
+            return j;
+          } catch (_) {}
+        }
+        stat.failed++; transient = true;
+        return null;
+      };
+      let icon = null;
+      const norm = v => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (ids[k]) {
+        for (const c of [cc, 'us']) {
+          const d = await get('https://itunes.apple.com/lookup?id=' + ids[k] + '&country=' + c);
+          const x = (d?.results || [])[0];
+          // only if it really is that app
+          if (x && norm(x.trackName).includes(norm(alias[k] || name).replace(/^apple/, ''))) icon = art(x);
+          if (icon) break;
+        }
+      }
+      if (!icon) {
+        const term = alias[k] || name;
+        const want = norm(term), wantName = norm(name);
+        for (const c of (cc === 'us' ? ['us'] : [cc, 'us'])) {
+          if (c === 'us' && transient) break;   // the local store didn't answer: don't spend another turn
+          const d = await get('https://itunes.apple.com/search?term=' + encodeURIComponent(term) + '&entity=software&limit=10&country=' + c);
+          const rs = d?.results || [];
+          const hit = rs.find(x => norm(x.trackName) === want || norm(x.trackName) === wantName)
+            || rs.find(x => { const t = norm(x.trackName); return t.startsWith(want) || t.startsWith(wantName) || (want.length >= 4 && want.startsWith(t)); })
+            || rs.find(x => want.length >= 5 && norm(x.trackName).includes(want))
+            // nothing by that exact name: Apple's own best match (apps are often listed under a longer
+            // name), except for Apple's built-in apps, where the top result is someone else's app
+            || (want.length >= 3 && !/^(photos|settings|computers|search|arcade|app store|appstore)$/.test(k) ? rs[0] : null);
+          icon = art(hit);
+          if (icon) break;
+        }
+      }
+      // the App Store doesn't have it (or can't be reached): the logo from the app's website
+      let fromSite = false;
+      if (!icon) { const fav = this._appFavicon(name); if (fav) { icon = fav; fromSite = true; } }
+      if (icon) {
+        const data = await this._appIconToData(icon);
+        this._appIconStore(name, data || icon, icon);
+        delete this._appIconMiss[name];
+        // a website logo is a stand-in: the App Store is asked again in a week
+        try {
+          const site = JSON.parse(localStorage.getItem('crow_atv_app_icon_site') || '{}') || {};
+          if (fromSite) site[name] = Date.now(); else delete site[name];
+          localStorage.setItem('crow_atv_app_icon_site', JSON.stringify(site));
+        } catch (_) {}
+      } else if (!transient) {
+        this._appIconMiss[name] = Date.now();     // not on the App Store under that name: try again in a few hours
+        try { localStorage.setItem('crow_atv_app_icon_miss2', JSON.stringify(this._appIconMiss)); } catch (_) {}
+      }
+      return (icon && this._appIconCache[name]) || icon;
+    };
+    // A lookup that couldn't get through (Apple refusing and no relay answering) goes to the back
+    // of the line and tries again a little later, up to three times, without holding up the other
+    // apps, so icons keep arriving while the Apps grid is open.
+    const enqueue = () => (this._appIconQueue = (this._appIconQueue || Promise.resolve()).catch(() => null).then(async () => {
+      const before = this._appIconStats ? this._appIconStats.failed : 0;
+      const icon = await job();
+      return { icon, failed: !!this._appIconStats && this._appIconStats.failed !== before };
+    }));
+    const p = (async () => {
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const { icon, failed } = await enqueue();
+        if (icon || !failed) return icon;
+        await new Promise(r => setTimeout(r, 15000 * (attempt + 1)));
+      }
+      return null;
+    })();
+    this._appIconInflight[name] = p;
+    p.finally(() => { delete this._appIconInflight[name]; });
+    return p;
+  }
+  // An app's website: well-known apps from a short list, otherwise the developer's site from the
+  // App Store (kept for next time), otherwise a web search for it.
+  async _appWebsite(name) {
+    const n = String(name || '').trim(), k = n.toLowerCase();
+    const known = CROWAI_APP_SITES;
+    if (known[k]) return known[k];
+    let sites = {};
+    try { sites = JSON.parse(localStorage.getItem('crow_atv_app_sites') || '{}') || {}; } catch (_) {}
+    if (sites[n]) return sites[n];
+    try {
+      const cc = String(this._hass?.config?.country || 'gb').toLowerCase();
+      const res = await fetch('https://itunes.apple.com/search?term=' + encodeURIComponent(n) + '&entity=software&limit=5&country=' + cc);
+      const data = await res.json();
+      const norm = v => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const want = norm(n);
+      const hit = (data?.results || []).find(x => norm(x.trackName).startsWith(want) || want.startsWith(norm(x.trackName)));
+      const url = hit?.sellerUrl && /^https?:\/\//i.test(hit.sellerUrl) ? hit.sellerUrl : null;
+      if (url) { sites[n] = url; try { localStorage.setItem('crow_atv_app_sites', JSON.stringify(sites)); } catch (_) {} return url; }
+    } catch (_) {}
+    return 'https://www.google.com/search?q=' + encodeURIComponent(n + ' official website');
+  }
+  _atvAppsRender(host, close, opened) {
+    this._appIconCacheReady();          // loads the saved icons straight away
+    const { list, current } = this._atvApps();
+    const esc = v => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const tile = (name) => {
+      // a neat letter tile, in a colour from the name, until (or unless) the real icon arrives
+      let h = 0; for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) % 360;
+      return 'background:linear-gradient(145deg, hsl(' + h + ',62%,52%), hsl(' + ((h + 28) % 360) + ',62%,38%));';
+    };
+    const apps = this._atvAppsSorted(list);
+    host.innerHTML = '<div class="r-ag-head"><div class="r-ag-title">Apps</div><button class="r-ag-close" type="button" aria-label="Close apps"><svg viewBox="0 0 24 24"><path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/></svg></button></div>'
+      // a search box like the library's, to filter the apps by name
+      + (apps.length > 0 ? '<div class="r-ag-search"><svg class="r-ag-search-icon" viewBox="0 0 24 24"><path d="M9.5,3A6.5,6.5 0 0,1 16,9.5C16,11.11 15.41,12.59 14.44,13.73L14.71,14H15.5L20.5,19L19,20.5L14,15.5V14.71L13.73,14.44C12.59,15.41 11.11,16 9.5,16A6.5,6.5 0 0,1 3,9.5A6.5,6.5 0 0,1 9.5,3M9.5,5C7,5 5,7 5,9.5C5,12 7,14 9.5,14C12,14 14,12 14,9.5C14,7 12,5 9.5,5Z"/></svg>'
+        + '<input class="r-ag-search-input" type="text" placeholder="Search apps\u2026" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search">'
+        + '<button class="r-ag-search-clear" type="button" aria-label="Clear search"><svg viewBox="0 0 24 24"><path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/></svg></button></div>' : '')
+      + '<div class="r-ag-list">' + (apps.length ? apps.map(name => {
+        const icon = this._appIconCache?.[name];
+        // no saved icon yet: the app's website logo straight away (when it has a known site),
+        // over the letter tile in case the logo doesn't load
+        const fav = icon ? null : this._appFavicon(name);
+        const letter = '<span class="r-ag-letter">' + esc(name.trim().charAt(0).toUpperCase()) + '</span>';
+        return '<button type="button" class="r-ag-app' + (name === current ? ' r-ag-active' : '') + '" data-app="' + esc(name) + '" aria-label="Open ' + esc(name) + '">'
+          + '<span class="r-ag-icon" style="' + (icon ? '' : tile(name)) + '">' + (icon ? '<img alt="" src="' + esc(icon) + '">'
+            : fav ? letter + '<img class="r-ag-fav" alt="" src="' + esc(fav) + '" onload="this.style.opacity=1" onerror="this.remove()">' : letter) + '</span>'
+          + '<span class="r-ag-name">' + esc(name) + '</span></button>';
+      }).join('') + '<div class="r-ag-empty r-ag-nomatch" style="display:none;">No apps match your search.</div>' : '<div class="r-ag-empty">The Apple TV isn\u2019t sharing its apps with Home Assistant. On tvOS 26 this needs Home Assistant 2026.7 or later.</div>') + '</div>';
+    host.querySelector('.r-ag-close').onclick = (e) => { e.stopPropagation(); close(); };
+    // filter as you type: matches anywhere in the name, ignoring case and accents
+    const sIn = host.querySelector('.r-ag-search-input'), sClr = host.querySelector('.r-ag-search-clear');
+    if (sIn) {
+      const fold = v => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      const filter = () => {
+        const q = fold(sIn.value);
+        let shown = 0;
+        host.querySelectorAll('.r-ag-app').forEach(b => {
+          const ok = !q || fold(b.dataset.app).includes(q) || fold(b.dataset.app).replace(/ /g, '').includes(q.replace(/ /g, ''));
+          b.style.display = ok ? '' : 'none';
+          if (ok) shown++;
+        });
+        const nm = host.querySelector('.r-ag-nomatch');
+        if (nm) nm.style.display = shown ? 'none' : '';
+        sClr.style.display = sIn.value ? 'flex' : 'none';
+      };
+      ['click', 'pointerdown', 'touchstart'].forEach(t => sIn.addEventListener(t, e => e.stopPropagation(), { passive: true }));
+      sIn.addEventListener('input', filter);
+      sIn.addEventListener('keydown', e => {
+        e.stopPropagation();
+        // Return opens the app when only one is left
+        if (e.key === 'Enter') {
+          const left = [...host.querySelectorAll('.r-ag-app')].filter(b => b.style.display !== 'none');
+          if (left.length === 1) left[0].click(); else sIn.blur();
+        }
+      });
+      sClr.onclick = (e) => { e.stopPropagation(); sIn.value = ''; filter(); sIn.focus(); };
+      filter();
+    }
+    host.querySelectorAll('.r-ag-app').forEach(b => {
+      b.onclick = (e) => {
+        e.stopPropagation();
+        const name = b.dataset.app;
+        this._atvAppUsed(name);
+        this._hass.callService('media_player', 'select_source', { entity_id: this._entity, source: name })
+          .then(() => this._showToast('Opening ' + name, 1600))
+          .catch(() => this._showToast('The Apple TV couldn\u2019t open ' + name, 2600));
+        close();
+      };
+    });
+    // swiping down on the grid closes it (when it's scrolled to the top)
+    const listEl = host.querySelector('.r-ag-list');
+    let sy = null;
+    host.ontouchstart = (e) => { sy = (listEl.scrollTop <= 0 && e.touches.length === 1) ? e.touches[0].clientY : null; };
+    host.ontouchend = (e) => { if (sy != null && (e.changedTouches[0].clientY - sy) > 70) close(); sy = null; };
+    // exactly over the touchpad
+    // over the whole remote panel (the buttons-position setting can move it back inside the panel, so it's put back each time)
+    const ov = this.shadowRoot?.getElementById('remoteOverlay');
+    if (ov && host.parentNode !== ov) ov.appendChild(host);
+    host.style.cssText = '';
+    host.classList.remove('hidden');
+    opened?.();
+    // the real icons, as they arrive
+    apps.forEach(name => {
+      if (this._appIconCache?.[name]) return;
+      this._atvAppIcon(name).then(icon => {
+        if (!icon || host.classList.contains('hidden')) return;
+        const b = [...host.querySelectorAll('.r-ag-app')].find(x => x.dataset.app === name);
+        const ic = b?.querySelector('.r-ag-icon');
+        if (!ic) return;
+        const img = new Image(); img.alt = '';
+        img.onload = () => { ic.removeAttribute('style'); ic.innerHTML = ''; ic.appendChild(img); };
+        img.src = icon;
+      });
+    });
+  }
+
+  // Play Trailer on Apple TV: the official trailer from TMDB (so it needs a TMDB key), opened in the
+  // YouTube app on an Apple TV through a deep link. The Apple TV playing now if it is one, otherwise the
+  // first Apple TV in the card's players.
+  _atvTrailerTarget() {
+    const ents = (this._config?.entities || []).map(e => typeof e === 'string' ? e : e?.entity).filter(Boolean);
+    if (this._isAppleTVEntity(this._entity) && this._hass?.states[this._entity]) return this._entity;
+    return ents.find(e => this._hass?.states[e] && this._isAppleTVEntity(e)) || null;
+  }
+  _atvTrailerItems(data) {
+    const target = this._atvTrailerTarget();
+    if (!target || !String(this._config?.tmdb_api_key || '').trim() || !data?.title) return [];
+    const name = this._hass.states[target]?.attributes?.friendly_name || 'Apple TV';
+    return [{
+      label: 'Play Trailer on ' + name,
+      icon: 'M21,3H3C1.89,3 1,3.89 1,5V17A2,2 0 0,0 3,19H8V21H16V19H21A2,2 0 0,0 23,17V5C23,3.89 22.1,3 21,3M21,17H3V5H21V17M16,11L9,15V7L16,11Z',
+      onClick: () => this._atvPlayTrailer(target, data),
+    }];
+  }
+  async _atvPlayTrailer(target, data) {
+    const type = data.type === 'tv' ? 'tv' : 'movie';
+    try {
+      this._showToast('Finding the trailer\u2026', 2000);
+      const base = 'https://api.themoviedb.org/3';
+      const q = encodeURIComponent(data.title || ''), yr = String(data.year || '').slice(0, 4);
+      const found = await this._tmdbFetch(base + '/search/' + type + '?query=' + q + (yr ? (type === 'tv' ? '&first_air_date_year=' : '&year=') + yr : '')).then(x => x.ok ? x.json() : null);
+      const id = found?.results?.[0]?.id;
+      if (!id) throw new Error('none');
+      const vids = await this._tmdbFetch(base + '/' + type + '/' + id + '/videos?language=en-US').then(x => x.ok ? x.json() : null);
+      const yt = (vids?.results || []).filter(v => v.site === 'YouTube' && v.key);
+      const pick = yt.find(v => v.type === 'Trailer' && v.official) || yt.find(v => v.type === 'Trailer') || yt.find(v => v.type === 'Teaser') || yt[0];
+      if (!pick) throw new Error('none');
+      await this._hass.callService('media_player', 'play_media', { entity_id: target, media_content_type: 'url', media_content_id: 'youtube://watch/' + pick.key });
+      this._showToast('Playing the trailer on ' + (this._hass.states[target]?.attributes?.friendly_name || 'the Apple TV'), 2500);
+    } catch (e) {
+      this._showToast(String(e?.message) === 'none' ? 'No trailer found for this title' : 'The Apple TV couldn\u2019t open the trailer', 3000);
+    }
+  }
+
+  // Wake: turns the remote entity back on first (it can switch itself off), wakes the Apple TV,
+  // and tells Home Assistant it's on. Sleep: suspends it and tells Home Assistant it's off.
+  async _atvWake() {
+    const rem = this._entity.replace('media_player.', 'remote.');
+    try { if (this._hass.states[rem]?.state === 'off') await this._hass.callService('remote', 'turn_on', { entity_id: rem }); } catch (_) {}
+    this.sendRemoteCommand('wakeup');
+    setTimeout(() => { this._hass.callService('media_player', 'turn_on', { entity_id: this._entity }).catch(() => {}); }, 800);
+    this._showToast('Waking the Apple TV\u2026', 1800);
+  }
+  _atvSleep() {
+    this.sendRemoteCommand('suspend');
+    setTimeout(() => { this._hass.callService('media_player', 'turn_off', { entity_id: this._entity }).catch(() => {}); }, 800);
+    this._showToast('Putting the Apple TV to sleep\u2026', 1800);
   }
 
   sendRemoteCommand(command) {
@@ -5225,7 +6629,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           border: var(--crow-card-border, 1px solid rgba(255, 255, 255, 0.18)) !important;
           /* Classic keeps the original flat shadow; Glass gets the outer ambient shadow
              plus a hairline catch-light along the top edge (--crow-card-shadow, set in JS) —
-             the same signature used by the button / washer / light-slider cards */
+             a soft, consistent glass look */
           box-shadow: var(--crow-card-shadow, 0 8px 32px rgba(0, 0, 0, 0.4)) !important;
           transition: all 0.3s ease;
         }
@@ -5257,8 +6661,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         #cardOuter.mode-compact .remote-close-btn { display: none; }
 
         .art-wrapper { width: 100%; aspect-ratio: 1; background: linear-gradient(135deg, rgba(40,40,45,0.8), rgba(28,28,30,0.9)); display: flex; align-items: center; justify-content: center; overflow: hidden; cursor: pointer; position: relative; -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; touch-action: pan-y; }
-        /* Glass catch-light over the artwork — the same soft corner sheen used on the
-           button / washer / light-slider cards' glass surfaces. Sits above the art,
+        /* Glass catch-light over the artwork — a soft corner sheen, matching the card's
+           other glass surfaces. Sits above the art,
            below the volume HUD and remote overlay (both positioned with a higher z-index). */
         .art-wrapper::after {
           content: ''; position: absolute; inset: 0; pointer-events: none;
@@ -5274,6 +6678,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           100% { opacity: 0; transform: translate(calc(-50% + var(--heart-drift-x)), calc(-50% - var(--heart-rise))) rotate(var(--heart-rotate)) scale(0.85); }
         }
         .art-wrapper img { width: 100%; height: 100%; object-fit: cover; -webkit-touch-callout: none; pointer-events: none; }
+        .art-wrapper img.ph-app-icon { width: 120px; height: 120px; }
         /* Visualiser over the artwork: a tap closes it, back to the artwork */
         .crow-viz { display: none; position: absolute; inset: 0; background: #000; opacity: 0; transition: opacity 0.6s ease; pointer-events: none; cursor: pointer; -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; }
         .crow-viz.on { opacity: 1; pointer-events: auto; }
@@ -5351,104 +6756,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           box-shadow: inset 0 1px 0 #ffffff, 0 0 0 0.5px rgba(0,0,0,0.08), 0 2px 6px rgba(0,0,0,0.16);
         }
         :host(.crow-glass.crow-light-theme) .sleep-mini svg { fill: #1c1c1e; }
-        /* ── Screensaver: over the artwork only (a layer of its own, sized to the artwork, so taps on it never
-           reach the artwork's own tap / double-tap / swipe / long-press). Tap anywhere on it to close. ── */
-        .crow-saver {
-          position: absolute; z-index: 26; overflow: hidden; background: #000; color: #fff;
-          opacity: 0; transition: opacity 0.9s ease; cursor: pointer; -webkit-tap-highlight-color: transparent;
-          user-select: none; -webkit-user-select: none; touch-action: manipulation; -webkit-touch-callout: none;
-        }
-        .crow-saver img { -webkit-touch-callout: none; -webkit-user-drag: none; pointer-events: none; }
-        .crow-saver.on { opacity: 1; }
-        .crow-saver .cs-stage, .crow-saver .cs-stage > * { position: absolute; inset: 0; }
-        .crow-saver canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-        /* Ken Burns: slow pan and zoom, crossfading between pictures */
-        /* Ambient aurora: colour glows that drift and fade in turn, so the colour keeps changing, under
-           soft aurora curtains swaying across a starry night sky. Only movement and fading are animated. */
-        .crow-saver .cs-aurora { background: radial-gradient(ellipse at 50% 120%, #0b1430 0%, #04060f 70%); overflow: hidden; }
-        .crow-saver .cs-stars { position: absolute; inset: 0; opacity: 0.55;
-          background-image: radial-gradient(1px 1px at 12% 18%, #fff 50%, transparent 51%), radial-gradient(1px 1px at 33% 9%, #fff 50%, transparent 51%),
-            radial-gradient(1.4px 1.4px at 58% 22%, #fff 50%, transparent 51%), radial-gradient(1px 1px at 76% 12%, #fff 50%, transparent 51%),
-            radial-gradient(1px 1px at 88% 31%, #fff 50%, transparent 51%), radial-gradient(1.2px 1.2px at 22% 40%, #fff 50%, transparent 51%),
-            radial-gradient(1px 1px at 47% 36%, #fff 50%, transparent 51%), radial-gradient(1px 1px at 67% 44%, #fff 50%, transparent 51%),
-            radial-gradient(1.3px 1.3px at 8% 62%, #fff 50%, transparent 51%), radial-gradient(1px 1px at 93% 58%, #fff 50%, transparent 51%); }
-        .crow-saver .cs-glow { position: absolute; width: 85%; height: 85%; border-radius: 50%; mix-blend-mode: screen; opacity: 0;
-          will-change: transform, opacity; animation: cs-glowmove 26s ease-in-out infinite alternate, cs-glowfade 21s ease-in-out infinite; }
-        .crow-saver .cs-glow.g0 { left: -20%; top: -15%; background: radial-gradient(circle, rgba(61,255,138,0.85) 0%, transparent 62%); animation-delay: 0s, 0s; }
-        .crow-saver .cs-glow.g1 { right: -25%; top: -5%; background: radial-gradient(circle, rgba(0,229,192,0.8) 0%, transparent 62%); animation-delay: -6s, -3s; animation-duration: 31s, 23s; }
-        .crow-saver .cs-glow.g2 { left: 10%; top: 20%; background: radial-gradient(circle, rgba(34,199,255,0.8) 0%, transparent 62%); animation-delay: -11s, -6s; animation-duration: 28s, 19s; }
-        .crow-saver .cs-glow.g3 { right: -10%; bottom: -25%; background: radial-gradient(circle, rgba(61,107,255,0.85) 0%, transparent 62%); animation-delay: -4s, -9s; animation-duration: 34s, 25s; }
-        .crow-saver .cs-glow.g4 { left: -25%; bottom: -20%; background: radial-gradient(circle, rgba(155,92,255,0.85) 0%, transparent 62%); animation-delay: -15s, -12s; animation-duration: 29s, 22s; }
-        .crow-saver .cs-glow.g5 { left: 25%; top: -30%; background: radial-gradient(circle, rgba(255,79,216,0.75) 0%, transparent 62%); animation-delay: -9s, -15s; animation-duration: 33s, 27s; }
-        .crow-saver .cs-glow.g6 { right: 5%; top: 35%; background: radial-gradient(circle, rgba(255,179,71,0.65) 0%, transparent 62%); animation-delay: -19s, -18s; animation-duration: 37s, 29s; }
-        @keyframes cs-glowmove {
-          0% { transform: translate(0,0) scale(1); } 33% { transform: translate(18%,10%) scale(1.15); }
-          66% { transform: translate(-12%,16%) scale(0.92); } 100% { transform: translate(10%,-14%) scale(1.1); } }
-        @keyframes cs-glowfade { 0%, 100% { opacity: 0.08; } 30% { opacity: 0.85; } 55% { opacity: 0.35; } 75% { opacity: 0.75; } }
-        .crow-saver .cs-curtain { position: absolute; top: -20%; width: 38%; height: 130%; opacity: 0; mix-blend-mode: screen; will-change: transform, opacity;
-          -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 35%, #000 65%, transparent 100%); mask-image: linear-gradient(90deg, transparent 0%, #000 35%, #000 65%, transparent 100%);
-          animation: cs-sway 19s ease-in-out infinite alternate, cs-curtainfade 15s ease-in-out infinite; }
-        .crow-saver .cs-curtain.c0 { left: 8%; background: linear-gradient(180deg, transparent 0%, rgba(61,255,138,0.55) 38%, rgba(0,229,192,0.25) 62%, transparent 92%); }
-        .crow-saver .cs-curtain.c1 { left: 38%; background: linear-gradient(180deg, transparent 0%, rgba(34,199,255,0.5) 34%, rgba(155,92,255,0.28) 64%, transparent 92%); animation-delay: -7s, -5s; animation-duration: 23s, 17s; }
-        .crow-saver .cs-curtain.c2 { left: 62%; background: linear-gradient(180deg, transparent 0%, rgba(255,79,216,0.42) 36%, rgba(61,107,255,0.25) 64%, transparent 92%); animation-delay: -13s, -10s; animation-duration: 27s, 21s; }
-        @keyframes cs-sway { 0% { transform: translateX(-14%) skewX(-16deg); } 50% { transform: translateX(10%) skewX(-6deg); } 100% { transform: translateX(22%) skewX(-20deg); } }
-        @keyframes cs-curtainfade { 0%, 100% { opacity: 0; } 35% { opacity: 0.9; } 60% { opacity: 0.45; } 80% { opacity: 0.8; } }
-        .crow-saver .cs-vignette { background: radial-gradient(ellipse at center, transparent 45%, rgba(0,0,0,0.45) 100%); pointer-events: none; }
-        /* Clock & Weather */
-        .crow-saver .cs-clockbg { background: linear-gradient(160deg, #10172a 0%, #1d2b4a 55%, #2a1f3d 100%); }
-        .crow-saver .cs-stage > .cs-big, .crow-saver .cs-big { position: absolute; left: 0; right: 0; top: 50%; bottom: auto; text-align: center; transform: translateY(-50%); transition: transform 2s ease;
-          text-shadow: 0 2px 14px rgba(0,0,0,0.35); font-variant-numeric: tabular-nums; }
-        .crow-saver .cs-big .t { font-size: min(26vw, 108px); font-weight: 200; letter-spacing: -2px; line-height: 1; }
-        .crow-saver .cs-big .d { font-size: 15px; font-weight: 500; opacity: 0.92; margin-top: 10px; }
-        .crow-saver .cs-big .w { font-size: 14px; font-weight: 500; opacity: 0.9; margin-top: 6px; }
-        /* the small clock (top left) and the caption (bottom right) over the other styles */
-        .crow-saver .cs-mini { position: absolute; left: 16px; top: 14px; text-shadow: 0 1px 8px rgba(0,0,0,0.55); font-variant-numeric: tabular-nums; pointer-events: none; }
-        .crow-saver .cs-mini .t { font-size: 34px; font-weight: 300; line-height: 1; letter-spacing: -0.5px; }
-        .crow-saver .cs-mini .d { font-size: 12px; font-weight: 500; opacity: 0.9; margin-top: 4px; }
-          text-shadow: 0 1px 6px rgba(0,0,0,0.6); opacity: 0.88; pointer-events: none; }
-        .crow-saver .cs-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 24px; font-size: 13px; opacity: 0.75; }
-        /* Album Wall: a grid of covers, a tile at a time flipping to another */
-        .crow-saver .cs-wall { display: grid; gap: 2px; background: #000; animation: cs-walldrift 60s ease-in-out infinite alternate; }
-        @keyframes cs-walldrift { from { transform: scale(1.04) translate(-1%, -1%); } to { transform: scale(1.1) translate(1%, 1%); } }
-        .crow-saver .cs-tile { position: relative; perspective: 600px; overflow: hidden; }
-        .crow-saver .cs-tile .in { position: absolute; inset: 0; transform-style: preserve-3d; transition: transform 0.9s cubic-bezier(.4,.2,.2,1); }
-        .crow-saver .cs-tile.flipped .in { transform: rotateY(180deg); }
-        .crow-saver .cs-tile img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; backface-visibility: hidden; -webkit-backface-visibility: hidden; }
-        .crow-saver .cs-tile img.b { transform: rotateY(180deg); }
-        /* Flip Clock: split-flap digits */
-        .crow-saver .cs-flipbg { background: radial-gradient(ellipse at 50% 35%, #23232b 0%, #0b0b0f 75%); }
-        .crow-saver .cs-flip { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-58%); display: flex; align-items: center; justify-content: center; gap: 2.2%; }
-        .crow-saver .cs-fd { position: relative; width: 19%; aspect-ratio: 0.68; perspective: 500px; font-weight: 600; font-variant-numeric: tabular-nums; }
-        .crow-saver .cs-fd .h { position: absolute; left: 0; right: 0; height: 50%; overflow: hidden; background: linear-gradient(180deg, #2c2c33, #1f1f25); color: #f2f2f5; }
-        .crow-saver .cs-fd .h.t { top: 0; border-radius: 10px 10px 0 0; }
-        .crow-saver .cs-fd .h.b { bottom: 0; border-radius: 0 0 10px 10px; background: linear-gradient(180deg, #1c1c22, #26262d); }
-        .crow-saver .cs-fd .h span { position: absolute; left: 0; right: 0; height: 200%; display: flex; align-items: center; justify-content: center; font-size: var(--cs-fd, 64px); line-height: 1; }
-        .crow-saver .cs-fd .h.t span { top: 0; } .crow-saver .cs-fd .h.b span { bottom: 0; }
-        .crow-saver .cs-fd::after { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 2px; margin-top: -1px; background: rgba(0,0,0,0.75); z-index: 3; }
-        .crow-saver .cs-fd .flap { position: absolute; left: 0; right: 0; height: 50%; overflow: hidden; z-index: 2; backface-visibility: hidden; -webkit-backface-visibility: hidden; }
-        .crow-saver .cs-fd .flap.t { top: 0; transform-origin: 50% 100%; border-radius: 10px 10px 0 0; background: linear-gradient(180deg, #2c2c33, #1f1f25); animation: cs-flapt 0.32s ease-in forwards; }
-        .crow-saver .cs-fd .flap.b { bottom: 0; transform-origin: 50% 0; border-radius: 0 0 10px 10px; background: linear-gradient(180deg, #1c1c22, #26262d); transform: rotateX(90deg); animation: cs-flapb 0.32s ease-out 0.32s forwards; }
-        .crow-saver .cs-fd .flap span { position: absolute; left: 0; right: 0; height: 200%; display: flex; align-items: center; justify-content: center; font-size: var(--cs-fd, 64px); line-height: 1; color: #f2f2f5; }
-        .crow-saver .cs-fd .flap.t span { top: 0; } .crow-saver .cs-fd .flap.b span { bottom: 0; }
-        @keyframes cs-flapt { from { transform: rotateX(0); } to { transform: rotateX(-90deg); } }
-        @keyframes cs-flapb { from { transform: rotateX(90deg); } to { transform: rotateX(0); } }
-        .crow-saver .cs-colon { display: flex; flex-direction: column; gap: 14px; }
-        .crow-saver .cs-colon i { width: 9px; height: 9px; border-radius: 50%; background: #d8d8de; opacity: 0.85; }
-        .crow-saver .cs-ampm { position: absolute; right: 7%; top: 18%; font-size: 13px; font-weight: 600; opacity: 0.7; letter-spacing: 1px; }
-        .crow-saver .cs-under { position: absolute; left: 0; right: 0; bottom: 13%; text-align: center; font-size: 14px; font-weight: 500; opacity: 0.9; line-height: 1.55; text-shadow: 0 1px 8px rgba(0,0,0,0.5); }
-        /* Analogue Clock */
-        .crow-saver .cs-anbg { background: radial-gradient(ellipse at 50% 40%, #1f222b 0%, #08090c 78%); }
-        .crow-saver .cs-dial { position: absolute; left: 50%; top: 44%; transform: translate(-50%, -50%); filter: drop-shadow(0 10px 24px rgba(0,0,0,0.55)); }
-        /* Lava Lamp and Rain on Glass are drawn on canvases */
-        .crow-saver .cs-lava { background: #050507; }
-        .crow-saver .cs-lava canvas { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: auto; }
-        .crow-saver .cs-rainbg { background: #0d1118; }
-        .crow-saver .cs-rainbg img { position: absolute; inset: -8%; width: 116%; height: 116%; object-fit: cover; filter: blur(16px) saturate(1.1) brightness(0.62); }
-        @media (prefers-reduced-motion: reduce) {
-            .crow-saver .cs-fd .flap.b { transform: none; }
-          .crow-saver .cs-tile .in { transition: none; }
-          .crow-saver .cs-glow, .crow-saver .cs-curtain { opacity: 0.55; }
-        }
+        ${CROWAI_SAVER_CSS}
         @keyframes crow-busy-spin { to { transform: rotate(360deg); } }
         @media (prefers-reduced-motion: reduce) {
           .mini-busy span { animation: none; width: 8px; height: 8px; border: none; background: #fff; }
@@ -6396,6 +7704,24 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           width: 100%; text-align: center; font-size: 14px !important;
           white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         }
+        /* ── Glass buttons and pills in the app AI Info panel (Glass chosen in the editor) ── */
+        .info-popup.ip-glass .info-popup-close,
+        .info-popup.ip-glass .ai-pill {
+          background: rgba(255,255,255,0.10) !important;
+          border: 1px solid rgba(255,255,255,0.22) !important;
+          backdrop-filter: blur(20px) saturate(180%); -webkit-backdrop-filter: blur(20px) saturate(180%);
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.16), 0 2px 8px rgba(0,0,0,0.16);
+        }
+        .info-popup.ip-glass .info-popup-close:active,
+        .info-popup.ip-glass .ai-pill:active { background: rgba(255,255,255,0.22) !important; border-color: rgba(255,255,255,0.35) !important; }
+        :host(.crow-light-theme) .info-popup.ip-glass .info-popup-close,
+        :host(.crow-light-theme) .info-popup.ip-glass .ai-pill {
+          background: linear-gradient(160deg, rgba(255,255,255,0.85), rgba(255,255,255,0.55)) !important;
+          border-color: rgba(0,0,0,0.10) !important;
+          box-shadow: inset 0 1px 0 #ffffff, 0 2px 8px rgba(0,0,0,0.10);
+        }
+        :host(.crow-light-theme) .info-popup.ip-glass .info-popup-close:active,
+        :host(.crow-light-theme) .info-popup.ip-glass .ai-pill:active { background: rgba(0,0,0,0.08) !important; }
         .info-popup-close {
           width: 28px; height: 28px; border-radius: 50% !important;
           background: rgba(255,255,255,0.1); border: none !important;
@@ -6866,7 +8192,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           background: rgba(0,0,0,0.52);
           border: 1px solid rgba(255,255,255,0.22);
           /* hairline glass catch-light on the inner top edge — only shown in Glass mode
-             (matches the chip styling on the button / washer / light-slider cards) */
+             (matches the card's other glass chips) */
           box-shadow: var(--crow-badge-glow, none);
           color: rgba(255,255,255,0.9); font-size: 11px; font-weight: 500;
           font-family: inherit;
@@ -7190,7 +8516,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           z-index: 1;
         }
         .clickpad-wrap { width: 100%; display: flex; justify-content: center; flex: 1; min-height: 0; }
-        .clickpad-wrap .clickpad { width: 88%; height: 100%; aspect-ratio: unset; }
+        .clickpad-wrap .clickpad { width: 96%; height: 100%; aspect-ratio: unset; }
 
         /* ── Bottom-position: small circle + tiny label ── */
         .r-top-row {
@@ -7203,6 +8529,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           padding-bottom: 4px;
         }
         .r-apps-btn { display: none !important; }
+        .remote-panel.has-apps .r-apps-btn { display: flex !important; }
         .r-pill-btn {
           display: flex;
           flex-direction: column;
@@ -7305,6 +8632,43 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           overflow-y: auto;
         }
         .r-apps-dropdown.hidden { display: none; }
+        /* Apps: a grid of app icons over the touchpad, like the Apple TV's Home screen */
+        .clickpad-wrap { position: relative; }
+        .r-apps-dropdown.r-apps-grid {
+          position: absolute; top: 0; bottom: 0; left: 0; right: 0; max-height: none;
+          border-radius: inherit; background: rgba(20,20,24,0.88); border: none;
+          backdrop-filter: blur(24px) saturate(1.3); -webkit-backdrop-filter: blur(24px) saturate(1.3);
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.12), 0 8px 30px rgba(0,0,0,0.35);
+          display: flex; flex-direction: column; overflow: hidden; z-index: 30;
+          animation: r-apps-in 0.22s ease-out;
+        }
+        .r-apps-dropdown.r-apps-grid.hidden { display: none; }
+        @keyframes r-apps-in { from { opacity: 0; transform: scale(0.97); } to { opacity: 1; transform: none; } }
+        .r-ag-head { display: flex; align-items: center; gap: 10px; padding: 12px 12px 6px 12px; flex-shrink: 0; }
+        .r-ag-title { font: 700 14px -apple-system, BlinkMacSystemFont, sans-serif; color: #fff; letter-spacing: 0.2px; }
+        .r-ag-close { width: 32px; height: 32px; order: -1; border-radius: 50%; border: 1px solid rgba(255,255,255,0.18); background: rgba(255,255,255,0.1); display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
+        .r-ag-close svg { width: 14px; height: 14px; fill: rgba(255,255,255,0.85); }
+        .r-ag-search { position: relative; display: flex; align-items: center; margin: 2px 12px 2px; flex-shrink: 0; }
+        .r-ag-search-icon { position: absolute; left: 10px; width: 14px; height: 14px; fill: rgba(255,255,255,0.45); pointer-events: none; }
+        .r-ag-search-input { width: 100%; box-sizing: border-box; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.13); border-radius: 10px; padding: 8px 32px; color: #fff; font: 13px -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif; outline: none; -webkit-appearance: none; }
+        .r-ag-search-input::placeholder { color: rgba(255,255,255,0.4); }
+        .r-ag-search-input:focus { border-color: rgba(255,255,255,0.28); }
+        .r-ag-search-clear { display: none; position: absolute; right: 8px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; border-radius: 50%; background: rgba(255,255,255,0.2); border: none; padding: 0; cursor: pointer; align-items: center; justify-content: center; }
+        .r-ag-search-clear svg { width: 10px; height: 10px; fill: #fff; display: block; }
+        .r-ag-nomatch { grid-column: 1 / -1; }
+        .r-ag-icon { position: relative; }
+        .r-ag-icon img.r-ag-fav { position: absolute; inset: 0; width: 100%; height: 100%; box-sizing: border-box; padding: 18%; object-fit: contain; background: #fff; opacity: 0; transition: opacity 0.2s ease; }
+        .r-ag-list { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px 6px; padding: 12px 14px 18px; align-content: start; scrollbar-width: none; }
+        .r-ag-list::-webkit-scrollbar { display: none; }
+        .r-ag-app { display: flex; flex-direction: column; align-items: center; gap: 5px; cursor: pointer; -webkit-tap-highlight-color: transparent; border: none; background: none; padding: 0; min-width: 0; }
+        .r-ag-icon { width: 60px; height: 60px; max-width: 100%; aspect-ratio: 1; border-radius: 50%; border: 1px solid rgba(255,255,255,0.18); overflow: hidden; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 8px rgba(0,0,0,0.35); transition: transform 0.12s ease; position: relative; }
+        .r-ag-icon img { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .r-ag-letter { font: 700 20px -apple-system, BlinkMacSystemFont, sans-serif; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.25); }
+        .r-ag-app:active .r-ag-icon { transform: scale(0.92); }
+        .r-ag-name { font: 500 10px -apple-system, BlinkMacSystemFont, sans-serif; color: rgba(255,255,255,0.8); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; }
+        .r-ag-app.r-ag-active .r-ag-icon { box-shadow: 0 0 0 2px #fff, 0 0 16px rgba(255,255,255,0.35); }
+        .r-ag-app.r-ag-active .r-ag-name { color: #fff; font-weight: 700; }
+        .r-ag-empty { grid-column: 1 / -1; text-align: center; color: rgba(255,255,255,0.55); font: 500 12px -apple-system, BlinkMacSystemFont, sans-serif; padding: 24px 12px; line-height: 1.5; }
         .r-apps-dropdown::-webkit-scrollbar { width: 3px; }
         .r-apps-dropdown::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
         .r-app-item {
@@ -7341,9 +8705,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           transition: background 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
         }
         .clickpad.cp-glass {
-          background: transparent !important;
-          border: 1px solid rgba(255,255,255,0.18);
-          box-shadow: inset 0 1px 0 rgba(255,255,255,0.10), 0 4px 20px rgba(0,0,0,0.12);
+          background: rgba(255,255,255,0.10) !important;
+          border: 1px solid rgba(255,255,255,0.22);
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.12), 0 2px 10px rgba(0,0,0,0.18);
         }
         .clickpad.cp-glass .cp-select {
           background: rgba(255,255,255,0.10);
@@ -7400,6 +8764,27 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           align-items: center;
           justify-content: center;
         }
+        /* the touchpad takes the finger's movement itself (swipes move the Apple TV, not the page) */
+        .clickpad { touch-action: none; overscroll-behavior: contain; -webkit-user-select: none; -webkit-touch-callout: none; }
+        .cp-ripple { position: absolute; width: 56px; height: 56px; margin: -28px 0 0 -28px; border-radius: 50%; pointer-events: none; z-index: 4;
+          background: radial-gradient(circle, rgba(255,255,255,0.32) 0%, rgba(255,255,255,0.12) 45%, rgba(255,255,255,0) 70%);
+          transform: scale(0.3); opacity: 1; animation: cp-ripple 0.5s ease-out forwards; }
+        @keyframes cp-ripple { to { transform: scale(2.2); opacity: 0; } }
+        .cp-dot { position: absolute; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%; pointer-events: none; z-index: 4;
+          background: radial-gradient(circle, rgba(255,255,255,0.45), rgba(255,255,255,0) 70%); transition: opacity 0.2s ease; }
+        .clickpad.cp-glass.pressed { background: rgba(255,255,255,0.15) !important; }
+        .cp-edge { position: absolute; pointer-events: none; z-index: 4; animation: cp-edge 0.42s ease-out forwards; }
+        .cp-edge-up { top: 0; left: 15%; right: 15%; height: 30%; background: radial-gradient(ellipse at 50% 0%, rgba(255,255,255,0.35), transparent 70%); }
+        .cp-edge-down { bottom: 0; left: 15%; right: 15%; height: 30%; background: radial-gradient(ellipse at 50% 100%, rgba(255,255,255,0.35), transparent 70%); }
+        .cp-edge-left { left: 0; top: 15%; bottom: 15%; width: 30%; background: radial-gradient(ellipse at 0% 50%, rgba(255,255,255,0.35), transparent 70%); }
+        .cp-edge-right { right: 0; top: 15%; bottom: 15%; width: 30%; background: radial-gradient(ellipse at 100% 50%, rgba(255,255,255,0.35), transparent 70%); }
+        @keyframes cp-edge { from { opacity: 1; } to { opacity: 0; } }
+        .cp-held { box-shadow: inset 0 0 0 2px rgba(255,255,255,0.35), 0 0 22px rgba(255,255,255,0.18) !important; }
+        .r-hint { width: 100%; text-align: center; font-size: 10px; line-height: 1.35; color: rgba(255,255,255,0.45); margin-top: 6px; transition: opacity 0.6s ease, max-height 0.6s ease 0.4s, margin-top 0.6s ease 0.4s; pointer-events: none; }
+        .r-hint { max-height: 40px; overflow: hidden; }
+        .r-hint.gone { opacity: 0; max-height: 0; margin-top: 0; }
+        .r-power-btn.r-power-asleep .r-btn-circle { background: rgba(48,209,88,0.12); border-color: rgba(48,209,88,0.35); }
+        .r-power-btn.r-power-asleep .r-btn-circle svg { fill: rgba(80,220,120,0.95); }
         .cp-select:active, .cp-select.pressed {
           background: rgba(255,255,255,0.20);
           box-shadow: inset 0 1px 0 rgba(255,255,255,0.12), 0 0 16px rgba(255,255,255,0.18);
@@ -7593,21 +8978,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
               <!-- Touchpad — Apple Remote app style rounded rectangle -->
               <div class="clickpad-wrap">
-                <div class="clickpad">
+                <div class="clickpad" role="button" aria-label="Touchpad: swipe to move, tap to select, hold for options">
                   <div class="clickpad-blur-bg" id="clickpadBlurBg"></div>
-                  <button class="cp-dir cp-up" id="rUp">
-                    <svg viewBox="0 0 24 24"><path d="M5 15.5L12 8.5L19 15.5" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
-                  </button>
-                  <button class="cp-dir cp-down" id="rDown">
-                    <svg viewBox="0 0 24 24"><path d="M5 8.5L12 15.5L19 8.5" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
-                  </button>
-                  <button class="cp-dir cp-left" id="rLeft">
-                    <svg viewBox="0 0 24 24"><path d="M15.5 5L8.5 12L15.5 19" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
-                  </button>
-                  <button class="cp-dir cp-right" id="rRight">
-                    <svg viewBox="0 0 24 24"><path d="M8.5 5L15.5 12L8.5 19" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
-                  </button>
-                  <button class="cp-select" id="rSelect"></button>
                 </div>
               </div>
 
@@ -7630,9 +9002,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
                 </button>
                 <button class="r-pill-btn r-power-btn" id="rPower">
                   <div class="r-btn-circle"><svg viewBox="0 0 24 24"><path d="M16.56,5.44L15.11,6.89C16.84,7.94 18,9.83 18,12A6,6 0 0,1 12,18A6,6 0 0,1 6,12C6,9.83 7.16,7.94 8.88,6.88L7.44,5.44C5.36,6.88 4,9.28 4,12A8,8 0 0,0 12,20A8,8 0 0,0 20,12C20,9.28 18.64,6.88 16.56,5.44M13,3H11V13H13V3Z"/></svg></div>
-                  <span class="r-btn-label">Power Off</span>
+                  <span class="r-btn-label" id="rPowerLabel">Sleep</span>
                 </button>
               </div>
+              <div class="r-hint gone" id="rHint">Swipe to move, tap to select, hold for options. Hold TV for Control Centre, hold Back for Home.</div>
 
             </div>
           </div>
@@ -7915,6 +9288,11 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // Only suppress when the event originates from within the art wrapper.
     const cardOuter = r.getElementById('cardOuter');
     const _blockVideoLongPress = (e) => {
+      // the remote's touchpad and its Back / TV buttons handle their own presses and holds
+      if (this._remoteMode && e.type === 'pointerdown' && e.target.closest?.('.clickpad, #rMenu, #rHome')) {
+        if (_isVideoMedia()) { e.preventDefault(); e.stopImmediatePropagation(); this._remoteDown?.(e); }
+        return;
+      }
       if (_isVideoMedia() && artEl.contains(e.target)) {
         e.preventDefault();
         e.stopImmediatePropagation();
@@ -8028,7 +9406,15 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         const isMusic = state?.state === 'playing' && mediaType === 'music'
           && !!(state?.attributes?.media_artist || state?.attributes?.media_title);
         const isVideo = mediaType === 'tv' || mediaType === 'movie';
-        if (isMusic) {
+        // an app the card has its own AI Info for (a video app that isn't sharing what's on,
+        // YouTube, Twitch, sport, news, a game…), even with no artwork to tap on
+        const _ak = state ? this._appInfoKind(state.attributes || {}) : null;
+        if (_ak && _ak !== 'music' && state.state !== 'off' && state.state !== 'standby' && (_ak === 'personal' || this._aiFeatureOn('info'))) {
+          this._openInfoPopup();
+        } else if (_ak === 'app' && state.attributes?.app_name) {
+          // AI Info is off: at least say why there's nothing to show
+          this._showNoteSheet(state.attributes.app_name, state.attributes.app_name + ' isn\u2019t sharing what\u2019s playing with Home Assistant, so there\u2019s nothing to look up. Turn on AI Info in the card editor to see details about the app itself.');
+        } else if (isMusic) {
           this._openInfoPopup();
         } else if (isVideo && _hasArt()) {
           this._openInfoPopup();
@@ -8264,7 +9650,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           const supportsSeek = ((state?.attributes?.supported_features || 0) & 2) !== 0;
           const hasDuration  = state?.attributes?.media_duration > 0;
           // Detect Alexa/Echo devices — check entity ID, friendly name, platform attribute,
-          // and also the integration string used by the Alexa Media Player custom integration
+          // and also the integration name Alexa devices report
           const _eid   = this._entity.toLowerCase();
           const _fname = (state?.attributes?.friendly_name || '').toLowerCase();
           const _plat  = (state?.attributes?.platform || '').toLowerCase();
@@ -8407,7 +9793,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         // so gating this by isMa/hasMA/video-playing kept missing valid
         // scenarios (e.g. a native, non-MA entity playing music).
         const _qmMediaType = this._detectMediaType(state);
-        const _qmIsVideo = _qmMediaType === 'tv' || _qmMediaType === 'movie';
+        // Something inside an app the card treats on its own (YouTube, Twitch, sport, news, an app
+        // that isn't saying what's on…) isn't a film or show, so the film tools stay out of the way;
+        // and a film tool needs a title to work on.
+        const _qmAppKind = state ? this._appInfoKind(state.attributes || {}) : null;
+        const _qmAppContent = !!_qmAppKind && _qmAppKind !== 'music';
+        const _qmIsVideo = (_qmMediaType === 'tv' || _qmMediaType === 'movie') && !_qmAppContent
+          && !!(state?.attributes?.media_series_title || state?.attributes?.media_title);
         items.push({ id: 'qm_library', label: 'Discover', icon: SVG.library, active: false });
         if ((isMa || hasMA) && this._config?.show_vibe === true) items.push({ id: 'qm_mood', label: 'Vibe', icon: '<svg viewBox="0 0 24 24"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>', active: false });
 
@@ -8470,7 +9862,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         // They lead the Export menu, above the history reports.
         {
           const _pa = state?.attributes || {};
-          const _pdfMusic = isPlaying && !isStream && !_qmIsVideo && !!(_pa.media_title && _pa.media_artist);
+          const _pdfMusic = isPlaying && !isStream && !_qmIsVideo && !_qmAppContent && _qmMediaType !== 'tv' && _qmMediaType !== 'movie' && !!(_pa.media_title && _pa.media_artist);
           const _pdfVideoTitle = _qmIsVideo ? (_pa.media_series_title || _pa.media_title || '') : '';
           const _pdfCase = _pdfMusic
             ? { label: 'CD Case Printables', music: { artist: String(_pa.media_artist).split(/\s*[&,]\s*/)[0].trim() || _pa.media_artist, title: _pa.media_title, album: _pa.media_album_name || '' } }
@@ -8523,10 +9915,15 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             lava: 'M9,2H15L14,7C16.5,9 18,12.5 17,17L18,22H6L7,17C6,12.5 7.5,9 10,7L9,2M11,12A1.5,1.5 0 0,0 9.5,13.5A1.5,1.5 0 0,0 11,15A1.5,1.5 0 0,0 12.5,13.5A1.5,1.5 0 0,0 11,12M13.5,16A1,1 0 0,0 12.5,17A1,1 0 0,0 13.5,18A1,1 0 0,0 14.5,17A1,1 0 0,0 13.5,16Z',
             flip: 'M4,4H11V11H4V4M13,4H20V11H13V4M4,13H11V20H4V13M13,13H20V20H13V13M3,11.5H21V12.5H3V11.5Z',
             analog: 'M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M11,6V12.41L15.29,16.71L16.71,15.29L13,11.59V6H11Z',
+            night: 'M17.75,4.09L15.22,6.03L16.13,9.09L13.5,7.28L10.87,9.09L11.78,6.03L9.25,4.09L12.44,4L13.5,1L14.56,4L17.75,4.09M21.25,11L19.61,12.25L20.2,14.23L18.5,13.06L16.8,14.23L17.39,12.25L15.75,11L17.81,10.95L18.5,9L19.19,10.95L21.25,11M18.97,15.95C19.8,15.87 20.69,17.05 20.16,17.8C19.84,18.25 19.5,18.67 19.08,19.07C15.17,23 8.84,23 4.94,19.07C1.03,15.17 1.03,8.83 4.94,4.93C5.34,4.53 5.76,4.17 6.21,3.85C6.96,3.32 8.14,4.21 8.06,5.04C7.79,7.9 8.75,10.87 10.95,13.06C13.14,15.26 16.1,16.22 18.97,15.95Z',
+            words: 'M3,4H21V6H3V4M3,9H13V11H3V9M15,9H21V11H15V9M3,14H8V16H3V14M10,14H21V16H10V14M3,19H16V21H3V19Z',
+            fire: 'M17.66,11.2C17.43,10.9 17.15,10.64 16.89,10.38C16.22,9.78 15.46,9.35 14.82,8.72C13.33,7.26 13,4.85 13.95,3C13,3.23 12.17,3.75 11.46,4.32C8.87,6.4 7.85,10.07 9.07,13.22C9.11,13.32 9.15,13.42 9.15,13.55C9.15,13.77 9,13.97 8.8,14.05C8.57,14.15 8.33,14.09 8.14,13.93C8.08,13.88 8.04,13.83 8,13.76C6.87,12.33 6.69,10.28 7.45,8.64C5.78,10 4.87,12.3 5,14.47C5.06,14.97 5.12,15.47 5.29,15.97C5.43,16.57 5.7,17.17 6,17.7C7.08,19.43 8.95,20.67 10.96,20.92C13.1,21.19 15.39,20.8 17.03,19.32C18.86,17.66 19.5,15 18.56,12.72L18.43,12.46C18.22,12 17.66,11.2 17.66,11.2Z',
+            ocean: 'M20,12H22V14H20C18.62,14 17.26,13.65 16,13C13.5,14.3 10.5,14.3 8,13C6.74,13.65 5.37,14 4,14H2V12H4C5.39,12 6.78,11.53 8,10.67C10.44,12.38 13.56,12.38 16,10.67C17.22,11.53 18.6,12 20,12M20,6H22V8H20C18.62,8 17.26,7.65 16,7C13.5,8.3 10.5,8.3 8,7C6.74,7.65 5.37,8 4,8H2V6H4C5.39,6 6.78,5.53 8,4.67C10.44,6.38 13.56,6.38 16,4.67C17.22,5.53 18.6,6 20,6M20,18H22V20H20C18.62,20 17.26,19.65 16,19C13.5,20.3 10.5,20.3 8,19C6.74,19.65 5.37,20 4,20H2V18H4C5.39,18 6.78,17.53 8,16.67C10.44,18.38 13.56,18.38 16,16.67C17.22,17.53 18.6,18 20,18Z',
             shuffle: 'M14.83,13.41L13.42,14.82L16.55,17.95L14.5,20H20V14.5L17.96,16.54L14.83,13.41M14.5,4L16.54,6.04L4,18.59L5.41,20L17.96,7.46L20,9.5V4M10.59,9.17L5.41,4L4,5.41L9.17,10.58L10.59,9.17Z',
           };
           [['wall', 'Album Wall'], ['rain', 'Rain on Glass'], ['aurora', 'Ambient Aurora'], ['lava', 'Lava Lamp'],
-           ['clock', 'Clock & Weather'], ['flip', 'Flip Clock'], ['analog', 'Analogue Clock'], ['shuffle', 'Shuffle']]
+           ['night', 'Night Sky'], ['fire', 'Fireplace'], ['ocean', 'Ocean'],
+           ['clock', 'Clock & Weather'], ['flip', 'Flip Clock'], ['analog', 'Analogue Clock'], ['words', 'Word Clock'], ['shuffle', 'Shuffle']]
             .forEach(([k, label]) => items.push({ id: 'qm_saver_' + k, label, icon: '<path d="' + _ssIcons[k] + '"/>', active: k === _ssPick }));
         }
 
@@ -8550,6 +9947,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         if (this._isAppleTV) items.push({
           id: 'qm_remote', label: 'Remote Control', icon: SVG.remote, active: remoteOn, statePill: remoteOn ? true : undefined
         });
+        // Open App: the remote's app grid, straight from the menu
+        if (this._isAppleTV && this._config?.atv_apps_button !== false && this._atvApps().list.length) items.push({
+          id: 'qm_atv_apps', label: 'Open App', icon: '<path d="M4,4H10V10H4V4M14,4H20V10H14V4M4,14H10V20H4V14M14,14H20V20H14V14Z"/>'
+        });
 
         // Soundtrack Search — Apple TV only, when something is playing.
         // Runs through AI Search, so hidden when AI features are off.
@@ -8558,7 +9959,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           const _atShow    = _atAttrs.media_series_title || '';
           const _atTitle   = _atAttrs.media_title || '';
           const _atMedia   = _atShow || _atTitle;
-          if (_atMedia) items.push({
+          if (_atMedia && !_qmAppContent) items.push({
             id: 'qm_soundtrack', label: 'Find Soundtrack', icon: '<path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6zm0 16c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3-7.82V5h2v4.18l-2 2z"/><path d="M19 3l-4.5 4.5 1.42 1.42 3.08-3.09V11h2V4.41L19 3z"/>', active: false, _atMedia
           });
         }
@@ -8639,7 +10040,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           reports: { label: 'Export',          icon: QM_ICON.reports, ids: ['qm_pdf_lyrics', 'qm_pdf_case', 'qm_rep_listening', 'qm_rep_month', 'qm_rep_recent', 'qm_rep_watch', 'qm_rep_pins'] },
           share:  { label: 'Share & Announce', icon: QM_ICON.share,  ids: ['qm_copy_link', 'qm_announce', 'qm_sendmsg'] },
           viz:    { label: 'Visualiser',       icon: '<path d="' + CROWAI_VIZ_ICONS.eq + '"/>', ids: ['qm_viz_artwork', ...CROWAI_VIZ_STYLES.map(s => 'qm_viz_' + s[0]), 'qm_viz_shuffle'] },
-          saver:  { label: 'Screensaver',      icon: '<path d="M14,6L10.25,11L13.1,14.8L11.5,16C9.81,13.75 7,10 7,10L1,18H23L14,6Z"/>', ids: ['qm_saver_wall', 'qm_saver_rain', 'qm_saver_aurora', 'qm_saver_lava', 'qm_saver_clock', 'qm_saver_flip', 'qm_saver_analog', 'qm_saver_shuffle'] },
+          saver:  { label: 'Screensaver',      icon: '<path d="M14,6L10.25,11L13.1,14.8L11.5,16C9.81,13.75 7,10 7,10L1,18H23L14,6Z"/>', ids: ['wall', 'rain', 'aurora', 'lava', 'night', 'fire', 'ocean', 'clock', 'flip', 'analog', 'words', 'shuffle'].map(k => 'qm_saver_' + k) },
         };
         // Top level, in sections: find & browse · discover & build · what's
         // playing now · recaps and sharing.
@@ -8649,7 +10050,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         const QM_ORDER = [
           'qm_queue', 'qm_search', 'qm_ai_search', 'qm_library', '|',
           'qm_mood', 'qm_ai_recs', 'qm_artist_radio', '@addq', 'qm_radio', '|',
-          'qm_lyrics', '@viz', '@saver', 'qm_sleep', 'qm_pin', 'qm_mood_video', 'qm_trivia', 'qm_remote', 'qm_soundtrack', '|',
+          'qm_lyrics', '@viz', '@saver', 'qm_sleep', 'qm_pin', 'qm_mood_video', 'qm_trivia', 'qm_remote', 'qm_atv_apps', 'qm_soundtrack', '|',
           '@recaps', '@reports', '@share', '|',
           'qm_info',
         ];
@@ -8742,14 +10143,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             _maTag.style.cssText = 'font-size:9px;font-weight:700;color:rgba(99,179,237,0.6);background:rgba(99,179,237,0.1);border:1px solid rgba(99,179,237,0.2);border-radius:4px;padding:1px 4px;margin-left:4px;letter-spacing:0.3px;flex-shrink:0;';
             btn.appendChild(_maTag);
           }
-          if (item.statePill !== undefined) {
-            const pill = document.createElement('span');
-            const on = !!item.statePill;
-            pill.textContent = on ? 'On' : 'Off';
-            pill.style.cssText = 'margin-left:auto;font-size:12px;font-weight:600;letter-spacing:0.2px;padding:2px 8px;border-radius:20px;flex-shrink:0;' +
-              (on ? 'background:rgba(0,122,255,1);color:${this._pt("text")};' : 'background:${this._pt("btnBg")};color:${this._pt("dim")};');
-            btn.appendChild(pill);
-          }
+          // something switched on shows in the accent colour; no On / Off badge
           let _qmSy = 0, _qmMoved = false;
           if (item.disabled) {
             btn.style.opacity = '0.35';
@@ -8858,6 +10252,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
               const k = item.id.slice(7);
               // kept only while the page stays open: a refresh, or closing and reopening, goes back to the editor's setting
               window.__crowVizPick = k === 'artwork' ? { mode: 'artwork' } : { mode: 'visualiser', style: k };
+              // the screensaver and a visualiser never show together: choosing a visualiser closes the screensaver
+              if (k !== 'artwork' && this._saverEl) this._saverStop(true);
               // iOS's late click from this tap lands on the visualiser (already showing when switching
               // style), which would close it again, so it's ignored for a moment
               this._vizTapGuardUntil = Date.now() + 900;
@@ -8869,6 +10265,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
               this._vizTick();
             }
             else if (item.id === 'qm_remote')   { expand().then(() => this._toggleRemote()); }
+            else if (item.id === 'qm_atv_apps') { expand().then(() => { if (!this._remoteMode) this._toggleRemote(); setTimeout(() => this._atvAppsOpen?.(), 80); }); }
             else if (item.id === 'qm_copy_link')  {
               const _clT = state?.attributes?.media_title  || '';
               const _clA = state?.attributes?.media_artist || '';
@@ -9297,21 +10694,143 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       addPressEffect(el);
     };
 
-    rCmd('rMenu',     () => this.sendRemoteCommand('menu'));
-    rCmd('rHome',     () => this.sendRemoteCommand('home'));
-    rCmd('rUp',       () => this.sendRemoteCommand('up'));
-    rCmd('rDown',     () => this.sendRemoteCommand('down'));
-    rCmd('rLeft',     () => this.sendRemoteCommand('left'));
-    rCmd('rRight',    () => this.sendRemoteCommand('right'));
-    rCmd('rSelect',   () => this.sendRemoteCommand('select'));
+    // a press the touchpad (or a hold on Back / TV) has already acted on doesn't also count as a click
+    const _byGesture = () => Date.now() - (this._rGestureAt || 0) < 700;
+    rCmd('rMenu',     () => { if (!_byGesture()) this.sendRemoteCommand('menu'); });
+    rCmd('rHome',     () => { if (!_byGesture()) this.sendRemoteCommand('home'); });
+
+    // ── Touchpad, like the Siri Remote: swipe to move (a longer swipe moves further), tap to select,
+    //    hold to open the options menu, and hold at the end of a swipe (or on an arrow) to keep moving.
+    //    Back and TV: hold Back for the Home screen, hold TV for Control Centre. ──
+    {
+      const pad = r.querySelector('.clickpad');
+      const STEP = 85, START = 26, HOLD = 520, GAP = 260;   // calmer: a deliberate swipe for each step, and never more than about four steps a second
+      const flash = (dir) => {
+        if (!pad) return;
+        const el = document.createElement('span');
+        el.className = 'cp-edge cp-edge-' + dir;
+        pad.appendChild(el); setTimeout(() => el.remove(), 420);
+      };
+      const ripple = (x, y) => {
+        if (!pad) return;
+        const rc = pad.getBoundingClientRect(), el = document.createElement('span');
+        el.className = 'cp-ripple'; el.style.left = (x - rc.left) + 'px'; el.style.top = (y - rc.top) + 'px';
+        pad.appendChild(el); setTimeout(() => el.remove(), 520);
+      };
+      let g = null;
+      const stopRepeat = () => { if (g) { clearTimeout(g.rep); clearTimeout(g.still); g.rep = g.still = null; } };
+      const repeat = (dir) => {
+        // keeps moving, getting quicker the longer it's held
+        let n = 0;
+        const go = () => { if (!g) return; this.sendRemoteCommand(dir); flash(dir); n++; g.rep = setTimeout(go, n < 3 ? 450 : n < 8 ? 320 : 240); };
+        go();
+      };
+      const end = (e) => {
+        if (!g || (e && e.pointerId !== g.id)) return;
+        const st = g; stopRepeat(); clearTimeout(st.hold);
+        window.removeEventListener('pointermove', move, true); window.removeEventListener('pointerup', end, true); window.removeEventListener('pointercancel', end, true);
+        st.el?.classList.remove('pressed', 'cp-held'); st.dot?.remove();
+        g = null;
+        // if the system takes the touch away part way through a swipe, still count it as one
+        if (e?.type === 'pointercancel' && st.kind === 'pad' && !st.moved && !st.done && Math.max(Math.abs(st.ldx || 0), Math.abs(st.ldy || 0)) >= 14) {
+          const dir = Math.abs(st.ldx) > Math.abs(st.ldy) ? (st.ldx > 0 ? 'right' : 'left') : (st.ldy > 0 ? 'down' : 'up');
+          this.sendRemoteCommand(dir); flash(dir);
+        }
+        // a little movement that didn't become a swipe isn't a tap either
+        if (e?.type === 'pointerup' && !st.moved && !st.done && (st.travel || 0) < 12) {
+          // a tap: the arrow it landed on, or select anywhere else
+          const cmd = st.kind === 'menu' ? 'menu' : st.kind === 'home' ? 'home' : st.dir || 'select';
+          this.sendRemoteCommand(cmd);
+          if (st.dir) flash(st.dir);
+        }
+        this._rGestureAt = Date.now();
+      };
+      const move = (e) => {
+        if (!g || e.pointerId !== g.id || g.kind !== 'pad') return;
+        const dx = e.clientX - g.ax, dy = e.clientY - g.ay;
+        if (!g.moved) g.travel = Math.max(g.travel || 0, Math.hypot(dx, dy));
+        g.ldx = dx; g.ldy = dy;
+        if (!g.moved && g.travel > 12) clearTimeout(g.hold);
+        if (g.dot && pad) { const rc = pad.getBoundingClientRect(); g.dot.style.left = (e.clientX - rc.left) + 'px'; g.dot.style.top = (e.clientY - rc.top) + 'px'; }
+        const adx = Math.abs(dx), ady = Math.abs(dy);
+        // Which way the swipe goes. A thumb swiping up or down usually drifts sideways too, so a
+        // swipe only counts as left or right when it's clearly sideways (half as much again as it
+        // is up or down); anything in between is up or down. Once a swipe has moved, it keeps its
+        // direction until the finger clearly turns (twice as far the other way).
+        let axis;
+        if (!g.moved) {
+          if (Math.max(adx, ady) < START) return;
+          axis = adx > ady * 1.5 ? 'h' : 'v';
+        } else {
+          axis = g.axis;
+          if (axis === 'v' && adx > ady * 2 && adx >= STEP) axis = 'h';
+          else if (axis === 'h' && ady > adx * 2 && ady >= STEP) axis = 'v';
+          if ((axis === 'v' ? ady : adx) < STEP) return;
+          if (Date.now() - (g.lastAt || 0) < GAP) return;
+        }
+        // a swipe: one step now, another for every further stretch the finger travels
+        clearTimeout(g.hold); stopRepeat();
+        const dir = axis === 'h' ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
+        g.axis = axis;
+        this.sendRemoteCommand(dir); flash(dir);
+        g.moved = true; g.last = dir; g.ax = e.clientX; g.ay = e.clientY; g.lastAt = Date.now();
+        if (g.el) g.el.classList.remove('pressed');
+        // resting the finger at the end of a swipe keeps moving that way
+        g.still = setTimeout(() => { if (g && g.moved) repeat(g.last); }, 800);
+      };
+      this._remoteDown = (e) => {
+        if (!this._remoteMode || (e.button != null && e.button > 0)) return;
+        if (e._crowRemote) return;
+        e._crowRemote = true;
+        if (g) end();
+        const btn = e.target.closest?.('#rMenu, #rHome');
+        const onPad = !btn && e.target.closest?.('.clickpad');
+        if (!btn && !onPad) return;
+        // close the apps list if it's open
+        const dd = r.getElementById('rAppsDropdown');
+        if (dd && !dd.classList.contains('hidden')) { dd.classList.add('hidden'); r.getElementById('rApps')?.classList.remove('r-apps-open'); }
+        const dir = null;
+        const el = btn || pad;
+        g = { id: e.pointerId, kind: btn ? (btn.id === 'rMenu' ? 'menu' : 'home') : 'pad', ax: e.clientX, ay: e.clientY, dir, el, moved: false, done: false };
+        this._rGestureAt = Date.now();
+        el?.classList.add('pressed');
+        if (onPad) {
+          ripple(e.clientX, e.clientY);
+          if (pad) { const rc = pad.getBoundingClientRect(), d = document.createElement('span'); d.className = 'cp-dot'; d.style.left = (e.clientX - rc.left) + 'px'; d.style.top = (e.clientY - rc.top) + 'px'; pad.appendChild(d); g.dot = d; }
+        }
+        g.hold = setTimeout(() => {
+          if (!g || g.moved) return;
+          g.done = true;
+          try { navigator.vibrate?.(12); } catch (_) {}
+          if (g.kind === 'menu') { this.sendRemoteCommand('home'); this._showToast('Home screen', 1400); }
+          else if (g.kind === 'home') { this.sendRemoteCommand('control_center'); this._showToast('Control Centre', 1400); }
+          else if (g.dir) repeat(g.dir);
+          else {
+            // hold on the touchpad: select held down, which opens the options menu in most apps
+            g.el?.classList.add('cp-held');
+            this._hass.callService('remote', 'send_command', { entity_id: this._entity.replace('media_player.', 'remote.'), command: 'select', hold_secs: 1 }).catch(() => {});
+          }
+        }, HOLD);
+        window.addEventListener('pointermove', move, true); window.addEventListener('pointerup', end, true); window.addEventListener('pointercancel', end, true);
+      };
+      pad?.addEventListener('pointerdown', (e) => this._remoteDown(e));
+      ['rMenu', 'rHome'].forEach(id => r.getElementById(id)?.addEventListener('pointerdown', (e) => this._remoteDown(e)));
+      pad?.addEventListener('contextmenu', (e) => e.preventDefault());
+      // iOS (and the companion app's web view) can still hand an upward swipe to the dashboard's
+      // scroll despite touch-action, which cancels the gesture before it reaches the remote.
+      // Claiming every touch move on the pad keeps all four directions with the touchpad.
+      pad?.addEventListener('touchmove', (e) => { if (this._remoteMode && e.cancelable) e.preventDefault(); }, { passive: false });
+    }
 
     rCmd('rPower', (e) => {
       e.stopPropagation();
       // Remove any existing confirmation
       const existing = r.getElementById('powerOffConfirm');
       if (existing) { existing.remove(); return; }
+      const asleep = r.getElementById('rPower')?.classList.contains('r-power-asleep');
+      if (asleep) { this._atvWake(); return; }
       const remotePanel = r.querySelector('.remote-panel');
-      if (!remotePanel) { this.sendRemoteCommand('suspend'); return; }
+      if (!remotePanel) { this._atvSleep(); return; }
       const conf = document.createElement('div');
       conf.id = 'powerOffConfirm';
       conf.style.cssText = 'position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:rgba(0,0,0,0.75);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);z-index:20;border-radius:inherit;';
@@ -9319,16 +10838,16 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         '<div style="width:48px;height:48px;border-radius:50%;background:rgba(255,59,48,0.18);border:1px solid rgba(255,59,48,0.4);display:flex;align-items:center;justify-content:center;">' +
           '<svg viewBox="0 0 24 24" style="width:24px;height:24px;fill:rgba(255,80,70,0.95);"><path d="M13,3H11V13H13V3M17.83,5.17L16.41,6.59C17.99,7.86 19,9.81 19,12A7,7 0 0,1 12,19A7,7 0 0,1 5,12C5,9.81 6.01,7.86 7.58,6.58L6.17,5.17C4.23,6.82 3,9.26 3,12A9,9 0 0,0 12,21A9,9 0 0,0 21,12C21,9.26 19.77,6.82 17.83,5.17Z"/></svg>' +
         '</div>' +
-        '<div style="font-size:15px;font-weight:600;color:${this._pt("text")};text-align:center;padding:0 20px;line-height:1.4;">Power Off Apple TV?</div>' +
-        '<div style="font-size:12px;color:${this._pt("dim")};text-align:center;padding:0 24px;line-height:1.4;">This will put your Apple TV to sleep.</div>' +
+        '<div style="font-size:15px;font-weight:600;color:#fff;text-align:center;padding:0 20px;line-height:1.4;">Put the Apple TV to sleep?</div>' +
+        '<div style="font-size:12px;color:rgba(255,255,255,0.6);text-align:center;padding:0 24px;line-height:1.4;">Tap Wake on the remote to turn it back on.</div>' +
         '<div style="display:flex;gap:10px;">' +
-          '<button id="powerConfirmNo"  style="padding:9px 22px;border-radius:20px;border:1px solid rgba(255,255,255,0.25);background:${this._pt("btnBg")};color:${this._pt("text")};font-size:13px;font-weight:500;cursor:pointer;">Cancel</button>' +
-          '<button id="powerConfirmYes" style="padding:9px 22px;border-radius:20px;border:none;background:rgba(255,59,48,0.85);color:${this._pt("text")};font-size:13px;font-weight:600;cursor:pointer;">Power Off</button>' +
+          '<button id="powerConfirmNo"  style="padding:9px 22px;border-radius:20px;border:1px solid rgba(255,255,255,0.25);background:rgba(255,255,255,0.1);color:#fff;font-size:13px;font-weight:500;cursor:pointer;">Cancel</button>' +
+          '<button id="powerConfirmYes" style="padding:9px 22px;border-radius:20px;border:none;background:rgba(255,59,48,0.85);color:#fff;font-size:13px;font-weight:600;cursor:pointer;">Sleep</button>' +
         '</div>';
       remotePanel.appendChild(conf);
       const dismiss = () => conf.remove();
       conf.querySelector('#powerConfirmNo').addEventListener('click',  (ev) => { ev.stopPropagation(); dismiss(); });
-      conf.querySelector('#powerConfirmYes').addEventListener('click', (ev) => { ev.stopPropagation(); dismiss(); this.sendRemoteCommand('suspend'); });
+      conf.querySelector('#powerConfirmYes').addEventListener('click', (ev) => { ev.stopPropagation(); dismiss(); this._atvSleep(); });
       setTimeout(() => { if (r.getElementById('powerOffConfirm')) dismiss(); }, 6000);
     });
 
@@ -9339,65 +10858,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       rAppsDropdown.classList.add('hidden');
       rAppsBtn.classList.remove('r-apps-open');
     };
-
-    if (!this._appIconCache) this._appIconCache = {};
-
-    const _renderAppList = (sources, current) => {
-      rAppsDropdown.innerHTML = sources.map(src => {
-        const iconUrl = this._appIconCache[src];
-        const iconHtml = iconUrl
-          ? `<img src="${iconUrl}" onerror="this.style.display='none'">`
-          : `<svg viewBox="0 0 24 24" style="opacity:0.35"><path d="M8,5.14V19.14L19,12.14L8,5.14Z"/></svg>`;
-        return `<div class="r-app-item ${src === current ? 'r-app-active' : ''}" data-src="${src}">
-            ${iconHtml}
-            <span>${src}</span>
-          </div>`;
-      }).join('');
-      rAppsDropdown.querySelectorAll('.r-app-item[data-src]').forEach(item => {
-        item.onclick = (e) => {
-          e.stopPropagation();
-          this.call('select_source', { source: item.dataset.src });
-          closeApps();
-        };
-      });
-    };
-
-    const _fetchAppIcons = async (sources, current) => {
-      const missing = sources.filter(src => !(src in this._appIconCache));
-      if (!missing.length) return;
-      await Promise.all(missing.map(async src => {
-        try {
-          const res = await fetch(
-            `https://itunes.apple.com/search?term=${encodeURIComponent(src)}&entity=software&limit=1&country=us`,
-            { signal: AbortSignal.timeout(4000) }
-          );
-          const data = await res.json();
-          const icon = data?.results?.[0]?.artworkUrl60 || null;
-          this._appIconCache[src] = icon;
-        } catch {
-          this._appIconCache[src] = null;
-        }
-      }));
-      // Re-render now that icons are loaded (only if dropdown still open)
-      if (!rAppsDropdown.classList.contains('hidden')) {
-        _renderAppList(sources, current);
-      }
-    };
-
-    const openApps = () => {
-      const state   = this._hass.states[this._entity];
-      const sources = state?.attributes?.source_list || [];
-      const current = state?.attributes?.source || '';
-      if (!sources.length) {
-        rAppsDropdown.innerHTML = `<div class="r-app-item" style="color:${this._pt("dim")};cursor:default;">No apps available</div>`;
-      } else {
-        _renderAppList(sources, current);
-        _fetchAppIcons(sources, current);
-      }
-      rAppsDropdown.classList.remove('hidden');
-      rAppsBtn.classList.add('r-apps-open');
-    };
-
+    // the grid fills the whole remote panel
+    {
+      const ov = r.getElementById('remoteOverlay');
+      if (ov && rAppsDropdown.parentNode !== ov) ov.appendChild(rAppsDropdown);
+      rAppsDropdown.classList.add('r-apps-grid');
+    }
+    const openApps = () => this._atvAppsRender(rAppsDropdown, closeApps, () => rAppsBtn.classList.add('r-apps-open'));
     rAppsBtn.onclick = (e) => {
       e.stopPropagation();
       rAppsDropdown.classList.contains('hidden') ? openApps() : closeApps();
@@ -9407,6 +10874,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     r.getElementById('remoteOverlay').addEventListener('click', (e) => {
       if (!rAppsBtn.contains(e.target) && !rAppsDropdown.contains(e.target)) closeApps();
     });
+    this._atvAppsOpen = () => { if (rAppsDropdown.classList.contains('hidden')) openApps(); };
 
     // ── Music Assistant ──
     r.getElementById('btnMABrowse').onclick = (e) => {
@@ -10503,6 +11971,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   updateContent(state) {
     const r = this.shadowRoot;
     if (!state || !r) return;
+    state = this._atvNothingPlaying(state);
     this._updatePinnedIndicator();
     // Cheap fingerprint guard — skip the expensive style/DOM update pass if nothing
     // meaningful changed. Volume, position, and shuffle are updated separately.
@@ -10514,7 +11983,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // Only write placeholder innerHTML when the content type changes — prevents
     // the fallback icon from flashing on every state update (e.g. volume changes).
     const _setPlaceholder = (el, key, html) => {
-      if (el.dataset.phKey !== key) { el.dataset.phKey = key; el.innerHTML = html; }
+      if (el.dataset.phKey !== key || el._phHtml !== html) { el.dataset.phKey = key; el._phHtml = html; el.innerHTML = html; }
     };
     const isPlaying = state.state === 'playing';
 
@@ -10629,7 +12098,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const _optimisticActive = this._optimisticMediaExpiry && Date.now() < this._optimisticMediaExpiry;
     if (!_optimisticActive || _hasRealMedia) {
       this._optimisticMediaExpiry = undefined;
-      this._applyScrollText(titleEl,  state.attributes.media_title  || (isPlaying ? 'Media' : 'Idle'));
+      this._applyScrollText(titleEl,  state.attributes.media_title  || (isPlaying ? (state.attributes.app_name || 'Media') : 'Idle'));
       this._applyScrollText(artistEl, state.attributes.media_artist || state.attributes.friendly_name || '');
     }
 
@@ -10754,6 +12223,14 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (rPowerBtn) {
       const isOff = state.state === 'off' || state.state === 'standby' || state.state === 'unavailable';
       rPowerBtn.classList.toggle('r-power-on', !isOff);
+      // asleep: Wake (green); awake: Sleep (red)
+      rPowerBtn.classList.toggle('r-power-asleep', isOff);
+      const pl = r.getElementById('rPowerLabel');
+      if (pl) pl.textContent = isOff ? 'Wake' : 'Sleep';
+      // Apps: only when the Apple TV is sharing its app list (and the editor's Apps Button is on)
+      const hasApps = this._config?.atv_apps_button !== false && this._atvApps().list.length > 0;
+      r.querySelector('.remote-panel')?.classList.toggle('has-apps', hasApps);
+      rPowerBtn.title = isOff ? 'Wake the Apple TV' : 'Put the Apple TV to sleep';
     }
     const _repIcons = this._themeIconPaths || this._themeIcons();
     r.getElementById('repeatIcon').innerHTML = rep === 'one'
@@ -13389,16 +14866,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const enc = encodeURIComponent(url);
     const routes = [
       () => get(url, 7000),
-      () => get('https://api.allorigins.win/raw?url=' + enc, 10000),
-      () => get('https://api.codetabs.com/v1/proxy/?quest=' + enc, 10000),
-      () => get('https://corsproxy.io/?url=' + enc, 10000),
-      () => get('https://api.cors.lol/?url=' + enc, 10000),
-      () => get('https://cors.eu.org/' + url, 10000),
-      () => get('https://thingproxy.freeboard.io/fetch/' + url, 10000),
-      () => get('https://api.allorigins.win/get?url=' + enc, 12000).then(j => JSON.parse(j?.contents || 'null')),
+      ...CROWAI_RELAYS.map(r => () => get(r.url(url), 10000).then(j => (r.unwrap ? r.unwrap(j) : j))),
     ];
+    // the route that worked last time (kept on this device), so a feed that needs a relay doesn't try the dead ones first
+    if (this._chartRoute == null) { try { const k = +localStorage.getItem('crow_chart_route'); if (k > 0 && k < routes.length) this._chartRoute = k; } catch (_) {} }
     if (directOnly) { try { return ok(await get(url, 8000)); } catch (_) { return null; } }
-    const tryRoute = i => routes[i]().then(j => { const v = ok(j); if (!v) throw new Error('bad'); if (!preferDirect) this._chartRoute = i; return v; });
+    const tryRoute = i => routes[i]().then(j => { const v = ok(j); if (!v) throw new Error('bad'); if (!preferDirect) { this._chartRoute = i; try { localStorage.setItem('crow_chart_route', String(i)); } catch (_) {} } return v; });
     const first = preferDirect ? 0 : (this._chartRoute || 0);
     this._chartSay('Contacting ' + what + '\u2026');
     try { return await tryRoute(first); } catch (_) {}
@@ -13433,6 +14906,26 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // other sizes are tried too, and the first that answers is used (trimmed to the size asked for).
   async _chartAppleFeed(path, size) {
     const valid = j => Array.isArray(j?.feed?.results) && j.feed.results.length > 0;
+    // Apple couldn't be reached from this device recently: straight to the fallback rather than waiting on every route
+    // again (tried afresh after three hours, or when a chart is refreshed by hand)
+    let downAt = 0; try { downAt = +localStorage.getItem('crow_apple_down') || 0; } catch (_) {}
+    if (downAt && Date.now() - downAt < 3 * 3600e3 && !this._chartRetryAll) return null;
+    const res = await this._chartAppleFeedTry(path, size, valid);
+    try { if (res) localStorage.removeItem('crow_apple_down'); else localStorage.setItem('crow_apple_down', String(Date.now())); } catch (_) {}
+    return res;
+  }
+  async _chartAppleFeedTry(path, size, valid) {
+    // Apple's newer feed straight from the device, then its older iTunes feed (also direct), and only then the relays
+    if (this._chartRoute == null || this._chartRoute === 0) {
+      const d = await this._chartFetchJson('https://rss.marketingtools.apple.com/api/v2/' + path.replace('{n}', size), valid, { directOnly: true }).catch(() => null);
+      if (d) { d.feed.results = d.feed.results.slice(0, size); return d; }
+    }
+    const legUrl = crowaiAppleLegacyUrl(path, size);
+    if (legUrl) {
+      const lj = await this._chartFetchJson(legUrl, j => !!j?.feed, { directOnly: true }).catch(() => null);
+      const mapped = crowaiAppleLegacyMap(lj);
+      if (mapped) { mapped.feed.results = mapped.feed.results.slice(0, size); return mapped; }
+    }
     const sizes = [size, ...[100, 50, 25].filter(x => x !== size)];
     for (let k = 0; k < sizes.length; k++) {
       // other sizes only go through the route that's been working, so a real outage doesn't take minutes
@@ -13445,6 +14938,32 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
   // Deezer's API can't be read by a web page directly, so it's loaded the way Deezer supports
   // for that (a script callback). It runs from this device, so the live charts follow its location.
+  // Apple Podcasts' chart couldn't be reached from this device: Deezer's podcast chart, each one found on
+  // Apple Podcasts by name (the iTunes search answers the browser directly), so it opens with its episodes as usual
+  async _pcChartFromDeezer() {
+    this._chartSay('Apple Podcasts can\u2019t be reached \u2014 getting Deezer\u2019s podcast chart instead\u2026');
+    const dz = await this._chartDeezer('/chart/0/podcasts?limit=30');
+    const list = (dz?.data || []).filter(x => x?.title);
+    if (!list.length) return null;
+    const norm = v => String(v || '').toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, '');
+    const out = new Array(list.length).fill(null);
+    let i = 0;
+    await Promise.all(Array.from({ length: 5 }, async () => {
+      while (i < list.length) {
+        const k = i++, t = list[k].title;
+        try {
+          const r = await fetch('https://itunes.apple.com/search?media=podcast&entity=podcast&limit=3&term=' + encodeURIComponent(t));
+          const j = r.ok ? await r.json() : null;
+          const hit = (j?.results || []).find(x => norm(x.collectionName) === norm(t)) || (j?.results || [])[0];
+          if (hit?.collectionId && norm(hit.collectionName).slice(0, 12) === norm(t).slice(0, 12)) out[k] = hit;
+        } catch (_) {}
+      }
+    }));
+    const items = out.filter(Boolean).map(x => ({ collectionId: x.collectionId, collectionName: x.collectionName, artistName: x.artistName || '', primaryGenreName: x.primaryGenreName || '',
+      artworkUrl100: x.artworkUrl600 || x.artworkUrl100 || '', artworkUrl600: x.artworkUrl600 || '', feedUrl: x.feedUrl || '' }));
+    return items.length ? { items, updated: Date.now(), fallback: true } : null;
+  }
+
   _chartDeezer(path) {
     this._chartSay(/^\/search\//.test(path) ? 'Looking up Deezer\u2019s charts\u2026' : 'Contacting Deezer\u2026');
     return new Promise(resolve => {
@@ -13492,6 +15011,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         const j = await this._chartAppleFeed(cc + '/music/most-played/{n}/' + sec.appleFeed + '.json', 50);
         const big = u => String(u || '').replace(/\/\d+x\d+(bb|cc)?\./, '/300x300bb.');
         items = (j?.feed?.results || []).map(x => ({ id: 'am:album:' + x.id, kind: 'am-album', amId: x.id, country: cc, label: x.name, sub: x.artistName || '', art: big(x.artworkUrl100) }));
+        if (!items.length && sec.appleFeed === 'albums') {
+          // Apple Music couldn't be reached from this device: Deezer's album chart for where you are instead
+          this._chartSay('Apple Music can\u2019t be reached \u2014 getting Deezer\u2019s album chart instead\u2026');
+          const dz = await this._chartDeezer('/chart/0/albums?limit=50');
+          items = (dz?.data || []).map(a => ({ id: 'dz:album:' + a.id, kind: 'album', dzId: a.id, label: a.title, sub: (a.artist?.name || '') + ' \u00b7 Deezer', art: a.cover_medium || a.cover || '' }));
+        }
       } else if (sec.api) {
         const r = await this._chartDeezer(sec.api);
         const d = r?.data || [];
@@ -14226,6 +15751,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       this._chartSayWhat = 'Apple Podcasts';
       const j = await this._chartAppleFeed(cc + '/podcasts/top/{n}/' + def.feed + '.json', 50).finally(() => { this._chartSayWhat = null; });
       const res = j?.feed?.results;
+      if ((!Array.isArray(res) || !res.length) && def.feed === 'podcasts') return this._pcChartFromDeezer();
       if (!Array.isArray(res) || !res.length) return null;
       const art = (u, n) => String(u || '').replace(/\/\d+x\d+(bb)?\./, '/' + n + 'x' + n + 'bb.');
       const items = res.map(x => ({ collectionId: +x.id || x.id, collectionName: x.name || '', artistName: x.artistName || '', primaryGenreName: x.genres?.[0]?.name || '', artworkUrl100: art(x.artworkUrl100, 200), artworkUrl600: art(x.artworkUrl100, 600) }));
@@ -15500,6 +17026,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // ══════════════════════════════════════════════════════════════════════
   // always available from the quick menu; starting by itself is the editor's Start Automatically
   _saverOn() { return true; }
+  // Full Screen switch (editor → Visualiser & Screensaver → Screensaver): off (the default) keeps it over the
+  // artwork; on covers the whole screen. Saved as screensaver_area: 'screen' or 'artwork'.
+  _saverFull() { return this._config?.screensaver_area === 'screen'; }
   // the style picked from the quick menu (until the page is refreshed or closed), otherwise the editor's
   _saverPick() {
     let pick = null;
@@ -15523,6 +17052,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       // any tap on the card counts as activity (taps on the screensaver close it instead)
       this._saverActWired = true;
       r.addEventListener('pointerdown', () => { this._saverActiveAt = Date.now(); }, { capture: true, passive: true });
+      // full screen covers the whole dashboard, so using any of it counts too (taps on the screensaver close it)
+      this._saverDocAct = (e) => {
+        if (!this._saverFull()) return;
+        if (this._saverHost && e.composedPath?.().includes(this._saverHost)) return;
+        this._saverActiveAt = Date.now();
+      };
+      ['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach(t => document.addEventListener(t, this._saverDocAct, { capture: true, passive: true }));
     }
     const now = Date.now();
     const st = this._hass?.states[this._entity];
@@ -15540,23 +17076,36 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       if (!anyTime && (startedPlaying || (playing && !this._saverEl._manual))) this._saverStop();
       return;
     }
+    // a visualiser showing counts as being in use: the screensaver doesn't start over it
+    const vizEl = r?.getElementById('crowViz');
+    if (this._vizRaf && vizEl?.classList.contains('on')) { this._saverActiveAt = now; return; }
     const mins = anyTime ? auto.after : 0;
     if (!mins || now - this._saverActiveAt < mins * 60000) return;
     if (!this._saverCanShow(false)) return;
     this._saverStart(false);
   }
 
-  // Only over the full-size player's artwork, on screen, with nothing else open over it
+  // Over the artwork: only the full-size player's, on screen. Full screen: from any card that's showing
+  // (compact too), never from the card editor's preview, and one at a time however many cards there are.
+  // Either way, never with something open over the card.
   _saverCanShow(manual) {
     const r = this.shadowRoot;
     const card = r?.getElementById('cardOuter'), art = r?.getElementById('artClick');
-    if (!card || !art || document.hidden) return false;
-    if (!manual && card.classList.contains('mode-compact')) return false;
+    const full = this._saverFull();
+    if (!card || (!art && !full) || document.hidden) return false;
+    if (!manual && !full && card.classList.contains('mode-compact')) return false;
     if (this._remoteMode || card.classList.contains('lyrics-open')) return false;
     if (r.getElementById('maPopup')?.classList.contains('visible') || r.getElementById('infoPopup')?.classList.contains('visible')) return false;
     if (!manual) {
       const rc = card.getBoundingClientRect();
-      if (!rc.width || rc.bottom < 0 || rc.top > (window.innerHeight || 0)) return false;
+      if (full) {
+        if (!rc.width || !rc.height) return false;   // on a hidden view or tab
+        const owner = window.__crowSaverOwner;
+        if (owner && owner !== this && owner.isConnected && owner._saverEl) return false;
+        for (let n = this; n; n = n.parentElement || n.getRootNode?.()?.host || null) {
+          if (n.tagName?.toLowerCase().includes('dialog')) return false;   // the editor's preview
+        }
+      } else if (!rc.width || rc.bottom < 0 || rc.top > (window.innerHeight || 0)) return false;
     }
     return true;
   }
@@ -15565,10 +17114,16 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const r = this.shadowRoot;
     let card = r?.getElementById('cardOuter');
     if (!card) return;
-    if (card.classList.contains('mode-compact')) { try { await this._expandFromCompact(); } catch (_) {} }
+    const full = this._saverFull();
+    if (!full && card.classList.contains('mode-compact')) { try { await this._expandFromCompact(); } catch (_) {} }
     const art = r.getElementById('artClick');
-    if (!art || !this._saverCanShow(true)) return;
+    if ((!art && !full) || !this._saverCanShow(true)) return;
     this._saverStop(true);
+    // the screensaver and a visualiser never show together
+    this._vizStop(true);
+    // only one full-screen screensaver on the page: another card's makes way
+    const other = window.__crowSaverOwner;
+    if (other && other !== this) { try { other._saverStop(true); } catch (_) {} }
     const el = document.createElement('div');
     el.id = 'crowSaver';
     el.className = 'crow-saver';
@@ -15577,11 +17132,30 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     el.setAttribute('role', 'button');
     el.setAttribute('aria-label', 'Screensaver: tap to close');
     el.innerHTML = '<div class="cs-stage"></div>';
-    card.insertBefore(el, art.nextSibling);
+    if (full) {
+      // Full screen: a layer of its own on the page, above Home Assistant's header and sidebar, with its
+      // own sealed-off copy of the screensaver styles (a card's glass blur would otherwise trap it inside
+      // the card, and dashboard themes can't reach in)
+      el.classList.add('cs-full');
+      const host = document.createElement('div');
+      host.className = 'crowai-saver-host';
+      host.style.cssText = 'position:fixed;inset:0;z-index:2147483000;display:block;margin:0;padding:0;border:0;background:transparent;';
+      const sr = host.attachShadow({ mode: 'open' });
+      sr.innerHTML = '<style>' + CROWAI_SAVER_CSS + CROWAI_SAVER_FULL_CSS + '</style>';
+      try { const font = getComputedStyle(card).fontFamily; if (font) el.style.setProperty('--cs-font', font); } catch (_) {}
+      sr.appendChild(el);
+      document.body.appendChild(host);
+      this._saverHost = host;
+      window.__crowSaverOwner = this;
+      this._saverKey = (e) => { if (e.key === 'Escape' && this._saverEl === el) { e.stopPropagation(); this._saverActiveAt = Date.now(); this._saverStop(); } };
+      document.addEventListener('keydown', this._saverKey, true);
+    } else {
+      card.insertBefore(el, art.nextSibling);
+    }
     this._saverEl = el;
     this._saverPlace();
     if (!this._saverRO && typeof ResizeObserver === 'function') this._saverRO = new ResizeObserver(() => this._saverPlace());
-    this._saverRO?.observe(art);
+    this._saverRO?.observe(full ? el : art);
     const close = (e) => {
       e.preventDefault(); e.stopPropagation();
       // iOS sends a late "click" after the tap that chose it from the quick menu, at the same spot, which
@@ -15632,7 +17206,18 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
   // Sized and placed exactly over the artwork
   _saverPlace() {
-    const el = this._saverEl, art = this.shadowRoot?.getElementById('artClick');
+    const el = this._saverEl;
+    if (el?.classList.contains('cs-full')) {
+      // fills the window by itself; just keep the drawings in step when it's resized or rotated
+      if (this._saverSky && this._saverSkyCv?.isConnected) this._saverSky.resize(el.offsetWidth, el.offsetHeight);
+      if (el._style === 'wall' && el._wallDims) {
+        const d = this._saverWallDims(el._wallN);
+        if (d.c !== el._wallDims.c || d.r !== el._wallDims.r) this._saverShow('wall');
+      }
+      if (el._style === 'flip') this._saverFlipUpdate(false);
+      return;
+    }
+    const art = this.shadowRoot?.getElementById('artClick');
     if (!el || !art) return;
     // measured from the artwork's real on-screen box (inside the card's border), so no edge of it peeks out
     const host = el.offsetParent || el.parentElement;
@@ -15651,11 +17236,16 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const el = this._saverEl;
     this._saverEl = null;
     if (this._saverRO) { try { this._saverRO.disconnect(); } catch (_) {} }
-    if (!el) return;
-    if (now) { el.remove(); return; }
+    if (this._saverKey) { document.removeEventListener('keydown', this._saverKey, true); this._saverKey = null; }
+    const host = this._saverHost;
+    this._saverHost = null;
+    if (window.__crowSaverOwner === this) window.__crowSaverOwner = null;
+    if (host) host.style.pointerEvents = 'none';   // the fading layer mustn't catch taps meant for the dashboard
+    if (!el) { host?.remove(); return; }
+    if (now) { el.remove(); host?.remove(); return; }
     el.style.pointerEvents = 'none';
     el.classList.remove('on');
-    setTimeout(() => el.remove(), 650);
+    setTimeout(() => { el.remove(); host?.remove(); }, 650);
   }
 
   _saverClearStyle() {
@@ -15683,9 +17273,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     else if (style === 'analog') this._saverAnalog(stage);
     else if (style === 'lava') this._saverLava(stage);
     else if (style === 'rain') this._saverRain(stage);
+    else if (style === 'night') this._saverNightSky(stage);
+    else if (style === 'words') this._saverWordClock(stage);
+    else if (style === 'fire') this._saverFireplace(stage);
+    else if (style === 'ocean') this._saverOcean(stage);
     else this._saverWall(stage);
     // styles that already show the time don't get the small clock
-    if (!['clock', 'flip', 'analog'].includes(style) && this._config?.screensaver_clock !== false) {
+    if (!['clock', 'flip', 'analog', 'words'].includes(style) && this._config?.screensaver_clock !== false) {
       const m = document.createElement('div');
       m.className = 'cs-mini';
       el.appendChild(m);
@@ -15808,12 +17402,16 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (!list.length) { this._saverAurora(stage); return; }
     const alive = () => this._saverEl && stage.parentNode === this._saverEl;
     const n = list.length >= 6 ? 4 : list.length >= 2 ? 3 : 2;
+    // over the artwork it's n by n; full screen keeps the covers square, so a tall phone gets more rows
+    // and a wide screen more columns (worked out again if the screen is rotated)
+    const dims = this._saverWallDims(n);
+    if (this._saverEl) { this._saverEl._wallN = n; this._saverEl._wallDims = dims; }
     const wall = document.createElement('div');
     wall.className = 'cs-wall';
-    wall.style.gridTemplateColumns = 'repeat(' + n + ', 1fr)';
-    wall.style.gridTemplateRows = 'repeat(' + n + ', 1fr)';
+    wall.style.gridTemplateColumns = 'repeat(' + dims.c + ', 1fr)';
+    wall.style.gridTemplateRows = 'repeat(' + dims.r + ', 1fr)';
     const tiles = [];
-    for (let i = 0; i < n * n; i++) {
+    for (let i = 0; i < dims.c * dims.r; i++) {
       const t = document.createElement('div');
       t.className = 'cs-tile';
       t.innerHTML = '<div class="in"><img class="a" alt=""><img class="b" alt=""></div>';
@@ -15851,6 +17449,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     }, 2600);
   }
 
+  _saverWallDims(n) {
+    const el = this._saverEl;
+    if (!el?.classList.contains('cs-full')) return { c: n, r: n };
+    const W = el.offsetWidth || 1, H = el.offsetHeight || 1, side = Math.min(W, H) / n;
+    return { c: Math.max(1, Math.round(W / side)), r: Math.max(1, Math.round(H / side)) };
+  }
+
   // ── Flip Clock: split-flap digits ──
   _saverFlip(stage) {
     const bg = document.createElement('div');
@@ -15859,6 +17464,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     bg.innerHTML = '<div class="cs-flip">' + unit() + unit() + '<div class="cs-colon"><i></i><i></i></div>' + unit() + unit()
       + '</div><div class="cs-ampm"></div><div class="cs-under"></div>';
     stage.appendChild(bg);
+    if (this._saverEl?.classList.contains('cs-full')) bg.querySelector('.cs-flip').appendChild(bg.querySelector('.cs-ampm'));
     this._saverFlipUpdate(true);
     this._saverFxT = setInterval(() => this._saverFlipUpdate(false), 1000);
   }
@@ -15877,7 +17483,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const digits = (hs + String(now.getMinutes()).padStart(2, '0')).split('').map(c => c === ' ' ? '' : c);
     const flip = bg.querySelector('.cs-flip');
     const w = el.offsetWidth || 300;
-    flip.style.setProperty('--cs-fd', Math.round(w * 0.19 / 0.68 * 0.74) + 'px');
+    if (el.classList.contains('cs-full')) {
+      // as wide as fits, and never taller than about 44% of the screen (wide screens, landscape tablets)
+      const dw = Math.min(w * 0.19, (el.offsetHeight || 300) * 0.44 * 0.68);
+      flip.style.setProperty('--cs-fdw', dw.toFixed(1) + 'px');
+      flip.style.setProperty('--cs-fd', Math.round(dw / 0.68 * 0.74) + 'px');
+    } else flip.style.setProperty('--cs-fd', Math.round(w * 0.19 / 0.68 * 0.74) + 'px');
     bg.querySelector('.cs-ampm').textContent = h12 ? ampm : '';
     const units = flip.querySelectorAll('.cs-fd');
     const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
@@ -15930,7 +17541,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const frame = () => {
       if (!this._saverEl || !cv.isConnected) return;
       const el = this._saverEl;
-      const size = Math.round(Math.min(el.offsetWidth, el.offsetHeight * 0.92) * 0.58);
+      const size = Math.round(el.classList.contains('cs-full')
+        ? Math.min(el.offsetWidth * 0.8, el.offsetHeight * 0.6)
+        : Math.min(el.offsetWidth, el.offsetHeight * 0.92) * 0.58);
       if (size > 0 && size !== px) { px = size; drawer.resize(px); lastSec = -1; }
       const now = new Date();
       const s = now.getSeconds(), ms = now.getMilliseconds();
@@ -16018,7 +17631,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       const cw = el.offsetWidth, ch = el.offsetHeight;
       if (!cw || !ch) return false;
       // drawn at a bit over half the panel's size and smoothed up: sharp enough, still light on the battery
-      const w = Math.max(120, Math.min(280, Math.round(cw * 0.6)));
+      const w = Math.max(120, Math.min(el.classList.contains('cs-full') ? 360 : 280, Math.round(cw * 0.6)));
       const h = Math.max(120, Math.round(w * ch / cw));
       if (w === W && h === H) return true;
       W = w; H = h;
@@ -16077,9 +17690,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           x = b.x + b.wob * Math.sin(t * 0.23 + b.ph * 2);
           r = b.r * (1 + 0.12 * Math.sin(t * 0.4 + b.i));
         }
-        const R = r * W * REACH;
+        const M = Math.min(W, H);   // the same as W over the (square) artwork
+        const R = r * M * REACH;
         pos[k * 4] = x * W; pos[k * 4 + 1] = y * H; pos[k * 4 + 2] = R * R; pos[k * 4 + 3] = 1 / (R * R);
-        rAvg += r * W;
+        rAvg += r * M;
       });
       rAvg /= blobs.length;
       const dome = rAvg * 0.9;   // how tall the blobs look, for the shading
@@ -16155,7 +17769,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const ctx = cv.getContext('2d');
     const mist = document.createElement('canvas');   // the small, still droplets
     const mctx = mist.getContext('2d');
-    let W = 0, H = 0, S = 1;
+    let W = 0, H = 0, S = 1, Rs = 1, maxDrops = Infinity;
     const drops = [];
     const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
     const size = () => {
@@ -16165,9 +17779,14 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       if (!w || !h) return false;
       if (w === W && h === H) return true;
       W = w; H = h; S = Math.min(2, window.devicePixelRatio || 1);
+      if (el.classList.contains('cs-full')) {
+        S = Math.max(1, Math.min(S, Math.sqrt(2.4e6 / (W * H))));   // keep a big screen light on the processor
+        Rs = Math.max(1, Math.min(1.8, Math.min(W, H) / 380));        // drops in proportion to the screen
+        maxDrops = 150;
+      }
       cv.width = mist.width = Math.round(W * S); cv.height = mist.height = Math.round(H * S);
       mctx.setTransform(S, 0, 0, S, 0, 0);
-      for (let i = 0; i < W * H / 260; i++) dot(Math.random() * W, Math.random() * H, 0.6 + Math.random() * 1.8);
+      for (let i = 0; i < Math.min(W * H / 260, 9000); i++) dot(Math.random() * W, Math.random() * H, (0.6 + Math.random() * 1.8) * Rs);
       return true;
     };
     const dot = (x, y, r) => {
@@ -16177,7 +17796,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       mctx.beginPath(); mctx.arc(x, y, r * 0.8, 0, Math.PI * 2); mctx.fill();
     };
     const spawn = (y) => drops.push({
-      x: Math.random() * W, y: y ?? Math.random() * H * 0.8, r: 3 + Math.random() * 6,
+      x: Math.random() * W, y: y ?? Math.random() * H * 0.8, r: (3 + Math.random() * 6) * Rs,
       vy: 0, hold: 40 + Math.random() * 300, lastTrail: 0, drift: (Math.random() - 0.5) * 0.3,
     });
     const drawDrop = (d) => {
@@ -16217,8 +17836,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       const dt = lastT ? Math.min(3, (now - lastT) / 16.7) : 1;
       lastT = now;
       if (!still) {
-        if (drops.length < Math.max(10, W * H / 3500) && Math.random() < 0.08 * dt) spawn();
-        if (Math.random() < 0.5 * dt) dot(Math.random() * W, Math.random() * H, 0.5 + Math.random() * 1.6);
+        if (drops.length < Math.min(maxDrops, Math.max(10, W * H / 3500)) && Math.random() < 0.08 * dt) spawn();
+        if (Math.random() < 0.5 * dt) dot(Math.random() * W, Math.random() * H, (0.5 + Math.random() * 1.6) * Rs);
         for (let i = drops.length - 1; i >= 0; i--) {
           const d = drops[i];
           if (d.hold > 0) { d.hold -= dt; if (d.hold <= 0) d.vy = 0.4; continue; }
@@ -16241,6 +17860,995 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     };
     if (still) { const go = () => frame(performance.now()); if (art && !art.complete) art.onload = go; requestAnimationFrame(go); }
     else this._saverRaf = requestAnimationFrame(frame);
+  }
+
+
+  // A canvas filling the screensaver, kept at the panel's size (sharp, up to 2x on high-density screens).
+  // frame(ctx, t, dt, W, H, resized, S) is called about 30 times a second; with reduced motion it's drawn once.
+  // Anything drawn ahead of time should be made at W*S by H*S so it stays as sharp as the rest.
+  _saverCanvasLoop(box, frame, { scale = 2, fps = 30 } = {}) {
+    const cv = document.createElement('canvas');
+    cv.setAttribute('aria-hidden', 'true');
+    box.appendChild(cv);
+    const ctx = cv.getContext('2d');
+    let W = 0, H = 0, S = 1;
+    const size = () => {
+      const el = this._saverEl;
+      if (!el) return false;
+      const w = el.offsetWidth, h = el.offsetHeight;
+      if (!w || !h) return false;
+      if (w === W && h === H) return true;
+      W = w; H = h; S = Math.min(scale, window.devicePixelRatio || 1);
+      // full screen on a big, high-density display is a lot of pixels: stay within a budget (Raspberry Pi heat)
+      if (el.classList.contains('cs-full')) S = Math.max(1, Math.min(S, Math.sqrt(2.4e6 / (W * H))));
+      cv.width = Math.round(W * S); cv.height = Math.round(H * S);
+      return 'resized';
+    };
+    const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    const t0 = performance.now();
+    let last = 0, prev = 0;
+    const step = (now) => {
+      if (!this._saverEl || !cv.isConnected) return;
+      if (!still) this._saverRaf = requestAnimationFrame(step);
+      if (now - last < 1000 / fps - 2) return;
+      last = now;
+      const sz = size();
+      if (!sz) return;
+      const dt = prev ? Math.min(0.1, (now - prev) / 1000) : 1 / fps;
+      prev = now;
+      ctx.setTransform(S, 0, 0, S, 0, 0);
+      ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+      frame(ctx, (now - t0) / 1000, dt, W, H, sz === 'resized', S);
+    };
+    this._saverRaf = requestAnimationFrame(step);
+    return { cv, ctx };
+  }
+
+  // An offscreen canvas at the screen's pixel density; draw on it in CSS pixels
+  _saverOff(W, H, S) {
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(W * S)); c.height = Math.max(1, Math.round(H * S));
+    const g = c.getContext('2d'); g.setTransform(S, 0, 0, S, 0, 0);
+    return [c, g];
+  }
+
+  // A fine, still film grain over the picture, which hides the banding smooth gradients get on screens
+  _saverGrain(ctx, W, H, alpha = 0.035) {
+    if (!this._saverGrainTile) {
+      const c = document.createElement('canvas'); c.width = c.height = 128;
+      const g = c.getContext('2d'), im = g.createImageData(128, 128), d = im.data;
+      for (let i = 0; i < d.length; i += 4) { const v = Math.random() < 0.5 ? 0 : 255; d[i] = d[i + 1] = d[i + 2] = v; d[i + 3] = (Math.random() * 255) | 0; }
+      g.putImageData(im, 0, 0);
+      this._saverGrainTile = c;
+    }
+    const p = ctx.createPattern(this._saverGrainTile, 'repeat');
+    if (!p) return;
+    ctx.save(); ctx.globalAlpha = alpha; ctx.fillStyle = p; ctx.fillRect(0, 0, W, H); ctx.restore();
+  }
+
+  // A soft round glow for stars, in white, warm or blue-white
+  _saverStarSprites() {
+    if (this._saverSprites) return this._saverSprites;
+    const mk = (col) => {
+      const c = document.createElement('canvas'); c.width = c.height = 64;
+      const g = c.getContext('2d'), gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+      gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.08, 'rgba(' + col + ',0.95)');
+      gr.addColorStop(0.22, 'rgba(' + col + ',0.35)'); gr.addColorStop(0.5, 'rgba(' + col + ',0.08)'); gr.addColorStop(1, 'rgba(' + col + ',0)');
+      g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+      return c;
+    };
+    return (this._saverSprites = [mk('255,255,255'), mk('255,214,170'), mk('180,205,255')]);
+  }
+
+  // Tonight's moon, with its real phase (mirrored south of the equator), a soft edge to the shadow,
+  // dark seas and craters, a glow, and the faint earthshine on its dark side. Drawn once a minute and reused.
+  _saverMoon(ctx, cx, cy, r, S = 1, glow = 1) {
+    const age = (((Date.now() - Date.UTC(2000, 0, 6, 18, 14)) / 86400000) % 29.530588853 + 29.530588853) % 29.530588853;
+    const f = age / 29.530588853, k = Math.cos(f * Math.PI * 2);
+    const south = (this._hass?.config?.latitude ?? 51) < 0;
+    const side = (f < 0.5 ? 1 : -1) * (south ? -1 : 1);
+    const lit = (1 - k) / 2;
+    const key = [Math.round(r * 10), S, Math.round(f * 2000), side].join('|');
+    if (this._saverMoonC?.key !== key) {
+      const pad = Math.ceil(r * 0.15), D = (r + pad) * 2;
+      const [c, g] = this._saverOff(D, D, S);
+      const o = r + pad;
+      // the surface: limb darkening, seas and a few craters
+      const base = g.createRadialGradient(o - r * 0.25, o - r * 0.3, r * 0.1, o, o, r);
+      base.addColorStop(0, '#fbf8ee'); base.addColorStop(0.7, '#e6e1d2'); base.addColorStop(1, '#bfb9a8');
+      g.fillStyle = base; g.beginPath(); g.arc(o, o, r, 0, Math.PI * 2); g.fill();
+      g.save(); g.beginPath(); g.arc(o, o, r, 0, Math.PI * 2); g.clip();
+      const sea = (x, y, rx, ry, a) => { const gr = g.createRadialGradient(o + x * r, o + y * r, 0, o + x * r, o + y * r, Math.max(rx, ry) * r); gr.addColorStop(0, 'rgba(110,108,100,' + a + ')'); gr.addColorStop(0.7, 'rgba(110,108,100,' + a * 0.6 + ')'); gr.addColorStop(1, 'rgba(110,108,100,0)'); g.fillStyle = gr; g.beginPath(); g.ellipse(o + x * r, o + y * r, rx * r, ry * r, 0.3, 0, Math.PI * 2); g.fill(); };
+      sea(-0.28, -0.28, 0.3, 0.24, 0.42); sea(-0.05, -0.05, 0.24, 0.2, 0.35); sea(0.22, -0.32, 0.18, 0.14, 0.32); sea(-0.42, 0.12, 0.2, 0.26, 0.3); sea(0.12, 0.25, 0.16, 0.12, 0.28); sea(0.36, 0.05, 0.12, 0.16, 0.25);
+      let seed = 7; const rnd = () => (seed = (seed * 9301 + 49297) % 233280) / 233280;
+      for (let i = 0; i < 26; i++) {
+        const a = rnd() * Math.PI * 2, d = Math.sqrt(rnd()) * r * 0.9, cr = r * (0.02 + rnd() * 0.06);
+        const x = o + Math.cos(a) * d, y = o + Math.sin(a) * d;
+        g.fillStyle = 'rgba(90,86,78,0.22)'; g.beginPath(); g.arc(x + cr * 0.15, y + cr * 0.15, cr, 0, Math.PI * 2); g.fill();
+        g.fillStyle = 'rgba(255,255,250,0.25)'; g.beginPath(); g.arc(x - cr * 0.2, y - cr * 0.2, cr * 0.7, 0, Math.PI * 2); g.fill();
+      }
+      // a bright rayed crater low on the face
+      g.fillStyle = 'rgba(255,255,255,0.45)'; g.beginPath(); g.arc(o - r * 0.12, o + r * 0.6, r * 0.05, 0, Math.PI * 2); g.fill();
+      g.restore();
+      // the shadow: the unlit part taken away, in a few slightly different shapes for a soft terminator
+      const N = 48;
+      g.save(); g.globalCompositeOperation = 'destination-out';
+      [[0, 1], [0.04, 0.35], [0.08, 0.25], [0.13, 0.15]].forEach(([dk, a]) => {
+        const kk = Math.max(-1, Math.min(1, k + dk));
+        g.globalAlpha = a; g.beginPath();
+        for (let i = 0; i <= N; i++) { const t = -Math.PI / 2 + Math.PI * i / N; const x = o - side * (r + 1) * Math.cos(t), y = o + (r + 1) * Math.sin(t); i ? g.lineTo(x, y) : g.moveTo(x, y); }
+        for (let i = N; i >= 0; i--) { const t = -Math.PI / 2 + Math.PI * i / N; g.lineTo(o + side * kk * r * Math.cos(t), o + r * Math.sin(t)); }
+        g.closePath(); g.fill();
+      });
+      g.restore();
+      // earthshine behind
+      g.save(); g.globalCompositeOperation = 'destination-over';
+      g.fillStyle = 'rgba(120,135,170,0.16)'; g.beginPath(); g.arc(o, o, r, 0, Math.PI * 2); g.fill();
+      g.restore();
+      this._saverMoonC = { key, c, D };
+    }
+    const m = this._saverMoonC;
+    if (glow > 0) {
+      const gr = ctx.createRadialGradient(cx, cy, r * 0.8, cx, cy, r * 6);
+      gr.addColorStop(0, 'rgba(210,222,255,' + (0.22 * (0.25 + lit) * glow).toFixed(3) + ')');
+      gr.addColorStop(0.3, 'rgba(200,214,255,' + (0.07 * (0.25 + lit) * glow).toFixed(3) + ')');
+      gr.addColorStop(1, 'rgba(200,214,255,0)');
+      ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(cx, cy, r * 6, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+    }
+    ctx.drawImage(m.c, cx - m.D / 2, cy - m.D / 2, m.D, m.D);
+  }
+
+  // ── Night Sky: thousands of twinkling stars, the Milky Way flowing slowly up from the bottom left to the
+  //    top right (and endlessly replenishing), hills and trees, the odd shooting star and tonight's moon ──
+  _saverNightSky(stage) {
+    const box = document.createElement('div');
+    box.className = 'cs-night';
+    stage.appendChild(box);
+    const SPR = this._saverStarSprites();
+    let B = null, shoot = null, nextShoot = 5 + Math.random() * 8;
+    const gauss = () => (Math.random() + Math.random() + Math.random() + Math.random() - 2) / 2;
+    const build = (W, H, S) => {
+      // the stars across the sky
+      const stars = [];
+      const n = Math.min(Math.round(W * H / 300), 2600);
+      for (let i = 0; i < n; i++) {
+        const r = Math.random(), tier = r < 0.035 ? 2 : r < 0.3 ? 1 : 0;
+        stars.push({ x: Math.random() * W, y: Math.random() * H * 0.95, tier, size: tier === 2 ? 7 + Math.random() * 9 : tier === 1 ? 0.7 + Math.random() * 0.6 : 0.35 + Math.random() * 0.4,
+          al: tier === 2 ? 0.75 + Math.random() * 0.25 : tier === 1 ? 0.5 + Math.random() * 0.35 : 0.22 + Math.random() * 0.3,
+          tw: 0.5 + Math.random() * 2.5, ph: Math.random() * 6.3, spr: Math.random() < 0.2 ? 1 : Math.random() < 0.35 ? 2 : 0 });
+      }
+      // the Milky Way, laid out along its own length (u) and across it (v). It repeats every L, so as it
+      // flows toward the top right, what leaves at the top comes back in at the bottom left without a join.
+      const ang = -0.62, cx = W * 0.5, cy = H * 0.44;
+      const L = Math.ceil(Math.hypot(W, H) * 1.25), BH = Math.ceil(H * 0.6);
+      const dust = [];
+      for (let i = 0; i < Math.min(W * 4.5, 5200); i++) {
+        const u = Math.random() * L;
+        dust.push({ u, v: gauss() * H * 0.07 * (1 + 0.45 * Math.sin(u / L * Math.PI * 2 * 3)), s: 0.3 + Math.random() * 0.55, al: 0.18 + Math.random() * 0.45 });
+      }
+      // a few brighter knots of stars in it
+      for (let k = 0; k < 7; k++) {
+        const u0 = Math.random() * L, v0 = gauss() * H * 0.03;
+        for (let i = 0; i < 70; i++) dust.push({ u: (u0 + gauss() * W * 0.05 + L) % L, v: v0 + gauss() * H * 0.025, s: 0.3 + Math.random() * 0.5, al: 0.25 + Math.random() * 0.5 });
+      }
+      // its glow and dark dust lanes, drawn once at half size (they're soft), on a strip that wraps round
+      const GS = 0.5, glow = document.createElement('canvas');
+      glow.width = Math.ceil(L * GS); glow.height = Math.ceil(BH * GS);
+      const g = glow.getContext('2d');
+      g.setTransform(GS, 0, 0, GS, 0, BH * GS / 2);   // CSS pixels; v = 0 along the middle of the strip
+      const blob = (u, v, rr, col) => {
+        [u - L, u, u + L].forEach(x => {
+          if (x + rr < 0 || x - rr > L) return;
+          const gr = g.createRadialGradient(x, v, 0, x, v, rr);
+          gr.addColorStop(0, col); gr.addColorStop(1, 'rgba(0,0,0,0)');
+          g.fillStyle = gr; g.beginPath(); g.arc(x, v, rr, 0, Math.PI * 2); g.fill();
+        });
+      };
+      for (let i = 0; i < 190; i++) blob(Math.random() * L, gauss() * H * 0.06, W * (0.05 + Math.random() * 0.12), Math.random() < 0.3 ? 'rgba(235,205,215,0.05)' : 'rgba(170,185,240,0.055)');
+      g.globalCompositeOperation = 'destination-out';
+      for (let i = 0; i < 80; i++) blob(Math.random() * L, gauss() * H * 0.018 + H * 0.008, W * (0.015 + Math.random() * 0.04), 'rgba(0,0,0,0.35)');
+      // the land: a glow along the horizon, distant hills in the haze, and a nearer ridge with trees
+      const [land, l] = this._saverOff(W, H, S);
+      const hg = l.createLinearGradient(0, H * 0.55, 0, H * 0.9);
+      hg.addColorStop(0, 'rgba(70,90,150,0)'); hg.addColorStop(0.7, 'rgba(80,95,150,0.16)'); hg.addColorStop(0.9, 'rgba(255,170,110,0.07)'); hg.addColorStop(1, 'rgba(255,170,110,0)');
+      l.fillStyle = hg; l.fillRect(0, H * 0.55, W, H * 0.35);
+      const ridge = (base, amp, fr, top, bottom, trees) => {
+        const p1 = Math.random() * 6, p2 = Math.random() * 6, p3 = Math.random() * 6;
+        const yAt = x => H * (base - amp * (0.55 * Math.sin(x / W * Math.PI * fr + p1) + 0.3 * Math.sin(x / W * Math.PI * fr * 2.3 + p2) + 0.15 * Math.sin(x / W * Math.PI * fr * 6.1 + p3)));
+        const gr = l.createLinearGradient(0, H * (base - amp), 0, H);
+        gr.addColorStop(0, top); gr.addColorStop(1, bottom);
+        l.fillStyle = gr; l.beginPath(); l.moveTo(0, H);
+        for (let x = 0; x <= W; x += 2) l.lineTo(x, yAt(x));
+        l.lineTo(W, H); l.closePath(); l.fill();
+        if (!trees) return;
+        l.fillStyle = bottom;
+        let x = -10;
+        while (x < W + 10) {
+          if (Math.random() < 0.55) {
+            const n = 2 + Math.floor(Math.random() * 7);
+            for (let i = 0; i < n; i++) {
+              const tx = x + Math.random() * 14, th = H * (0.03 + Math.random() * 0.05), tw = th * (0.28 + Math.random() * 0.12), ty = yAt(tx) + 2;
+              l.beginPath(); l.moveTo(tx, ty - th);
+              for (let j = 1; j <= 4; j++) { const yy = ty - th + th * j / 4; l.lineTo(tx + tw * j / 4 * 1.1, yy); l.lineTo(tx + tw * j / 4 * 0.55, yy); }
+              l.lineTo(tx + tw * 0.08, ty); l.lineTo(tx - tw * 0.08, ty);
+              for (let j = 4; j >= 1; j--) { const yy = ty - th + th * j / 4; l.lineTo(tx - tw * j / 4 * 0.55, yy); l.lineTo(tx - tw * j / 4 * 1.1, yy); }
+              l.closePath(); l.fill();
+              x += 4 + Math.random() * 7;
+            }
+          }
+          x += 10 + Math.random() * 40;
+        }
+      };
+      ridge(0.8, 0.05, 1.4, '#141c36', '#0b1124', false);
+      ridge(0.87, 0.045, 2.2, '#080c19', '#05070f', false);
+      ridge(0.93, 0.03, 3.1, '#030409', '#020306', true);
+      B = { stars, dust, glow, GS, L, BH, ang, cx, cy, land };
+    };
+    this._saverCanvasLoop(box, (ctx, t, dt, W, H, resized, S) => {
+      if (resized || !B) build(W, H, S);
+      const { L, BH, ang, cx, cy } = B;
+      const sky = ctx.createLinearGradient(0, 0, 0, H);
+      sky.addColorStop(0, '#010208'); sky.addColorStop(0.45, '#040719'); sky.addColorStop(0.75, '#0a1230'); sky.addColorStop(1, '#141d40');
+      ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H);
+      // the Milky Way flowing up toward the top right: across the panel in about four minutes
+      const off = (t * W / 240) % L;
+      ctx.save();
+      ctx.translate(cx, cy); ctx.rotate(ang);
+      ctx.globalCompositeOperation = 'lighter';
+      for (const k of [-1, 0]) ctx.drawImage(B.glow, -L / 2 + off + k * L, -BH / 2, L, BH);
+      ctx.fillStyle = '#dfe6ff';
+      for (const s of B.dust) {
+        const u = ((s.u + off) % L) - L / 2;
+        ctx.globalAlpha = s.al; ctx.fillRect(u, s.v, s.s, s.s);
+      }
+      ctx.restore();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.fillStyle = '#dfe6ff';
+      for (const s of B.stars) {
+        const tw = 0.7 + 0.3 * Math.sin(t * s.tw + s.ph) + 0.1 * Math.sin(t * s.tw * 2.7 + s.ph);
+        if (s.tier === 2) {
+          const z = s.size * (0.9 + 0.1 * tw);
+          ctx.globalAlpha = s.al * tw; ctx.drawImage(SPR[s.spr], s.x - z / 2, s.y - z / 2, z, z);
+          if (s.size > 12) { ctx.globalAlpha = s.al * tw * 0.25; ctx.fillStyle = '#fff'; ctx.fillRect(s.x - z * 0.55, s.y - 0.25, z * 1.1, 0.5); ctx.fillRect(s.x - 0.25, s.y - z * 0.55, 0.5, z * 1.1); ctx.fillStyle = '#dfe6ff'; }
+        } else {
+          ctx.globalAlpha = s.al * tw; ctx.fillRect(s.x - s.size / 2, s.y - s.size / 2, s.size, s.size);
+        }
+      }
+      ctx.globalAlpha = 1;
+      // a shooting star now and then
+      nextShoot -= dt;
+      if (!shoot && nextShoot <= 0) {
+        const a = 0.3 + Math.random() * 0.6;
+        shoot = { x: W * (0.25 + Math.random() * 0.7), y: H * (0.04 + Math.random() * 0.3), vx: -Math.cos(a) * W * 0.8, vy: Math.sin(a) * W * 0.8, life: 0, dur: 0.6 + Math.random() * 0.6 };
+        nextShoot = 15 + Math.random() * 40;
+      }
+      if (shoot) {
+        shoot.life += dt;
+        const k = shoot.life / shoot.dur;
+        if (k >= 1) shoot = null;
+        else {
+          const hx = shoot.x + shoot.vx * shoot.life, hy = shoot.y + shoot.vy * shoot.life;
+          const tl = 0.16, tx = hx - shoot.vx * tl, ty = hy - shoot.vy * tl;
+          const al = Math.sin(k * Math.PI);
+          const gr = ctx.createLinearGradient(hx, hy, tx, ty);
+          gr.addColorStop(0, 'rgba(255,255,255,' + al.toFixed(2) + ')'); gr.addColorStop(0.3, 'rgba(200,220,255,' + (al * 0.4).toFixed(2) + ')'); gr.addColorStop(1, 'rgba(200,220,255,0)');
+          ctx.strokeStyle = gr; ctx.lineCap = 'round';
+          ctx.lineWidth = 1.4; ctx.beginPath(); ctx.moveTo(hx, hy); ctx.lineTo(tx, ty); ctx.stroke();
+          ctx.globalAlpha = al; ctx.drawImage(SPR[0], hx - 5, hy - 5, 10, 10); ctx.globalAlpha = 1;
+        }
+      }
+      ctx.globalCompositeOperation = 'source-over';
+      const mr = Math.max(11, Math.min(W, H) * 0.06);
+      this._saverMoon(ctx, W - mr * 2.6, mr * 2.8, mr, S);
+      ctx.drawImage(B.land, 0, 0, W, H);
+      this._saverGrain(ctx, W, H, 0.03);
+    });
+  }
+
+  // ── Word Clock: the time spelled out in a grid of letters, to the nearest five minutes, with a dot for each minute in between ──
+  _saverWordClock(stage) {
+    const ROWS = ['ITLISASTIME', 'ACQUARTERDC', 'TWENTYFIVEX', 'HALFSTENFTO', 'PASTERUNINE', 'ONESIXTHREE', 'FOURFIVETWO', 'EIGHTELEVEN', 'SEVENTWELVE', 'TENSEOCLOCK'];
+    const W = { it: [0, 0, 2], is: [0, 3, 2], a: [1, 0, 1], quarter: [1, 2, 7], twenty: [2, 0, 6], fivem: [2, 6, 4], half: [3, 0, 4], tenm: [3, 5, 3], to: [3, 9, 2], past: [4, 0, 4],
+      h9: [4, 7, 4], h1: [5, 0, 3], h6: [5, 3, 3], h3: [5, 6, 5], h4: [6, 0, 4], h5: [6, 4, 4], h2: [6, 8, 3], h8: [7, 0, 5], h11: [7, 5, 6], h7: [8, 0, 5], h12: [8, 5, 6], h10: [9, 0, 3], oclock: [9, 5, 6] };
+    const box = document.createElement('div');
+    box.className = 'cs-wordbg';
+    const grid = document.createElement('div');
+    grid.className = 'cs-word';
+    grid.innerHTML = ROWS.map(r => '<div class="r">' + [...r].map(c => '<span>' + c + '</span>').join('') + '</div>').join('')
+      ;
+    const v = document.createElement('div'); v.className = 'cs-vignette';
+    box.appendChild(grid);
+    stage.appendChild(box); stage.appendChild(v);
+    const cells = [...grid.querySelectorAll('.r')].map(r => [...r.children]);
+    // the accent follows the album's colour when there is one, otherwise a warm white
+    const tint = () => {
+      const h = this._saverArtHues?.();
+      grid.style.setProperty('--cs-wc', h ? 'hsl(' + Math.round(h[0]) + ', 70%, 82%)' : '#fff6e6');
+    };
+    let lastKey = '';
+    const draw = () => {
+      if (!grid.isConnected) { clearInterval(this._saverFxT); return; }
+      const now = new Date(), m = now.getMinutes();
+      let h = now.getHours();
+      const m5 = Math.floor(m / 5) * 5;
+      const words = ['it', 'is'];
+      if (m5 > 30) h++;
+      const hw = 'h' + (((h % 12) + 11) % 12 + 1);
+      ({ 0: ['oclock'], 5: ['fivem', 'past'], 10: ['tenm', 'past'], 15: ['a', 'quarter', 'past'], 20: ['twenty', 'past'], 25: ['twenty', 'fivem', 'past'], 30: ['half', 'past'],
+        35: ['twenty', 'fivem', 'to'], 40: ['twenty', 'to'], 45: ['a', 'quarter', 'to'], 50: ['tenm', 'to'], 55: ['fivem', 'to'] })[m5].forEach(w => words.push(w));
+      words.push(hw);
+      const key = words.join();
+      if (key === lastKey) return;
+      lastKey = key;
+      tint();
+      const on = new Set();
+      words.forEach(w => { const [r, s, l] = W[w]; for (let i = 0; i < l; i++) on.add(r * 11 + s + i); });
+      cells.forEach((row, r) => row.forEach((c, i) => c.classList.toggle('on', on.has(r * 11 + i))));
+      // a small drift each minute, so nothing sits still on the screen for hours
+      grid.style.transform = 'translate(calc(-50% + ' + (Math.random() * 6 - 3).toFixed(1) + '%), calc(-50% + ' + (Math.random() * 6 - 3).toFixed(1) + '%))';
+    };
+    const fit = () => {
+      const el = this._saverEl;
+      if (!el || !grid.isConnected) return;
+      const s = Math.min(el.offsetWidth / 11, el.offsetHeight / 10.4) * 0.74;
+      grid.style.setProperty('--cs-wf', Math.max(9, s).toFixed(1) + 'px');
+    };
+    fit(); draw();
+    requestAnimationFrame(fit);
+    this._saverFxT = setInterval(() => { fit(); draw(); }, 2000);
+  }
+
+  // ── Fireplace: flames licking up in the dark, with sparks rising ──
+  _saverFireplace(stage) {
+    const box = document.createElement('div');
+    box.className = 'cs-firebg';
+    stage.appendChild(box);
+    // the flames are hundreds of soft glowing wisps, drawn on top of each other so the fire builds up
+    // white-hot at the base and cools through yellow and orange to red at the tips
+    const SPR = [[255, 252, 230], [255, 236, 160], [255, 208, 100], [255, 172, 60], [252, 132, 36], [238, 96, 24], [205, 62, 14], [150, 38, 8]].map(c => {
+      const cv = document.createElement('canvas'); cv.width = cv.height = 64;
+      const g = cv.getContext('2d'), gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+      gr.addColorStop(0, 'rgba(' + c + ',0.9)'); gr.addColorStop(0.3, 'rgba(' + c + ',0.5)'); gr.addColorStop(0.65, 'rgba(' + c + ',0.12)'); gr.addColorStop(1, 'rgba(' + c + ',0)');
+      g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+      return cv;
+    });
+    let B = null, flames = [], sparks = [];
+    // the fire's width (fw) and scale (M): over the square artwork these are 0.86 of the width and the height,
+    // as before; full screen keeps them in proportion to each other
+    const dimsOf = (W, H) => ({ fw: Math.min(W * 0.86, H * 1.3), M: Math.min(H, W * 1.15) });
+    const build = (W, H, S) => {
+      const { fw, M } = dimsOf(W, H);
+      // where flames start: along the bottom, most in the middle
+      const emit = [];
+      for (let x = W / 2 - fw / 2; x <= W / 2 + fw / 2; x += 2) { const c = 1 - Math.abs(x - W / 2) / (fw / 2); if (c > 0) emit.push({ x, y: H - M * (0.015 + 0.09 * Math.pow(c, 1.4)), c: Math.min(1, c * 1.4), front: false }); }
+      B = { emit, fw, M };
+      flames = []; sparks = [];
+    };
+    const drawFlames = (ctx, front, mult = 1) => {
+      for (const p of flames) {
+        if (p.front !== front) continue;
+        const k = p.life / p.max;
+        const sz = p.s * (k < 0.15 ? 0.55 + k / 0.15 * 0.45 : 1 - (k - 0.15) * 0.85);
+        const ci = Math.min(7, Math.floor(k * 7.5 + p.heat));
+        const a = (k < 0.08 ? k / 0.08 : 1) * Math.pow(1 - k, 1.25) * p.a;
+        if (a < 0.01 || sz < 1) continue;
+        ctx.globalAlpha = a * mult;
+        ctx.drawImage(SPR[ci], p.x - sz / 2, p.y - sz * 0.95, sz, sz * 1.7);
+      }
+      ctx.globalAlpha = 1;
+    };
+    this._saverCanvasLoop(box, (ctx, t, dt, W, H, resized, S) => {
+      if (resized || !B) build(W, H, S);
+      const flick = 0.82 + 0.1 * Math.sin(t * 7.1) * Math.sin(t * 2.9) + 0.08 * Math.sin(t * 13.7 + Math.sin(t * 3));
+      // new flames: more where the fire is strongest, gathering into tongues that wander along the logs
+      const want = 720 * dt;
+      for (let i = 0; i < Math.floor(want) + (Math.random() < want % 1 ? 1 : 0); i++) {
+        const e = B.emit[(Math.random() * B.emit.length) | 0];
+        if (!e) break;
+        const tongue = 0.45 + 0.55 * Math.max(0, Math.sin(e.x * 0.045 + t * 1.6) * 0.6 + Math.sin(e.x * 0.11 - t * 2.3) * 0.4 + 0.3);
+        if (Math.random() > e.c * tongue) continue;
+        flames.push({ x: e.x + (Math.random() - 0.5) * 6, y: e.y + 3 + Math.random() * 3, vx: (Math.random() - 0.5) * 12, vy: -B.M * (0.17 + Math.random() * 0.22) * (0.7 + e.c * 0.5),
+          life: 0, max: (0.45 + Math.random() * 0.75) * (0.55 + e.c * 0.6) * (0.7 + tongue * 0.5), s: B.M * (0.06 + Math.random() * 0.06) * (0.7 + e.c * 0.5),
+          a: 0.38 + Math.random() * 0.3, heat: Math.random() * 0.6, ph: Math.random() * 6.3, front: e.front });
+      }
+      flames = flames.filter(p => {
+        p.life += dt;
+        if (p.life >= p.max) return false;
+        p.x += (p.vx + Math.sin(t * 4.2 + p.ph + p.y * 0.05) * B.M * 0.035) * dt;
+        p.y += p.vy * dt; p.vy *= 1 + dt * 0.5;
+        p.x += (W / 2 - p.x) * dt * 0.06;
+        return true;
+      });
+      // darkness, warmed by the fire and breathing with it
+      ctx.fillStyle = '#040201'; ctx.fillRect(0, 0, W, H);
+      ctx.globalCompositeOperation = 'lighter';
+      const warm = ctx.createRadialGradient(W / 2, H * 0.8, 0, W / 2, H * 0.8, Math.max(W, H) * (0.7 + 0.05 * flick));
+      warm.addColorStop(0, 'rgba(150,50,10,' + (0.55 * flick).toFixed(3) + ')'); warm.addColorStop(0.45, 'rgba(70,20,5,' + (0.35 * flick).toFixed(3) + ')'); warm.addColorStop(1, 'rgba(20,5,0,0)');
+      ctx.fillStyle = warm; ctx.fillRect(0, 0, W, H);
+      // the flames
+      drawFlames(ctx, false);
+      // the bright glow at the base of the fire
+      ctx.globalCompositeOperation = 'lighter';
+      const cg = ctx.createRadialGradient(W / 2, H - B.M * 0.06, 0, W / 2, H - B.M * 0.06, B.fw * 0.44);
+      cg.addColorStop(0, 'rgba(255,100,20,' + (0.28 * flick).toFixed(3) + ')'); cg.addColorStop(1, 'rgba(255,60,0,0)');
+      ctx.fillStyle = cg; ctx.fillRect(0, 0, W, H);
+      // sparks rising and fading
+      const sk = this._saverEl?.classList.contains('cs-full') ? Math.max(1, B.M / 380) : 1;
+      if (sparks.length < 30 && Math.random() < dt * 5) sparks.push({ x: W / 2 + B.fw * (Math.random() - 0.5) * 0.42, y: H - B.M * 0.28, vx: (Math.random() - 0.5) * 20 * sk, vy: -(40 + Math.random() * 70) * sk, life: 0, max: 1 + Math.random() * 2.2, r: (0.5 + Math.random() * 0.9) * sk, ph: Math.random() * 6 });
+      sparks = sparks.filter(e => {
+        e.life += dt;
+        if (e.life > e.max) return false;
+        e.x += (e.vx + Math.sin(t * 2.5 + e.ph) * 16) * dt; e.y += e.vy * dt; e.vy *= 0.993;
+        const a = (1 - e.life / e.max) * (0.55 + 0.45 * Math.sin(t * 14 + e.ph));
+        ctx.fillStyle = 'rgba(255,' + (160 + Math.round(70 * (1 - e.life / e.max))) + ',70,' + a.toFixed(2) + ')';
+        ctx.beginPath(); ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2); ctx.fill();
+        return true;
+      });
+      ctx.globalCompositeOperation = 'source-over';
+      this._saverGrain(ctx, W, H, 0.025);
+    });
+  }
+
+  // ── Ocean: a rippling sea in perspective under a sky that follows Home Assistant's sun — dawn pink,
+  //    midday blue, dusk orange, deep blue at night — with the sun or moon's path of light on the water,
+  //    and clouds from the screensaver's weather entity ──
+  _saverOcean(stage) {
+    const box = document.createElement('div');
+    box.className = 'cs-oceanbg';
+    stage.appendChild(box);
+    const SPR = this._saverStarSprites();
+    // sky top, sky middle, horizon, far sea, near sea, sun, cloud lit, cloud shade
+    const P = {
+      night: ['#01030c', '#06102c', '#16264e', '#0c1a3a', '#01040b', '#eef2ff', '#3c4a74', '#0b1226'],
+      dawn:  ['#1b2152', '#6d5c92', '#f8b8a2', '#7c6f98', '#121833', '#ffe6c8', '#ffcdb8', '#5c4c7c'],
+      dusk:  ['#160f3a', '#73396c', '#ff9654', '#8b5262', '#140c1f', '#ffc06a', '#ffb877', '#5a2f52'],
+      day:   ['#1b5fb8', '#5a9bdc', '#f0dcc0', '#3d86c1', '#08355f', '#ffd98e', '#fff3e2', '#b8b8c8'],
+    };
+    const hex = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+    const mix = (a, b, k) => a.map((v, i) => hex(v).map((c, j) => Math.round(c + (hex(b[i])[j] - c) * k)));
+    const rgb = (c, a = 1) => 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + a + ')';
+    const sun = () => {
+      const s = this._hass?.states?.['sun.sun']?.attributes;
+      if (s && typeof s.elevation === 'number') return { el: s.elevation, rising: !!s.rising };
+      const now = new Date(), hr = now.getHours() + now.getMinutes() / 60;
+      return { el: 50 * Math.sin((hr - 6) / 12 * Math.PI), rising: hr < 12 };
+    };
+    const palette = () => {
+      const { el, rising } = sun();
+      const tw = rising ? P.dawn : P.dusk;
+      let c, dark = 0;
+      if (el <= -10) { c = mix(P.night, P.night, 0); dark = 1; }
+      else if (el < 0) { c = mix(P.night, tw, (el + 10) / 10); dark = -el / 10; }
+      else if (el < 14) c = mix(tw, P.day, el / 14);
+      else c = mix(P.day, P.day, 0);
+      // how cloudy: from the weather entity chosen for the screensaver, a few wisps otherwise
+      const w = this._hass?.states?.[(this._config?.screensaver_weather || '').trim()]?.state || '';
+      const cloud = ({ sunny: 0.15, 'clear-night': 0.1, partlycloudy: 0.5, cloudy: 0.85, fog: 0.9, rainy: 0.9, pouring: 1, snowy: 0.9, 'snowy-rainy': 0.9, lightning: 1, 'lightning-rainy': 1, hail: 1, windy: 0.45, 'windy-variant': 0.6 })[w] ?? 0.35;
+      return { c, el, rising, dark, cloud };
+    };
+    let pal = palette(), palAt = -99, B = null;
+    // the water's ripples: one tile, worked out once, that repeats seamlessly; light on the crests, shade in the troughs
+    const TW = 256, TH = 128;
+    const tex = (() => {
+      const comps = Array.from({ length: 16 }, (_, i) => ({ kx: Math.round((Math.random() - 0.5) * (i < 4 ? 4 : i < 10 ? 10 : 18)), ky: (i < 4 ? 3 : i < 10 ? 6 : 12) + Math.floor(Math.random() * (i < 4 ? 4 : i < 10 ? 10 : 16)), a: i < 4 ? 1 : i < 10 ? 0.5 : 0.25, p: Math.random() * 6.3 }));
+      const hv = new Float32Array(TW * TH);
+      let mx = 0;
+      for (let y = 0; y < TH; y++) for (let x = 0; x < TW; x++) {
+        let v = 0;
+        for (const c of comps) v += c.a * Math.sin(Math.PI * 2 * (c.kx * x / TW + c.ky * y / TH) + c.p);
+        hv[y * TW + x] = v; mx = Math.max(mx, Math.abs(v));
+      }
+      const mk = (fn) => {
+        const c = document.createElement('canvas'); c.width = TW; c.height = TH;
+        const g = c.getContext('2d'), im = g.createImageData(TW, TH), d = im.data;
+        for (let i = 0; i < hv.length; i++) {
+          // the slope toward the viewer catches the light, so take the change from the row behind
+          const y = (i / TW) | 0, x = i % TW, up = hv[((y + TH - 1) % TH) * TW + x];
+          const [r, gg, b, a] = fn(hv[i] / mx, (hv[i] - up) / mx * 6);
+          d[i * 4] = r; d[i * 4 + 1] = gg; d[i * 4 + 2] = b; d[i * 4 + 3] = a;
+        }
+        g.putImageData(im, 0, 0);
+        return c;
+      };
+      const ss = (a, b, v) => { const t = Math.max(0, Math.min(1, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
+      return {
+        hi: mk((v, s) => [255, 255, 255, Math.round(255 * Math.min(1, ss(0.4, 1, v) * 0.55 + ss(0.3, 1, -s) * 0.8))]),
+        lo: mk((v, s) => [0, 8, 24, Math.round(255 * Math.min(1, ss(0.1, 0.95, -v) * 0.7 + ss(0.2, 0.9, s) * 0.35))]),
+      };
+    })();
+    const build = (W, H, S, hy) => {
+      // rows of water from the horizon down: thin far away, thicker close up
+      const rows = [];
+      let y = hy;
+      while (y < H) { const d = (y - hy) / (H - hy); const ny = Math.min(H, Math.round((y + 0.6 + d * 1.9) * S) / S); if (ny <= y) { y += 1 / S; continue; } rows.push([y, ny - y]); y = ny; }
+      // clouds: soft banks low in the sky
+      const clouds = Array.from({ length: 7 }, (_, i) => ({ x: Math.random() * W * 1.4 - W * 0.2, y: hy * (0.15 + Math.random() * 0.6), w: W * (0.45 + Math.random() * 0.5),
+        puffs: Array.from({ length: 10 }, () => ({ dx: (Math.random() - 0.5) * 0.9, dy: (Math.random() - 0.5) * 0.25, r: 0.22 + Math.random() * 0.24 })), sp: 1.5 + Math.random() * 3, rank: i / 9 }));
+      const stars = Array.from({ length: Math.round(W * hy / 450) }, () => ({ x: Math.random() * W, y: Math.random() * hy * 0.92, s: Math.random() < 0.06 ? 5 + Math.random() * 5 : 0.4 + Math.random() * 0.7, ph: Math.random() * 6, tw: 0.6 + Math.random() * 2 }));
+      B = { rows, clouds, stars, hiP: null, loP: null };
+    };
+    // ── Life on the ocean: one thing at a time, now and then — a boat crossing the horizon, dolphins leaping
+    //    (alone or in a pod), seabirds gliding over, or a whale far out ──
+    const life = { ev: null, bird: null, next: 2 + Math.random() * 3, nextBird: 3 + Math.random() * 3, splashes: [], caps: [], force: null };
+    this._saverOceanLife = life;
+    const navSpr = (col) => { const c = document.createElement('canvas'); c.width = c.height = 32; const g = c.getContext('2d'), gr = g.createRadialGradient(16, 16, 0, 16, 16, 16); gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.15, 'rgba(' + col + ',1)'); gr.addColorStop(0.4, 'rgba(' + col + ',0.3)'); gr.addColorStop(1, 'rgba(' + col + ',0)'); g.fillStyle = gr; g.fillRect(0, 0, 32, 32); return c; };
+    const NAV = { w: navSpr('255,250,235'), r: navSpr('255,60,50'), g: navSpr('70,255,120') };
+    const rr = (a, b) => a + Math.random() * (b - a);
+    const startEvent = (W, H, hy) => {
+      const night = pal.dark > 0.6;
+      const pick = [['boat', 0.4], ['dolphins', 0.42], ['whale', 0.18]];
+      let r = Math.random() * pick.reduce((s, p) => s + p[1], 0), kind = 'boat';
+      for (const [k, w] of pick) { if ((r -= w) <= 0) { kind = k; break; } }
+      if (life.force) { kind = life.force; life.force = null; }
+      const dir = Math.random() < 0.5 ? 1 : -1;
+      if (kind === 'boat') {
+        const type = ['sail', 'sail', 'yacht', 'ship', 'ferry'][Math.floor(Math.random() * 5)];
+        const u = H * (type === 'ship' || type === 'ferry' ? rr(0.009, 0.012) : rr(0.011, 0.014));
+        const dur = rr(32, 50) * (type === 'sail' ? 1.25 : 1);
+        return { kind, type, u, dir, t: 0, dur, x0: dir > 0 ? -u * 8 : W + u * 8, x1: dir > 0 ? W + u * 8 : -u * 8,
+          cont: Array.from({ length: 9 }, () => ['#b23a2c', '#2f5d8a', '#c98b2a', '#3c7a4a', '#7a7f86', '#9a3f6a'][Math.floor(Math.random() * 6)]) };
+      }
+      if (kind === 'dolphins') {
+        const n = Math.random() < 0.4 ? 1 : 3 + Math.floor(Math.random() * 4);
+        const d = rr(0.2, 0.4), len = W * 0.05 * (d / 0.35);
+        const yW = hy + (H - hy) * d, speed = len * rr(1.6, 2.2) * dir;
+        const x0 = dir > 0 ? rr(-0.05, 0.3) * W : rr(0.7, 1.05) * W;
+        const pod = Array.from({ length: n }, (_, i) => {
+          const leaps = [];
+          let tt = i * rr(0.15, 0.6);
+          const k = 2 + Math.floor(Math.random() * 3);
+          for (let j = 0; j < k; j++) { const ld = rr(0.85, 1.15); leaps.push([tt, ld]); tt += ld + rr(1.1, 2.2); }
+          return { dx: (i ? (Math.random() - 0.5) * len * 3 : 0) - i * len * 0.4 * dir, dy: (Math.random() - 0.5) * (H - hy) * 0.03, sc: rr(0.85, 1.1), leaps, end: tt };
+        });
+        return { kind, d, len, yW, speed, x0, pod, t: 0, dur: Math.max(...pod.map(p => p.end)) + 1.5, dir };
+      }
+      if (kind === 'birds') {
+        const sc = W / 400 * 1.25;   // bird size, in step with the screen
+        const x0 = dir > 0 ? -70 * sc : W + 70 * sc;
+        if (Math.random() < 0.3) {
+          // a distant flock: lots of tiny birds moving together, the group slowly changing shape
+          const n = 15 + Math.floor(Math.random() * 16), R = W * rr(0.05, 0.08);
+          return { kind, style: 'flock', dir, t: 0, x: x0, y: hy * rr(0.45, 0.8), vx: W * rr(0.035, 0.05) * dir, R,
+            birds: Array.from({ length: n }, () => ({ a: Math.random() * 6.3, r: Math.sqrt(Math.random()), f1: rr(0.15, 0.35), f2: rr(0.1, 0.3), p1: Math.random() * 6.3, p2: Math.random() * 6.3, flapPh: Math.random() * 6, flapSpd: rr(0.13, 0.19), size: rr(1.2, 1.6) * sc })) };
+        }
+        const depth = 0.75 + Math.random() * 0.5, speed = (0.7 + Math.random() * 0.55) * dir * depth * 30 * sc;
+        const startY = hy * (0.42 + Math.random() * 0.42);
+        const count = 1 + Math.floor(Math.random() * 10), formation = Math.floor(Math.random() * 3);
+        const birds = Array.from({ length: count }, (_, i) => {
+          let offX = 0, offY = 0;
+          if (count > 1) {
+            if (formation === 0) { const row = Math.floor((i + 1) / 2), side = i % 2 === 0 ? 1 : -1; offX = -15 * row * dir; offY = 8 * row * side; }
+            else if (formation === 1) { offX = -18 * i * dir; offY = 10 * i * (Math.random() > 0.5 ? 1 : -1); }
+            else { offX = (Math.random() - 0.5) * 60 * dir; offY = (Math.random() - 0.5) * 45; }
+          }
+          return { x: x0 + offX * depth * sc, y: startY + offY * depth * sc, vx: speed, vy: (Math.random() - 0.5) * 0.06 * 30 * sc, flapPh: i + Math.random() * 2, flapSpd: 0.13 + Math.random() * 0.06, size: (2.0 + Math.random() * 0.7) * depth * sc };
+        });
+        return { kind, style: 'v', dir, t: 0, birds };
+      }
+      return { kind: 'whale', x: rr(0.2, 0.8) * W, d: rr(0.08, 0.15), t: 0, dur: 11, dir };
+    };
+    const seaY = (H, hy, d) => hy + (H - hy) * d;
+    // a splash: droplets thrown up and a ring of ripples spreading
+    const splash = (x, y, size) => {
+      const drops = Array.from({ length: 10 }, () => ({ x, y, vx: (Math.random() - 0.5) * size * 3, vy: -rr(1.5, 3.5) * size, r: rr(0.35, 0.7) * Math.max(0.45, size * 0.05) }));
+      life.splashes.push({ x, y, size, t: 0, drops });
+    };
+    const drawSplashes = (ctx, dt, lightC) => {
+      life.splashes = life.splashes.filter(s => {
+        s.t += dt;
+        if (s.t > 2.2) return false;
+        const k = s.t / 2.2;
+        ctx.strokeStyle = rgb(lightC, (0.4 * (1 - k)).toFixed(3)); ctx.lineWidth = 0.6;
+        ctx.beginPath(); ctx.ellipse(s.x, s.y, s.size * (0.4 + k * 2.2), s.size * (0.08 + k * 0.35), 0, 0, Math.PI * 2); ctx.stroke();
+        ctx.fillStyle = rgb(lightC, Math.max(0, 0.85 - k * 2).toFixed(3));
+        for (const p of s.drops) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += s.size * 9 * dt; if (p.y < s.y) { ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill(); } }
+        return true;
+      });
+    };
+    // a dolphin, side on, facing +x, nose at +len/2
+    const dolphin = (ctx, len, light) => {
+      const L = len;
+      const top = [Math.round(40 * light + 8), Math.round(52 * light + 10), Math.round(64 * light + 14)];
+      const belly = [Math.round(150 * light + 20), Math.round(160 * light + 22), Math.round(168 * light + 26)];
+      const g = ctx.createLinearGradient(0, -L * 0.12, 0, L * 0.09);
+      g.addColorStop(0, rgb(top)); g.addColorStop(0.55, rgb(top.map((c, i) => Math.round(c * 0.6 + belly[i] * 0.4)))); g.addColorStop(1, rgb(belly));
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.moveTo(0.5 * L, 0.012 * L);
+      ctx.quadraticCurveTo(0.44 * L, -0.02 * L, 0.36 * L, -0.05 * L);
+      ctx.quadraticCurveTo(0.31 * L, -0.1 * L, 0.2 * L, -0.11 * L);
+      ctx.bezierCurveTo(0.02 * L, -0.13 * L, -0.22 * L, -0.09 * L, -0.38 * L, -0.03 * L);
+      ctx.lineTo(-0.45 * L, -0.012 * L);
+      ctx.quadraticCurveTo(-0.5 * L, -0.06 * L, -0.57 * L, -0.085 * L);
+      ctx.quadraticCurveTo(-0.53 * L, -0.02 * L, -0.55 * L, 0.0);
+      ctx.quadraticCurveTo(-0.53 * L, 0.02 * L, -0.57 * L, 0.085 * L);
+      ctx.quadraticCurveTo(-0.5 * L, 0.06 * L, -0.45 * L, 0.012 * L);
+      ctx.bezierCurveTo(-0.22 * L, 0.07 * L, 0.05 * L, 0.095 * L, 0.26 * L, 0.06 * L);
+      ctx.quadraticCurveTo(0.4 * L, 0.04 * L, 0.5 * L, 0.012 * L);
+      ctx.closePath(); ctx.fill();
+      // dorsal fin and flipper
+      ctx.fillStyle = rgb(top);
+      ctx.beginPath(); ctx.moveTo(0.06 * L, -0.115 * L); ctx.quadraticCurveTo(-0.02 * L, -0.2 * L, -0.12 * L, -0.235 * L); ctx.quadraticCurveTo(-0.08 * L, -0.16 * L, -0.12 * L, -0.105 * L); ctx.closePath(); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(0.22 * L, 0.05 * L); ctx.quadraticCurveTo(0.14 * L, 0.12 * L, 0.08 * L, 0.15 * L); ctx.quadraticCurveTo(0.12 * L, 0.08 * L, 0.12 * L, 0.06 * L); ctx.closePath(); ctx.fill();
+      if (L < 18) return;
+      // a wet highlight along the back
+      ctx.strokeStyle = 'rgba(255,255,255,' + (0.35 * light).toFixed(2) + ')'; ctx.lineWidth = Math.max(0.5, L * 0.012);
+      ctx.beginPath(); ctx.moveTo(0.32 * L, -0.075 * L); ctx.bezierCurveTo(0.15 * L, -0.11 * L, -0.1 * L, -0.1 * L, -0.3 * L, -0.05 * L); ctx.stroke();
+      // eye
+      ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.beginPath(); ctx.arc(0.36 * L, -0.025 * L, Math.max(0.35, L * 0.008), 0, Math.PI * 2); ctx.fill();
+    };
+    const drawBoat = (ctx, e, x, y, night, tint) => {
+      const u = e.u, d = e.dir;
+      const hullC = night ? '#05070c' : tint(e.type === 'sail' ? '#1e2a3a' : '#f2f2f0'), dark = night ? '#03050a' : tint('#1c232c');
+      ctx.save(); ctx.translate(x, y); ctx.scale(d, 1);
+      if (e.type === 'sail') {
+        // hull, mast, mainsail and jib, leaning a touch with the wind
+        ctx.fillStyle = hullC; ctx.beginPath(); ctx.moveTo(-u * 0.9, -u * 0.12); ctx.lineTo(u * 1.0, -u * 0.12); ctx.lineTo(u * 0.7, u * 0.12); ctx.lineTo(-u * 0.75, u * 0.12); ctx.closePath(); ctx.fill();
+        ctx.strokeStyle = dark; ctx.lineWidth = Math.max(0.4, u * 0.04); ctx.beginPath(); ctx.moveTo(0, -u * 0.12); ctx.lineTo(u * 0.05, -u * 1.5); ctx.stroke();
+        const sail = night ? '#0a0d14' : tint('#fbfaf6');
+        ctx.fillStyle = sail; ctx.beginPath(); ctx.moveTo(u * 0.02, -u * 1.45); ctx.quadraticCurveTo(-u * 0.55, -u * 0.8, -u * 0.72, -u * 0.2); ctx.lineTo(-u * 0.02, -u * 0.2); ctx.closePath(); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(u * 0.08, -u * 1.35); ctx.quadraticCurveTo(u * 0.55, -u * 0.75, u * 0.85, -u * 0.18); ctx.lineTo(u * 0.1, -u * 0.18); ctx.closePath(); ctx.fill();
+        if (!night) { ctx.fillStyle = 'rgba(0,0,0,0.12)'; ctx.beginPath(); ctx.moveTo(u * 0.02, -u * 1.45); ctx.lineTo(-u * 0.02, -u * 0.2); ctx.lineTo(-u * 0.2, -u * 0.2); ctx.closePath(); ctx.fill(); }
+      } else if (e.type === 'yacht') {
+        ctx.fillStyle = hullC; ctx.beginPath(); ctx.moveTo(-u * 1.4, -u * 0.2); ctx.lineTo(u * 1.6, -u * 0.2); ctx.lineTo(u * 1.1, u * 0.14); ctx.lineTo(-u * 1.3, u * 0.14); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = night ? '#070a10' : tint('#e8e8e6'); ctx.beginPath(); ctx.moveTo(-u * 0.9, -u * 0.2); ctx.lineTo(u * 0.7, -u * 0.2); ctx.lineTo(u * 0.4, -u * 0.55); ctx.lineTo(-u * 0.7, -u * 0.55); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = night ? '#070a10' : tint('#dcdcda'); ctx.fillRect(-u * 0.45, -u * 0.8, u * 0.75, u * 0.25);
+        if (!night) { ctx.fillStyle = tint('#26323f'); ctx.fillRect(-u * 0.75, -u * 0.47, u * 1.3, u * 0.12); ctx.fillRect(-u * 0.38, -u * 0.74, u * 0.6, u * 0.1); }
+      } else if (e.type === 'ship') {
+        // a container ship: a long dark hull, stacks of containers and the bridge at the back
+        ctx.fillStyle = night ? '#04060b' : tint('#2b2f36'); ctx.beginPath(); ctx.moveTo(-u * 3.6, -u * 0.3); ctx.lineTo(u * 3.9, -u * 0.3); ctx.lineTo(u * 3.5, u * 0.22); ctx.lineTo(-u * 3.5, u * 0.22); ctx.closePath(); ctx.fill();
+        if (!night) { ctx.fillStyle = tint('#8a2a22'); ctx.fillRect(-u * 3.5, u * 0.08, u * 7, u * 0.14); }
+        for (let i = 0; i < 9; i++) { ctx.fillStyle = night ? '#05070c' : tint(e.cont[i]); const hgt = u * (0.3 + ((i * 37) % 3) * 0.12); ctx.fillRect(-u * 2.4 + i * u * 0.62, -u * 0.3 - hgt, u * 0.58, hgt); }
+        ctx.fillStyle = night ? '#05070c' : tint('#ecebe6'); ctx.fillRect(-u * 3.3, -u * 1.05, u * 0.7, u * 0.75);
+        ctx.fillStyle = night ? '#05070c' : tint('#ecebe6'); ctx.fillRect(-u * 3.45, -u * 1.2, u * 1.0, u * 0.18);
+        ctx.fillStyle = night ? '#05070c' : tint('#2b2f36'); ctx.fillRect(-u * 3.1, -u * 1.45, u * 0.22, u * 0.3);
+      } else {
+        // a ferry: white, with rows of windows and a funnel
+        ctx.fillStyle = night ? '#04060b' : tint('#1f3c63'); ctx.beginPath(); ctx.moveTo(-u * 3, -u * 0.2); ctx.lineTo(u * 3.2, -u * 0.2); ctx.lineTo(u * 2.8, u * 0.2); ctx.lineTo(-u * 2.9, u * 0.2); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = night ? '#05070c' : tint('#f4f4f2'); ctx.beginPath(); ctx.moveTo(-u * 2.8, -u * 0.2); ctx.lineTo(u * 2.9, -u * 0.2); ctx.lineTo(u * 2.4, -u * 0.95); ctx.lineTo(-u * 2.5, -u * 0.95); ctx.closePath(); ctx.fill();
+        ctx.fillRect(-u * 1.6, -u * 1.3, u * 2.6, u * 0.36);
+        if (!night) { ctx.fillStyle = tint('#2a3746'); ctx.fillRect(-u * 2.5, -u * 0.6, u * 4.9, u * 0.12); ctx.fillRect(-u * 2.3, -u * 0.85, u * 4.4, u * 0.1); ctx.fillRect(-u * 1.4, -u * 1.2, u * 2.2, u * 0.1); }
+        ctx.fillStyle = night ? '#05070c' : tint('#c23b2e'); ctx.fillRect(-u * 0.9, -u * 1.75, u * 0.45, u * 0.45);
+      }
+      ctx.restore();
+      if (night) {
+        // navigation lights: white on the mast, red and green at the sides, warm lit windows
+        const side = d > 0 ? NAV.g : NAV.r;   // the side facing us: starboard (green) heading right, port (red) heading left
+        const L = (lx, ly, c, s) => { ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = 0.95; ctx.drawImage(c === 0 ? NAV.w : side, x + lx * d - s / 2, y + ly - s / 2, s, s); ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over'; };
+        const s = Math.max(3, u * 1.1);
+        if (e.type === 'sail') { L(u * 0.05, -u * 1.5, 0, s * 0.8); L(u * 0.6, -u * 0.05, 3, s * 0.6); }
+        else if (e.type === 'yacht') { L(0, -u * 0.85, 0, s * 0.8); L(u * 1.2, -u * 0.1, 3, s * 0.6); ctx.fillStyle = 'rgba(255,205,130,0.85)'; for (let i = 0; i < 4; i++) ctx.fillRect(x + d * (-u * 0.7 + i * u * 0.32), y - u * 0.45, u * 0.18, u * 0.08); }
+        else { L(e.type === 'ship' ? -u * 3 : 0, -u * 1.6, 0, s); L(u * 3.2, -u * 0.6, 0, s * 0.8); L(u * 2.5, -u * 0.1, 3, s * 0.6);
+          ctx.fillStyle = 'rgba(255,205,130,0.85)';
+          const rows = e.type === 'ferry' ? [[-u * 0.62, 14], [-u * 0.87, 12]] : [[-u * 0.95, 3]];
+          rows.forEach(([ry, n]) => { for (let i = 0; i < n; i++) ctx.fillRect(x + d * ((e.type === 'ferry' ? -u * 2.3 : -u * 3.2) + i * u * (e.type === 'ferry' ? 0.33 : 0.2)), y + ry, u * 0.12, u * 0.08); }); }
+      }
+    };
+    const lifeDraw = (ctx, t, dt, W, H, S, hy, day, sunC, hor, bx) => {
+      // the main visitors (a boat, dolphins or a whale) one at a time; seabirds come and go on their own
+      life.next -= dt; life.nextBird -= dt;
+      if (!life.ev && life.next <= 0) life.ev = startEvent(W, H, hy);
+      if (!life.bird && life.nextBird <= 0 && pal.dark < 0.6) { life.force = 'birds'; life.bird = startEvent(W, H, hy); }
+      const night = pal.dark > 0.6;
+      const tint = (hex) => { const c = hex.length === 7 ? [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16)) : [128, 128, 128]; const k = 0.15; const lt = day ? 1 : 0.55; return rgb(c.map((v, i) => Math.round((v * (1 - k) + hor[i] * k) * lt))); };
+      const lightC = day ? [255, 255, 255] : [200, 210, 235];
+      for (const e of [life.ev, life.bird]) {
+        if (!e) continue;
+        e.t += dt;
+        if (e.kind === 'boat') {
+          const k = e.t / e.dur, x = e.x0 + (e.x1 - e.x0) * k, y = hy + 0.8 + Math.sin(t * 1.3) * 0.25;
+          // its reflection, broken by the water, then the boat
+          ctx.save(); ctx.beginPath(); ctx.rect(0, y, W, e.u * 3); ctx.clip();
+          ctx.globalAlpha = night ? 0.5 : 0.28;
+          for (let i = 0; i < 6; i++) { ctx.save(); ctx.beginPath(); ctx.rect(0, y + i * e.u * 0.25, W, e.u * 0.25); ctx.clip(); ctx.translate(Math.sin(t * 3 + i) * e.u * 0.12, 2 * y); ctx.scale(1, -1); drawBoat(ctx, e, x, y, night, tint); ctx.restore(); }
+          ctx.restore();
+          drawBoat(ctx, e, x, y, night, tint);
+          if (k >= 1) e.done = true;
+        } else if (e.kind === 'dolphins') {
+          const light = day ? 1 : 0.4;
+          for (const p of e.pod) {
+            const wy = e.yW + p.dy;
+            for (const [st, ld] of p.leaps) {
+              const lt = e.t - st;
+              const x = e.x0 + p.dx + e.speed * (e.t);
+              if (lt >= 0 && lt <= ld) {
+                const q = lt / ld, L = e.len * p.sc;
+                if (!p['s' + st]) { p['s' + st] = 1; splash(x - L * 0.3 * e.dir, wy, L * 0.35); }
+                if (q > 0.88 && !p['e' + st]) { p['e' + st] = 1; splash(x + L * 0.25 * e.dir, wy, L * 0.4); }
+                const hgt = Math.sin(Math.PI * q) * L * 0.75, ang = -Math.cos(Math.PI * q) * 0.75;
+                ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, wy + 0.5); ctx.clip();
+                ctx.translate(x, wy - hgt + L * 0.12); ctx.scale(e.dir, 1); ctx.rotate(ang);
+                dolphin(ctx, L, light);
+                ctx.restore();
+              }
+            }
+          }
+          if (e.t >= e.dur) e.done = true;
+        } else if (e.kind === 'birds') {
+          // the birds: two strokes meeting at the body, wings beating in bursts
+          ctx.strokeStyle = day ? 'rgba(40,45,52,0.80)' : 'rgba(200,210,220,0.65)'; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+          const step = dt * 30;   // the birds move a little each frame, paced for 30 frames a second
+          const drawBird = (x, y, b, dir) => {
+            b.flapPh += b.flapSpd * step;
+            const env = Math.max(0, Math.sin(b.flapPh * 0.38)), wing = Math.sin(b.flapPh) * b.size * env;
+            ctx.lineWidth = Math.max(0.8, b.size * 0.45);
+            ctx.beginPath(); ctx.moveTo(x - b.size * dir, y + wing - b.size / 2.2); ctx.lineTo(x, y); ctx.lineTo(x - b.size * dir, y + wing + b.size / 2.2); ctx.stroke();
+          };
+          if (e.style === 'flock') {
+            e.x += e.vx * dt;
+            for (const b of e.birds) {
+              // each bird wanders around its place in the flock, so the group keeps changing shape
+              const a = b.a + Math.sin(t * b.f1 + b.p1) * 0.8, r = e.R * (0.35 + b.r * 0.65) * (0.8 + 0.3 * Math.sin(t * b.f2 + b.p2));
+              drawBird(e.x + Math.cos(a) * r * 1.6, e.y + Math.sin(a) * r * 0.55, b, e.dir);
+            }
+            if ((e.dir > 0 && e.x - e.R * 2 > W) || (e.dir < 0 && e.x + e.R * 2 < 0)) e.done = true;
+          } else {
+            let gone = true;
+            for (const b of e.birds) {
+              b.x += b.vx * dt; b.y += b.vy * dt;
+              drawBird(b.x, b.y, b, e.dir);
+              if (!((e.dir > 0 && b.x > W + 80) || (e.dir < 0 && b.x < -80))) gone = false;
+            }
+            if (gone) e.done = true;
+          }
+          ctx.lineCap = 'butt'; ctx.lineJoin = 'miter';
+        } else if (e.kind === 'whale') {
+          const y = seaY(H, hy, e.d), sz = W * 0.038 * (e.d / 0.12), light = day ? 1 : 0.45;
+          // first a misty spout, then the back rolling over, then the tail lifting and slipping under
+          if (e.t < 3.2) {
+            const k = e.t / 3.2, h = sz * 1.1 * Math.min(1, k * 3);
+            const g = ctx.createRadialGradient(e.x, y - h * 0.6, 0, e.x, y - h * 0.6, sz * 0.5 * (0.6 + k));
+            g.addColorStop(0, rgb(lightC, (0.55 * (1 - k)).toFixed(3))); g.addColorStop(1, rgb(lightC, 0));
+            ctx.fillStyle = g; ctx.save(); ctx.translate(e.x, y - h * 0.6); ctx.scale(0.7, 1.3); ctx.translate(-e.x, -(y - h * 0.6)); ctx.beginPath(); ctx.arc(e.x, y - h * 0.6, sz * 0.5 * (0.6 + k), 0, Math.PI * 2); ctx.fill(); ctx.restore();
+          }
+          const col = rgb([Math.round(30 * light + 6), Math.round(36 * light + 8), Math.round(44 * light + 10)]);
+          ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, y + 0.3); ctx.clip(); ctx.fillStyle = col;
+          if (e.t > 2 && e.t < 6) {
+            const k = (e.t - 2) / 4, bxw = e.x + (k - 0.5) * sz * 1.2 * e.dir, hgt = Math.sin(Math.PI * k) * sz * 0.22;
+            ctx.beginPath(); ctx.ellipse(bxw, y, sz * 0.8, hgt + 0.3, 0, Math.PI, 0); ctx.fill();
+            if (k > 0.35 && k < 0.8) { ctx.beginPath(); ctx.moveTo(bxw - sz * 0.15 * e.dir, y - hgt); ctx.lineTo(bxw - sz * 0.25 * e.dir, y - hgt - sz * 0.1); ctx.lineTo(bxw - sz * 0.32 * e.dir, y - hgt + 1); ctx.closePath(); ctx.fill(); }
+          }
+          if (e.t > 6 && e.t < 10) {
+            const k = (e.t - 6) / 4, lift = Math.sin(Math.PI * k) * sz * 0.75, fx = e.x + sz * 0.6 * e.dir;
+            ctx.save(); ctx.translate(fx, y - lift); ctx.scale(e.dir, 1);
+            ctx.beginPath(); ctx.moveTo(-sz * 0.05, sz * 0.4); ctx.lineTo(-sz * 0.04, 0); ctx.quadraticCurveTo(-sz * 0.25, -sz * 0.05, -sz * 0.45, -sz * 0.18); ctx.quadraticCurveTo(-sz * 0.2, sz * 0.02, 0, 0.02 * sz); ctx.quadraticCurveTo(sz * 0.2, sz * 0.02, sz * 0.45, -sz * 0.18); ctx.quadraticCurveTo(sz * 0.25, -sz * 0.05, sz * 0.04, 0); ctx.lineTo(sz * 0.05, sz * 0.4); ctx.closePath(); ctx.fill();
+            // water streaming off it
+            ctx.fillStyle = rgb(lightC, (0.5 * Math.sin(Math.PI * k)).toFixed(3));
+            for (let i = 0; i < 6; i++) ctx.fillRect(-sz * 0.4 + i * sz * 0.16, -sz * 0.12 + ((t * 40 + i * 13) % (lift + 1)), 0.6, 1.2);
+            ctx.restore();
+            if (!e.sp1 && k > 0.85) { e.sp1 = 1; splash(fx, y, sz * 0.4); }
+          }
+          ctx.restore();
+          if (e.t >= e.dur) e.done = true;
+        }
+        if (e.done) { if (e === life.bird) { life.bird = null; life.nextBird = rr(4, 12); } else { life.ev = null; life.next = rr(5, 12); } }
+      }
+      drawSplashes(ctx, dt, lightC);
+    };
+    // the state of the sea, from the weather entity's wind (and its storms)
+    const seaState = () => {
+      const st = this._hass?.states?.[(this._config?.screensaver_weather || '').trim()];
+      const a = st?.attributes || {}, cond = st?.state || '';
+      let ws = Number(a.wind_speed);
+      const unit = String(a.wind_speed_unit || this._hass?.config?.unit_system?.wind_speed || 'km/h').toLowerCase();
+      if (!isFinite(ws)) ws = cond === 'windy' || cond === 'windy-variant' ? 30 : 12;
+      const kmh = unit.includes('mph') ? ws * 1.609 : unit.includes('m/s') ? ws * 3.6 : unit.includes('kn') ? ws * 1.852 : ws;
+      let chop = Math.max(0, Math.min(1, (kmh - 5) / 45));
+      if (/lightning|pouring|hail/.test(cond)) chop = Math.max(chop, 0.75);
+      return { chop, rain: /rain|pouring|lightning-rainy|hail/.test(cond), storm: /lightning/.test(cond) };
+    };
+    let sea = seaState();
+    // white caps when it's windy: small bright flecks breaking on the crests and fading
+    const capsDraw = (ctx, dt, W, H, hy, lightC) => {
+      const want = sea.chop > 0.4 ? (sea.chop - 0.4) * 90 : 0;
+      if (life.caps.length < want && Math.random() < dt * want * 0.8) {
+        const d = 0.05 + Math.pow(Math.random(), 0.7) * 0.95;
+        life.caps.push({ x: Math.random() * W, d, t: 0, max: rr(1.2, 2.6), w: rr(4, 12) * (d + 0.05) * (W / 400) * (0.6 + sea.chop), sk: (Math.random() - 0.5) * 0.15 });
+      }
+      life.caps = life.caps.filter(c => {
+        c.t += dt;
+        if (c.t > c.max) return false;
+        const k = c.t / c.max, y = seaY(H, hy, c.d), a = Math.sin(Math.PI * Math.min(1, k * 1.6)) * (1 - k) * 0.55;
+        ctx.fillStyle = rgb(lightC, a.toFixed(3));
+        ctx.beginPath(); ctx.ellipse(c.x, y, c.w * (0.7 + k * 0.8), Math.max(0.3, c.w * 0.06), c.sk, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = rgb(lightC, (a * 0.35).toFixed(3)); ctx.beginPath(); ctx.ellipse(c.x - c.w * 0.3, y + c.w * 0.08, c.w * (0.5 + k), Math.max(0.3, c.w * 0.05), c.sk, 0, Math.PI * 2); ctx.fill();
+        return true;
+      });
+    };
+    // distant weather: a grey shower hanging under a cloud far out, and silent lightning in a storm
+    const wx = { x: 0.15 + Math.random() * 0.7, flash: 0, nextFlash: 6 + Math.random() * 10 };
+    const weatherDraw = (ctx, t, dt, W, H, hy, day) => {
+      if (sea.rain) {
+        const cx = W * wx.x, cw = W * 0.28, top = hy * 0.62;
+        const cc = day ? [96, 102, 116] : [22, 26, 38];
+        ctx.save();
+        // the cloud
+        for (let i = 0; i < 7; i++) {
+          const px = cx + (i - 3) * cw * 0.16, py = top + Math.sin(i * 1.7) * hy * 0.025, r = cw * (0.2 + (i % 3) * 0.05);
+          const g = ctx.createRadialGradient(px, py, 0, px, py, r);
+          g.addColorStop(0, rgb(cc, 0.6)); g.addColorStop(1, rgb(cc, 0));
+          ctx.save(); ctx.translate(px, py); ctx.scale(1, 0.45); ctx.translate(-px, -py); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+        }
+        // the rain falling from it to the sea: a soft grey veil, densest where it meets the sea and fading at the sides
+        ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, hy); ctx.clip();
+        const vr = cw * 0.4;
+        ctx.translate(cx, hy); ctx.scale(1, (hy - top) / vr); 
+        const veil = ctx.createRadialGradient(0, 0, 0, 0, 0, vr);
+        veil.addColorStop(0, rgb(cc, 0.34)); veil.addColorStop(0.6, rgb(cc, 0.2)); veil.addColorStop(1, rgb(cc, 0));
+        ctx.fillStyle = veil; ctx.beginPath(); ctx.arc(0, 0, vr, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+        for (let i = 0; i < 5; i++) {
+          const sx = cx - cw * 0.25 + i * cw * 0.12 + Math.sin(t * 0.25 + i * 2.1) * cw * 0.03, sw = cw * (0.04 + (i % 2) * 0.03);
+          const g = ctx.createLinearGradient(sx - sw, 0, sx + sw, 0);
+          g.addColorStop(0, rgb(cc, 0)); g.addColorStop(0.5, rgb(cc, 0.12)); g.addColorStop(1, rgb(cc, 0));
+          ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(sx - sw, top + hy * 0.03); ctx.lineTo(sx + sw, top + hy * 0.03); ctx.lineTo(sx + sw - cw * 0.06, hy); ctx.lineTo(sx - sw - cw * 0.06, hy); ctx.closePath(); ctx.fill();
+        }
+        ctx.restore();
+      }
+      if (sea.storm) {
+        wx.nextFlash -= dt;
+        if (wx.nextFlash <= 0) { wx.flash = 1; wx.flash2 = Math.random() < 0.6 ? 0.25 : 0; wx.nextFlash = 8 + Math.random() * 22; wx.fx = sea.rain ? W * wx.x : W * (0.2 + Math.random() * 0.6); }
+        if (wx.flash > 0 || wx.flash2 > 0) {
+          if (wx.flash2 > 0 && wx.flash < 0.3) { wx.flash2 -= dt; if (wx.flash2 <= 0) wx.flash = 0.8; }
+          const a = Math.max(0, wx.flash) * (day ? 0.35 : 0.7);
+          ctx.save(); ctx.globalCompositeOperation = 'lighter';
+          const g = ctx.createRadialGradient(wx.fx, hy * 0.6, 0, wx.fx, hy * 0.6, W * 0.6);
+          g.addColorStop(0, 'rgba(200,210,255,' + a.toFixed(3) + ')'); g.addColorStop(1, 'rgba(200,210,255,0)');
+          ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+          ctx.restore();
+          wx.flash -= dt * 6;
+        }
+      }
+    };
+    const water = (ctx, t, W, H, S, hy, pattern, alphaFn, speed, scale, drift) => {
+      const K = (H - hy) / (0.55 * 1.6 * W / TW);
+      for (const [y, st] of B.rows) {
+        const d = (y + st / 2 - hy) / (H - hy);
+        const a = alphaFn(d);
+        if (a < 0.01) continue;
+        const z = 1 / (d + 0.035);
+        // ripples as deep as they are wide (a little flattened by the angle), so the water doesn't streak
+        const v = (((z * K / scale + t * speed) % TH) + TH) % TH;
+        const sx = (d + 0.035) * scale * W / TW * 1.6;
+        const off = W / 2 - sx * (TW / 2 + t * drift);
+        ctx.globalAlpha = a;
+        ctx.setTransform(S * sx, 0, 0, S * st, S * off, S * (y - v * st));
+        ctx.fillRect((-off) / sx - 1, v, W / sx + 2, 1);
+      }
+      ctx.setTransform(S, 0, 0, S, 0, 0); ctx.globalAlpha = 1;
+    };
+    this._saverCanvasLoop(box, (ctx, t, dt, W, H, resized, S) => {
+      const hy = Math.round(H * 0.55);
+      if (resized || !B) build(W, H, S, hy);
+      if (t - palAt > 30) { pal = palette(); sea = seaState(); palAt = t; }
+      if (!B.hiP) { B.hiP = ctx.createPattern(tex.hi, 'repeat'); B.loP = ctx.createPattern(tex.lo, 'repeat'); }
+      const [top, mid, hor, seaFar, seaNear, sunC, cLit, cShd] = pal.c;
+      // the sky
+      const sky = ctx.createLinearGradient(0, 0, 0, hy);
+      sky.addColorStop(0, rgb(top)); sky.addColorStop(0.55, rgb(mid)); sky.addColorStop(1, rgb(hor));
+      ctx.fillStyle = sky; ctx.fillRect(0, 0, W, hy + 1);
+      if (pal.dark > 0.15) {
+        ctx.globalCompositeOperation = 'lighter';
+        for (const s of B.stars) {
+          const a = (pal.dark - 0.15) * (0.6 + 0.4 * Math.sin(t * s.tw + s.ph)) * (1 - s.y / hy * 0.6);
+          ctx.globalAlpha = a;
+          if (s.s > 2) ctx.drawImage(SPR[0], s.x - s.s / 2, s.y - s.s / 2, s.s, s.s);
+          else { ctx.fillStyle = '#e6ecff'; ctx.fillRect(s.x, s.y, s.s, s.s); }
+        }
+        ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+      }
+      // the sun low over the sea (rising on the left, setting on the right), or the moon at night
+      const day = pal.el > -5;
+      const bx = W * (pal.rising ? 0.3 : 0.7);
+      const br = Math.min(W, H) * (day ? 0.045 : 0.05);
+      const by = day ? hy - Math.max(-br * 1.2, Math.min(hy * 0.75, (pal.el / 35) * hy * 0.75)) : hy * 0.28;
+      if (day) {
+        ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, hy); ctx.clip();
+        ctx.globalCompositeOperation = 'lighter';
+        const low = Math.max(0, 1 - Math.max(0, pal.el) / 20);
+        const cor = ctx.createRadialGradient(bx, by, 0, bx, by, br * 9);
+        const warmC = sunC.map((c, i) => Math.round(c * [1, 0.86, 0.62][i]));   // a deeper gold for the glow, so it warms the blue rather than paling it
+        cor.addColorStop(0, rgb(warmC, 0.75)); cor.addColorStop(0.12, rgb(warmC, 0.4)); cor.addColorStop(0.35, rgb(warmC, 0.12 + low * 0.08)); cor.addColorStop(1, rgb(warmC, 0));
+        ctx.fillStyle = cor; ctx.fillRect(0, 0, W, hy);
+        // a wide warm glow along the horizon when the sun is low
+        if (low > 0) {
+          const hg = ctx.createRadialGradient(bx, hy, 0, bx, hy, W * 0.8);
+          hg.addColorStop(0, rgb(sunC, 0.35 * low)); hg.addColorStop(1, rgb(sunC, 0));
+          ctx.save(); ctx.translate(bx, hy); ctx.scale(1, 0.35); ctx.translate(-bx, -hy); ctx.fillStyle = hg; ctx.fillRect(0, hy - hy / 0.35 - 4, W, hy / 0.35 + 8); ctx.restore();
+        }
+        ctx.globalCompositeOperation = 'source-over';
+        const disc = ctx.createRadialGradient(bx - br * 0.2, by - br * 0.2, 0, bx, by, br);
+        disc.addColorStop(0, '#fffdf2'); disc.addColorStop(0.55, rgb(sunC.map(c => Math.round(c + (255 - c) * 0.6)))); disc.addColorStop(1, rgb(sunC));
+        ctx.fillStyle = disc; ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+      } else {
+        this._saverMoon(ctx, bx, by, br, S, 1.3);
+      }
+      // clouds, lit from the sun's side
+      const nC = Math.round(B.clouds.length * pal.cloud);
+      for (let i = 0; i < nC; i++) {
+        const c = B.clouds[i];
+        c.x += c.sp * dt * (0.6 + c.rank);
+        if (c.x - c.w > W) c.x = -c.w;
+        const persp = 0.35 + 0.65 * (1 - c.y / hy);
+        for (const p of c.puffs) {
+          const x = c.x + p.dx * c.w, y = c.y + p.dy * c.w * 0.3 * persp, r = p.r * c.w * persp;
+          const lx = (bx - x) / W * r * 0.5;
+          const g = ctx.createRadialGradient(x + lx, y - r * 0.25, 0, x, y, r);
+          g.addColorStop(0, rgb(cLit, 0.3 * (0.5 + pal.cloud * 0.5)));
+          g.addColorStop(0.5, rgb(cShd, 0.2 * (0.5 + pal.cloud * 0.5))); g.addColorStop(1, rgb(cShd, 0));
+          ctx.save(); ctx.translate(x, y); ctx.scale(1, 0.38); ctx.translate(-x, -y);
+          ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+          ctx.restore();
+        }
+      }
+      // the sun shining through: a bright glare over any cloud in front of it
+      if (day) {
+        ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, hy); ctx.clip();
+        ctx.globalCompositeOperation = 'lighter';
+        const gc = sunC.map((c, i) => Math.round(c * [1, 0.8, 0.5][i]));
+        const gl = ctx.createRadialGradient(bx, by, br * 0.6, bx, by, br * 2);
+        gl.addColorStop(0, rgb(gc, 0.3)); gl.addColorStop(1, rgb(gc, 0));
+        ctx.fillStyle = gl; ctx.beginPath(); ctx.arc(bx, by, br * 2, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+      }
+      weatherDraw(ctx, t, dt, W, H, hy, day);
+      // the sea: the sky's colour reflected near the horizon, deepening toward you
+      const sg = ctx.createLinearGradient(0, hy, 0, H);
+      sg.addColorStop(0, rgb(hor)); sg.addColorStop(0.06, rgb(seaFar)); sg.addColorStop(0.45, rgb(seaFar.map((c, i) => Math.round(c * 0.6 + seaNear[i] * 0.4)))); sg.addColorStop(1, rgb(seaNear));
+      ctx.fillStyle = sg; ctx.fillRect(0, hy, W, H - hy);
+      // the ripples: two layers of the same water, at different sizes and speeds, so it never looks repeated
+      // calmer and glassier on a still day, choppier and quicker in the wind
+      const chopA = 0.55 + 0.9 * sea.chop, spA = 9 * (0.6 + sea.chop * 1.2), spB = 13 * (0.6 + sea.chop * 1.2);
+      const shadeA = d => Math.min(1, d * 6) * (0.35 + 0.35 * d) * chopA;
+      const lightA = d => Math.min(1, d * 5) * (0.08 + 0.22 * d) * (day ? 1 : 0.55) * chopA;
+      ctx.fillStyle = B.loP; water(ctx, t, W, H, S, hy, B.loP, shadeA, spA, 1, 2.2);
+      ctx.fillStyle = B.hiP; water(ctx, t, W, H, S, hy, B.hiP, lightA, spA, 1, 2.2);
+      ctx.fillStyle = B.loP; water(ctx, t * 0.7 + 40, W, H, S, hy, B.loP, d => shadeA(d) * 0.5, spB, 0.55, -1.4);
+      ctx.fillStyle = B.hiP; water(ctx, t * 0.7 + 40, W, H, S, hy, B.hiP, d => lightA(d) * 0.6, spB, 0.55, -1.4);
+      capsDraw(ctx, dt, W, H, hy, day ? [255, 255, 255] : [190, 200, 225]);
+      // the path of light: crests sparkling under the sun or moon, strongest in the middle and fading out softly to the sides
+      const strength = day ? Math.max(0.3, 1 - Math.max(0, pal.el) / 50) : 0.75;
+      const spread = W * (day ? 0.3 : 0.18);
+      const mkey = [Math.round(bx), Math.round(br), Math.round(spread), W, H].join('|');
+      if (!B.glit || B.glit.key !== mkey) {
+        const [gc, gg] = this._saverOff(W, H, S), [mc, mg] = this._saverOff(W, H, S);
+        for (const [y, st] of B.rows) {
+          const d = (y + st / 2 - hy) / (H - hy), half = br * 0.7 + spread * d;
+          const lg = mg.createLinearGradient(bx - half, 0, bx + half, 0);
+          lg.addColorStop(0, 'rgba(0,0,0,0)'); lg.addColorStop(0.3, 'rgba(0,0,0,0.35)'); lg.addColorStop(0.5, 'rgba(0,0,0,1)'); lg.addColorStop(0.7, 'rgba(0,0,0,0.35)'); lg.addColorStop(1, 'rgba(0,0,0,0)');
+          mg.fillStyle = lg; mg.fillRect(bx - half, y, half * 2, st);
+        }
+        B.glit = { key: mkey, gc, gg, mc };
+      }
+      {
+        const { gc, gg, mc } = B.glit;
+        gg.setTransform(1, 0, 0, 1, 0, 0); gg.globalCompositeOperation = 'source-over'; gg.clearRect(0, 0, gc.width, gc.height);
+        gg.setTransform(S, 0, 0, S, 0, 0);
+        const pc = day ? sunC : [215, 225, 255];
+        gg.fillStyle = rgb(pc, 0.22 * strength); gg.fillRect(0, hy, W, H - hy);
+        gg.fillStyle = B.hiP; water(gg, t, W, H, S, hy, B.hiP, d => Math.min(1, d * 14) * strength, spA, 1, 2.2);
+        gg.fillStyle = B.hiP; water(gg, t * 0.7 + 40, W, H, S, hy, B.hiP, d => Math.min(1, d * 14) * strength * 0.7, spB, 0.55, -1.4);
+        gg.globalCompositeOperation = 'source-in';
+        gg.fillStyle = rgb(day ? pc : pc.map(c => Math.min(255, c + 30))); gg.fillRect(0, hy, W, H - hy);
+        gg.globalCompositeOperation = 'destination-in';
+        gg.setTransform(1, 0, 0, 1, 0, 0); gg.drawImage(mc, 0, 0);
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.drawImage(gc, 0, 0, W, H);
+        ctx.globalCompositeOperation = 'source-over';
+      }
+      // haze along the horizon, so the far water melts into the sky
+      const hz = ctx.createLinearGradient(0, hy - H * 0.04, 0, hy + H * 0.07);
+      hz.addColorStop(0, rgb(hor, 0)); hz.addColorStop(0.4, rgb(hor, 0.55)); hz.addColorStop(1, rgb(hor, 0));
+      ctx.fillStyle = hz; ctx.fillRect(0, hy - H * 0.04, W, H * 0.11);
+      // a boat, dolphins, seabirds or a whale, now and then
+      lifeDraw(ctx, t, dt, W, H, S, hy, day, sunC, hor, bx);
+      // a little darker at the bottom corners
+      const vg = ctx.createRadialGradient(W / 2, H * 0.45, Math.min(W, H) * 0.4, W / 2, H * 0.45, Math.max(W, H) * 0.85);
+      vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,0.35)');
+      ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+      this._saverGrain(ctx, W, H, 0.03);
+    });
   }
 
   // ══════════════════════════════════════════════════════════════════════
@@ -16294,6 +18902,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const cfg = this._vizCfg();
     const el = this.shadowRoot?.getElementById('crowViz');
     if (!el) return;
+    if (this._saverEl) { this._vizStop(); return; }
     if (!cfg.on || this._remoteMode || !this._vizEligible(st)) {
       // paused or stopped while a visualiser was showing: back to the artwork, and it stays on the
       // artwork when the music resumes (pick a visualiser again from the quick menu)
@@ -16366,6 +18975,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const card = r?.getElementById('cardOuter');
     if (card?.classList.contains('mode-compact')) { this._vizAutoOn = false; this._vizTouchAt = now; return; }
     if (this._vizAutoOn) return;
+    // the screensaver showing: the count waits, so a visualiser doesn't take over from it
+    if (this._saverEl) { this._vizTouchAt = now; return; }
     // scrolled off screen, in the background, or with a panel, the remote or lyrics over the player: the count waits
     if (!this._saverCanShow(false)) { this._vizTouchAt = now; return; }
     const from = Math.max(this._vizPlayFrom, this._vizTouchAt || 0);
@@ -16422,7 +19033,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const viz = this._viz, el = this.shadowRoot?.getElementById('crowViz');
     if (!viz || !el || document.hidden || this._vizOffscreen) return;
     const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    if (now - (this._vizLast || 0) < (still ? 500 : 33)) return;   // about 30 frames a second
+    // lyrics glide at the screen's full rate; the rest at a steady 30 frames a second (every other frame,
+    // rather than an uneven mix of gaps, which looks juddery)
+    if (now - (this._vizLast || 0) < (still ? 500 : viz.style === 'lyrics' ? 0 : 29)) return;
     this._vizLast = now;
     const w = el.offsetWidth, h = el.offsetHeight;
     if (!w || !h) return;
@@ -17144,6 +19757,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     });
     // Watch History drill-in — hide day headings left with no visible rows.
     if (this._watchDetailActive) this._watchSyncDayHeadings(content.querySelector('#watchDetailList'));
+    // Watch History list: hide the Movies & TV / YouTube headings when the search leaves them empty.
+    else if (this._maCurrentTab === 'recently_watched') this._watchSyncDayHeadings(content);
   }
 
 
@@ -18346,16 +20961,16 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const art = item.artworkUrl100 || '';
     const artHtml = art
       ? '<img src="' + art + '" alt="" style="width:40px;height:40px;border-radius:8px;object-fit:cover;" onerror="this.style.display=\'none\'">'
-      : '<svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:rgba(255,255,255,0.3)"><path d="M21,3H3C1.89,3 1,3.89 1,5V19A2,2 0 0,0 3,21H21A2,2 0 0,0 23,19V5C23,3.89 22.1,3 21,3M21,19H3V5H21V19M18,13.5L15.5,15.15L15.5,11.85L18,13.5M13,15.5L10.5,17.15L10.5,13.85L13,15.5M8,13.5L5.5,15.15L5.5,11.85L8,13.5Z"/></svg>';
+      : '<svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:var(--crow-panel-icon-dim,rgba(255,255,255,0.3))"><path d="M21,3H3C1.89,3 1,3.89 1,5V19A2,2 0 0,0 3,21H21A2,2 0 0,0 23,19V5C23,3.89 22.1,3 21,3M21,19H3V5H21V19M18,13.5L15.5,15.15L15.5,11.85L18,13.5M13,15.5L10.5,17.15L10.5,13.85L13,15.5M8,13.5L5.5,15.15L5.5,11.85L8,13.5Z"/></svg>';
 
     row.innerHTML =
-      '<div class="ma-item-art" style="width:40px;height:40px;border-radius:8px;background:rgba(255,255,255,0.08);flex-shrink:0;overflow:hidden;display:flex;align-items:center;justify-content:center;">' + artHtml + '</div>' +
+      '<div class="ma-item-art" style="width:40px;height:40px;border-radius:8px;background:var(--crow-panel-btn-bg,rgba(255,255,255,0.08));flex-shrink:0;overflow:hidden;display:flex;align-items:center;justify-content:center;">' + artHtml + '</div>' +
       '<div style="flex:1;min-width:0;">' +
         // ma-item-title / ma-item-sub let the shared search bar
         // (_filterMAGrid) filter these rows — without them, typing in the
         // search bar on Watch History silently matched nothing.
-        '<div class="ma-item-title" style="font-size:13px;font-weight:600;color:var(--primary-text-color,#fff);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + item.title + (item.kind === 'tv' ? ' <span style="opacity:0.5;font-weight:400;font-size:10px;">TV</span>' : '') + '</div>' +
-        '<div class="ma-item-sub" style="font-size:11px;color:rgba(255,255,255,0.45);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + item.subtitle + '</div>' +
+        '<div class="ma-item-title" style="font-size:13px;font-weight:600;color:var(--crow-panel-text,#fff);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + item.title + (item.kind === 'tv' ? ' <span style="opacity:0.5;font-weight:400;font-size:10px;">TV</span>' : '') + '</div>' +
+        '<div class="ma-item-sub" style="font-size:11px;color:var(--crow-panel-text-dim,rgba(255,255,255,0.45));margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + item.subtitle + '</div>' +
       '</div>' +
       (opts?.trailingHtml || '');
     wrap.appendChild(row);
@@ -19116,7 +21731,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const j = releaseId ? await this._cdJson('https://musicbrainz.org/ws/2/release/' + releaseId + '?inc=recordings+artist-credits&fmt=json', { gap: 1100 }) : null;
     const media = j && !j.notFound ? (j.media || []) : [];
     const out = [];
-    media.forEach((m, mi) => (m.tracks || []).forEach(t => out.push({ d: mi + 1, n: t.number || t.position, title: t.title || '' })));
+    media.forEach((m, mi) => (m.tracks || []).forEach(t => out.push({ d: mi + 1, n: t.number || t.position, title: t.title || '', len: +t.length || +t.recording?.length || 0 })));
     return { tracks: out, discs: media.length, artist: this._cdCreditName(j?.['artist-credit']) };
   }
 
@@ -19218,6 +21833,62 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       return { data: c.toDataURL('image/jpeg', 0.9), mode, aspect: bmp.width / bmp.height, srcW: bmp.width, srcH: bmp.height, dpi: dpiEff };
     } finally { if (own) { try { bmp.close(); } catch (_) {} } }
   }
+
+  // ── Format marks on case printables (editor → Export & PDF → Format Marks) ──
+  // The card's own mark - a small disc (outer ring, faint inner ring, centre dot) beside the format's name -
+  // drawn in the PDF itself so it stays sharp, tinted to suit each cover. Not any official logo.
+  _caseMarksOn() { return this._pdfOn('marks'); }
+  // x = left edge, y = vertical centre; returns the width used (mm)
+  _pdfFormatMark(doc, x, y, { r = 3.4, lines = ['CD'], rgb = [255, 255, 255], fs = 6.4, measure = false } = {}) {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(fs);
+    const cs = fs * 0.045, capH = fs * 0.3528 * 0.72;
+    const tw = Math.max(...lines.map(l => doc.getTextWidth(l) + cs * (l.length - 1)));
+    const width = r * 2 + r * 0.7 + tw;
+    if (measure) return width;
+    doc.setDrawColor(...rgb); doc.setFillColor(...rgb); doc.setTextColor(...rgb);
+    doc.setLineWidth(Math.max(0.18, r * 0.12)); doc.circle(x + r, y, r, 'S');
+    doc.setLineWidth(Math.max(0.08, r * 0.045)); doc.circle(x + r, y, r * 0.64, 'S');
+    doc.circle(x + r, y, r * 0.26, 'F');
+    const tx = x + r * 2 + r * 0.7;
+    if (lines.length === 1) doc.text(lines[0], tx, y + capH / 2, { charSpace: cs });
+    else {
+      const gap = capH * 0.55;
+      doc.text(lines[0], tx, y - gap / 2, { charSpace: cs });
+      doc.text(lines[1], tx, y + gap / 2 + capH, { charSpace: cs });
+    }
+    return width;
+  }
+  // The short mark for a spine, at its foot. dir: 'down' (text reads top to bottom, mark at the bottom) or
+  // 'up' (reads bottom to top, mark at the bottom). cx = the spine's centre line, yEnd = the foot (mm).
+  // Returns the length used along the spine.
+  _pdfSpineMark(doc, cx, yEnd, { r = 2.2, label = 'CD', rgb = [255, 255, 255], fs = 6.2, dir = 'down', measure = false } = {}) {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(fs);
+    const cs = fs * 0.045, capH = fs * 0.3528 * 0.72;
+    const tw = doc.getTextWidth(label) + cs * (label.length - 1), gap = r * 0.8;
+    const len = tw + gap + r * 2;
+    if (measure) return len;
+    doc.setDrawColor(...rgb); doc.setFillColor(...rgb); doc.setTextColor(...rgb);
+    const ry = yEnd - r;
+    doc.setLineWidth(Math.max(0.16, r * 0.12)); doc.circle(cx, ry, r, 'S');
+    doc.circle(cx, ry, r * 0.3, 'F');
+    const top = yEnd - len;
+    if (dir === 'down') doc.text(label, cx - capH / 2, top, { angle: -90, charSpace: cs });
+    else doc.text(label, cx + capH / 2, top + tw, { angle: 90, charSpace: cs });
+    return len;
+  }
+  // a mark on a disc label: centred, near the bottom edge, on a soft dark pill so it shows on any artwork
+  _pdfDiscMark(doc, cx, cy, radius, label, { onArt = true, rgb = [255, 255, 255], inset = 8.5 } = {}) {
+    const r = 2.1, fs = 6.4;
+    const w = this._pdfSpineMarkWidth(doc, label, r, fs);
+    const y = cy + radius - inset, x = cx - w / 2;
+    if (onArt) {
+      try { doc.setGState(new doc.GState({ opacity: 0.42 })); } catch (_) {}
+      doc.setFillColor(0, 0, 0); doc.roundedRect(x - 2.2, y - r - 1.4, w + 4.4, r * 2 + 2.8, r + 1.4, r + 1.4, 'F');
+      try { doc.setGState(new doc.GState({ opacity: 1 })); } catch (_) {}
+    }
+    this._pdfFormatMark(doc, x, y, { r, lines: [label], rgb, fs });
+  }
+  _pdfSpineMarkWidth(doc, label, r, fs) { return this._pdfFormatMark(doc, 0, 0, { r, lines: [label], fs, measure: true }); }
 
   async _buildCdPrintables({ artist, title, album, rgId = '', rgTitle = '', rgArtist = '' }, preview) {
     artist = String(artist || '').trim(); title = String(title || '').trim(); album = String(album || '').trim();
@@ -19334,10 +22005,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (blobs.medium) { discImg = await safe(() => this._cdRender(blobs.medium, DD, DD, { shape: 'disc', hole: HOLE })); if (discImg) discHow = 'Found'; }
     if (!discImg && blobs.front) { discImg = await safe(() => this._cdRender(blobs.front, DD, DD, { shape: 'disc', hole: HOLE, fit: 'cover' })); if (discImg) discHow = 'No disc scan on the archive - made from the front cover'; }
     if (discImg) {
-      items.push({ kind: 'img', disc: true, w: DD, h: DD, img: discImg, cap: 'Disc label - 118 mm, centre hole 36 mm' + (discHow === 'Found' ? '' : ' (made from the front cover)') });
+      items.push({ kind: 'img', disc: true, markOk: discHow !== 'Found', w: DD, h: DD, img: discImg, cap: 'Disc label - 118 mm, centre hole 36 mm' + (discHow === 'Found' ? '' : ' (made from the front cover)') });
       rows.push(['Disc', discHow]);
     } else {
-      items.push({ kind: 'genDisc', disc: true, w: DD, h: DD, cap: 'Disc label - 118 mm, centre hole 36 mm (title only - no artwork found)' });
+      items.push({ kind: 'genDisc', disc: true, markOk: true, w: DD, h: DD, cap: 'Disc label - 118 mm, centre hole 36 mm (title only - no artwork found)' });
       rows.push(['Disc', 'Not found - printed a plain title label']);
     }
 
@@ -19446,10 +22117,29 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         doc.line(x + 6, y, x + 6, y + it.h); doc.line(x + it.w - 6, y, x + it.w - 6, y + it.h);
         doc.setLineDashPattern([], 0);
         const spine = clean(coverArtist ? coverArtist + ' - ' + albumName : albumName);
+        // format marks: a small CD mark at the foot of each spine, and a strip along the bottom of the back
+        const mk = this._caseMarksOn();
+        const mLen = mk ? this._pdfSpineMark(doc, 0, 0, { label: 'CD', measure: true, r: 1.7, fs: 5.4 }) + 3 : 0;
         doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(...inkRgb);
-        const sp = fit1(spine, it.h - 14), sw = doc.getTextWidth(sp);
-        doc.text(sp, x + 3.9, y + it.h / 2 + sw / 2, { angle: 90 });
-        doc.text(sp, x + it.w - 6 + 3.9, y + it.h / 2 + sw / 2, { angle: 90 });
+        const sp = fit1(spine, it.h - 14 - mLen), sw = doc.getTextWidth(sp);
+        const smid = y + (it.h - mLen) / 2;
+        doc.text(sp, x + 3.9, smid + sw / 2, { angle: 90 });
+        doc.text(sp, x + it.w - 6 + 3.9, smid + sw / 2, { angle: 90 });
+        if (mk) [x + 3, x + it.w - 3].forEach(scx => this._pdfSpineMark(doc, scx, y + it.h - 2.5, { label: 'CD', rgb: mutedRgb, r: 1.7, fs: 5.4, dir: 'up' }));
+        if (mk) {
+          const sy = y + it.h - 6.5;
+          doc.setDrawColor(205, 205, 210); doc.setLineWidth(0.2); doc.line(x + 12, sy - 5.2, x + it.w - 12, sy - 5.2);
+          const mw = this._pdfFormatMark(doc, x + 12, sy, { r: 2.6, lines: ['COMPACT', 'DISC'], rgb: inkRgb, fs: 5.6 });
+          const yr = (String(release?.date || '').match(/^\d{4}/) || [])[0] || '';
+          const lab = release?.['label-info']?.find(li => li?.label?.name)?.label?.name || '';
+          const ms = (it.tl?.tracks || []).reduce((t, tr) => t + (tr.len || 0), 0);
+          const info = [lab, yr, ms > 60000 ? Math.round(ms / 60000) + ' min' : ''].filter(Boolean).join('  -  ');
+          if (info) {
+            doc.setFont('helvetica', 'normal'); doc.setFontSize(6.5); doc.setTextColor(...mutedRgb);
+            doc.text(fit1(info, it.w - 24 - mw - 6), x + it.w - 12, sy + 0.8, { align: 'right' });
+          }
+        }
+        doc.setFont('helvetica', 'bold'); doc.setTextColor(...inkRgb); doc.setDrawColor(200, 200, 205);   // back to the card's own text style
         const bx = x + 12, bw = it.w - 24;
         doc.setFontSize(15);
         const t = doc.splitTextToSize(clean(albumName), bw).slice(0, 2);
@@ -19460,7 +22150,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         if (tracks.length) {
           const cols = tracks.length > 40 ? 3 : tracks.length > 18 ? 2 : 1;
           const fs = tracks.length > 40 ? 6 : 7, lhT = tracks.length > 40 ? 3 : 3.4;
-          const top = y + (coverArtist ? 20 : 14) + t.length * 6.5, perCol = Math.floor((y + it.h - 8 - top) / lhT), colW = bw / cols;
+          const top = y + (coverArtist ? 20 : 14) + t.length * 6.5, perCol = Math.floor((y + it.h - (this._caseMarksOn() ? 15 : 8) - top) / lhT), colW = bw / cols;
           doc.setFontSize(fs); doc.setTextColor(...inkRgb);
           tracks.slice(0, perCol * cols).forEach((tr, i) => {
             const c = Math.floor(i / perCol), r = i % perCol;
@@ -19469,6 +22159,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           });
         }
       }
+      if (it.disc && it.markOk && this._caseMarksOn()) this._pdfDiscMark(doc, x + it.w / 2, y + it.h / 2, it.w / 2, 'CD', { onArt: it.kind === 'img', rgb: it.kind === 'img' ? [255, 255, 255] : mutedRgb });
       // Cut guides and caption — outside the artwork so nothing prints over it
       if (it.disc) discGuides(x + it.w / 2, y + it.h / 2); else marks(x, y, it.w, it.h);
       if (it.tray) foldTicks(x, y, it.h);
@@ -20302,7 +22993,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       ['RATING', num > 0 ? num.toFixed(1) + '/10' : '', 0.17],
       ['GENRE', clean((data.genres || []).slice(0, 3).join(', ')), 0],
     ]).filter(c => c[1]);
-    const STRIP = (cert || specCols.length) ? 13.5 : 0;
+    const caseMk = this._caseMarksOn();
+    const caseLines = bluray ? ['BLU-RAY', 'DISC'] : ['DVD', 'VIDEO'];
+    const caseMkW = caseMk ? this._pdfFormatMark(doc, 0, 0, { r: 2.9, lines: caseLines, fs: 6.2, measure: true }) : 0;
+    const STRIP = (cert || specCols.length || caseMk) ? 13.5 : 0;
     const textBottom = bottom - STRIP;
     const drawStrip = () => {
       if (!STRIP) return;
@@ -20320,9 +23014,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         doc.text(cert, bx + boxW / 2, bottom - 4 + fsz * 0.353 * 0.36, { align: 'center' });
         cx0 = bx + boxW + 4;
       }
-      const W = bx + bw - cx0;
+      // the format mark sits at the right-hand end of the strip
+      const right = bx + bw - (caseMk ? caseMkW + 4 : 0);
+      if (caseMk) this._pdfFormatMark(doc, bx + bw - caseMkW, bottom - 4, { r: 2.9, lines: caseLines, rgb: [255, 255, 255], fs: 6.2 });
+      const W = right - cx0;
       specCols.forEach(([lab, val, frac]) => {
-        const w = frac ? W * frac : (bx + bw - cx0);
+        const w = frac ? W * frac : (right - cx0);
         doc.setFont('helvetica', 'bold'); doc.setFontSize(6.3); doc.setTextColor(200, 200, 208);
         doc.text(lab, cx0, bottom - 5);
         doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(255, 255, 255);
@@ -20714,7 +23411,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     drawStrip();
 
     // spine: the title, reading top to bottom
-    const bandT = 6, bandB = 10;   // margins kept clear at the top and bottom of the spine
+    const spineMkLen = caseMk ? this._pdfSpineMark(doc, 0, 0, { label: bluray ? 'BLU-RAY' : 'DVD', r: 2.2, fs: 6.2, measure: true }) : 0;
+    const bandT = 6, bandB = caseMk ? spineMkLen + 9 : 10;   // margins kept clear at the top and bottom of the spine (room for the format mark)
     let fs = 12;
     doc.setFont('helvetica', 'bold');
     const spineTxt = clean(title);
@@ -20722,6 +23420,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     while (fs > 6 && doc.getTextWidth(spineTxt) > CH - bandT - bandB - 10) { fs -= 0.5; doc.setFontSize(fs); }
     doc.setTextColor(255, 255, 255);
     doc.text(spineTxt, wx + PW + SP / 2 - fs * 0.353 * 0.36, wy + bandT + 5, { angle: -90 });
+    if (caseMk) this._pdfSpineMark(doc, wx + PW + SP / 2, wy + CH - 6, { label: bluray ? 'BLU-RAY' : 'DVD', r: 2.2, fs: 6.2, rgb: accentLbl, dir: 'down' });
 
     marks(wx, wy, CW, CH);
     doc.setDrawColor(...lineRgb); doc.setLineWidth(0.15);
@@ -20732,6 +23431,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     doc.addPage();
     const dx = (pageW - DD) / 2, dy = (pageH - DD) / 2 - 3;
     doc.addImage(disc.data, 'JPEG', dx, dy, DD, DD, undefined, 'FAST');
+    // below the title, over the label's own dark fade
+    if (caseMk) this._pdfDiscMark(doc, dx + DD / 2, dy + DD / 2, DD / 2, bluray ? 'BLU-RAY' : 'DVD', { onArt: false, inset: 6.2 });
     doc.setDrawColor(...lineRgb); doc.setLineWidth(0.15);
     doc.circle(dx + DD / 2, dy + DD / 2, DD / 2 + 0.4, 'S');
     doc.circle(dx + DD / 2, dy + DD / 2, HOLE / 2 - 0.3, 'S');
@@ -20779,8 +23480,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     this._showPDFPreview(doc, 'crowai-' + kind + '-case-' + slug + '-' + new Date().toISOString().slice(0, 10) + '.pdf', preview);
   }
 
-  // Lazily loads jsPDF from a CDN the first time a PDF is exported — the
-  // same library and approach as the DolphinAI card. Cached as a promise;
+  // Lazily loads jsPDF from a CDN the first time a PDF is exported. Cached as a promise;
   // a failed load can be retried.
   _ensureJsPDF(preview = null) {
     if (window.jspdf?.jsPDF) return Promise.resolve(window.jspdf.jsPDF);
@@ -21057,8 +23757,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
   // Export: builds a PDF of everything currently showing in the info panel
   // (music, Discogs, album, movie and TV, episode, person, station or
-  // audiobook) and shows it in a preview with a Download button — the same
-  // flow as the DolphinAI card's exports.
+  // audiobook) and shows it in a preview with a Download button.
   async _exportInfoPanelPDF() {
     if (!this._pdfOn('info')) return;   // switched off in the card editor
     if (this._pdfBusy) return;
@@ -21646,13 +24345,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     this._showPDFPreview(doc, 'crowai-' + slug + '-' + new Date().toISOString().slice(0, 10) + '.pdf', preview);
   }
 
-  // Preview before downloading — the DolphinAI card's layout: a stacked
+  // Preview before downloading: a stacked
   // overlay over the page with the rendered PDF and a Download button. If
   // the app's web view won't show PDFs inline the preview is blank, but
   // Download still works.
   // ── History reports (Music History / Watch History / the Recaps) ─────────
   // "Export Report to PDF" in their 3-dot menus: pick a period, then a PDF
-  // of charts and stats for it — the same charting as the DolphinAI card.
+  // of charts and stats for it.
 
   // An iOS-style sheet with a list of choices (same look as _iosConfirm).
   // Resolves to the chosen option's value, or undefined if cancelled.
@@ -21728,7 +24427,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const preview = this._openPDFPreview();
     try {
       // rebuilt when the history has changed (or on another day, since ranges count back from today)
-      const log = (kind === 'music' ? this._getListenLogEntries() : this._getWatchLogEntries()) || [];
+      const log = (kind === 'music' ? this._getListenLogEntries() : this._getWatchLogEntries({ all: true })) || [];
       const fp = log.length + ':' + log.reduce((m, e) => Math.max(m, e?.ts || 0), 0);
       if (this._pdfFromSession('hist|' + kind + '|' + range + '|' + new Date().toDateString() + '|' + fp, preview)) return;
       await this._buildHistoryReportPDF(kind, range, preview);
@@ -21749,6 +24448,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       .filter(e => e && e.ts).sort((a, b) => a.ts - b.ts);
     const cutoff = range === 'today' ? midnight(now) : range === 'all' ? 0 : now - range * DAY;
     const entries = all.filter(e => e.ts >= cutoff);
+    // YouTube videos: their own section in the Watch Report, kept apart from the films and shows so
+    // a pile of short videos doesn't swamp the Movies vs TV bar or the top titles
+    const ytAll = isMusic ? [] : this._getYouTubeLogEntries().filter(e => e && e.ts).sort((a, b) => a.ts - b.ts);
+    const yt = ytAll.filter(e => e.ts >= cutoff);
     const rangeLabel = range === 'today' ? 'Today' : range === 'all' ? 'All time' : 'Last ' + range + ' days';
 
     const doc = new JsPDFCtor({ unit: 'pt', format: 'a4' });
@@ -21875,11 +24578,11 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     doc.setDrawColor(...accentRgb); doc.setLineWidth(1.5);
     doc.line(marginX, y, pageW - marginX, y);
     y += 14;
-    const firstTs = entries.length ? entries[0].ts : cutoff || now;
+    const firstTs = Math.min(entries.length ? entries[0].ts : now, yt.length ? yt[0].ts : now, entries.length || yt.length ? now : (cutoff || now));
     // The history only keeps so many entries, so it may not reach back to
     // the start of the chosen range — then the report starts where the
     // history does, rather than showing weeks of empty days.
-    const historyStart = all.length ? all[0].ts : now;
+    const historyStart = Math.min(all.length ? all[0].ts : now, ytAll.length ? ytAll[0].ts : now);
     const reportStart = range === 'all' ? firstTs : Math.max(cutoff, historyStart);
     const span = new Date(reportStart).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
       + ' - ' + new Date(now).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
@@ -21887,7 +24590,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     doc.text(range === 'today' ? new Date(now).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : span, marginX, y);
     y += 22;
 
-    if (!entries.length) {
+    if (!entries.length && !yt.length) {
       doc.setFont('helvetica', 'normal'); doc.setFontSize(11); doc.setTextColor(...inkRgb);
       doc.text(isMusic ? 'Nothing was played in this period.' : 'Nothing was watched in this period.', marginX, y);
     } else {
@@ -21901,10 +24604,11 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           { label: 'Busiest day', value: busiest ? new Date(busiest.label).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) + ' (' + busiest.value + ')' : '-' },
         ]);
       } else {
-        statCards([
+        if (entries.length) statCards([
           { label: 'Watches', value: String(entries.length), accent: true },
           { label: 'Time watched', value: fmtDur(entries.reduce((s, e) => s + watchedMs(e), 0)) },
           { label: 'Movies / episodes', value: entries.filter(e => !isTv(e)).length + ' / ' + entries.filter(isTv).length },
+          ...(yt.length ? [{ label: 'YouTube videos', value: String(yt.length) }] : []),
         ]);
       }
 
@@ -21915,7 +24619,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           const topNames = countBy(entries, e => isMusic ? e.artist : (e.seriesTitle || e.title), valueOf).slice(0, 5).map(i => i.label).join(', ');
           const prompt = isMusic
             ? `Someone's music listening for "${rangeLabel}": top artists ${topNames}. Write a warm 2-sentence summary of their listening. Do not mention how many plays or tracks. Plain text, no emojis.`
-            : `Someone's TV and movie watching for "${rangeLabel}": ${entries.length} watches, mostly ${topNames}. Write a warm 2-sentence summary of their watching. Plain text, no emojis.`;
+            : `Someone's TV and movie watching for "${rangeLabel}": ${entries.length} watches${topNames ? ', mostly ' + topNames : ''}`
+              + (yt.length ? `, plus ${yt.length} YouTube videos, mostly from ${countBy(yt, e => e.channel || '').slice(0, 3).map(i => i.label).join(', ') || 'various channels'}` : '')
+              + `. Write a warm 2-sentence summary of their watching. Plain text, no emojis.`;
           const raw = await this._aiConverseF('recap', prompt);
           const text = clean(raw);
           if (text) {
@@ -21967,8 +24673,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           y = this._pdfDrawDonutWithBars(doc, theme, speakers, marginX, y + 4, pageW, { title: isMusic ? 'Where you listen' : 'Where you watch', newPageIfNeeded });
         }
       };
-      drawWhere();
-      drawWhen();
+      if (entries.length) { drawWhere(); drawWhen(); }
 
       // ── Top lists ──
       if (isMusic) {
@@ -21985,7 +24690,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           e => e.album + '\u0000' + (e.artist || '')).slice(0, 5)
           .map(t => { const [al, ar] = t.label.split('\u0000'); return { label: al + (ar ? ' - ' + ar : ''), value: t.value, art: { artist: ar, album: al } }; });
         if (albums.length) { sectionHeader('Top albums'); await rankedBars(albums, { valueLabel: v => v + (v === 1 ? ' play' : ' plays'), covers: true }); }
-      } else {
+      } else if (entries.length) {
         const movies = entries.filter(e => !isTv(e)), eps = entries.filter(isTv);
         newPageIfNeeded(60);
         y = this._pdfDrawSegmentedBar(doc, theme, [
@@ -21996,6 +24701,66 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         await rankedBars(countBy(entries, e => isTv(e) ? (e.seriesTitle || e.title) : e.title, e => watchedMs(e)).slice(0, 10)
           .map(t => ({ ...t, art: { video: t.label } })),
           { valueLabel: v => fmtDur(v), covers: true });
+      }
+
+      // ── YouTube ── its own section: how much, which channels, when, and the videos
+      if (!isMusic && yt.length) {
+        if (!entries.length) {
+          doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(...mutedRgb);
+          doc.text('No films or TV in this period.', marginX, y); y += 18;
+        }
+        newPageIfNeeded(140);
+        y += entries.length ? 22 : 6;
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(14); doc.setTextColor(...inkRgb);
+        doc.text('YouTube', marginX, y);
+        y += 6;
+        doc.setDrawColor(255, 0, 51); doc.setLineWidth(1);
+        doc.line(marginX, y, pageW - marginX, y);
+        y += 16;
+        const ytMs = e => (e.watchedMs > 0 ? e.watchedMs : 0);
+        const channels = new Set(yt.map(e => (e.channel || '').toLowerCase()).filter(Boolean));
+        statCards([
+          { label: 'Videos', value: String(yt.length), accent: true },
+          { label: 'Time watched', value: fmtDur(yt.reduce((s, e) => s + ytMs(e), 0)) || '-' },
+          { label: 'Channels', value: String(channels.size || '-') },
+        ]);
+        const chans = countBy(yt, e => e.channel || '', e => ytMs(e) / 60000).filter(c => c.value > 0).slice(0, 8);
+        if (chans.length > 1) {
+          sectionHeader('Top channels by time watched');
+          await rankedBars(chans.map(c => ({ ...c, color: '#FF0033' })), { valueLabel: v => fmtDur(v * 60000) });
+        }
+        // when, by time of day (only worth a chart with a few videos)
+        if (yt.length >= 3) {
+          const tod = ['Morning', 'Afternoon', 'Evening', 'Night'].map(label => ({ label, value: 0 }));
+          yt.forEach(e => { const h = new Date(e.ts).getHours(); tod[h >= 5 && h < 12 ? 0 : h >= 12 && h < 17 ? 1 : h >= 17 && h < 22 ? 2 : 3].value += Math.max(1, Math.round(ytMs(e) / 60000)); });
+          newPageIfNeeded(170);
+          const halfW = (contentW - 16) / 2;
+          y = this._pdfDrawCategoryBarChart(doc, theme, tod, marginX, y + 4, marginX * 2 + halfW, { title: 'When you watch YouTube' });
+        }
+        // the videos themselves, most recent first (the heading never sits alone at the foot of a page)
+        newPageIfNeeded(90);
+        sectionHeader(yt.length > 15 ? 'Latest videos' : 'Videos');
+        const list = yt.slice().reverse().slice(0, 15);
+        list.forEach((e, k) => {
+          newPageIfNeeded(26);
+          if (k % 2 === 0) { doc.setFillColor(...zebraRgb); doc.rect(marginX, y - 9, contentW, 24, 'F'); }
+          doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(...inkRgb);
+          const timeLbl = fmtDur(ytMs(e));
+          const right = new Date(e.ts).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) + ', ' + new Date(e.ts).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) + (ytMs(e) >= 60000 ? ' - ' + timeLbl : '');
+          const maxW = contentW - 16 - doc.getTextWidth(right) - 12;
+          let t = clean(e.title);
+          while (doc.getTextWidth(t) > maxW && t.length > 4) t = t.slice(0, -2);
+          if (t !== clean(e.title)) t = t.trimEnd() + '...';
+          doc.text(t, marginX + 8, y + 1);
+          doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...mutedRgb);
+          if (e.channel) doc.text(clean(e.channel), marginX + 8, y + 11);
+          doc.text(right, marginX + contentW - 8, y + 1, { align: 'right' });
+          y += 26;
+        });
+        if (yt.length > list.length) {
+          doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(...mutedRgb);
+          newPageIfNeeded(14); doc.text('...and ' + (yt.length - list.length) + ' more', marginX + 8, y + 2); y += 14;
+        }
       }
 
 
@@ -22013,7 +24778,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     this._showPDFPreview(doc, 'crowai-' + slug + '-' + new Date().toISOString().slice(0, 10) + '.pdf', preview);
   }
 
-  // ── PDF chart helpers (from the DolphinAI card) ─────────────────────────
+  // ── PDF chart helpers ───────────────────────────────────────────────────
   _pdfFillPolygon(doc, points) {
     if (!points || points.length < 3) return;
     const start = points[0];
@@ -22336,7 +25101,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       y += 8;
     }
 
-    // ── Charts (DolphinAI style) ──
+    // ── Charts ──
     // spec.charts: { type: 'days' (dated bars) | 'category' | 'donut' |
     // 'segmented' | 'ranked' | 'pair' (two category charts side by side),
     // title, items, ... }
@@ -23443,7 +26208,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // The PDF preview window. It opens straight away with a spinner while the
   // PDF is being made (fetching artwork can take a few seconds), so a tap
   // on Export always gets an immediate response, then shows the finished
-  // PDF with its Download button — the same layout as the DolphinAI card.
+  // PDF with its Download button.
   // If the app's web view won't show PDFs inline the preview is blank, but
   // Download still works.
   _openPDFPreview(opts = {}) {
@@ -24222,6 +26987,14 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // shows "Watch History" as the title, same as Music History.
   _renderRecentlyWatchedTab(content) {
     if (!content) return;
+    if (this._historyBackfillDone && !this._watchCatchUpDrawing) {
+      const before = this._getWatchLogEntries({ all: true }).length;
+      this._catchUpHistory(() => {
+        if (this._getWatchLogEntries({ all: true }).length === before) return;
+        this._watchCatchUpDrawing = true;
+        try { this._refreshWatchHistoryView(); } finally { this._watchCatchUpDrawing = false; }
+      });
+    }
     // Leaving (or never having entered) a title's drill-in — restore the
     // list-level header title and ⋮ menu.
     this._watchDetailActive = false;
@@ -24238,6 +27011,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // first. The 10/50 limit applies to titles, not individual plays.
     const limit = this._mtWatchExpanded ? 50 : 10;
     const groups = this._groupWatchLog(this._getWatchLogEntries()).slice(0, limit);
+    const ytGroups = this._groupYouTubeLog().slice(0, limit);
 
     content.innerHTML = '';
 
@@ -24245,16 +27019,28 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // reasoning as Recent Searches / Recent Played, which never vanish
     // either, so "nothing watched yet" reads differently from "this
     // feature doesn't exist here".
-    if (!groups.length) {
+    if (!groups.length && !ytGroups.length) {
       const empty = document.createElement('div');
       empty.innerHTML = this._psEmpty(
         'M21,3H3C1.89,3 1,3.89 1,5V19A2,2 0 0,0 3,21H21A2,2 0 0,0 23,19V5C23,3.89 22.1,3 21,3M21,19H3V5H21V19M18,13.5L15.5,15.15L15.5,11.85L18,13.5M13,15.5L10.5,17.15L10.5,13.85L13,15.5M8,13.5L5.5,15.15L5.5,11.85L8,13.5Z',
         'Nothing watched yet',
-        'Movies and TV shows you watch will show up here.'
+        'Movies, TV shows and YouTube videos you watch will show up here.'
       );
       content.appendChild(empty);
       return;
     }
+
+    // With YouTube videos in the history, the list is split into two
+    // sections: Movies & TV first, then YouTube.
+    const _section = (label) => {
+      const h = document.createElement('div');
+      h.className = 'watch-day-heading watch-section-heading';
+      h.style.cssText = 'font-size:10px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:' + this._pt('dim') + ';padding:10px 4px 6px;';
+      h.textContent = label;
+      content.appendChild(h);
+      return h;
+    };
+    if (ytGroups.length && groups.length) _section('Movies & TV');
 
     const _pendingArt = [];
     groups.forEach(g => {
@@ -24300,6 +27086,94 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // known issue on Apple's end) — which would silently blank out
     // artwork for the whole list at once, not just mismatch a few titles.
     if (_pendingArt.length) this._fetchMtArtQueue(_pendingArt);
+
+    if (ytGroups.length) {
+      _section('YouTube');
+      ytGroups.forEach(g => content.appendChild(this._buildYouTubeHistoryRow(g)));
+      if (!this._appIconCache?.['YouTube']) {
+        this._atvAppIcon('YouTube').then(url => {
+          if (!url) return;
+          content.querySelectorAll('.yt-hist-art').forEach(el => { el.innerHTML = '<img src="' + this._watchEsc(url) + '" alt="" style="width:40px;height:40px;object-fit:cover;display:block;">'; });
+        }).catch(() => {});
+      }
+    }
+  }
+
+  // YouTube's part of Watch History: one row per video, most recent first.
+  // Watching the same video again within six hours counts as one watch.
+  _groupYouTubeLog() {
+    const groups = new Map();
+    this._getYouTubeLogEntries().sort((a, b) => (b.ts || 0) - (a.ts || 0)).forEach(e => {
+      const key = this._watchTitleKey(e.title) + '|' + this._watchTitleKey(e.channel || '');
+      if (!e.title) return;
+      let g = groups.get(key);
+      if (!g) { g = { key, title: e.title, channel: e.channel || '', entries: [], watches: 0, lastTs: e.ts || 0, _prevTs: null }; groups.set(key, g); }
+      if (!g.channel && e.channel) g.channel = e.channel;
+      if (g._prevTs === null || g._prevTs - (e.ts || 0) > 6 * 3600 * 1000) g.watches++;
+      g._prevTs = e.ts || 0;
+      g.entries.push(e);
+    });
+    return [...groups.values()].sort((a, b) => b.lastTs - a.lastTs);
+  }
+
+  _buildYouTubeHistoryRow(g) {
+    const wrap = document.createElement('div');
+    wrap.className = 'ma-item-wrap';
+    const row = document.createElement('div');
+    row.className = 'ma-item';
+    row.style.cssText = 'cursor:pointer;-webkit-tap-highlight-color:transparent;position:relative;';
+    let sub = (g.channel ? g.channel + ' \u00b7 ' : '') + this._watchRelTime(g.lastTs);
+    if (g.watches > 1) sub += ' \u00b7 ' + g.watches + ' watches';
+    // the YouTube app's own icon (the same one the Info panel shows), or a red play mark until it loads
+    const _ytIcon = this._appIconCache?.['YouTube'];
+    row.innerHTML =
+      '<div class="ma-item-art yt-hist-art" style="width:40px;height:40px;border-radius:8px;background:rgba(255,0,51,0.12);flex-shrink:0;overflow:hidden;display:flex;align-items:center;justify-content:center;">'
+        + (_ytIcon ? '<img src="' + this._watchEsc(_ytIcon) + '" alt="" style="width:40px;height:40px;object-fit:cover;display:block;">' : '<svg viewBox="0 0 24 24" style="width:22px;height:22px;"><path style="fill:#FF0033" d="M21.58,7.19C21.35,6.33 20.67,5.65 19.81,5.42C18.25,5 12,5 12,5C12,5 5.75,5 4.19,5.42C3.33,5.65 2.65,6.33 2.42,7.19C2,8.75 2,12 2,12C2,12 2,15.25 2.42,16.81C2.65,17.67 3.33,18.35 4.19,18.58C5.75,19 12,19 12,19C12,19 18.25,19 19.81,18.58C20.67,18.35 21.35,17.67 21.58,16.81C22,15.25 22,12 22,12C22,12 22,8.75 21.58,7.19Z"/><path style="fill:#fff" d="M10,15L15.2,12L10,9V15Z"/></svg>')
+      + '</div>'
+      + '<div style="flex:1;min-width:0;">'
+        + '<div class="ma-item-title" style="font-size:13px;font-weight:600;color:var(--crow-panel-text,#fff);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + this._watchEsc(g.title) + '</div>'
+        + '<div class="ma-item-sub" style="font-size:11px;color:var(--crow-panel-text-dim,rgba(255,255,255,0.45));margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + this._watchEsc(sub) + '</div>'
+      + '</div>';
+    wrap.appendChild(row);
+
+    // tap: AI Info for the video (or a YouTube search when AI Info is off); hold: remove it
+    let lpT = null, lpFired = false;
+    row.addEventListener('contextmenu', e => e.preventDefault());
+    row.addEventListener('pointerdown', () => { lpFired = false; lpT = setTimeout(() => { lpFired = true; this._confirmRemoveYouTubeGroup(g); }, 480); }, { passive: true });
+    ['pointerup', 'pointercancel', 'pointermove'].forEach(t => row.addEventListener(t, () => clearTimeout(lpT), { passive: true }));
+    row.addEventListener('click', () => {
+      if (lpFired) { lpFired = false; return; }
+      this._openYouTubeHistoryInfo(g);
+    });
+    return wrap;
+  }
+
+  _openYouTubeHistoryInfo(g) {
+    const q = (g.title + ' ' + (g.channel || '')).trim();
+    if (!this._aiFeatureOn('info')) { window.open(this._buildYoutubeUrl(q), '_blank'); return; }
+    const r = this.shadowRoot, infoPopup = r?.getElementById('infoPopup'), infoContent = r?.getElementById('infoContent');
+    if (!infoPopup || !infoContent) return;
+    infoPopup.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
+    infoPopup.style.setProperty('backdrop-filter', 'none');
+    infoPopup.style.setProperty('-webkit-backdrop-filter', 'none');
+    infoContent.style.setProperty('background', 'var(--crow-panel-bg, #13131a)');
+    infoPopup.classList.add('visible');
+    this._infoPopupOpenedAt = Date.now();
+    this._activeInfoPanelKind = null;
+    r.getElementById('queueMenuBtn')?.classList.add('hidden');
+    this._showAppAIInfo({ media_title: g.title, media_artist: g.channel || '', app_name: 'YouTube', app_id: 'com.google.ios.youtube' }, 'creator');
+  }
+
+  async _confirmRemoveYouTubeGroup(g) {
+    const ok = await this._iosConfirm({
+      title: 'Remove from History?',
+      message: 'This removes \u201c' + g.title + '\u201d from Watch History. This can\u2019t be undone.',
+      confirmLabel: 'Remove', destructive: true,
+    });
+    if (!ok) return;
+    this._removeWatchEntries(g.entries.map(e => e._key).filter(Boolean));
+    this._refreshWatchHistoryView();
+    this._showToast('Removed from History');
   }
 
   // ── Watch History grouping helpers ──────────────────────────────────────
@@ -29445,6 +32319,14 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     this._infoNavStack = [];
     r.getElementById('infoPopup').querySelectorAll('.info-popup-back').forEach(b => b.remove());
     const state = this._hass?.states[this._entity];
+    // the app that's playing decides the panel: creator videos, Twitch, sport, news, workouts, podcasts,
+    // apps and games get app-aware AI Info, personal videos a simple panel, music apps the song's AI Info
+    {
+      const _aa = state?.attributes || {}, _ak = state ? this._appInfoKind(_aa) : null;
+      const _live = state && (state.state === 'playing' || state.state === 'paused' || state.state === 'buffering');
+      if (_ak === 'music' && _live && _aa.media_title) { this._showAITrackInfo(_aa.media_title, _aa.media_artist || ''); return; }
+      if (_ak && _ak !== 'music' && (_live || _ak === 'app') && (_ak === 'personal' || this._aiFeatureOn('info'))) { this._showAppAIInfo(_aa, _ak); return; }
+    }
     if (!state || state.state !== 'playing') {
       { const _ic = r.getElementById('infoContent');
         _ic.innerHTML = this._psAutoClose(this._psEmpty('M12,3V13.55C11.41,13.21 10.73,13 10,13C7.79,13 6,14.79 6,17C6,19.21 7.79,21 10,21C12.21,21 14,19.21 14,17V7H18V3H12Z', 'Nothing playing', 'Start playing something and tap the artwork to open this panel.'), null, 10000, 'infoNpBtn', 'infoNpRing');
@@ -29499,6 +32381,255 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       const rawTitle = attrs.media_series_title || attrs.media_title || '';
       this._fetchVideoInfo(rawTitle);
     }
+  }
+
+  // ── App-aware AI Info ─────────────────────────────────────────────────────
+  // What's playing on an Apple TV (or any player that reports its app) that isn't a film or series:
+  // YouTube and other creator videos, Twitch streams, sport, news channels, workouts, games and other
+  // apps, podcasts, and personal videos. Films and series in Netflix, iPlayer, Disney+ and the like keep
+  // Media Info; music apps go to the song's AI Info. Home Assistant gives the title, the channel or
+  // creator (as the artist) and a thumbnail, but no IDs, so the AI goes by those - and says when it's guessing.
+  _appInfoKind(attrs) {
+    const app = String(attrs.app_name || '').trim(), id = String(attrs.app_id || '').toLowerCase(), a = (app + ' ' + id).toLowerCase();
+    const title = String(attrs.media_title || '').trim();
+    const has = (...w) => w.some(x => a.includes(x));
+    if (has('youtube music')) return 'music';
+    if (has('youtube', 'vimeo', 'tiktok', 'dailymotion')) return 'creator';
+    if (has('twitch')) return 'twitch';
+    if (has('com.apple.tvmusic', 'apple music', 'spotify', 'amazon music', 'tidal', 'deezer', 'soundcloud', 'qobuz')) return 'music';
+    if (has('com.apple.podcasts', 'podcast', 'pocket casts', 'overcast', 'castro')) return 'podcast';
+    if (has('fitness', 'peloton', 'les mills', 'nike training', 'zwift', 'apple.health')) return 'fitness';
+    if (has('news', 'cnn', 'al jazeera', 'bloomberg', 'france 24', 'euronews')) return 'news';
+    if (has('sky sports', 'tnt sports', 'bt sport', 'dazn', 'eurosport', 'f1 tv', 'nba', 'nfl', 'espn', 'sport')) return 'sport';
+    // live sport inside a general app (e.g. Prime Video): a title that reads like a fixture
+    if (/\s(v|vs\.?)\s/i.test(title) && has('prime video', 'amazon', 'itv', 'bbc', 'channel 4', 'channel4', 'apple tv', 'com.apple.tv')) return 'sport';
+    if (has('photos', 'com.apple.mobileslideshow') || /^(img|mov|vid|dsc|pxl)[_-]?\d+|\.(mp4|mov|mkv|avi|m4v)$|^\d{4}[-_.]\d{2}[-_.]\d{2}/i.test(title)) return 'personal';
+    if (has('plex', 'infuse', 'jellyfin', 'emby', 'vlc', 'channels') && !title) return 'personal';
+    // an app or game with nothing playing in it, or a video app (Netflix…) that isn't sharing
+    // what's on; not the Apple TV's own apps
+    if (app && !title && !/^(tv|apple tv)$/i.test(app) && !/^com\.apple\.(tv|headboard|tvsettings)/.test(id)) return 'app';
+    return null;
+  }
+  _showYouTubeInfo(attrs) { return this._showAppAIInfo(attrs, 'creator'); }
+
+  // A simple note that slides up from the bottom of the screen (title, a line or two, a close
+  // button), the same popup the content-warning pills use. body is plain text; pass loading:true
+  // for a spinner, then fill it with the returned setBody(text).
+  _showNoteSheet(title, body, { titleColor, loading } = {}) {
+    const r = this.shadowRoot;
+    r?.querySelectorAll('.cw-popup').forEach(el => el.remove());
+    const host = r?.getElementById('cardOuter') || r;
+    const esc = v => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const text = this._pt('text'), light = !!this._panelIsLight;
+    const sheet = document.createElement('div');
+    sheet.className = 'cw-popup';
+    sheet.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;align-items:flex-end;justify-content:center;background:rgba(0,0,0,' + (light ? '0.3' : '0.5') + ');';
+    sheet.innerHTML = '<div style="width:100%;max-width:480px;background:var(--crow-panel-bg,#13131a);border-radius:20px 20px 0 0;padding:20px 20px 40px;box-shadow:0 -8px 40px rgba(0,0,0,' + (light ? '0.18' : '0.6') + ');">'
+      + '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;">'
+        + '<span style="font-size:15px;font-weight:700;color:' + (titleColor || this._pt('dim')) + ';">' + esc(title) + '</span>'
+        + '<button class="cw-popup-close" type="button" aria-label="Close" style="width:28px;height:28px;flex-shrink:0;border-radius:50%;background:' + (light ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.1)') + ';border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;">'
+          + '<svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:' + text + '"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>'
+        + '</button>'
+      + '</div>'
+      + '<div class="cw-popup-body" style="font-size:13px;color:' + text + ';line-height:1.6;"></div>'
+    + '</div>';
+    const bodyEl = sheet.querySelector('.cw-popup-body');
+    const setBody = (t) => { bodyEl.innerHTML = esc(t); };
+    if (loading) bodyEl.innerHTML = '<div style="display:flex;align-items:center;gap:8px;opacity:0.6;"><div style="width:14px;height:14px;border:2px solid rgba(99,179,237,0.25);border-top-color:#63b3ed;border-radius:50%;animation:ma-spin 0.8s linear infinite;flex-shrink:0;"></div>Loading\u2026</div>';
+    else setBody(body);
+    host.appendChild(sheet);
+    const close = () => sheet.remove();
+    sheet.addEventListener('click', e => { if (e.target === sheet) close(); });
+    sheet.querySelector('.cw-popup-close').addEventListener('click', close);
+    return { setBody, close, el: sheet };
+  }
+
+  // Glass buttons and pills for the app AI Info panel when Glass is chosen in the editor. It
+  // switches itself off the moment the panel shows anything else, and when it closes.
+  _infoGlass(on) {
+    const r = this.shadowRoot, popup = r?.getElementById('infoPopup'), content = r?.getElementById('infoContent');
+    if (!popup) return;
+    on = !!on && this._config?.card_liquid_glass !== false;
+    popup.classList.toggle('ip-glass', on);
+    if (on && content && !this._infoGlassObs) {
+      this._infoGlassObs = new MutationObserver(() => {
+        if (popup.classList.contains('ip-glass') && !content.querySelector('[data-app-ai]')) this._infoGlass(false);
+      });
+      this._infoGlassObs.observe(content, { childList: true });
+    }
+  }
+  async _showAppAIInfo(attrs, kind) {
+    const r = this.shadowRoot, content = r?.getElementById('infoContent');
+    if (!content) return;
+    const app = String(attrs.app_name || '').trim() || 'the app';
+    const isApp = kind === 'app';
+    const title = isApp ? app : String(attrs.media_title || '').trim();
+    const who = String(attrs.media_artist || attrs.media_channel || '').trim();
+    const thumb = attrs.entity_picture_local || attrs.entity_picture || '';
+    const titleEl = r.getElementById('infoPopupTitle');
+    if (titleEl) titleEl.textContent = kind === 'personal' ? 'Info' : 'AI Info';
+    const esc = v => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const myGen = (this._ytInfoGen = (this._ytInfoGen || 0) + 1);
+    const stale = () => this._ytInfoGen !== myGen || !r.getElementById('infoPopup')?.classList.contains('visible');
+    const low = (app + ' ' + (attrs.app_id || '')).toLowerCase();
+    // the app's colour and a search link for "Find on …"
+    const brand = low.includes('youtube') ? ['#FF0033', 'YouTube', q => this._buildYoutubeUrl(q)]
+      : low.includes('vimeo') ? ['#1AB7EA', 'Vimeo', q => 'https://vimeo.com/search?q=' + encodeURIComponent(q)]
+      : low.includes('tiktok') ? ['#FE2C55', 'TikTok', q => 'https://www.tiktok.com/search?q=' + encodeURIComponent(q)]
+      : low.includes('dailymotion') ? ['#0D0D0D', 'Dailymotion', q => 'https://www.dailymotion.com/search/' + encodeURIComponent(q)]
+      : low.includes('twitch') ? ['#9146FF', 'Twitch', q => /^\w+$/.test(who) ? 'https://www.twitch.tv/' + who : 'https://www.twitch.tv/search?term=' + encodeURIComponent(q)]
+      : ['#0A84FF', null, q => 'https://www.google.com/search?q=' + encodeURIComponent(q)];
+    const [colour, brandName, findUrl] = brand;
+    const dot = '<span style="width:10px;height:10px;border-radius:50%;background:' + colour + ';flex-shrink:0;display:inline-block;"></span>';
+    const ytIcon = low.includes('youtube') ? '<svg viewBox="0 0 24 24" style="width:16px;height:16px;flex-shrink:0;"><path fill="#FF0033" d="M21.58,7.19C21.35,6.33 20.67,5.65 19.81,5.42C18.25,5 12,5 12,5C12,5 5.75,5 4.19,5.42C3.33,5.65 2.65,6.33 2.42,7.19C2,8.75 2,12 2,12C2,12 2,15.25 2.42,16.81C2.65,17.67 3.33,18.35 4.19,18.58C5.75,19 12,19 12,19C12,19 18.25,19 19.81,18.58C20.67,18.35 21.35,17.67 21.58,16.81C22,15.25 22,12 22,12C22,12 22,8.75 21.58,7.19Z"/><path fill="#fff" d="M10,15L15.2,12L10,9V15Z"/></svg>' : dot;
+    const sub = isApp ? '' : (who ? who + (kind === 'creator' || kind === 'twitch' ? '' : ' · ' + app) : app);
+    // The artwork spot, like a film's poster: the video's own thumbnail when the app shares one
+    // (with the app's icon in the corner), otherwise the app's icon (Netflix, YouTube…) beside the
+    // title. Shows a coloured letter tile until the icon arrives.
+    const appName = String(attrs.app_name || '').trim();
+    const _iconCached = appName ? this._appIconCache?.[appName] : null;
+    const _tileBg = (() => { let h = 0; for (const ch of (appName || '?')) h = (h * 31 + ch.charCodeAt(0)) % 360; return 'linear-gradient(145deg, hsl(' + h + ',62%,52%), hsl(' + ((h + 28) % 360) + ',62%,38%))'; })();
+    const _iconInner = (size) => _iconCached
+      ? '<img src="' + esc(_iconCached) + '" alt="" style="width:100%;height:100%;object-fit:cover;display:block;">'
+      : '<span style="font-size:' + size + 'px;font-weight:700;color:#fff;">' + esc((appName || '?').charAt(0).toUpperCase()) + '</span>';
+    const titleHtml = '<div style="font-size:17px;font-weight:700;line-height:1.3;color:' + this._pt('text') + ';">' + esc(title) + '</div>';
+    const subHtml = sub ? '<div style="display:flex;align-items:center;gap:6px;font-size:13px;color:' + this._pt('dim') + ';">' + ytIcon + '<span>' + esc(sub) + '</span></div>' : '';
+    const hero = thumb
+      ? '<div style="position:relative;border-radius:14px;overflow:hidden;background:#000;aspect-ratio:16/9;margin-bottom:12px;box-shadow:0 6px 20px rgba(0,0,0,0.35);"><img src="' + esc(thumb) + '" alt="" style="width:100%;height:100%;object-fit:cover;display:block;">'
+          + (appName ? '<div class="app-info-icon" role="button" style="cursor:pointer;-webkit-tap-highlight-color:transparent;position:absolute;left:10px;bottom:10px;width:34px;height:34px;border-radius:9px;overflow:hidden;display:flex;align-items:center;justify-content:center;background:' + _tileBg + ';box-shadow:0 2px 10px rgba(0,0,0,0.45);">' + _iconInner(15) + '</div>' : '')
+          + '</div>'
+          + '<div style="margin-bottom:6px;">' + titleHtml + '</div>'
+          + (subHtml ? '<div style="margin-bottom:14px;">' + subHtml + '</div>' : '<div style="height:8px;"></div>')
+      : '<div class="info-hero" style="align-items:center;">'
+          + '<div class="app-info-icon" role="button" style="cursor:pointer;-webkit-tap-highlight-color:transparent;width:96px;height:96px;flex-shrink:0;border-radius:22px;overflow:hidden;display:flex;align-items:center;justify-content:center;background:' + _tileBg + ';box-shadow:0 6px 20px rgba(0,0,0,0.3);">' + _iconInner(40) + '</div>'
+          + '<div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:5px;">' + titleHtml + subHtml + '</div>'
+        + '</div>';
+    // fetch the icon once, then drop it into whichever artwork spot is showing; tapping it offers
+    // to open the app's website
+    const _fillIcon = () => {
+      // look the website up now, so the tap can open it straight away (browsers block a window
+      // opened after a wait)
+      let _site = null;
+      if (appName) this._appWebsite(appName).then(u => { _site = u; }).catch(() => {});
+      if (appName) content.querySelectorAll('.app-info-icon').forEach(el => {
+        el.onclick = async (e) => {
+          e.stopPropagation();
+          el.style.transform = 'scale(0.94)'; setTimeout(() => { el.style.transform = ''; }, 140);
+          const ok = await this._iosConfirm({ title: 'Open ' + appName + '?', message: 'This opens the ' + appName + ' website in your browser.', confirmLabel: 'Open', confirmFirst: true });
+          if (!ok) return;
+          window.open(_site || 'https://www.google.com/search?q=' + encodeURIComponent(appName + ' official website'), '_blank');
+        };
+      });
+      if (!appName || _iconCached) return;
+      this._atvAppIcon(appName).then(url => {
+        if (!url || stale()) return;
+        content.querySelectorAll('.app-info-icon').forEach(el => { el.innerHTML = '<img src="' + esc(url) + '" alt="" style="width:100%;height:100%;object-fit:cover;display:block;">'; });
+      }).catch(() => {});
+    };
+    // personal videos: just what's playing, no lookup (it isn't a film or show)
+    if (kind === 'personal') {
+      content.innerHTML = '<div data-app-ai="1" style="padding:4px 2px 16px;">' + hero + '<div style="font-size:13px;line-height:1.5;color:' + this._pt('dim') + ';">A personal video playing in ' + esc(app) + '.</div></div>';
+      this._infoGlass(true);
+      _fillIcon();
+      return;
+    }
+    content.innerHTML = '<div data-app-ai="1" style="padding:4px 2px 16px;">' + hero + '<div id="ytAiBody">' + this._psLoading('Asking AI…') + '</div></div>';
+    this._infoGlass(true);
+    _fillIcon();
+    // what to ask, and what to call each section, for each kind of app
+    const K = {
+      creator: { ask: 'A ' + (brandName || 'video') + ' video is playing. Title: "' + title + '"' + (who ? '. Channel: "' + who + '"' : '') + '.', s: 'About this video', a: 'About ' + (who || 'the channel'), aHint: 'about the channel or creator', topics: 'Topics', fact: 'Fun fact', rel: 'You might also like', relHint: 'real videos, each {"title":"","by":"channel"}' },
+      twitch: { ask: 'A Twitch stream is playing. Stream title: "' + title + '"' + (who ? '. Streamer: "' + who + '"' : '') + '.', s: 'About this stream', a: 'About ' + (who || 'the streamer'), aHint: 'about the streamer and what they are known for', topics: 'Game & category', fact: 'Fun fact', rel: 'Similar streamers', relHint: 'real streamers, each {"title":"streamer name","by":"what they stream"}' },
+      sport: { ask: 'Sport is playing in ' + app + '. Title: "' + title + '"' + (who ? ' (' + who + ')' : '') + '. Give background only: you have no live scores, results or current form.', s: 'About this event', a: 'Background', aHint: 'background on the teams or competitors (history, rivalry, notable facts), no current-season claims', topics: 'Teams & competition', fact: 'Did you know?', rel: '', relHint: '', note: 'Background only: the AI has no live scores or this season’s form.' },
+      news: { ask: 'A news channel is playing in ' + app + '. Programme: "' + title + '"' + (who ? ' (' + who + ')' : '') + '. Describe the channel and programme only. You have no live headlines, so do not mention any current events.', s: 'About this programme', a: 'About the channel', aHint: 'about the news channel, its owner and what it is known for', topics: 'Covers', fact: 'Did you know?', rel: '', relHint: '', note: 'About the channel and programme only: the AI has no live headlines.' },
+      fitness: { ask: 'A workout is playing in ' + app + '. Title: "' + title + '"' + (who ? '. Instructor or series: "' + who + '"' : '') + '.', s: 'About this workout', a: who ? 'About ' + who : 'Tips', aHint: who ? 'about the instructor or series' : 'two short tips for this kind of workout', topics: 'Works', fact: 'Tip', rel: 'Try next', relHint: 'workout types or classes to try next, each {"title":"","by":"why"}' },
+      podcast: { ask: 'A podcast is playing in ' + app + '. Episode: "' + title + '"' + (who ? '. Podcast or host: "' + who + '"' : '') + '.', s: 'About this episode', a: 'About ' + (who || 'the podcast'), aHint: 'about the podcast and its hosts', topics: 'Topics', fact: 'Fun fact', rel: 'You might also like', relHint: 'real podcasts, each {"title":"podcast name","by":"host"}' },
+      app: { ask: 'An app or game called "' + app + '" is open on an Apple TV.', s: 'About ' + app, a: 'Tips', aHint: 'two or three short tips for getting the most out of it', topics: 'Genre & developer', fact: 'Fun fact', rel: null },
+    }[kind] || null;
+    if (!K) return;
+    const key = (kind + '|' + title + '|' + who + '|' + app).toLowerCase();
+    if (!this._ytAiCache) this._ytAiCache = new Map();
+    let info = this._aiCachedRead(this._ytAiCache, 'appinfo', key);
+    if (!info) {
+      const prompt = K.ask + '\nUsing what you know (or, if you don\'t know this exact one, what the title suggests), reply ONLY with JSON (no markdown):\n'
+        + '{"summary":"2-3 sentences ' + K.s.toLowerCase() + '","about":"1-3 sentences ' + K.aHint + '","category":"one or two words","category_note":"one short sentence on why","topics":[{"t":"3 to 5 short items for ' + K.topics.toLowerCase() + '","note":"one short sentence on how it relates to this"}],"fun_fact":"one short ' + K.fact.toLowerCase().replace('?', '') + ', or empty"'
+        + (K.rel ? ',"related":[up to 4 ' + K.relHint + ']' : '') + ',"known":true}\n'
+        + 'Set "known" to false if you don\'t recognise this exact one and are going by the title. Never make up statistics, dates, scores or quotes.';
+      try {
+        const raw = await this._aiConverse(prompt, { feature: 'info' });
+        const txt = String(raw || ''), i1 = txt.indexOf('{'), i2 = txt.lastIndexOf('}');
+        info = JSON.parse(i1 >= 0 && i2 > i1 ? txt.slice(i1, i2 + 1) : txt);
+        if (!info || typeof info !== 'object' || !info.summary) throw Object.assign(new Error('unreadable'), { kind: 'unreadable' });
+        this._aiCachedWrite(this._ytAiCache, 'appinfo', key, info);
+      } catch (e) {
+        if (stale()) return;
+        const body = r.getElementById('ytAiBody');
+        if (body) this._aiShowFail(body, () => this._showAppAIInfo(attrs, kind), e?.kind || (e instanceof SyntaxError ? 'unreadable' : null));
+        return;
+      }
+    }
+    if (stale()) return;
+    const body = r.getElementById('ytAiBody');
+    if (!body) return;
+    const label = t => '<div style="font-size:10px;font-weight:700;color:' + (this._panelIsLight ? '#1f6fb5' : 'rgba(99,179,237,0.85)') + ';letter-spacing:0.6px;text-transform:uppercase;margin:16px 0 6px;">' + esc(t) + '</div>';
+    const para = t => '<div style="font-size:14px;line-height:1.55;color:' + this._pt('text') + ';">' + esc(t) + '</div>';
+    // tappable pills: each shows a short note about itself in a message at the bottom of the screen
+    const chip = (t, i) => '<span class="ai-pill" role="button" data-pill="' + i + '" style="display:inline-block;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:600;color:' + this._pt('text') + ';background:' + this._pt('btnBg') + ';border:1px solid ' + this._pt('btnBdr') + ';margin:0 6px 6px 0;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:transform 0.12s ease, background 0.12s ease;">' + esc(t) + '</span>';
+    const topics = (Array.isArray(info.topics) ? info.topics : []).filter(Boolean).slice(0, 6).map(x => typeof x === 'string' ? { t: x } : { t: x.t || x.name || '', note: x.note || '' }).filter(x => x.t);
+    const pills = [{ t: info.category || '', note: info.category_note || '', cat: true }, ...topics];
+    const related = K.rel ? (Array.isArray(info.related) ? info.related : []).filter(x => x && x.title).slice(0, 4) : [];
+    const about = info.about || info.channel || '';
+    body.innerHTML = ''
+      + (info.category ? '<div style="margin-bottom:4px;">' + chip(info.category, 0) + '</div>' : '')
+      + label(K.s) + para(info.summary)
+      + (info.known === false ? '<div style="font-size:11px;color:' + this._pt('dim') + ';margin-top:6px;">Going by the title - the AI doesn’t know this exact one.</div>' : '')
+      + (K.note ? '<div style="font-size:11px;color:' + this._pt('dim') + ';margin-top:6px;">' + esc(K.note) + '</div>' : '')
+      + (about ? label(K.a) + para(about) : '')
+      + (topics.length ? label(K.topics) + '<div>' + topics.map((x, i) => chip(x.t, i + 1)).join('') + '</div>' : '')
+      + (info.fun_fact ? label(K.fact) + para(info.fun_fact) : '')
+      + (related.length ? label(K.rel) + related.map((v, i) => '<div class="yt-rel" data-i="' + i + '" role="button" style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid ' + this._pt('div') + ';cursor:pointer;">' + ytIcon + '<div style="min-width:0;flex:1;"><div style="font-size:13px;font-weight:600;color:' + this._pt('text') + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(v.title) + '</div>' + ((v.by || v.channel) ? '<div style="font-size:11px;color:' + this._pt('dim') + ';">' + esc(v.by || v.channel) + '</div>' : '') + '</div></div>').join('') : '')
+      // same style as the Ask / Mood Match / Trivia buttons in the film and TV panel
+      + (!brandName ? '' : '<div style="display:flex;gap:8px;margin:18px 0 8px;"><button id="ytOpenBtn" type="button" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:9px 12px;border-radius:12px;background:' + this._pt('btnBg') + ';border:1px solid ' + this._pt('border') + ';color:' + this._pt('text') + ';font-size:12px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;-webkit-tap-highlight-color:transparent;">'
+        + (low.includes('youtube')
+          ? '<svg viewBox="0 0 24 24" style="width:13px;height:13px;flex-shrink:0"><path fill="#FF0033" d="M21.58,7.19C21.35,6.33 20.67,5.65 19.81,5.42C18.25,5 12,5 12,5C12,5 5.75,5 4.19,5.42C3.33,5.65 2.65,6.33 2.42,7.19C2,8.75 2,12 2,12C2,12 2,15.25 2.42,16.81C2.65,17.67 3.33,18.35 4.19,18.58C5.75,19 12,19 12,19C12,19 18.25,19 19.81,18.58C20.67,18.35 21.35,17.67 21.58,16.81C22,15.25 22,12 22,12C22,12 22,8.75 21.58,7.19Z"/><path fill="#fff" d="M10,15L15.2,12L10,9V15Z"/></svg>'
+          : '<svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:' + (brandName ? colour : 'rgba(99,179,237,0.8)') + ';flex-shrink:0"><path d="M9.5,3A6.5,6.5 0 0,1 16,9.5C16,11.11 15.41,12.59 14.44,13.73L14.71,14H15.5L20.5,19L19,20.5L14,15.5V14.71L13.73,14.44C12.59,15.41 11.11,16 9.5,16A6.5,6.5 0 0,1 3,9.5A6.5,6.5 0 0,1 9.5,3M9.5,5C7,5 5,7 5,9.5C5,12 7,14 9.5,14C12,14 14,12 14,9.5C14,7 12,5 9.5,5Z"/></svg>')
+        + 'Find on ' + brandName + '</button></div>');
+    body.querySelectorAll('.ai-pill').forEach(el => {
+      el.onclick = async (e) => {
+        e.stopPropagation();
+        const p = pills[+el.dataset.pill];
+        if (!p || !p.t) return;
+        el.style.transform = 'scale(0.94)'; setTimeout(() => { el.style.transform = ''; }, 140);
+        let note = p.note;
+        let sheet = null;
+        if (!note) {
+          // an older answer without notes: ask for one line, and keep it
+          const nk = key + '|pill|' + p.t.toLowerCase();
+          note = this._aiCachedRead(this._ytAiCache, 'appinfo', nk);
+          if (!note) {
+            sheet = this._showNoteSheet(p.t, '', { loading: true });
+            try {
+              const raw = await this._aiConverse('In one short sentence (under 25 words), say how "' + p.t + '" relates to "' + title + '"' + (who && !isApp ? ' by ' + who : '') + '. Reply with the sentence only.', { feature: 'info', silent: true });
+              note = String(raw || '').trim().replace(/^"|"$/g, '');
+              if (note) this._aiCachedWrite(this._ytAiCache, 'appinfo', nk, note);
+            } catch (_) { note = ''; }
+          }
+          p.note = note;
+        }
+        const msg = note || 'No more detail on this one.';
+        if (sheet) sheet.setBody(msg); else this._showNoteSheet(p.t, msg);
+      };
+    });
+    const q = title + (who && !isApp ? ' ' + who : '');
+    // leaving the card for YouTube (or Twitch…) asks first, in the same popup as elsewhere
+    // (glass when Glass is on)
+    const _askOpen = async (url, what) => {
+      const ok = await this._iosConfirm({ title: 'Open ' + (brandName || 'the web') + '?', message: what, confirmLabel: 'Open' });
+      if (ok) window.open(url, '_blank');
+    };
+    const _openBtn = body.querySelector('#ytOpenBtn');
+    if (_openBtn) _openBtn.onclick = () => _askOpen(findUrl(q), 'This searches ' + (brandName || 'the web') + ' for \u201c' + title + '\u201d in your browser.');
+    body.querySelectorAll('.yt-rel').forEach(el => { el.onclick = () => { const v = related[+el.dataset.i]; _askOpen(findUrl(v.title + (v.by && kind === 'creator' ? ' ' + v.by : '')), 'This searches ' + (brandName || 'the web') + ' for \u201c' + v.title + '\u201d in your browser.'); }; });
   }
 
   // Display name for an entity anywhere the card SHOWS a speaker name —
@@ -29624,6 +32755,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const attrs = state.attributes;
     // MA explicitly tags radio/live streams
     if (attrs.mass_media_type === 'radio' || attrs.mass_media_type === 'flow') return true;
+    // Something playing inside a video app (Netflix, iPlayer, YouTube…) is never a radio station,
+    // even when the app reports no title, type or duration, which Netflix on Apple TV often does.
+    if (this._isVideoApp(attrs.app_id) || this._isVideoApp(attrs.app_name)) return false;
+    // An Apple TV app reporting nothing at all (no title, artist or album) isn't a station either;
+    // a station always shows at least its name or the song.
+    if ((attrs.app_id || attrs.app_name) && !attrs.media_title && !attrs.media_artist && !attrs.media_album_name && !/^builtin:\/\/radio\//i.test(attrs.media_content_id || '')) return false;
     // No duration = stream (0 and undefined both count; live TV has duration so exclude video)
     const dur = attrs.media_duration;
     const hasNoDuration = dur === undefined || dur === null || dur === 0;
@@ -29652,6 +32789,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // misclassify a track as a station. Resolving an actual station below
     // is the stronger signal, per the comment above this function.
     if (attrs.mass_media_type === 'radio' || attrs.mass_media_type === 'flow') return true;
+    if (this._isVideoApp(attrs.app_id) || this._isVideoApp(attrs.app_name)) return false;
     const streamKey = this._rbStreamKey(attrs);
     if (!streamKey) return false;
     if (this._rbGetLastPlayed(entityId, streamKey)) return true;
@@ -31564,6 +34702,43 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     return { kind: null };
   }
 
+  // Puts a film, show or YouTube video that's being followed into Watch History once it has played
+  // long enough to count. Run from every Home Assistant update and also on a timer, so it happens
+  // even when the Apple TV sends nothing new while a video plays.
+  _watchCheckEarly(entId, reason) {
+    const prev = this._maRecapState?.[entId];
+    if (!prev || prev.kind === 'music' || prev.logged || !prev.meta) return false;
+    const st = this._hass?.states?.[entId];
+    if (!st || st.state !== 'playing') return false;
+    const el = Date.now() - (prev.startTs || Date.now());
+    if (el < (prev.kind === 'youtube' ? 0 : 10000)) return false;
+    this._logWatchEntry({ ...prev.meta, watchedMs: el }, prev.startTs);
+    this._watchDiag(entId, prev.meta.title, prev.meta.channel || '', 'recorded in Watch History (still playing' + (reason ? ', ' + reason : '') + ')');
+    prev.logged = true;
+    crowaiSafeSet('crow_ai_local_maRecapState', JSON.stringify(this._maRecapState));
+    this._advanceHistoryCheckpoint(entId);
+    if (this._maCurrentTab === 'recently_watched') setTimeout(() => this._refreshWatchHistoryView(), 0);
+    return true;
+  }
+  _watchTick() {
+    if (this._watchTickAt && Date.now() - this._watchTickAt < 5000) return;
+    this._watchTickAt = Date.now();
+    Object.keys(this._maRecapState || {}).forEach(e => {
+      try {
+        if (this._watchCheckEarly(e, 'timer')) return;
+        // already in Watch History and still playing: keep its watched time up to date (once a minute)
+        const p = this._maRecapState[e], st = this._hass?.states?.[e];
+        if (p?.logged && p.kind !== 'music' && st?.state === 'playing' && Date.now() - (p.timeAt || 0) > 60000) {
+          p.timeAt = Date.now();
+          this._logWatchEntry({ ...p.meta, watchedMs: Date.now() - (p.startTs || Date.now()) }, p.startTs);
+        }
+      } catch (_) {}
+    });
+  }
+
+  // (the recorder used to keep notes for a diagnostic view; it no longer does)
+  _watchDiag() {}
+
   // Watch Recap's version of _logListenEntry — same per-entry-key storage
   // shape, same dedup/pruning approach, just a separate store (watchLog)
   // and a longer dedup window since episodes/movies run far longer than
@@ -31576,12 +34751,21 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       const now = tsOverride || Date.now();
 
       const dedupWindowMs = 30 * 60 * 1000;
-      const isDupe = Object.values(store).some(e => {
-        const d = e?.data;
+      const dupeKey = Object.keys(store).find(k => {
+        const e = store[k], d = e?.data;
         if (!d || d.title !== meta.title || (d.entity || '') !== (meta.entity || '')) return false;
         return Math.abs((e.ts || 0) - now) <= dedupWindowMs;
       });
-      if (isDupe) return;
+      if (dupeKey) {
+        // the same watch seen again (recorded early, then again when it ended): keep the longer time
+        const d = store[dupeKey].data;
+        if (meta.watchedMs > (d.watchedMs || 0)) {
+          d.watchedMs = Math.round(Math.min(meta.watchedMs, this._watchMsCap(d.durationMs)));
+          if (!crowaiSafeSet(lsKey, JSON.stringify(store))) { this._watchDiag(meta.entity, meta.title, meta.channel || '', 'couldn\u2019t save - this device\u2019s storage is full'); return; }
+          this._haStorageSaveAI('watchLog');
+        }
+        return dupeKey;
+      }
 
       const entryKey = 'w' + now + '_' + Math.random().toString(36).slice(2, 6);
       store[entryKey] = {
@@ -31596,6 +34780,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       };
       // Optional extras — only written when known, so older entries and
       // sources that don't report them simply omit the fields.
+      if (meta.channel) store[entryKey].data.channel = meta.channel;
       if (Number.isFinite(meta.season))  store[entryKey].data.season  = meta.season;
       if (Number.isFinite(meta.episode)) store[entryKey].data.episode = meta.episode;
       if (meta.watchedMs > 0) store[entryKey].data.watchedMs = Math.round(Math.min(meta.watchedMs, this._watchMsCap(store[entryKey].data.durationMs)));
@@ -31607,12 +34792,43 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             .slice(0, keys.length - 2000)
             .forEach(k => delete store[k]);
       }
-      localStorage.setItem(lsKey, JSON.stringify(store));
+      if (!crowaiSafeSet(lsKey, JSON.stringify(store))) { this._watchDiag(meta.entity, meta.title, meta.channel || '', 'couldn\u2019t save - this device\u2019s storage is full'); return; }
       this._haStorageSaveAIImmediate('watchLog');
+      return entryKey;
     } catch (_) { /* localStorage unavailable — silently skip logging */ }
   }
 
-  _getWatchLogEntries() {
+  // YouTube videos share the watch log but are kept out of everything that
+  // reads it as movies and TV (Watch History's main list, Video Recap, the
+  // reports). They're read on their own with _getYouTubeLogEntries().
+  _getWatchLogEntries(opts = {}) {
+    const all = this._readWatchLog();
+    if (opts.all) return all;
+    return opts.youtube ? all.filter(d => d.mediaType === 'youtube') : all.filter(d => d.mediaType !== 'youtube');
+  }
+  _getYouTubeLogEntries() { return this._getWatchLogEntries({ youtube: true }); }
+
+  // Something playing in the YouTube app (not YouTube Music).
+  _isYouTubeApp(attrs) {
+    const a = ((attrs?.app_name || '') + ' ' + (attrs?.app_id || '')).toLowerCase();
+    return a.includes('youtube') && !a.includes('youtube music') && !a.includes('youtubemusic');
+  }
+  // YouTube for recording purposes: the YouTube app, or (when an Apple TV doesn't say which app is
+  // open) a video with a channel but no album or series, which is how YouTube shows up
+  _looksLikeYouTube(attrs, entId) {
+    if (this._isYouTubeApp(attrs)) return true;
+    if (attrs?.app_name || attrs?.app_id) return false;
+    const isAtv = !!(entId && this._hass?.states?.[String(entId).replace('media_player.', 'remote.')]);
+    return isAtv && String(attrs?.media_content_type || '').toLowerCase() === 'video'
+      && !!attrs?.media_artist && !attrs?.media_album_name && !attrs?.media_series_title
+      && attrs?.media_season == null && attrs?.media_episode == null;
+  }
+  _youTubeMeta(attrs, entId) {
+    const title = attrs.media_title || '';
+    return { title, seriesTitle: title, channel: attrs.media_artist || attrs.media_channel || '', entity: entId, mediaType: 'youtube', duration: attrs.media_duration || 0 };
+  }
+
+  _readWatchLog() {
     try {
       const store = JSON.parse(localStorage.getItem('crow_ai_local_watchLog') || '{}');
       // Same bare-date check _classifyWatchMedia now applies before logging
@@ -31859,9 +35075,25 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     } catch (_) {}
   }
 
+  // The companion app stops running the card while the phone is locked or the app is in the
+  // background, so plays from that time (watching YouTube on the TV with the phone down) are never
+  // seen live. Catching up from Home Assistant's history again whenever the card comes back into
+  // view, and when a history list opens, fills them in. At most once a minute.
+  _catchUpHistory(after) {
+    if (this._historyCatchUpRunning) return this._historyCatchUpRunning.then(() => after?.());
+    if (this._historyCatchUpAt && Date.now() - this._historyCatchUpAt < 60000) { after?.(); return Promise.resolve(); }
+    this._historyCatchUpAt = Date.now();
+    this._historyBackfillDone = false;
+    this._historyCatchUpRunning = this._backfillListenHistoryFromHA()
+      .catch(() => {})
+      .finally(() => { this._historyCatchUpRunning = null; });
+    return this._historyCatchUpRunning.then(() => after?.());
+  }
+
   async _backfillListenHistoryFromHA() {
     if (this._historyBackfillDone) return;
     this._historyBackfillDone = true;
+    this._historyCatchUpAt = Date.now();
     const conn = this._hass?.connection;
     if (!conn) return;
 
@@ -31918,6 +35150,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
               const durMs = (prevMeta.duration || 0) * 1000;
               const qualifies = prevKind === 'music'
                 ? (elapsedMs >= 30000 || (durMs > 0 && elapsedMs >= durMs * 0.5))
+                : prevKind === 'youtube' ? true
                 : (elapsedMs >= 10000);
               if (qualifies) {
                 if (prevKind === 'music') this._logListenEntry(prevMeta, prevStartTs);
@@ -31932,7 +35165,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           if (!title) continue;
 
           let kind = null, key = null, entryMeta = null;
-          if (artist) {
+          if (this._looksLikeYouTube(entry.attrs, entId)) {
+            kind = 'youtube';
+            key = 'youtube|' + title;
+            entryMeta = this._youTubeMeta(entry.attrs, entId);
+            if (!prevMeta || prevMeta.key !== key) this._watchDiag(entId, title, entryMeta.channel, 'found in Home Assistant\u2019s history (' + new Date(entry.ts).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) + ')');
+          } else if (artist) {
             if (this._recapShouldExclude(artist, title, entry.attrs, { state: entry.state, attributes: entry.attrs }, entId)) continue;
             kind = 'music';
             key = 'music|' + artist + '|||' + title + '|||' + (entry.attrs.media_album_name || '');
@@ -31967,6 +35205,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             const durMs = (prevMeta.duration || 0) * 1000;
             const qualifies = prevKind === 'music'
               ? (elapsedMs >= 30000 || (durMs > 0 && elapsedMs >= durMs * 0.5))
+              : prevKind === 'youtube' ? true
               : (elapsedMs >= 10000); // TV/movie — just needs a genuine start, not a full watch
             if (qualifies) {
               if (prevKind === 'music') this._logListenEntry(prevMeta, prevStartTs);
@@ -31979,6 +35218,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             prevKind = kind;
             prevStartTs = entry.ts;
           }
+        }
+        // still playing at the end (a video or show that's on now): it counts once it has played
+        // long enough, the same as when watched live
+        if (prevMeta && prevKind && prevKind !== 'music') {
+          const elapsedMs = now - (prevStartTs || now);
+          if (elapsedMs >= (prevKind === 'youtube' ? 0 : 10000)) this._logWatchEntry({ ...prevMeta, watchedMs: elapsedMs }, prevStartTs);
         }
       }
 
@@ -32037,7 +35282,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             .slice(0, keys.length - 2000)
             .forEach(k => delete store[k]);
       }
-      localStorage.setItem(lsKey, JSON.stringify(store));
+      crowaiSafeSet(lsKey, JSON.stringify(store));
       this._haStorageSaveAIImmediate('listenLog');
       // Keep the daily summaries (Your month in music) up to date — at most every 10 minutes
       if (!this._dailyRollupAt || Date.now() - this._dailyRollupAt > 600000) {
@@ -33066,7 +36311,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         this._aiLocalGet('recs', cacheKey) === null && this._aiLocalSet('recs', cacheKey, recs);
       } catch(e) {
         if (_stale()) return;
-        content.innerHTML = this._psError(`AI couldn't fetch recommendations`, 'Try again in a moment.');
+        { const _k = e?.kind || (e instanceof SyntaxError ? 'unreadable' : this._aiErrorKind(e?.message)); const [_t, _b] = this._aiFriendlyReason(_k === 'error' && /no response/i.test(e?.message || '') ? 'unreadable' : _k); content.innerHTML = this._psError('Suggestions: ' + _t.charAt(0).toLowerCase() + _t.slice(1), _b); }
         return;
       }
     }
@@ -33561,6 +36806,15 @@ Include ALL tracks. Use null for unknown fields.`;
     const mediaType = this._detectMediaType(state);
     const attrs = state.attributes || {};
     const art = attrs.entity_picture_local || attrs.entity_picture || '';
+
+    // YouTube, Twitch, sport, news, an app that isn't saying what's on… aren't films or shows,
+    // so they'd only pin as a film that doesn't exist
+    const _appKind = this._appInfoKind(attrs);
+    if (_appKind && _appKind !== 'music') {
+      const _app = String(attrs.app_name || '').trim();
+      this._showToast(_appKind === 'app' || !_app ? 'Nothing to pin right now' : 'Things playing in ' + _app + ' can\u2019t be pinned', 2200);
+      return;
+    }
 
     if (mediaType === 'tv' || mediaType === 'movie') {
       const title = (attrs.media_title || '').trim();
@@ -35688,7 +38942,7 @@ Include ALL tracks. Use null for unknown fields.`;
       } catch(e) {
         if (_stale()) return;
         r?.getElementById('queueBuildingOverlay')?.style.setProperty('display', 'none');
-        content.innerHTML = this._psError('AI couldn\'t fetch recommendations', 'Try again in a moment.');
+        { const _k = e?.kind || (e instanceof SyntaxError ? 'unreadable' : this._aiErrorKind(e?.message)); const [_t, _b] = this._aiFriendlyReason(_k === 'error' && /no response/i.test(e?.message || '') ? 'unreadable' : _k); content.innerHTML = this._psError('Suggestions: ' + _t.charAt(0).toLowerCase() + _t.slice(1), _b); }
         return;
       }
     }
@@ -39843,6 +43097,7 @@ Include ALL tracks. Use null for unknown fields.`;
   _closeInfoPopup() {
     const r = this.shadowRoot;
     this._activeInfoPanelKind = null;
+    this._infoGlass(false);
     // Remove any artwork/bio lightbox that was opened from within this panel —
     // it mounts on cardOuter and would otherwise persist across panel changes.
     r.getElementById('cardOuter')?.querySelectorAll('.crow-bio-lightbox').forEach(el => el.remove());
@@ -41494,7 +44749,7 @@ Include ALL tracks. Use null for unknown fields.`;
         const _vShareUrl = 'https://www.themoviedb.org/search?query=' + encodeURIComponent(data.title || '');
         _vSelf._copyToClipboard(_vShareText + '\n' + _vShareUrl);
       }, {
-        extraItems: [{
+        extraItems: [..._vSelf._atvTrailerItems(data), {
           label: 'DVD / Blu-ray Case Printables (PDF)', pdf: 'disc',
           icon: 'M12,2A10,10 0 1,1 12,22A10,10 0 1,1 12,2Z M12,7.5A4.5,4.5 0 1,0 12,16.5A4.5,4.5 0 1,0 12,7.5Z M12,10.8A1.2,1.2 0 1,1 12,13.2A1.2,1.2 0 1,1 12,10.8Z',
           onClick: () => _vSelf._exportDiscCase(data, artUrl, { origTitles: _rootTitles || [data.title] }),
@@ -43901,7 +47156,7 @@ Include ALL tracks. Use null for unknown fields.`;
   }
 
   // Persistent store for Wikipedia photo bytes. Cache API needs a secure
-  // context (https / Nabu Casa) — on plain-http local access it's simply
+  // context (https) — on plain-http local access it's simply
   // unavailable and we fall back to the network every session as before.
   async _wikiImageCache() {
     if (this._wikiImgCachePromise === undefined) {
@@ -45321,7 +48576,7 @@ Include ALL tracks. Use null for unknown fields.`;
   // a short message, and full-width pill buttons stacked underneath — Cancel in
   // grey, the action in blue at the bottom. Resolves true for the action;
   // Cancel, a tap outside or Escape resolve false.
-  _iosConfirm({ title, message, confirmLabel = 'OK', cancelLabel = 'Cancel', destructive = false } = {}) {
+  _iosConfirm({ title, message, confirmLabel = 'OK', cancelLabel = 'Cancel', destructive = false, confirmFirst = true } = {}) {
     return new Promise(resolve => {
       const r = this.shadowRoot;
       const popup = r?.getElementById('infoPopup');
@@ -45343,8 +48598,10 @@ Include ALL tracks. Use null for unknown fields.`;
           (title ? '<div class="crow-ios-title" style="color:' + text + ';">' + esc(title) + '</div>' : '') +
           (message ? '<div class="crow-ios-msg" style="color:' + dim + ';">' + esc(message) + '</div>' : '') +
           '<div class="crow-ios-btns">' +
-            '<button class="crow-ios-cancel" style="color:' + text + ';">' + esc(cancelLabel) + '</button>' +
+            // the main button sits on top and Cancel at the bottom (confirmFirst:false swaps them)
+            (confirmFirst ? '' : '<button class="crow-ios-cancel" style="color:' + text + ';">' + esc(cancelLabel) + '</button>') +
             '<button class="crow-ios-ok"' + (destructive ? ' style="background:#FF3B30;"' : '') + '>' + esc(confirmLabel) + '</button>' +
+            (confirmFirst ? '<button class="crow-ios-cancel" style="color:' + text + ';">' + esc(cancelLabel) + '</button>' : '') +
           '</div>' +
         '</div>';
       host.appendChild(back);
@@ -45367,6 +48624,157 @@ Include ALL tracks. Use null for unknown fields.`;
       back.addEventListener('click', (e) => { e.stopPropagation(); if (tooSoon()) return; if (e.target === back) finish(false); });
       back.querySelector('.crow-ios-cancel').addEventListener('click', (e) => { e.stopPropagation(); if (tooSoon()) return; finish(false); });
       back.querySelector('.crow-ios-ok').addEventListener('click', (e) => { e.stopPropagation(); if (tooSoon()) return; finish(true); });
+    });
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  // "ENJOYING CROWAI?" — a friendly GitHub star request, once after an update
+  // ══════════════════════════════════════════════════════════════════════
+  // • Only after a real update (CROWAI_VERSION went up), never on a brand-new
+  //   install, and at most once per version.
+  // • Per Home Assistant user, saved in HA's user data (so a phone, tablet
+  //   and wall panel don't each ask), with this device's storage as a fallback.
+  // • Only at a calm moment: after the card has been used (a tap, or music
+  //   playing for a while), with nothing open over it, never in the editor's
+  //   preview, and only one card on the page asks.
+  // • Star on GitHub or Don't Ask Again: never asks again. Maybe Later (or a
+  //   tap outside): asks again after the next update.
+  // • Off switch: editor → Caches, Data & Support → Ask for a Star After Updates.
+  _starCmp(a, b) {
+    const pa = String(a || '0').split('.').map(n => parseInt(n, 10) || 0), pb = String(b || '0').split('.').map(n => parseInt(n, 10) || 0);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) { const d = (pa[i] || 0) - (pb[i] || 0); if (d) return d > 0 ? 1 : -1; }
+    return 0;
+  }
+  async _starLoad() {
+    let st = null;
+    try {
+      const r = await Promise.race([
+        this._hass.connection.sendMessagePromise({ type: 'frontend/get_user_data', key: 'crowai_star_prompt' }),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000)),
+      ]);
+      if (r?.value && typeof r.value === 'object') st = r.value;
+    } catch (_) {}
+    if (!st) { try { st = JSON.parse(localStorage.getItem('crowai_star_prompt') || 'null'); } catch (_) {} }
+    return st;
+  }
+  _starSave(st) {
+    try { localStorage.setItem('crowai_star_prompt', JSON.stringify(st)); } catch (_) {}
+    try { this._hass?.connection?.sendMessagePromise({ type: 'frontend/set_user_data', key: 'crowai_star_prompt', value: st }).catch(() => {}); } catch (_) {}
+  }
+  _starInDialog() {
+    for (let n = this; n; n = n.parentElement || n.getRootNode?.()?.host || null) if (n.tagName?.toLowerCase().includes('dialog')) return true;
+    return false;
+  }
+  // Once per page, a few seconds after the card first has Home Assistant
+  async _starCheck() {
+    if (window.__crowStarCheck || !this.isConnected || !this._hass?.connection || this._starInDialog()) return;
+    window.__crowStarCheck = this;
+    const V = CROWAI_VERSION;
+    let st = await this._starLoad();
+    if (!st) {
+      // No record yet: a brand-new install stays quiet. Someone who already had the card (it has left
+      // data on this device) is updating to the first version that can ask, so it counts as an update.
+      const existing = CROWAI_HAD_DATA;
+      st = { seen: existing ? '0' : V };
+      if (!existing) { this._starSave(st); return; }
+    }
+    const due = this._config?.star_prompt !== false && !st.done && st.asked !== V && this._starCmp(V, st.seen) > 0;
+    if (!due) { if (st.seen !== V) this._starSave({ ...st, seen: V }); return; }
+    this._starState = st;
+    this._starPending = true;
+    this._starLoadedAt = Date.now();
+    this._starPlayTicks = 0;
+    if (!this._starTouchWired) {
+      this._starTouchWired = true;
+      this.shadowRoot?.addEventListener('pointerdown', () => { this._starTouchAt = Date.now(); }, { capture: true, passive: true });
+    }
+    clearInterval(this._starTimer);
+    this._starTimer = setInterval(() => this._starTick(), 2000);
+  }
+  // Waits for a calm moment after the card has been used
+  _starTick() {
+    if (!this._starPending) { clearInterval(this._starTimer); return; }
+    if (!this.isConnected) { clearInterval(this._starTimer); if (window.__crowStarCheck === this) window.__crowStarCheck = null; return; }
+    if (this._config?.star_prompt === false) { this._starPending = false; return; }
+    const st = this._hass?.states?.[this._entity];
+    if (st?.state === 'playing') this._starPlayTicks++;
+    const used = !!this._starTouchAt || this._starPlayTicks >= 15;          // a tap, or about 30 seconds of music
+    if (!used || (this._starTouchAt && Date.now() - this._starTouchAt < 4000)) return;
+    if (!this._starCalm()) return;
+    this._starPending = false;
+    clearInterval(this._starTimer);
+    this._starShow(false);
+  }
+  _starCalm() {
+    const r = this.shadowRoot, card = r?.getElementById('cardOuter');
+    if (document.hidden || !card) return false;
+    const rc = card.getBoundingClientRect();
+    if (!rc.width || rc.bottom < 0 || rc.top > (window.innerHeight || 0)) return false;   // on screen
+    if (this._saverEl || this._remoteMode || card.classList.contains('lyrics-open')) return false;
+    if (this._vizRaf && r.getElementById('crowViz')?.classList.contains('on')) return false;
+    if (r.getElementById('maPopup')?.classList.contains('visible') || r.getElementById('infoPopup')?.classList.contains('visible')) return false;
+    if (document.getElementById('quickMenuPopup') || r.getElementById('quickMenuPopup') || r.querySelector('.crow-ios-backdrop, .crow-mac-backdrop')) return false;
+    if (document.querySelector('.crowai-saver-host, .crowai-star-host')) return false;
+    return true;
+  }
+
+  // The dialog: a centred card over a soft dimmed backdrop, on a layer of its own on the page (so it looks
+  // right even when the card is compact). Follows the card's Glass setting and light / dark panels.
+  _starShow(test = false) {
+    document.querySelector('.crowai-star-host')?.remove();
+    const V = CROWAI_VERSION;
+    if (!test) this._starSave({ ...(this._starState || {}), seen: V, asked: V });
+    const light = !!this._panelIsLight;
+    const glass = this._config?.card_liquid_glass !== false;
+    let accent = '';
+    try { accent = getComputedStyle(this).getPropertyValue('--accent').trim(); } catch (_) {}
+    if (!accent || /^var\(/.test(accent)) accent = this._config?.accent_color || '#007AFF';
+    const host = document.createElement('div');
+    host.className = 'crowai-star-host';
+    host.style.cssText = 'position:fixed;inset:0;z-index:2147482000;display:block;margin:0;padding:0;border:0;background:transparent;';
+    const sr = host.attachShadow({ mode: 'open' });
+    const star = 'M12,17.27L18.18,21L16.54,13.97L22,9.24L14.81,8.62L12,2L9.19,8.62L2,9.24L7.45,13.97L5.82,21L12,17.27Z';
+    sr.innerHTML = '<style>' + CROWAI_STAR_CSS + '</style>'
+      + '<div class="bd' + (glass ? ' glass' : '') + (light ? ' light' : '') + '" style="--acc:' + accent + ';">'
+      +   '<div class="al" role="alertdialog" aria-modal="true" aria-labelledby="st-t" aria-describedby="st-m">'
+      +     '<div class="star" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="' + star + '"/></svg></div>'
+      +     '<div class="t" id="st-t">Enjoying Crow Media Player?</div>'
+      +     '<div class="m" id="st-m">Thanks for updating! If the card has been useful, a star on GitHub would mean a lot \u2014 it helps other Home Assistant users find it, and only takes a second.</div>'
+      +     '<div class="btns">'
+      +       '<button type="button" class="ok">Star on GitHub</button>'
+      +       '<button type="button" class="later">Maybe Later</button>'
+      +       '<button type="button" class="never">Don\u2019t ask again</button>'
+      +     '</div>'
+      +   '</div>'
+      + '</div>';
+    document.body.appendChild(host);
+    const bd = sr.querySelector('.bd');
+    requestAnimationFrame(() => requestAnimationFrame(() => bd.classList.add('visible')));
+    let done = false;
+    const close = () => {
+      if (done) return; done = true;
+      document.removeEventListener('keydown', onKey, true);
+      bd.classList.remove('visible');
+      host.style.pointerEvents = 'none';
+      setTimeout(() => host.remove(), 260);
+    };
+    const never = (msg) => { if (!test) this._starSave({ ...(this._starState || {}), seen: V, asked: V, done: true }); if (msg) this._showToast(msg, 4500); };
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+    document.addEventListener('keydown', onKey, true);
+    // the tap that opened it (from the menu) sends a late click: ignore taps in its first moment
+    const openedAt = Date.now(), tooSoon = () => Date.now() - openedAt < 600;
+    bd.addEventListener('click', (e) => { e.stopPropagation(); if (tooSoon()) return; if (e.target === bd) close(); });
+    sr.querySelector('.ok').addEventListener('click', (e) => {
+      e.stopPropagation(); if (tooSoon()) return;
+      window.open(CROWAI_REPO_URL, '_blank', 'noopener');
+      never('\u2b50 Thank you \u2014 that really helps!');
+      close();
+    });
+    sr.querySelector('.later').addEventListener('click', (e) => { e.stopPropagation(); if (tooSoon()) return; close(); });
+    sr.querySelector('.never').addEventListener('click', (e) => {
+      e.stopPropagation(); if (tooSoon()) return;
+      never('No problem \u2014 it won\u2019t ask again. \u201cStar on GitHub\u201d is always in the card editor, under Caches, Data & Support.');
+      close();
     });
   }
 
@@ -45514,37 +48922,12 @@ Include ALL tracks. Use null for unknown fields.`;
   // limit, spots error answers (quota, sign-in, retired model, no agent…) and
   // shows one plain-English toast for them. Background look-ups pass
   // _crowSilent so they never pop up a toast on their own.
-  _aiErrorKind(text) {
-    const t = String(text || '').toLowerCase();
-    // "Busy" (overloaded / high demand) clears within seconds, so it's kept
-    // apart from "quota": it's retried once and never starts a long pause.
-    if (/\b503\b|overload|high demand|unavailable|try again later|temporarily/.test(t) && !/quota|exhaust/.test(t)) return 'busy';
-    if (/429|quota|resource_exhausted|rate.?limit|too many requests|exceeded/.test(t)) return 'quota';
-    if (/api.?key|unauthori[sz]ed|unauthenticated|permission|forbidden|\b403\b|invalid.?key/.test(t)) return 'auth';
-    if (/not found|\b404\b|is not supported|deprecated|no longer available|unknown model/.test(t) && /model|gemini|gpt|claude/.test(t)) return 'model';
-    if (/agent/.test(t) && /not found|unknown|invalid|no /.test(t)) return 'agent';
-    if (/timeout|timed out|deadline/.test(t)) return 'timeout';
-    if (/connection|network|offline|lost|socket/.test(t)) return 'offline';
-    return 'error';
-  }
+  _aiErrorKind(text) { return crowaiAiKind(text); }
   // ── Friendly AI failure, shown in the panel itself ─────────────────────
   // For features with no fallback (Ask, Meaning, Trivia, Mood Match): a
   // short reason plus Try Again, instead of an empty panel and a toast that
   // disappears before you can act on it. The raw error goes to the console.
-  _aiFriendlyReason(kind) {
-    switch (kind) {
-      case 'busy':     return ['Busy right now', 'The AI service is getting a lot of requests. This usually clears up within a few minutes.'];
-      case 'quota':    return ['Limit reached', 'The AI\u2019s free allowance is used up for the moment. If it keeps happening, the daily limit resets tomorrow.'];
-      case 'auth':     return ['The AI needs attention', 'Its sign-in wasn\u2019t accepted. Check the AI integration in Home Assistant\u2019s settings.'];
-      case 'model':    return ['The AI needs attention', 'Its model isn\u2019t available any more. Choose a current model in the AI integration\u2019s settings.'];
-      case 'agent':    return ['No AI agent', 'Choose a conversation agent under AI in this card\u2019s editor.'];
-      case 'timeout':  return ['No reply', 'The AI took too long to answer.'];
-      case 'offline':  return ['Couldn\u2019t connect', 'Check the connection to Home Assistant, then try again.'];
-      case 'disabled': return ['Switched off', 'This AI feature is turned off in the card\u2019s AI Settings.'];
-      case 'unreadable': return ['No answer', 'The AI\u2019s reply couldn\u2019t be read.'];
-      default:         return ['No answer', 'Something went wrong. Please try again in a moment.'];
-    }
-  }
+  _aiFriendlyReason(kind) { return crowaiAiReason(kind); }
   _aiShowFail(target, retry, kind) {
     if (!target || !target.isConnected) return;
     const k = kind || this._aiLastErrorKind || 'error';
@@ -48956,6 +52339,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
         .toggle-item { display: flex; align-items: center; justify-content: space-between; padding: 13px 16px; border-bottom: 1px solid var(--divider-color,rgba(128,128,128,0.2)); min-height: 52px; }
         .toggle-item:last-child { border-bottom: none; }
         /* collapsible groups: small headings between their settings, and no line under the last one */
+        @keyframes ed-spin { to { transform: rotate(360deg); } }
         .grp-sub { font-size: 10px; font-weight: 700; color: #888; text-transform: uppercase; letter-spacing: 0.5px; margin: 16px 0 2px; }
         .grp-body > .grp-sub:first-child { margin-top: 2px; }
         .grp-body > :last-child { border-bottom: none !important; }
@@ -49229,6 +52613,13 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                     <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Automatically shows a text input when an Apple TV's on-screen keyboard becomes active, so you can type on your phone instead of using the remote's letter-by-letter entry.</div>
                   </div>
                   <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="atv_keyboard_panel" checked><span class="toggle-track"></span></label>
+                </div>
+<div class="toggle-item" style="align-items:flex-start;gap:12px;padding:10px 0;">
+                  <div style="flex:1;">
+                    <div class="toggle-label">Apps Button</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Adds Apps to the Apple TV remote and Open App to the quick menu: a grid of the Apple TV's apps, most used first. Shows only when the Apple TV shares its app list (Home Assistant 2026.7 or later on tvOS 26).</div>
+                  </div>
+                  <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="atv_apps_button" checked><span class="toggle-track"></span></label>
                 </div>
 <div class="grp-sub">Display</div>
 <div class="toggle-item" style="align-items:flex-start;gap:12px;padding:10px 0;">
@@ -49711,7 +53102,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                 <div class="toggle-item" style="align-items:flex-start;gap:12px;padding:0;">
                   <div style="flex:1;">
                     <div class="toggle-label">Start Automatically</div>
-                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">A visualiser in place of the album artwork while music plays, or a screensaver whether or not anything is playing, once the card has been left alone for a while (one or the other). Visualiser and Screensaver in the quick menu work either way.</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">A visualiser in place of the album artwork while music plays, or a screensaver whether or not anything is playing (full screen or just over the artwork — see Full Screen below), once it has been left alone for a while (one or the other). Visualiser and Screensaver in the quick menu work either way.</div>
                   </div>
                   <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="auto_start_on"><span class="toggle-track"></span></label>
                 </div>
@@ -49765,9 +53156,13 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                   <option value="rain">Rain on Glass</option>
                   <option value="aurora">Ambient Aurora</option>
                   <option value="lava">Lava Lamp</option>
+                  <option value="night">Night Sky</option>
+                  <option value="fire">Fireplace</option>
+                  <option value="ocean">Ocean</option>
                   <option value="clock">Clock &amp; Weather</option>
                   <option value="flip">Flip Clock</option>
                   <option value="analog">Analogue Clock</option>
+                  <option value="words">Word Clock</option>
                   <option value="shuffle">Shuffle</option>
                 </select>
                   </div>
@@ -49789,6 +53184,13 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                   <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="qm_screensaver" checked><span class="toggle-track"></span></label>
                 </div>
 <div class="grp-sub">Screensaver</div>
+              <div class="toggle-item" style="align-items:flex-start;gap:12px;padding:0 0 10px;">
+                <div style="flex:1;">
+                  <div class="toggle-label">Full Screen</div>
+                  <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">On: the screensaver covers the whole screen, Home Assistant's header and sidebar included, and a tap anywhere on the dashboard counts as using it. Off: it stays over this card's album artwork.</div>
+                </div>
+                <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="screensaver_full"><span class="toggle-track"></span></label>
+              </div>
               <div style="margin:0 0 12px;">
                 <div style="font-size:13px;font-weight:500;margin-bottom:4px;">Analogue Clock Face</div>
                 <div style="font-size:11px;color:#888;margin-bottom:8px;line-height:1.4;">The dial used by the Analogue Clock style. Tap a face to choose it.</div>
@@ -49871,6 +53273,13 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                 </div>
                 <div class="toggle-item" style="align-items:flex-start;gap:12px;padding:8px 0;">
                   <div style="flex:1;">
+                    <div class="toggle-label">Format Marks</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">A small Compact Disc, DVD or Blu-ray mark at the foot of the spine, along the bottom of the back and on the disc label of CD and DVD / Blu-ray case printables (not on scanned artwork, which has its own).</div>
+                  </div>
+                  <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="pdf_marks" checked><span class="toggle-track"></span></label>
+                </div>
+                <div class="toggle-item" style="align-items:flex-start;gap:12px;padding:8px 0;">
+                  <div style="flex:1;">
                     <div class="toggle-label">Info Panel PDFs</div>
                     <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">The music, movie, TV and podcast info panels, and TV episode guides.</div>
                   </div>
@@ -49933,13 +53342,48 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                     <svg viewBox="0 0 24 24" style="width:15px;height:15px;fill:rgba(99,179,237,0.9);"><path d="M12 3C7.58 3 4 4.79 4 7v10c0 2.21 3.58 4 8 4s8-1.79 8-4V7c0-2.21-3.58-4-8-4zm0 2c3.87 0 6 1.5 6 2s-2.13 2-6 2-6-1.5-6-2 2.13-2 6-2zm6 12c0 .5-2.13 2-6 2s-6-1.5-6-2v-1.73C7.61 15.69 9.72 16 12 16s4.39-.31 6-1.73V17zm0-4c0 .5-2.13 2-6 2s-6-1.5-6-2v-1.73C7.61 11.69 9.72 12 12 12s4.39-.31 6-1.73V13z"/></svg>
                   </div>
                   <div>
-                    <div style="font-size:14px;font-weight:600;color:var(--primary-text-color, #111);">Caches &amp; Data</div>
-                    <div style="font-size:11px;color:#888;margin-top:1px;">Keep in Home Assistant · Clear caches · Pins</div>
+                    <div style="font-size:14px;font-weight:600;color:var(--primary-text-color, #111);">Caches, Data &amp; Support</div>
+                    <div style="font-size:11px;color:#888;margin-top:1px;">Health check · Report a problem · Keep in Home Assistant · Clear caches</div>
                   </div>
                 </div>
                 <svg id="cachesDataChevron" viewBox="0 0 24 24" style="width:18px;height:18px;fill:var(--secondary-text-color, rgba(0,0,0,0.5));transition:transform 0.25s ease;flex-shrink:0;"><path d="M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z"/></svg>
               </div>
               <div id="cachesDataBody" style="display:none;flex-direction:column;margin-top:10px;">
+                <!-- Health & Support -->
+                <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Health &amp; Support</div>
+                <div style="font-size:11px;color:#888;margin-bottom:10px;line-height:1.4;">Check that the services the card uses are working and still answer the way it expects, test your AI agent, or report a problem.</div>
+                <div style="display:flex;gap:8px;">
+                  <button id="healthRunBtn" style="flex:1;min-width:0;padding:9px 10px;border-radius:10px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;color:#0a84ff;background:rgba(10,132,255,0.12);border:1px solid rgba(10,132,255,0.32);">Run Health Check</button>
+                  <button id="healthAiBtn" style="flex:1;min-width:0;padding:9px 10px;border-radius:10px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;color:#bf5af2;background:rgba(191,90,242,0.12);border:1px solid rgba(191,90,242,0.32);">Test AI</button>
+                  <button id="reportBtn" style="flex:1;min-width:0;padding:9px 10px;border-radius:10px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;color:#ff9f0a;background:rgba(255,159,10,0.12);border:1px solid rgba(255,159,10,0.32);">Report a Problem</button>
+                </div>
+                <div id="reportPanel" style="display:none;margin-top:12px;padding:12px;border-radius:10px;background:rgba(255,159,10,0.06);border:1px solid rgba(255,159,10,0.2);">
+                  <div style="font-size:13px;font-weight:600;margin-bottom:6px;">Report a Problem</div>
+                  <div style="font-size:12px;line-height:1.5;color:var(--secondary-text-color,#999);">
+                    <div style="margin-bottom:6px;"><b style="color:var(--primary-text-color,#fff);">What helps most:</b> what you were doing, what you expected and what happened instead, and a screenshot if you can.</div>
+                    <div style="margin-bottom:6px;"><b style="color:var(--primary-text-color,#fff);">Added for you:</b> the card and Home Assistant versions, your device, which features are on and the Health Check results. API keys, entity names, addresses and anything personal are never included.</div>
+                    <div><b style="color:var(--primary-text-color,#fff);">Note:</b> GitHub needs a free account to open an issue.</div>
+                  </div>
+                  <div id="reportStatus" style="display:none;font-size:11px;margin-top:8px;color:var(--secondary-text-color,#999);"></div>
+                  <div style="display:flex;gap:8px;margin-top:10px;">
+                    <button id="reportOpenBtn" style="flex:1;min-width:0;padding:9px 10px;border-radius:10px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;color:#fff;background:#0a84ff;border:1px solid #0a84ff;">Open GitHub Issue</button>
+                    <button id="reportCopyBtn" style="flex:1;min-width:0;padding:9px 10px;border-radius:10px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;color:#0a84ff;background:rgba(10,132,255,0.12);border:1px solid rgba(10,132,255,0.32);">Copy Report</button>
+                  </div>
+                </div>
+                <div id="healthAiOut" style="display:none;margin-top:10px;font-size:12px;line-height:1.45;"></div>
+                <div id="healthOut" style="display:none;margin-top:12px;"></div>
+                <div style="height:16px;"></div>
+                <!-- Enjoying CrowAI? -->
+                <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Enjoying Crow Media Player?</div>
+                <div class="toggle-item" style="align-items:flex-start;gap:12px;padding:6px 0 8px;">
+                  <div style="flex:1;">
+                    <div class="toggle-label">Ask for a Star After Updates</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">Once after an update, a friendly note asks whether you'd like to star the card on GitHub. It never shows on a new install, and stops for good once you star it or choose Don't Ask Again.</div>
+                  </div>
+                  <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="star_prompt" checked><span class="toggle-track"></span></label>
+                </div>
+                <button id="starRepoBtn" style="width:100%;padding:9px 10px;border-radius:10px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;color:#c79a00;background:rgba(255,204,0,0.14);border:1px solid rgba(255,204,0,0.38);display:flex;align-items:center;justify-content:center;gap:6px;"><svg viewBox="0 0 24 24" style="width:15px;height:15px;fill:#FFCC00;"><path d="M12,17.27L18.18,21L16.54,13.97L22,9.24L14.81,8.62L12,2L9.19,8.62L2,9.24L7.45,13.97L5.82,21L12,17.27Z"/></svg>Star on GitHub</button>
+                <div style="height:16px;"></div>
                 <!-- Keep in Home Assistant -->
                 <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Keep in Home Assistant</div>
                 <div style="font-size:11px;color:#888;margin-bottom:4px;line-height:1.4;">Off: kept on this device only, where the phone can clear it. On: also saved in Home Assistant for your user, so it survives app restarts and is there on your other devices.</div>
@@ -50128,6 +53572,14 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                     <span style="font-size:12px;color:#888;" id="pcab-cache-status">Calculating…</span>
                   </div>
                   <button id="pcab-cache-clear-btn" style="font-size:12px;font-weight:500;color:#ff453a;background:rgba(255,69,58,0.12);border:1px solid rgba(255,69,58,0.3);border-radius:8px;padding:5px 12px;cursor:pointer;white-space:nowrap;">Clear</button>
+                </div>
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.07);">
+                  <div>
+                    <div style="font-size:13px;font-weight:500;margin-bottom:2px;">Apple TV App Icons</div>
+                    <div style="font-size:11px;color:#888;margin-bottom:2px;line-height:1.4;">The icons in the remote&#39;s Apps grid and the Info panel, kept on this device and in Home Assistant so they only load once.</div>
+                    <span style="font-size:12px;color:#888;" id="appicon-cache-status">Calculating…</span>
+                  </div>
+                  <button id="appicon-cache-clear-btn" style="font-size:12px;font-weight:500;color:#ff453a;background:rgba(255,69,58,0.12);border:1px solid rgba(255,69,58,0.3);border-radius:8px;padding:5px 12px;cursor:pointer;white-space:nowrap;">Clear</button>
                 </div>
                 <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.07);">
                   <div>
@@ -51217,7 +54669,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       _applyPdfDepState(pdfEnabledEl.checked);
       pdfEnabledEl.onchange = (e) => { this._updateConfig('pdf_enabled', e.target.checked); _applyPdfDepState(e.target.checked); };
     }
-    ['lyrics', 'cd', 'disc', 'info', 'history', 'month', 'recent', 'recap', 'pins', 'lists'].forEach(k => {
+    ['lyrics', 'cd', 'disc', 'marks', 'info', 'history', 'month', 'recent', 'recap', 'pins', 'lists'].forEach(k => {
       const el = root.getElementById('pdf_' + k);
       if (!el) return;
       el.checked = this._config?.['pdf_' + k] !== false;
@@ -51626,6 +55078,8 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
     {
       const clockEl = root.getElementById('screensaver_clock'), wxEl = root.getElementById('screensaver_weather');
       if (clockEl) { clockEl.checked = this._config?.screensaver_clock !== false; clockEl.onchange = (e) => this._updateConfig('screensaver_clock', e.target.checked); }
+      const fullEl = root.getElementById('screensaver_full');
+      if (fullEl) { fullEl.checked = this._config?.screensaver_area === 'screen'; fullEl.onchange = (e) => this._updateConfig('screensaver_area', e.target.checked ? 'screen' : 'artwork'); }
       // Analogue clock faces: a small drawing of each dial to pick from
       const faceEl = root.getElementById('screensaver_dial');
       if (faceEl) {
@@ -51705,6 +55159,11 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
     if (atvKeyboardPanelEl) {
       atvKeyboardPanelEl.checked = this._config?.atv_keyboard_panel !== false;
       atvKeyboardPanelEl.onchange = (e) => this._updateConfig('atv_keyboard_panel', e.target.checked);
+    }
+    const atvAppsBtnEl = root.getElementById('atv_apps_button');
+    if (atvAppsBtnEl) {
+      atvAppsBtnEl.checked = this._config?.atv_apps_button !== false;
+      atvAppsBtnEl.onchange = (e) => this._updateConfig('atv_apps_button', e.target.checked);
     }
 
     const showMALibBtnEl = root.getElementById('show_ma_library_button');
@@ -52183,6 +55642,13 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       try { if (window.caches) await window.caches.delete('crowai-wiki-img-v1'); } catch (_) {}
       _cards().forEach(el => { el._wikiImgCachePromise = undefined; });
     };
+    // Apple TV app icons: this device's copy, the copy in Home Assistant, and every card's memory
+    const clearAppIcons = () => {
+      ['crow_atv_app_icons', 'crow_atv_app_icon_miss', 'crow_atv_app_icon_miss2', 'crow_atv_app_icon_site', 'crow_atv_app_sites'].forEach(k => { try { localStorage.removeItem(k); } catch (_) {} });
+      try { crowaiAppIconDb.clear(); } catch (_) {}
+      try { (this._hass || _cards()[0]?._hass)?.connection?.sendMessagePromise({ type: 'frontend/set_user_data', key: 'crow_atv_app_icons', value: {} }).catch(() => {}); } catch (_) {}
+      _cards().forEach(el => { el._appIconCache = {}; el._appIconMiss = {}; el._appIconReadyP = Promise.resolve(); el._appIconUrls = {}; el._appIconPrefetchAt = 0; el._appIconAskedAt = {}; });
+    };
     const clearVibePool = () => {
       try { localStorage.removeItem('crow_vibe_pool_v1'); } catch (_) {}
       try { sessionStorage.removeItem('crow_mood_lib_cache'); } catch (_) {}
@@ -52198,6 +55664,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
         return n ? _n(n, 'chart') + ' kept for today' : 'No charts kept';
       }, clearCharts),
       _wire('pcab-cache', () => { const p = Object.keys(_lsJson('crow_pc_episode_cache', {})).length, a = Object.keys(_lsJson('crow_ab_chapter_cache', {})).length; return p + a ? _n(p, 'podcast') + ', ' + _n(a, 'audiobook') + ' cached' : 'Nothing cached'; }, clearPcAb),
+      _wire('appicon-cache', () => { const n = Object.keys(_lsJson('crow_atv_app_icons', {})).length; return n ? _n(n, 'icon') + ' kept' : 'No icons kept'; }, clearAppIcons),
       _wire('announce-hist', () => { const h = _lsJson('crow_announce_history', []); const fav = h.filter(x => x && x.favourite).length; return h.length ? _n(h.length, 'announcement') + (fav ? ' (' + fav + ' favourite' + (fav === 1 ? '' : 's') + ')' : '') : 'No history'; }, clearAnnounce),
       _wire('viz-bpm', () => { const n = Object.keys(_lsJson('crow_viz_bpm', {})).length; return n ? _n(n, 'song') + ' looked up' : 'Nothing looked up'; }, () => { try { localStorage.removeItem('crow_viz_bpm'); } catch (_) {} }),
       _wire('mdi-cache', () => { const n = Object.keys(_lsJson('crow_mdi_paths', {})).length; return n ? _n(n, 'icon') + ' cached' : 'No icons cached'; }, clearMdi),
@@ -52216,6 +55683,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
             'crow_radio_mode', 'crow_sleep_timer', 'crow_chart_limit'];
           clearAnnounce();
           clearMdi();
+          clearAppIcons();
           Promise.all([clearCovers(), clearCharts(), clearWikiImages()]).catch(() => {}).then(() => _furtherUpd.forEach(f => f()));
           const _rm = (storage) => {
             const keys = [];
@@ -52460,6 +55928,90 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       if (el) { el.addEventListener('change', () => setTimeout(() => this._infoPanelsRefresh(), 0)); if (id === 'tmdb_api_key') el.addEventListener('input', () => this._infoPanelsRefresh()); }
     });
     this._infoPanelsRefresh();
+    // ── Health & Support: Run Health Check, Test AI, Report a Problem ─────────────
+    {
+      const g = id => root.getElementById(id);
+      const esc = v => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const COL = { ok: '#30d158', slow: '#ff9f0a', warn: '#ff9f0a', changed: '#ff453a', fail: '#ff453a', off: '#8e8e93', skip: '#8e8e93' };
+      const cfgNow = () => this._config || {};
+      const aiState = () => {
+        const b = g('healthAiBtn'), on = !!g('ai_features_enabled')?.checked;
+        if (b) { b.disabled = !on; b.style.opacity = on ? '' : '0.4'; b.title = on ? 'Ask your AI agent a tiny question (uses a little quota)' : 'Turn on AI Features in the AI section first'; }
+      };
+      aiState();
+      g('ai_features_enabled')?.addEventListener('change', () => setTimeout(aiState, 0));
+      const renderRows = (rows, running) => {
+        const out = g('healthOut'); if (!out) return;
+        out.style.display = 'block';
+        const order = crowaiHealth.list().map(c => c.id);
+        rows = rows.slice().sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+        const groups = [...new Set(crowaiHealth.list().map(c => c.group))];
+        const sum = rows.length ? crowaiHealth.summary(rows) : '';
+        out.innerHTML = `<div style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;margin-bottom:6px;">${running ? '<span style="width:12px;height:12px;border:2px solid rgba(10,132,255,0.3);border-top-color:#0a84ff;border-radius:50%;display:inline-block;animation:ed-spin 0.8s linear infinite;"></span>' : ''}<span>${running ? 'Checking\u2026 ' : ''}${esc(sum)}</span></div>`
+          + groups.map(gr => {
+            const rs = rows.filter(r => r.group === gr);
+            if (!rs.length) return '';
+            return `<div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin:10px 0 2px;">${esc(gr)}</div>`
+              + rs.map(r => `<div style="display:flex;gap:9px;align-items:flex-start;padding:6px 0;border-bottom:1px solid var(--divider-color,rgba(128,128,128,0.15));"><span style="width:8px;height:8px;border-radius:50%;background:${COL[r.status] || '#8e8e93'};flex-shrink:0;margin-top:5px;"></span><div style="flex:1;min-width:0;"><div style="font-size:12.5px;font-weight:500;">${esc(r.name)}</div><div style="font-size:11px;color:${['fail', 'changed'].includes(r.status) ? '#ff6961' : '#888'};line-height:1.35;">${esc(r.note)}</div></div></div>`).join('');
+          }).join('');
+      };
+      const runHealth = async (force = true) => {
+        const btn = g('healthRunBtn'); if (btn) { btn.disabled = true; btn.textContent = 'Checking\u2026'; }
+        const rows = [];
+        renderRows(rows, true);
+        const res = await crowaiHealth.run({ hass: this._hass, cfg: cfgNow() }, r => { rows.push(r); renderRows(rows, true); }, { force });
+        renderRows(res.rows, false);
+        if (btn) { btn.disabled = false; btn.textContent = 'Run Health Check'; }
+        return res;
+      };
+      g('healthRunBtn')?.addEventListener('click', () => runHealth(true));
+      g('healthAiBtn')?.addEventListener('click', async () => {
+        const out = g('healthAiOut'), btn = g('healthAiBtn');
+        if (!out || btn?.disabled) return;
+        out.style.display = 'block';
+        out.innerHTML = '<span style="color:#888;">Asking your AI agent\u2026</span>';
+        btn.disabled = true;
+        const r = await crowaiHealth.testAI(this._hass, cfgNow());
+        this._lastAiTest = r;
+        out.innerHTML = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${COL[r.status] || '#8e8e93'};margin-right:7px;"></span><b>Test AI:</b> ${esc(r.note)}`;
+        btn.disabled = false;
+      });
+      // Report a Problem
+      const reportText = () => crowaiHealth.report(this._hass, cfgNow(), window.__crowHealthMemo || null, this._lastAiTest || null);
+      const copy = async (text) => {
+        try { await navigator.clipboard.writeText(text); return true; } catch (_) {}
+        try { const ta = document.createElement('textarea'); ta.value = text; ta.style.cssText = 'position:fixed;opacity:0;'; document.body.appendChild(ta); ta.select(); const ok = document.execCommand('copy'); ta.remove(); return ok; } catch (_) { return false; }
+      };
+      const status = (t) => { const el = g('reportStatus'); if (el) { el.style.display = t ? 'block' : 'none'; el.textContent = t || ''; } };
+      g('reportBtn')?.addEventListener('click', () => {
+        const p = g('reportPanel'); if (!p) return;
+        const show = p.style.display === 'none';
+        p.style.display = show ? 'block' : 'none';
+        if (show) setTimeout(() => { try { p.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (_) { p.scrollIntoView(); } }, 0);
+        // the Health Check runs in the background while the guidance is read, so its results go with the report
+        if (show && (!window.__crowHealthMemo || Date.now() - window.__crowHealthMemo.at > 600000) && !this._healthRunning) {
+          this._healthRunning = true;
+          status('Running the Health Check so its results go with your report\u2026');
+          runHealth(false).finally(() => { this._healthRunning = false; status('Health Check done - its results will be included.'); });
+        }
+      });
+      g('reportOpenBtn')?.addEventListener('click', () => {
+        // opened straight from the tap (so it isn't blocked as a pop-up), with whatever results there are so far
+        const details = reportText();
+        const { url, cut } = crowaiHealth.issueUrl(details);
+        window.open(url, '_blank', 'noopener');
+        if (cut) copy(crowaiHealth.issueBody(details));
+        status(cut ? 'The full report was too long for the link, so it\u2019s been copied - paste it into the issue.' : 'Opened GitHub. Fill in the top part and press Submit.');
+      });
+      // Enjoying CrowAI?: the after-update star request switch, and a star button that's always here
+      const starEl = g('star_prompt');
+      if (starEl) { starEl.checked = this._config?.star_prompt !== false; starEl.onchange = (e) => this._updateConfig('star_prompt', e.target.checked); }
+      g('starRepoBtn')?.addEventListener('click', () => window.open(CROWAI_REPO_URL, '_blank', 'noopener'));
+      g('reportCopyBtn')?.addEventListener('click', async () => {
+        const ok = await copy(crowaiHealth.issueBody(reportText()));
+        status(ok ? 'Report copied. Paste it into a new issue at ' + CROWAI_ISSUES_URL.replace('https://', '') : 'Couldn\u2019t copy on this device.');
+      });
+    }
     const _shareServiceEl = root.getElementById('share_service');
     if (_shareServiceEl) {
       _shareServiceEl.value = this._config?.share_service || 'youtube_music';
@@ -52708,7 +56260,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
     // Only spread the original config (without injected defaults) plus the new key.
     // This prevents default values from being permanently written into the user's YAML.
     const DEFAULTS = {
-      pdf_enabled: true, pdf_lyrics: true, pdf_cd: true, pdf_disc: true, pdf_info: true, pdf_history: true,
+      pdf_enabled: true, pdf_lyrics: true, pdf_cd: true, pdf_disc: true, pdf_marks: true, pdf_info: true, pdf_history: true,
       pdf_month: true, pdf_recent: true, pdf_recap: true, pdf_pins: true, pdf_lists: true, song_intro_enabled: false,
       discover_icon: 'grid', remote_icon: 'remote_classic',
       feat_lyrics_translate: true, feat_new_releases: true, feat_sleep_timer: true, feat_audio_quality: true, feat_charts: false, feat_podcast_charts: true, charts_apple: true, charts_deezer: true, feat_video_charts: true, feat_tv_guide: true,
@@ -52736,6 +56288,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       show_media_type_pill: false,
       show_youtube_button: true,
       atv_keyboard_panel: true,
+      atv_apps_button: true,
       sendspin_enabled: false, sendspin_url: '',
     };
     // Strip keys that match their default value to keep YAML clean
@@ -52756,7 +56309,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
   _updateConfigMulti(updates) {
     if (!this._config || !updates) return;
     const DEFAULTS = {
-      pdf_enabled: true, pdf_lyrics: true, pdf_cd: true, pdf_disc: true, pdf_info: true, pdf_history: true,
+      pdf_enabled: true, pdf_lyrics: true, pdf_cd: true, pdf_disc: true, pdf_marks: true, pdf_info: true, pdf_history: true,
       pdf_month: true, pdf_recent: true, pdf_recap: true, pdf_pins: true, pdf_lists: true, song_intro_enabled: false,
       discover_icon: 'grid', remote_icon: 'remote_classic',
       feat_lyrics_translate: true, feat_new_releases: true, feat_sleep_timer: true, feat_audio_quality: true, feat_charts: false, feat_podcast_charts: true, charts_apple: true, charts_deezer: true, feat_video_charts: true, feat_tv_guide: true,
@@ -52784,6 +56337,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       show_media_type_pill: false,
       show_youtube_button: true,
       atv_keyboard_panel: true,
+      atv_apps_button: true,
       sendspin_enabled: false, sendspin_url: '',
     };
     const updatedKeys = Object.keys(updates);
@@ -52817,14 +56371,13 @@ if (!window.customCards.some(card => card.type === "crowai-media-player-card")) 
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Bundled @sendspin/sendspin-js 5.0.0 (Apache-2.0, Open Home Foundation)
-// https://github.com/Sendspin/sendspin-js — same version Music Assistant 2.10
-// ships. Wrapped in a function so it is only evaluated when a device actually
+// https://github.com/Sendspin/sendspin-js. Wrapped in a function so it is only evaluated when a device actually
 // opts in. The opus-encdec fallback decoder is stubbed out; the player only
 // offers Opus when the browser has a native decoder.
 // ═══════════════════════════════════════════════════════════════════════════
 function __crowaiLoadSendspinLib() {
   if (window.__crowaiSendspinLib) return window.__crowaiSendspinLib;
-console.info('%c CROWAI MEDIA PLAYER CARD %c build 2026-10-05 ios alert ', 'background:#007AFF;color:#fff;font-weight:700;border-radius:3px 0 0 3px;padding:2px 4px', 'background:#333;color:#fff;border-radius:0 3px 3px 0;padding:2px 4px');
+console.info('%c CROWAI MEDIA PLAYER CARD %c v' + CROWAI_VERSION + ' ', 'background:#007AFF;color:#fff;font-weight:700;border-radius:3px 0 0 3px;padding:2px 4px', 'background:#333;color:#fff;border-radius:0 3px 3px 0;padding:2px 4px');
 var __CrowSendspinLib=(()=>{var Se=Object.defineProperty;var Tr=Object.getOwnPropertyDescriptor;var Dr=Object.getOwnPropertyNames;var vr=Object.prototype.hasOwnProperty;var Ir=(e,A,t)=>()=>{if(t)throw t[0];try{return e&&(A=e(e=0)),A}catch(n){throw t=[n],n}};var xn=(e,A)=>{for(var t in A)Se(e,t,{get:A[t],enumerable:!0})},Jr=(e,A,t,n)=>{if(A&&typeof A=="object"||typeof A=="function")for(let s of Dr(A))!vr.call(e,s)&&s!==t&&Se(e,s,{get:()=>A[s],enumerable:!(n=Tr(A,s))||n.enumerable});return e};var Br=e=>Jr(Se({},"__esModule",{value:!0}),e);var Me={};xn(Me,{default:()=>Pr});var Pr,Ce=Ir(()=>{Pr={};throw new Error("[CrowAI] opus-encdec fallback not bundled")});var Ro={};xn(Ro,{SendspinPlayer:()=>ye});var tt=class{constructor(A,t){this.webCodecsDecoder=null,this.webCodecsDecoderReady=null,this.webCodecsFormat=null,this.useNativeOpus=!0,this.nativeDecoderQueue=[],this.opusDecoder=null,this.opusDecoderModule=null,this.opusDecoderReady=null,this.flacDecodingContext=null,this.flacDecodingContextSampleRate=0,this.flacDecodingContextChannels=0,this.onDecodedChunk=A,this.currentGeneration=t}async handleBinaryMessage(A,t,n){if(new Uint8Array(A)[0]===4){let r=new DataView(A,1,8),i=Number(r.getBigInt64(0,!1)),a=A.slice(9);if(t.codec==="opus"&&this.useNativeOpus&&(await this.initWebCodecsDecoder(t),this.useNativeOpus&&this.webCodecsDecoder&&this.queueToNativeOpusDecoder(a,i,n)))return;try{let o=await this.decode(a,t);o&&n===this.currentGeneration()&&this.onDecodedChunk({samples:o.samples,sampleRate:o.sampleRate,serverTimeUs:i,generation:n})}catch(o){console.error("Sendspin: Failed to decode audio buffer:",o)}}}async decode(A,t){return t.codec==="opus"?this.decodeOpusWithEncdec(A,t):t.codec==="flac"?this.decodeFLAC(A,t):t.codec==="pcm"?this.decodePCM(A,t):null}decodePCM(A,t){let n=t.bit_depth??16;if(n!==16&&n!==24&&n!==32)return console.warn(`Sendspin: unsupported PCM bit_depth ${n}`),null;let s=n/8,r=new DataView(A),i=A.byteLength/(s*t.channels),a=[];for(let o=0;o<t.channels;o++)a.push(new Float32Array(i));for(let o=0;o<t.channels;o++){let h=a[o];for(let u=0;u<i;u++){let l=(u*t.channels+o)*s,c=0;if(n===16)c=r.getInt16(l,!0)/32768;else if(n===24){let f=r.getUint8(l),d=r.getUint8(l+1),m=r.getUint8(l+2)<<16|d<<8|f;m&8388608&&(m|=4278190080),c=m/8388608}else n===32&&(c=r.getInt32(l,!0)/2147483648);h[u]=c}}return{samples:a,sampleRate:t.sample_rate}}getFlacDecodingContext(A,t){return(!this.flacDecodingContext||this.flacDecodingContextSampleRate!==A||this.flacDecodingContextChannels!==t)&&(this.flacDecodingContext=new OfflineAudioContext(t,1,A),this.flacDecodingContextSampleRate=A,this.flacDecodingContextChannels=t),this.flacDecodingContext}async decodeFLAC(A,t){try{let n=A;if(t.codec_header){let a=Uint8Array.from(atob(t.codec_header),h=>h.charCodeAt(0)),o=new Uint8Array(a.length+A.byteLength);o.set(a,0),o.set(new Uint8Array(A),a.length),n=o.buffer}let r=await this.getFlacDecodingContext(t.sample_rate,t.channels).decodeAudioData(n),i=[];for(let a=0;a<r.numberOfChannels;a++)i.push(new Float32Array(r.getChannelData(a)));return{samples:i,sampleRate:r.sampleRate}}catch(n){return console.error("Error decoding FLAC data:",n),null}}async initWebCodecsDecoder(A){let t=()=>{if(!this.webCodecsDecoder)return!1;let n=!!this.webCodecsFormat&&this.webCodecsFormat.sample_rate===A.sample_rate&&this.webCodecsFormat.channels===A.channels;if(this.webCodecsDecoder.state==="configured"&&n)return!0;if(this.webCodecsDecoder.state==="closed")return!1;try{return this.webCodecsDecoder.configure({codec:"opus",sampleRate:A.sample_rate,numberOfChannels:A.channels}),this.webCodecsFormat=A,!0}catch{return!1}};if(!t()){if(this.webCodecsDecoderReady){if(await this.webCodecsDecoderReady,t())return;try{this.webCodecsDecoder?.close()}catch{}this.webCodecsDecoder=null,this.webCodecsDecoderReady=null,this.webCodecsFormat=null}if(this.webCodecsDecoderReady){await this.webCodecsDecoderReady;return}this.webCodecsDecoderReady=this.createWebCodecsDecoder(A),await this.webCodecsDecoderReady}}async createWebCodecsDecoder(A){if(typeof AudioDecoder>"u"){this.useNativeOpus=!1;return}try{if(!(await AudioDecoder.isConfigSupported({codec:"opus",sampleRate:A.sample_rate,numberOfChannels:A.channels})).supported){console.log("[NativeOpus] WebCodecs Opus not supported, will use fallback"),this.useNativeOpus=!1;return}this.webCodecsDecoder=new AudioDecoder({output:n=>this.handleAudioData(n),error:n=>{console.error("[NativeOpus] WebCodecs decoder error:",n)}}),this.webCodecsDecoder.configure({codec:"opus",sampleRate:A.sample_rate,numberOfChannels:A.channels}),this.webCodecsFormat=A,console.log(`[NativeOpus] Using WebCodecs AudioDecoder: ${A.sample_rate}Hz, ${A.channels}ch`)}catch(t){console.warn("[NativeOpus] WebCodecs init failed, will use fallback:",t),this.useNativeOpus=!1}}handleAudioData(A){try{let t=Number(A.timestamp),n=this.nativeDecoderQueue.shift();if(!n){console.warn(`[NativeOpus] Dropping frame with empty decode queue (out ts=${t})`),A.close();return}let{serverTimeUs:s,generation:r}=n,i=this.webCodecsFormat;if(!i){A.close();return}if(r!==this.currentGeneration()){console.warn(`[NativeOpus] Dropping old-stream frame (ts=${s}, gen=${r} != current=${this.currentGeneration()})`),A.close();return}let a=A.numberOfChannels,o=A.numberOfFrames,h=A.format,u=[];for(let l=0;l<a;l++)u.push(new Float32Array(o));if(h==="f32-planar")for(let l=0;l<a;l++)A.copyTo(u[l],{planeIndex:l});else if(h==="s16-planar"){let l=new Int16Array(o);for(let c=0;c<a;c++){A.copyTo(l,{planeIndex:c});let f=u[c];for(let d=0;d<o;d++)f[d]=l[d]/32768}}else if(h==="f32"){let l=new Float32Array(o*a);A.copyTo(l,{planeIndex:0});for(let c=0;c<a;c++){let f=u[c];for(let d=0;d<o;d++)f[d]=l[d*a+c]}}else if(h==="s16"){let l=new Int16Array(o*a);A.copyTo(l,{planeIndex:0});for(let c=0;c<a;c++){let f=u[c];for(let d=0;d<o;d++)f[d]=l[d*a+c]/32768}}else{console.warn(`[NativeOpus] Unsupported AudioData format: ${h}`),A.close();return}A.close(),this.onDecodedChunk({samples:u,sampleRate:i.sample_rate,serverTimeUs:s,generation:r})}catch(t){console.error("[NativeOpus] Error in output callback:",t),A.close()}}queueToNativeOpusDecoder(A,t,n){if(!this.webCodecsDecoder||this.webCodecsDecoder.state!=="configured")return!1;try{this.nativeDecoderQueue.push({serverTimeUs:t,generation:n});let s=new EncodedAudioChunk({type:"key",timestamp:t,data:A});return this.webCodecsDecoder.decode(s),!0}catch(s){return this.nativeDecoderQueue.length>0&&this.nativeDecoderQueue.pop(),console.error("[NativeOpus] WebCodecs queue error:",s),!1}}resolveOpusDecoderModule(A){let t=A?.default,n=A?.["module.exports"],s=t??n??A;if(!s||typeof s!="object")throw new Error("[Opus] Invalid libopus decoder module export");return s}resolveOggOpusDecoderClass(A){let t=A?.default,n=A?.["module.exports"],s=t??n??A,r=s?.OggOpusDecoder??s;if(typeof r!="function")throw new Error("[Opus] OggOpusDecoder class export not found");return r}async waitForOpusReady(A){if(!A.isReady){if(Object.isExtensible(A)){await new Promise(t=>{A.onready=()=>t()});return}for(;!A.isReady;)await new Promise(t=>setTimeout(t,20))}}async initOpusEncdecDecoder(A){if(this.opusDecoderReady){await this.opusDecoderReady;return}this.opusDecoderReady=(async()=>{console.log("[Opus] Initializing decoder (opus-encdec)...");let[t,n]=await Promise.all([Promise.resolve().then(()=>(Ce(),Me)),Promise.resolve().then(()=>(Ce(),Me))]);this.opusDecoderModule=this.resolveOpusDecoderModule(t);let s=this.resolveOggOpusDecoderClass(n);await this.waitForOpusReady(this.opusDecoderModule),this.opusDecoder=new s({rawOpus:!0,decoderSampleRate:A.sample_rate,outputBufferSampleRate:A.sample_rate,numberOfChannels:A.channels},this.opusDecoderModule),await this.waitForOpusReady(this.opusDecoder),console.log("[Opus] Decoder ready")})(),await this.opusDecoderReady}async decodeOpusWithEncdec(A,t){try{await this.initOpusEncdecDecoder(t);let n=new Uint8Array(A),s=[];if(this.opusDecoder.decodeRaw(n,o=>{s.push(new Float32Array(o))}),s.length===0)return console.warn("[Opus] Fallback decoder produced no samples"),null;let r=s[0],i=r.length/t.channels,a=[];for(let o=0;o<t.channels;o++){let h=new Float32Array(i);for(let u=0;u<i;u++)h[u]=r[u*t.channels+o];a.push(h)}return{samples:a,sampleRate:t.sample_rate}}catch(n){return console.error("[Opus] Decode error:",n),null}}clearState(){this.nativeDecoderQueue=[];try{this.webCodecsDecoder?.close()}catch{}this.webCodecsDecoder=null,this.webCodecsDecoderReady=null,this.webCodecsFormat=null}close(){this.clearState(),this.opusDecoder&&(this.opusDecoder=null,this.opusDecoderModule=null,this.opusDecoderReady=null),this.useNativeOpus=!0,this.flacDecodingContext=null,this.flacDecodingContextSampleRate=0,this.flacDecodingContextChannels=0}};var It=class{constructor(A,t,n){this.sender=A,this.stateManager=t,this.timeFilter=n,this.timeSyncBurstActive=!1,this.timeSyncBurstSentCount=0,this.timeSyncInFlightClientTransmitted=null,this.timeSyncInFlightTimeout=null,this.timeSyncBurstSamples=[]}startAndSchedule(){this.stop(),this.startTimeSyncBurstIfIdle(),this.scheduleNextTimeSyncBurstTick()}scheduleNextTimeSyncBurstTick(){let A=globalThis.setTimeout(()=>{this.startTimeSyncBurstIfIdle(),this.scheduleNextTimeSyncBurstTick()},1e4);this.stateManager.setTimeSyncInterval(A)}startTimeSyncBurstIfIdle(){this.timeSyncBurstActive||(this.timeSyncBurstActive=!0,this.timeSyncBurstSentCount=0,this.timeSyncBurstSamples=[],this.timeSyncInFlightClientTransmitted=null,this.sendNextTimeSyncBurstProbe())}sendNextTimeSyncBurstProbe(){if(!this.timeSyncBurstActive||this.timeSyncInFlightClientTransmitted!==null)return;if(this.timeSyncBurstSentCount>=8){this.finalizeTimeSyncBurst();return}let A=this.sendTimeSync();this.timeSyncBurstSentCount+=1,this.timeSyncInFlightClientTransmitted=A,this.armTimeSyncProbeTimeout(A)}armTimeSyncProbeTimeout(A){this.clearTimeSyncProbeTimeout(),this.timeSyncInFlightTimeout=globalThis.setTimeout(()=>{this.handleTimeSyncProbeTimeout(A)},2e3)}clearTimeSyncProbeTimeout(){this.timeSyncInFlightTimeout!==null&&(clearTimeout(this.timeSyncInFlightTimeout),this.timeSyncInFlightTimeout=null)}handleTimeSyncProbeTimeout(A){!this.timeSyncBurstActive||this.timeSyncInFlightClientTransmitted!==A||(console.warn("Sendspin: Time sync probe timed out, aborting current burst"),this.abortTimeSyncBurst())}finalizeTimeSyncBurst(){this.clearTimeSyncProbeTimeout();let A=this.selectTimeSyncBurstCandidate();A&&this.timeFilter.update(A.measurement,A.maxError,A.t4),this.timeSyncBurstActive=!1,this.timeSyncBurstSentCount=0,this.timeSyncInFlightClientTransmitted=null,this.timeSyncBurstSamples=[]}selectTimeSyncBurstCandidate(){if(this.timeSyncBurstSamples.length===0)return null;let t=[...[...this.timeSyncBurstSamples].sort((n,s)=>n.rttTerm-s.rttTerm).slice(0,Math.min(3,this.timeSyncBurstSamples.length))].sort((n,s)=>n.measurement-s.measurement);return t[Math.floor(t.length/2)]}abortTimeSyncBurst(){this.clearTimeSyncProbeTimeout(),this.timeSyncBurstActive=!1,this.timeSyncBurstSentCount=0,this.timeSyncInFlightClientTransmitted=null,this.timeSyncBurstSamples=[]}stop(){this.stateManager.clearTimeSyncInterval(),this.abortTimeSyncBurst()}handleServerTime(A){if(!this.timeSyncBurstActive||this.timeSyncInFlightClientTransmitted===null)return;let t=A.payload.client_transmitted;if(t!==this.timeSyncInFlightClientTransmitted){console.warn("Sendspin: Ignoring out-of-order time response",t,this.timeSyncInFlightClientTransmitted);return}let n=Math.floor(performance.now()*1e3),s=A.payload.server_received,r=A.payload.server_transmitted,i=(s-t+(r-n))/2,a=Math.max(0,n-t-(r-s)),o=Math.max(1e3,a/2);if(this.timeSyncBurstSamples.push({measurement:i,maxError:o,t4:n,rttTerm:a}),this.clearTimeSyncProbeTimeout(),this.timeSyncInFlightClientTransmitted=null,this.timeSyncBurstSentCount>=8){this.finalizeTimeSyncBurst();return}this.sendNextTimeSyncBurstProbe()}sendTimeSync(A=Math.floor(performance.now()*1e3)){let t={type:"client/time",payload:{client_transmitted:A}};return this.sender.sendControl(t),A}};function Rr(){let e=typeof navigator<"u"?navigator.userAgent:"",A=/^((?!chrome|android).)*safari/i.test(e),t=/firefox/i.test(e),n=typeof AudioDecoder<"u";return n||(typeof window<"u"&&!window.isSecureContext?console.warn("[Opus] Running in insecure context, falling back to FLAC/PCM"):console.warn("[Opus] Native decoder not available, falling back to FLAC/PCM")),A?new Set(["pcm","opus"]):t?new Set(["pcm","flac"]):n?new Set(["pcm","opus","flac"]):new Set(["pcm","flac"])}function Jt(e){let A=Rr(),t=[];for(let n of e)A.has(n)&&(n==="opus"?t.push({codec:"opus",sample_rate:48e3,channels:2,bit_depth:16}):(t.push({codec:n,sample_rate:48e3,channels:2,bit_depth:16}),t.push({codec:n,sample_rate:44100,channels:2,bit_depth:16})));if(t.length===0)throw new Error(`No supported codecs: requested [${e.join(", ")}], browser supports [${[...A].join(", ")}]`);return t}function Or(e){let A=e.sample_rate*e.channels*Math.ceil(e.bit_depth/8);switch(e.codec){case"opus":return 64e3;case"flac":return A*1.02;default:return A}}function En(e){let A=Math.max(...e.map(Or));return Math.ceil(A*30)}function nA(e){return isFinite(e)?Math.max(0,Math.min(5e3,Math.round(e))):0}var bn=5e3,Lr=250,Ur=250;function Bt(e,A){if(!isFinite(e)||e<0)throw new RangeError(`${A} must be a non-negative finite number`)}var Pt=class{constructor(A,t,n,s,r,i={}){this.sender=A,this.helloContext=t,this.streamHandler=n,this.stateManager=s,this.timeFilter=r,this.activated=!1,this.activeRoles=null,this.pairingSuspended=!1,this.lastSentPlayer=null,this.clientName=i.clientName??"Sendspin Player",this.productName=i.productName,this.codecs=i.codecs??["opus","flac","pcm"],this.bufferCapacity=i.bufferCapacity,this.requiredLeadTimeMs=i.requiredLeadTimeMs??Lr,Bt(this.requiredLeadTimeMs,"requiredLeadTimeMs"),this.minBufferMs=i.minBufferMs??Ur,Bt(this.minBufferMs,"minBufferMs"),this.useHardwareVolume=i.useHardwareVolume??!1,this.onVolumeCommand=i.onVolumeCommand,this.onDelayCommand=i.onDelayCommand,this.getExternalVolume=i.getExternalVolume,this.timeSyncManager=new It(A,s,r)}handleServerMessage(A){switch(A.type){case"server/hello":this.handleServerHello();break;case"server/activate":this.handleServerActivate(A);break;case"server/time":this.timeSyncManager.handleServerTime(A);break;case"stream/start":this.handleStreamStart(A);break;case"stream/clear":this.handleStreamClear(A);break;case"stream/end":this.handleStreamEnd(A);break;case"server/command":this.handleServerCommand(A);break;case"server/state":this.stateManager.updateServerState(A.payload);break;case"group/update":this.stateManager.updateGroupState(A.payload);break}}handleServerHello(){console.log("Sendspin: Connected to server"),this.sendClientHello()}handleServerActivate(A){this.pairingSuspended=!1;let t=!1;if(A.payload.active_roles!==void 0){let s=new Set(A.payload.active_roles);t=this.activeRoles===null||s.size!==this.activeRoles.size||[...s].some(r=>!this.activeRoles.has(r)),this.activeRoles=s}if(this.activated){t&&this.sendStateUpdate();return}this.activated=!0,this.sendStateUpdate(),this.timeSyncManager.startAndSchedule();let n=globalThis.setInterval(()=>this.sendStateUpdate(),bn);this.stateManager.setStateUpdateInterval(n)}restartStateUpdateInterval(){let A=globalThis.setInterval(()=>this.sendStateUpdate(),bn);this.stateManager.setStateUpdateInterval(A)}stopTimeSync(){this.timeSyncManager.stop()}suspendForPairing(){this.pairingSuspended=!0,this.activated=!1,this.activeRoles=new Set,this.timeSyncManager.stop(),this.stateManager.clearStateUpdateInterval()}resetActivation(A=!1){this.pairingSuspended=!1,this.activated=!1,A||(this.activeRoles=null),this.timeSyncManager.stop(),this.stateManager.clearStateUpdateInterval()}handleStreamStart(A){let t=this.stateManager.currentStreamFormat!==null;this.stateManager.currentStreamFormat=A.payload.player,console.log(t?"Sendspin: Stream format updated":"Sendspin: Stream started",this.stateManager.currentStreamFormat),console.log(`Sendspin: Codec=${this.stateManager.currentStreamFormat.codec.toUpperCase()}, SampleRate=${this.stateManager.currentStreamFormat.sample_rate}Hz, Channels=${this.stateManager.currentStreamFormat.channels}, BitDepth=${this.stateManager.currentStreamFormat.bit_depth}bit`),this.streamHandler.handleStreamStart(this.stateManager.currentStreamFormat,t),this.stateManager.isPlaying=!0,typeof navigator<"u"&&navigator.mediaSession&&(navigator.mediaSession.playbackState="playing")}handleStreamClear(A){let t=A.payload.roles;(!t||t.includes("player"))&&(console.log("Sendspin: Stream clear (seek)"),this.streamHandler.handleStreamClear())}handleStreamEnd(A){let t=A.payload?.roles;(!t||t.includes("player"))&&(console.log("Sendspin: Stream ended"),this.streamHandler.handleStreamEnd(),this.stateManager.currentStreamFormat=null,this.stateManager.isPlaying=!1,typeof navigator<"u"&&navigator.mediaSession&&(navigator.mediaSession.playbackState="paused"),this.sendStateUpdate())}handleServerCommand(A){let t=A.payload.player;if(t){switch(t.command){case"volume":t.volume!==void 0&&(this.stateManager.volume=t.volume,this.streamHandler.handleVolumeUpdate(),this.useHardwareVolume&&this.onVolumeCommand&&this.onVolumeCommand(t.volume,this.stateManager.muted));break;case"mute":t.mute!==void 0&&(this.stateManager.muted=t.mute,this.streamHandler.handleVolumeUpdate(),this.useHardwareVolume&&this.onVolumeCommand&&this.onVolumeCommand(this.stateManager.volume,t.mute));break;case"set_static_delay":{let n=t.static_delay_ms;if(typeof n=="number"&&isFinite(n)){let s=nA(n);this.streamHandler.handleSyncDelayChange(s),this.onDelayCommand?.(s)}break}}this.restartStateUpdateInterval(),this.sendStateUpdate(!0)}}sendClientHello(){let A=Jt(this.codecs),t={type:"client/hello",payload:{name:this.clientName,supported_roles:["player@v1","controller@v1","metadata@v1"],trust_level:this.helloContext.trustLevel(),supported_pair_methods:this.helloContext.pairMethods(),unpaired_access:{enabled:this.helloContext.unpairedAccess},device_info:{product_name:this.productName,manufacturer:typeof navigator<"u"&&navigator.vendor||"Unknown",software_version:typeof navigator<"u"&&navigator.userAgent||"Unknown"},"player@v1_support":{supported_formats:A,buffer_capacity:this.bufferCapacity??En(A),supported_commands:["volume","mute"]}}};this.lastSentPlayer=null,this.sender.sendControl(t)}setRequiredLeadTimeMs(A){Bt(A,"requiredLeadTimeMs"),this.requiredLeadTimeMs=A,this.sendStateUpdate()}setMinBufferMs(A){Bt(A,"minBufferMs"),this.minBufferMs=A,this.sendStateUpdate()}sendStateUpdate(A=!1){if(this.pairingSuspended)return;let t=this.stateManager.volume,n=this.stateManager.muted;if(!A&&this.useHardwareVolume&&this.getExternalVolume){let o=this.getExternalVolume();t=o.volume,n=o.muted}let s=this.streamHandler.getSyncDelayMs(),r=nA(s),i={available:!0};if(this.activeRoles===null||this.activeRoles.has("player@v1")){let o={volume:t,muted:n,static_delay_ms:r,required_lead_time_ms:this.requiredLeadTimeMs,min_buffer_ms:this.minBufferMs},h=this.lastSentPlayer;if(h===null)i.player={...o,supported_commands:["set_static_delay"]};else{let u={};o.static_delay_ms!==h.static_delay_ms&&(u.static_delay_ms=o.static_delay_ms),o.volume!==h.volume&&(u.volume=o.volume),o.muted!==h.muted&&(u.muted=o.muted),o.required_lead_time_ms!==h.required_lead_time_ms&&(u.required_lead_time_ms=o.required_lead_time_ms),o.min_buffer_ms!==h.min_buffer_ms&&(u.min_buffer_ms=o.min_buffer_ms),i.player=u}this.lastSentPlayer=o}let a={type:"client/state",payload:i};this.sender.sendControl(a)}sendGoodbye(A){this.sender.sendControl({type:"client/goodbye",payload:{reason:A}})}sendCommand(A,t){this.pairingSuspended||!this.activeRoles?.has("controller@v1")||this.sender.sendControl({type:"client/command",payload:{controller:{command:A,...t}}})}};function we(e,A){let t={...e};for(let n of Object.keys(A)){let s=A[n];if(s===null)delete t[n];else if(s!==void 0){let r=t[n];typeof s=="object"&&!Array.isArray(s)&&typeof r=="object"&&r!==null&&!Array.isArray(r)?t[n]=we(r,s):t[n]=s}}return t}var Rt=class{constructor(A){this._volume=100,this._muted=!1,this._playerState="synchronized",this._isPlaying=!1,this._currentStreamFormat=null,this._streamStartServerTime=0,this._streamStartAudioTime=0,this._streamGeneration=0,this._serverState={},this._groupState={},this.timeSyncInterval=null,this.stateUpdateInterval=null,this.onStateChangeCallback=A}get volume(){return this._volume}set volume(A){this._volume=Math.max(0,Math.min(100,A)),this.notifyStateChange()}get muted(){return this._muted}set muted(A){this._muted=A,this.notifyStateChange()}get playerState(){return this._playerState}set playerState(A){this._playerState=A,this.notifyStateChange()}get isPlaying(){return this._isPlaying}set isPlaying(A){this._isPlaying=A,this.notifyStateChange()}get currentStreamFormat(){return this._currentStreamFormat}set currentStreamFormat(A){this._currentStreamFormat=A}get streamStartServerTime(){return this._streamStartServerTime}set streamStartServerTime(A){this._streamStartServerTime=A}get streamStartAudioTime(){return this._streamStartAudioTime}set streamStartAudioTime(A){this._streamStartAudioTime=A}resetStreamAnchors(){this._streamStartServerTime=0,this._streamStartAudioTime=0,this._streamGeneration++}get streamGeneration(){return this._streamGeneration}setTimeSyncInterval(A){this.clearTimeSyncInterval(),this.timeSyncInterval=A}clearTimeSyncInterval(){this.timeSyncInterval!==null&&(clearTimeout(this.timeSyncInterval),this.timeSyncInterval=null)}setStateUpdateInterval(A){this.clearStateUpdateInterval(),this.stateUpdateInterval=A}clearStateUpdateInterval(){this.stateUpdateInterval!==null&&(clearInterval(this.stateUpdateInterval),this.stateUpdateInterval=null)}clearAllIntervals(){this.clearTimeSyncInterval(),this.clearStateUpdateInterval()}reset(){this._volume=100,this._muted=!1,this._playerState="synchronized",this._isPlaying=!1,this._currentStreamFormat=null,this._streamStartServerTime=0,this._streamStartAudioTime=0,this._serverState={},this._groupState={},this.clearAllIntervals()}notifyStateChange(){this.onStateChangeCallback&&this.onStateChangeCallback({isPlaying:this._isPlaying,volume:this._volume,muted:this._muted,playerState:this._playerState,serverState:this._serverState,groupState:this._groupState})}updateServerState(A){this._serverState=we(this._serverState,A),this.notifyStateChange()}updateGroupState(A){this._groupState=we(this._groupState,A),this.notifyStateChange()}get serverState(){return this._serverState}get groupState(){return this._groupState}};var Ot=class{constructor(A){this.ws=null,this.reconnectTimeout=null,this.shouldReconnect=!1,this.isReconnecting=!1,this.reconnectAttempt=0,this.baseDelayMs=Math.max(0,A?.baseDelayMs??1e3),this.maxDelayMs=Math.max(this.baseDelayMs,A?.maxDelayMs??15e3),this.maxAttempts=A?.maxAttempts===void 0?1/0:Math.max(0,A.maxAttempts),this.onReconnecting=A?.onReconnecting,this.onReconnected=A?.onReconnected,this.onExhausted=A?.onExhausted}adopt(A,t,n,s,r){if(A.readyState!==WebSocket.OPEN&&A.readyState!==WebSocket.CONNECTING)throw new Error(`Sendspin: Cannot adopt WebSocket in readyState ${A.readyState} (must be OPEN or CONNECTING)`);if(this.onOpenHandler=t,this.onMessageHandler=n,this.onErrorHandler=s,this.onCloseHandler=r,this.ws){let i=this.ws;i.onopen=null,i.onmessage=null,i.onerror=null,i.onclose=null,i.close(),this.ws=null}return this.ws=A,this.ws.binaryType="arraybuffer",this.shouldReconnect=!1,this.clearReconnectState(),this.ws.onmessage=i=>{this.onMessageHandler&&this.onMessageHandler(i)},this.ws.onerror=i=>{console.error("Sendspin: WebSocket error",i),this.onErrorHandler&&this.onErrorHandler(i)},this.ws.onclose=()=>{console.log("Sendspin: WebSocket disconnected"),this.onCloseHandler&&this.onCloseHandler()},new Promise((i,a)=>{let o=()=>{this.onOpenHandler&&this.onOpenHandler(),i()};if(A.readyState===WebSocket.OPEN){console.log("Sendspin: Adopted open WebSocket"),o();return}let h=this.ws.onclose;this.ws.onopen=()=>{console.log("Sendspin: Adopted WebSocket connected"),o()},this.ws.onclose=u=>{h&&h.call(this.ws,u),a(new Error("Sendspin: Adopted WebSocket closed before opening"))}})}async connect(A,t,n,s,r){if(this.onOpenHandler=t,this.onMessageHandler=n,this.onErrorHandler=s,this.onCloseHandler=r,this.shouldReconnect=!1,this.clearReconnectState(),this.ws){let i=this.ws;i.onopen=null,i.onmessage=null,i.onerror=null,i.onclose=null,i.close(),this.ws=null}return this.openSocket(A)}openSocket(A){return new Promise((t,n)=>{try{console.log("Sendspin: Connecting to",A),this.ws=new WebSocket(A),this.ws.binaryType="arraybuffer",this.shouldReconnect=!0;let s=!1;this.ws.onopen=()=>{console.log("Sendspin: WebSocket connected"),s=!0;let r=this.isReconnecting;this.isReconnecting=!1,this.reconnectAttempt=0,this.onOpenHandler&&this.onOpenHandler(),r&&this.onReconnected?.(),t()},this.ws.onmessage=r=>{this.onMessageHandler&&this.onMessageHandler(r)},this.ws.onerror=r=>{console.error("Sendspin: WebSocket error",r),this.onErrorHandler&&this.onErrorHandler(r),n(r)},this.ws.onclose=()=>{console.log("Sendspin: WebSocket disconnected"),s&&this.onCloseHandler&&this.onCloseHandler(),this.shouldReconnect&&this.scheduleReconnect(A)}}catch(s){console.error("Sendspin: Failed to connect",s),n(s)}})}getReconnectDelayMs(A){let t=this.baseDelayMs*2**(A-1);return Math.min(t,this.maxDelayMs)}scheduleReconnect(A){this.reconnectTimeout!==null&&(clearTimeout(this.reconnectTimeout),this.reconnectTimeout=null);let t=this.reconnectAttempt+1;if(t>this.maxAttempts){console.warn(`Sendspin: Reconnect exhausted after ${this.maxAttempts} attempt(s)`),this.shouldReconnect=!1,this.isReconnecting=!1,this.reconnectAttempt=0,this.onExhausted?.();return}this.reconnectAttempt=t,this.isReconnecting=!0;let n=this.getReconnectDelayMs(t);this.reconnectTimeout=globalThis.setTimeout(()=>{this.reconnectTimeout=null,this.shouldReconnect&&(this.onReconnecting?.(t),console.log(`Sendspin: Attempting to reconnect (attempt ${t}${this.maxAttempts===1/0?"":`/${this.maxAttempts}`})...`),this.openSocket(A).catch(s=>{console.error("Sendspin: Reconnection failed",s)}))},n)}clearReconnectState(){this.reconnectTimeout!==null&&(clearTimeout(this.reconnectTimeout),this.reconnectTimeout=null),this.isReconnecting=!1,this.reconnectAttempt=0}disconnect(){this.shouldReconnect=!1,this.clearReconnectState(),this.ws&&(this.ws.close(),this.ws=null)}sendText(A){this.ws&&this.ws.readyState===WebSocket.OPEN?this.ws.send(A):console.warn("Sendspin: Cannot send text, WebSocket not connected")}sendBinary(A){this.ws&&this.ws.readyState===WebSocket.OPEN?this.ws.send(A):console.warn("Sendspin: Cannot send binary, WebSocket not connected")}isConnected(){return this.ws!==null&&this.ws.readyState===WebSocket.OPEN}getReadyState(){return this.ws?this.ws.readyState:WebSocket.CLOSED}};var et=class{constructor(A=.01,t=1.1,n=2,s=0){this._last_update=0,this._count=0,this._measurements_processed=0,this._offset=0,this._drift=0,this._offset_covariance=1/0,this._offset_drift_covariance=0,this._drift_covariance=0,this._use_drift=!1,this._offset_process_variance=A*A,this._drift_process_variance=s*s,this._forget_variance_factor=t*t,this._drift_significance_threshold_squared=n*n,this._current_time_element=this._createDefaultTimeElement()}_createDefaultTimeElement(){return{last_update:0,offset:0,drift:0}}update(A,t,n){if(n<=this._last_update)return;let s=n-this._last_update;this._last_update=n,this._measurements_processed+=1;let r=t,i=r*r;if(this._count<=0){this._count+=1,this._offset=A,this._offset_covariance=i,this._drift=0,this._current_time_element={last_update:this._last_update,offset:this._offset,drift:this._drift},this._use_drift=!1;return}if(this._count===1){this._count+=1,this._drift=(A-this._offset)/s,this._offset=A,this._drift_covariance=(this._offset_covariance+i)/(s*s),this._offset_covariance=i,this._current_time_element={last_update:this._last_update,offset:this._offset,drift:this._drift},this._use_drift=!1;return}let a=this._offset+this._drift*s,o=s*s,h=s*this._drift_process_variance,u=this._drift_covariance+h,c=this._offset_drift_covariance+this._drift_covariance*s+0,f=s*this._offset_process_variance,d=this._offset_covariance+2*this._offset_drift_covariance*s+this._drift_covariance*o+f,g=A-a,m=t*2;this._count<100?this._count+=1:Math.abs(g)>m&&(u*=this._forget_variance_factor,c*=this._forget_variance_factor,d*=this._forget_variance_factor);let p=1/(d+i),S=d*p,y=c*p;this._offset=a+S*g,this._drift+=y*g,this._drift_covariance=u-y*c,this._offset_drift_covariance=c-y*d,this._offset_covariance=d-S*d;let _=this._drift*this._drift;this._use_drift=_>this._drift_significance_threshold_squared*this._drift_covariance,this._current_time_element={last_update:this._last_update,offset:this._offset,drift:this._drift}}computeServerTime(A){let t=A-this._current_time_element.last_update,n=this._use_drift?this._current_time_element.drift:0,s=Math.round(this._current_time_element.offset+n*t);return A+s}computeClientTime(A){let t=this._use_drift?this._current_time_element.drift:0;return Math.round((A-this._current_time_element.offset+t*this._current_time_element.last_update)/(1+t))}reset(){this._count=0,this._measurements_processed=0,this._last_update=0,this._offset=0,this._drift=0,this._offset_covariance=1/0,this._offset_drift_covariance=0,this._drift_covariance=0,this._use_drift=!1,this._current_time_element=this._createDefaultTimeElement()}get count(){return this._measurements_processed}get is_synchronized(){return this._count>=1&&isFinite(this._offset_covariance)}get error(){return Math.round(Math.sqrt(this._offset_covariance))}get covariance(){return Math.round(this._offset_covariance)}get offset(){return this._offset}get drift(){return this._drift}};var Tn="sendspin-static-delay-ms-v2",Lt=class{constructor(A){this.storage=A}load(){if(!this.storage)return null;try{let A=this.storage.getItem(Tn);if(A===null)return null;let t=parseFloat(A);return isNaN(t)?null:nA(t)}catch{return null}}save(A){if(this.storage)try{this.storage.setItem(Tn,A.toString())}catch{}}};var BA=typeof globalThis=="object"&&"crypto"in globalThis?globalThis.crypto:void 0;function PA(e){return e instanceof Uint8Array||ArrayBuffer.isView(e)&&e.constructor.name==="Uint8Array"}function nt(e){if(!Number.isSafeInteger(e)||e<0)throw new Error("positive integer expected, got "+e)}function W(e,...A){if(!PA(e))throw new Error("Uint8Array expected");if(A.length>0&&!A.includes(e.length))throw new Error("Uint8Array expected of length "+A+", got length="+e.length)}function vn(e){if(typeof e!="function"||typeof e.create!="function")throw new Error("Hash should be wrapped by utils.createHasher");nt(e.outputLen),nt(e.blockLen)}function YA(e,A=!0){if(e.destroyed)throw new Error("Hash instance has been destroyed");if(A&&e.finished)throw new Error("Hash#digest() has already been called")}function In(e,A){W(e);let t=A.outputLen;if(e.length<t)throw new Error("digestInto() expects output buffer of length at least "+t)}function SA(...e){for(let A=0;A<e.length;A++)e[A].fill(0)}function Ut(e){return new DataView(e.buffer,e.byteOffset,e.byteLength)}function sA(e,A){return e<<32-A|e>>>A}var Jn=typeof Uint8Array.from([]).toHex=="function"&&typeof Uint8Array.fromHex=="function",zr=Array.from({length:256},(e,A)=>A.toString(16).padStart(2,"0"));function RA(e){if(W(e),Jn)return e.toHex();let A="";for(let t=0;t<e.length;t++)A+=zr[e[t]];return A}var yA={_0:48,_9:57,A:65,F:70,a:97,f:102};function Dn(e){if(e>=yA._0&&e<=yA._9)return e-yA._0;if(e>=yA.A&&e<=yA.F)return e-(yA.A-10);if(e>=yA.a&&e<=yA.f)return e-(yA.a-10)}function zt(e){if(typeof e!="string")throw new Error("hex string expected, got "+typeof e);if(Jn)return Uint8Array.fromHex(e);let A=e.length,t=A/2;if(A%2)throw new Error("hex string expected, got unpadded hex of length "+A);let n=new Uint8Array(t);for(let s=0,r=0;s<t;s++,r+=2){let i=Dn(e.charCodeAt(r)),a=Dn(e.charCodeAt(r+1));if(i===void 0||a===void 0){let o=e[r]+e[r+1];throw new Error('hex string expected, got non-hex character "'+o+'" at index '+r)}n[s]=i*16+a}return n}function ke(e){if(typeof e!="string")throw new Error("string expected");return new Uint8Array(new TextEncoder().encode(e))}function st(e){return typeof e=="string"&&(e=ke(e)),W(e),e}function qA(...e){let A=0;for(let n=0;n<e.length;n++){let s=e[n];W(s),A+=s.length}let t=new Uint8Array(A);for(let n=0,s=0;n<e.length;n++){let r=e[n];t.set(r,s),s+=r.length}return t}var ZA=class{};function _e(e){let A=n=>e().update(st(n)).digest(),t=e();return A.outputLen=t.outputLen,A.blockLen=t.blockLen,A.create=()=>e(),A}function rt(e=32){if(BA&&typeof BA.getRandomValues=="function")return BA.getRandomValues(new Uint8Array(e));if(BA&&typeof BA.randomBytes=="function")return Uint8Array.from(BA.randomBytes(e));throw new Error("crypto.getRandomValues must be defined")}function Qr(e,A,t,n){if(typeof e.setBigUint64=="function")return e.setBigUint64(A,t,n);let s=BigInt(32),r=BigInt(4294967295),i=Number(t>>s&r),a=Number(t&r),o=n?4:0,h=n?0:4;e.setUint32(A+o,i,n),e.setUint32(A+h,a,n)}function Bn(e,A,t){return e&A^~e&t}function Pn(e,A,t){return e&A^e&t^A&t}var it=class extends ZA{constructor(A,t,n,s){super(),this.finished=!1,this.length=0,this.pos=0,this.destroyed=!1,this.blockLen=A,this.outputLen=t,this.padOffset=n,this.isLE=s,this.buffer=new Uint8Array(A),this.view=Ut(this.buffer)}update(A){YA(this),A=st(A),W(A);let{view:t,buffer:n,blockLen:s}=this,r=A.length;for(let i=0;i<r;){let a=Math.min(s-this.pos,r-i);if(a===s){let o=Ut(A);for(;s<=r-i;i+=s)this.process(o,i);continue}n.set(A.subarray(i,i+a),this.pos),this.pos+=a,i+=a,this.pos===s&&(this.process(t,0),this.pos=0)}return this.length+=A.length,this.roundClean(),this}digestInto(A){YA(this),In(A,this),this.finished=!0;let{buffer:t,view:n,blockLen:s,isLE:r}=this,{pos:i}=this;t[i++]=128,SA(this.buffer.subarray(i)),this.padOffset>s-i&&(this.process(n,0),i=0);for(let l=i;l<s;l++)t[l]=0;Qr(n,s-8,BigInt(this.length*8),r),this.process(n,0);let a=Ut(A),o=this.outputLen;if(o%4)throw new Error("_sha2: outputLen should be aligned to 32bit");let h=o/4,u=this.get();if(h>u.length)throw new Error("_sha2: outputLen bigger than state");for(let l=0;l<h;l++)a.setUint32(4*l,u[l],r)}digest(){let{buffer:A,outputLen:t}=this;this.digestInto(A);let n=A.slice(0,t);return this.destroy(),n}_cloneInto(A){A||(A=new this.constructor),A.set(...this.get());let{blockLen:t,buffer:n,length:s,finished:r,destroyed:i,pos:a}=this;return A.destroyed=i,A.finished=r,A.length=s,A.pos=a,s%t&&A.buffer.set(n),A}clone(){return this._cloneInto()}},MA=Uint32Array.from([1779033703,3144134277,1013904242,2773480762,1359893119,2600822924,528734635,1541459225]);var Z=Uint32Array.from([1779033703,4089235720,3144134277,2227873595,1013904242,4271175723,2773480762,1595750129,1359893119,2917565137,2600822924,725511199,528734635,4215389547,1541459225,327033209]);var Qt=BigInt(4294967295),Rn=BigInt(32);function Nr(e,A=!1){return A?{h:Number(e&Qt),l:Number(e>>Rn&Qt)}:{h:Number(e>>Rn&Qt)|0,l:Number(e&Qt)|0}}function On(e,A=!1){let t=e.length,n=new Uint32Array(t),s=new Uint32Array(t);for(let r=0;r<t;r++){let{h:i,l:a}=Nr(e[r],A);[n[r],s[r]]=[i,a]}return[n,s]}var xe=(e,A,t)=>e>>>t,Ee=(e,A,t)=>e<<32-t|A>>>t,OA=(e,A,t)=>e>>>t|A<<32-t,LA=(e,A,t)=>e<<32-t|A>>>t,ot=(e,A,t)=>e<<64-t|A>>>t-32,at=(e,A,t)=>e>>>t-32|A<<64-t;function hA(e,A,t,n){let s=(A>>>0)+(n>>>0);return{h:e+t+(s/2**32|0)|0,l:s|0}}var Ln=(e,A,t)=>(e>>>0)+(A>>>0)+(t>>>0),Un=(e,A,t,n)=>A+t+n+(e/2**32|0)|0,zn=(e,A,t,n)=>(e>>>0)+(A>>>0)+(t>>>0)+(n>>>0),Qn=(e,A,t,n,s)=>A+t+n+s+(e/2**32|0)|0,Nn=(e,A,t,n,s)=>(e>>>0)+(A>>>0)+(t>>>0)+(n>>>0)+(s>>>0),Hn=(e,A,t,n,s,r)=>A+t+n+s+r+(e/2**32|0)|0;var Kr=Uint32Array.from([1116352408,1899447441,3049323471,3921009573,961987163,1508970993,2453635748,2870763221,3624381080,310598401,607225278,1426881987,1925078388,2162078206,2614888103,3248222580,3835390401,4022224774,264347078,604807628,770255983,1249150122,1555081692,1996064986,2554220882,2821834349,2952996808,3210313671,3336571891,3584528711,113926993,338241895,666307205,773529912,1294757372,1396182291,1695183700,1986661051,2177026350,2456956037,2730485921,2820302411,3259730800,3345764771,3516065817,3600352804,4094571909,275423344,430227734,506948616,659060556,883997877,958139571,1322822218,1537002063,1747873779,1955562222,2024104815,2227730452,2361852424,2428436474,2756734187,3204031479,3329325298]),bA=new Uint32Array(64),be=class extends it{constructor(A=32){super(64,A,8,!1),this.A=MA[0]|0,this.B=MA[1]|0,this.C=MA[2]|0,this.D=MA[3]|0,this.E=MA[4]|0,this.F=MA[5]|0,this.G=MA[6]|0,this.H=MA[7]|0}get(){let{A,B:t,C:n,D:s,E:r,F:i,G:a,H:o}=this;return[A,t,n,s,r,i,a,o]}set(A,t,n,s,r,i,a,o){this.A=A|0,this.B=t|0,this.C=n|0,this.D=s|0,this.E=r|0,this.F=i|0,this.G=a|0,this.H=o|0}process(A,t){for(let l=0;l<16;l++,t+=4)bA[l]=A.getUint32(t,!1);for(let l=16;l<64;l++){let c=bA[l-15],f=bA[l-2],d=sA(c,7)^sA(c,18)^c>>>3,g=sA(f,17)^sA(f,19)^f>>>10;bA[l]=g+bA[l-7]+d+bA[l-16]|0}let{A:n,B:s,C:r,D:i,E:a,F:o,G:h,H:u}=this;for(let l=0;l<64;l++){let c=sA(a,6)^sA(a,11)^sA(a,25),f=u+c+Bn(a,o,h)+Kr[l]+bA[l]|0,g=(sA(n,2)^sA(n,13)^sA(n,22))+Pn(n,s,r)|0;u=h,h=o,o=a,a=i+f|0,i=r,r=s,s=n,n=f+g|0}n=n+this.A|0,s=s+this.B|0,r=r+this.C|0,i=i+this.D|0,a=a+this.E|0,o=o+this.F|0,h=h+this.G|0,u=u+this.H|0,this.set(n,s,r,i,a,o,h,u)}roundClean(){SA(bA)}destroy(){this.set(0,0,0,0,0,0,0,0),SA(this.buffer)}};var Kn=On(["0x428a2f98d728ae22","0x7137449123ef65cd","0xb5c0fbcfec4d3b2f","0xe9b5dba58189dbbc","0x3956c25bf348b538","0x59f111f1b605d019","0x923f82a4af194f9b","0xab1c5ed5da6d8118","0xd807aa98a3030242","0x12835b0145706fbe","0x243185be4ee4b28c","0x550c7dc3d5ffb4e2","0x72be5d74f27b896f","0x80deb1fe3b1696b1","0x9bdc06a725c71235","0xc19bf174cf692694","0xe49b69c19ef14ad2","0xefbe4786384f25e3","0x0fc19dc68b8cd5b5","0x240ca1cc77ac9c65","0x2de92c6f592b0275","0x4a7484aa6ea6e483","0x5cb0a9dcbd41fbd4","0x76f988da831153b5","0x983e5152ee66dfab","0xa831c66d2db43210","0xb00327c898fb213f","0xbf597fc7beef0ee4","0xc6e00bf33da88fc2","0xd5a79147930aa725","0x06ca6351e003826f","0x142929670a0e6e70","0x27b70a8546d22ffc","0x2e1b21385c26c926","0x4d2c6dfc5ac42aed","0x53380d139d95b3df","0x650a73548baf63de","0x766a0abb3c77b2a8","0x81c2c92e47edaee6","0x92722c851482353b","0xa2bfe8a14cf10364","0xa81a664bbc423001","0xc24b8b70d0f89791","0xc76c51a30654be30","0xd192e819d6ef5218","0xd69906245565a910","0xf40e35855771202a","0x106aa07032bbd1b8","0x19a4c116b8d2d0c8","0x1e376c085141ab53","0x2748774cdf8eeb99","0x34b0bcb5e19b48a8","0x391c0cb3c5c95a63","0x4ed8aa4ae3418acb","0x5b9cca4f7763e373","0x682e6ff3d6b2b8a3","0x748f82ee5defb2fc","0x78a5636f43172f60","0x84c87814a1f0ab72","0x8cc702081a6439ec","0x90befffa23631e28","0xa4506cebde82bde9","0xbef9a3f7b2c67915","0xc67178f2e372532b","0xca273eceea26619c","0xd186b8c721c0c207","0xeada7dd6cde0eb1e","0xf57d4f7fee6ed178","0x06f067aa72176fba","0x0a637dc5a2c898a6","0x113f9804bef90dae","0x1b710b35131c471b","0x28db77f523047d84","0x32caab7b40c72493","0x3c9ebe0a15c9bebc","0x431d67c49c100d4c","0x4cc5d4becb3e42b6","0x597f299cfc657e2a","0x5fcb6fab3ad6faec","0x6c44198c4a475817"].map(e=>BigInt(e))),Fr=Kn[0],Gr=Kn[1],TA=new Uint32Array(80),DA=new Uint32Array(80),Te=class extends it{constructor(A=64){super(128,A,16,!1),this.Ah=Z[0]|0,this.Al=Z[1]|0,this.Bh=Z[2]|0,this.Bl=Z[3]|0,this.Ch=Z[4]|0,this.Cl=Z[5]|0,this.Dh=Z[6]|0,this.Dl=Z[7]|0,this.Eh=Z[8]|0,this.El=Z[9]|0,this.Fh=Z[10]|0,this.Fl=Z[11]|0,this.Gh=Z[12]|0,this.Gl=Z[13]|0,this.Hh=Z[14]|0,this.Hl=Z[15]|0}get(){let{Ah:A,Al:t,Bh:n,Bl:s,Ch:r,Cl:i,Dh:a,Dl:o,Eh:h,El:u,Fh:l,Fl:c,Gh:f,Gl:d,Hh:g,Hl:m}=this;return[A,t,n,s,r,i,a,o,h,u,l,c,f,d,g,m]}set(A,t,n,s,r,i,a,o,h,u,l,c,f,d,g,m){this.Ah=A|0,this.Al=t|0,this.Bh=n|0,this.Bl=s|0,this.Ch=r|0,this.Cl=i|0,this.Dh=a|0,this.Dl=o|0,this.Eh=h|0,this.El=u|0,this.Fh=l|0,this.Fl=c|0,this.Gh=f|0,this.Gl=d|0,this.Hh=g|0,this.Hl=m|0}process(A,t){for(let y=0;y<16;y++,t+=4)TA[y]=A.getUint32(t),DA[y]=A.getUint32(t+=4);for(let y=16;y<80;y++){let _=TA[y-15]|0,J=DA[y-15]|0,D=OA(_,J,1)^OA(_,J,8)^xe(_,J,7),B=LA(_,J,1)^LA(_,J,8)^Ee(_,J,7),I=TA[y-2]|0,M=DA[y-2]|0,C=OA(I,M,19)^ot(I,M,61)^xe(I,M,6),k=LA(I,M,19)^at(I,M,61)^Ee(I,M,6),T=zn(B,k,DA[y-7],DA[y-16]),w=Qn(T,D,C,TA[y-7],TA[y-16]);TA[y]=w|0,DA[y]=T|0}let{Ah:n,Al:s,Bh:r,Bl:i,Ch:a,Cl:o,Dh:h,Dl:u,Eh:l,El:c,Fh:f,Fl:d,Gh:g,Gl:m,Hh:p,Hl:S}=this;for(let y=0;y<80;y++){let _=OA(l,c,14)^OA(l,c,18)^ot(l,c,41),J=LA(l,c,14)^LA(l,c,18)^at(l,c,41),D=l&f^~l&g,B=c&d^~c&m,I=Nn(S,J,B,Gr[y],DA[y]),M=Hn(I,p,_,D,Fr[y],TA[y]),C=I|0,k=OA(n,s,28)^ot(n,s,34)^ot(n,s,39),T=LA(n,s,28)^at(n,s,34)^at(n,s,39),w=n&r^n&a^r&a,E=s&i^s&o^i&o;p=g|0,S=m|0,g=f|0,m=d|0,f=l|0,d=c|0,{h:l,l:c}=hA(h|0,u|0,M|0,C|0),h=a|0,u=o|0,a=r|0,o=i|0,r=n|0,i=s|0;let v=Ln(C,T,E);n=Un(v,M,k,w),s=v|0}({h:n,l:s}=hA(this.Ah|0,this.Al|0,n|0,s|0)),{h:r,l:i}=hA(this.Bh|0,this.Bl|0,r|0,i|0),{h:a,l:o}=hA(this.Ch|0,this.Cl|0,a|0,o|0),{h,l:u}=hA(this.Dh|0,this.Dl|0,h|0,u|0),{h:l,l:c}=hA(this.Eh|0,this.El|0,l|0,c|0),{h:f,l:d}=hA(this.Fh|0,this.Fl|0,f|0,d|0),{h:g,l:m}=hA(this.Gh|0,this.Gl|0,g|0,m|0),{h:p,l:S}=hA(this.Hh|0,this.Hl|0,p|0,S|0),this.set(n,s,r,i,a,o,h,u,l,c,f,d,g,m,p,S)}roundClean(){SA(TA,DA)}destroy(){SA(this.buffer),this.set(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)}};var j=_e(()=>new be);var UA=_e(()=>new Te);var Ie=BigInt(0),ve=BigInt(1);function Nt(e,A=""){if(typeof e!="boolean"){let t=A&&`"${A}"`;throw new Error(t+"expected boolean, got type="+typeof e)}return e}function ct(e,A,t=""){let n=PA(e),s=e?.length,r=A!==void 0;if(!n||r&&s!==A){let i=t&&`"${t}" `,a=r?` of length ${A}`:"",o=n?`length=${s}`:`type=${typeof e}`;throw new Error(i+"expected Uint8Array"+a+", got "+o)}return e}function Fn(e){if(typeof e!="string")throw new Error("hex string expected, got "+typeof e);return e===""?Ie:BigInt("0x"+e)}function Gn(e){return Fn(RA(e))}function rA(e){return W(e),Fn(RA(Uint8Array.from(e).reverse()))}function Je(e,A){return zt(e.toString(16).padStart(A*2,"0"))}function Ht(e,A){return Je(e,A).reverse()}function X(e,A,t){let n;if(typeof A=="string")try{n=zt(A)}catch(r){throw new Error(e+" must be hex string or Uint8Array, cause: "+r)}else if(PA(A))n=Uint8Array.from(A);else throw new Error(e+" must be hex string or Uint8Array");let s=n.length;if(typeof t=="number"&&s!==t)throw new Error(e+" of length "+t+" expected, got "+s);return n}function Zn(e,A){if(e.length!==A.length)return!1;let t=0;for(let n=0;n<e.length;n++)t|=e[n]^A[n];return t===0}function Be(e){return Uint8Array.from(e)}var De=e=>typeof e=="bigint"&&Ie<=e;function Zr(e,A,t){return De(e)&&De(A)&&De(t)&&A<=e&&e<t}function VA(e,A,t,n){if(!Zr(A,t,n))throw new Error("expected valid "+e+": "+t+" <= n < "+n+", got "+A)}function Yn(e){let A;for(A=0;e>Ie;e>>=ve,A+=1);return A}var ht=e=>(ve<<BigInt(e))-ve;function zA(e,A,t={}){if(!e||typeof e!="object")throw new Error("expected valid options object");function n(s,r,i){let a=e[s];if(i&&a===void 0)return;let o=typeof a;if(o!==r||a===null)throw new Error(`param "${s}" is invalid: expected ${r}, got ${o}`)}Object.entries(A).forEach(([s,r])=>n(s,r,!1)),Object.entries(t).forEach(([s,r])=>n(s,r,!0))}var Pe=()=>{throw new Error("not implemented")};function Re(e){let A=new WeakMap;return(t,...n)=>{let s=A.get(t);if(s!==void 0)return s;let r=e(t,...n);return A.set(t,r),r}}var AA=BigInt(0),$=BigInt(1),QA=BigInt(2),Wn=BigInt(3),jn=BigInt(4),Xn=BigInt(5),Yr=BigInt(7),$n=BigInt(8),qr=BigInt(9),As=BigInt(16);function N(e,A){let t=e%A;return t>=AA?t:A+t}function tA(e,A,t){let n=e;for(;A-- >AA;)n*=n,n%=t;return n}function qn(e,A){if(e===AA)throw new Error("invert: expected non-zero number");if(A<=AA)throw new Error("invert: expected positive modulus, got "+A);let t=N(e,A),n=A,s=AA,r=$,i=$,a=AA;for(;t!==AA;){let h=n/t,u=n%t,l=s-i*h,c=r-a*h;n=t,t=u,s=i,r=a,i=l,a=c}if(n!==$)throw new Error("invert: does not exist");return N(s,A)}function Oe(e,A,t){if(!e.eql(e.sqr(A),t))throw new Error("Cannot find square root")}function ts(e,A){let t=(e.ORDER+$)/jn,n=e.pow(A,t);return Oe(e,n,A),n}function Vr(e,A){let t=(e.ORDER-Xn)/$n,n=e.mul(A,QA),s=e.pow(n,t),r=e.mul(A,s),i=e.mul(e.mul(r,QA),s),a=e.mul(r,e.sub(i,e.ONE));return Oe(e,a,A),a}function Wr(e){let A=wA(e),t=es(e),n=t(A,A.neg(A.ONE)),s=t(A,n),r=t(A,A.neg(n)),i=(e+Yr)/As;return(a,o)=>{let h=a.pow(o,i),u=a.mul(h,n),l=a.mul(h,s),c=a.mul(h,r),f=a.eql(a.sqr(u),o),d=a.eql(a.sqr(l),o);h=a.cmov(h,u,f),u=a.cmov(c,l,d);let g=a.eql(a.sqr(u),o),m=a.cmov(h,u,g);return Oe(a,m,o),m}}function es(e){if(e<Wn)throw new Error("sqrt is not defined for small field");let A=e-$,t=0;for(;A%QA===AA;)A/=QA,t++;let n=QA,s=wA(e);for(;Vn(s,n)===1;)if(n++>1e3)throw new Error("Cannot find square root: probably non-prime P");if(t===1)return ts;let r=s.pow(n,A),i=(A+$)/QA;return function(o,h){if(o.is0(h))return h;if(Vn(o,h)!==1)throw new Error("Cannot find square root");let u=t,l=o.mul(o.ONE,r),c=o.pow(h,A),f=o.pow(h,i);for(;!o.eql(c,o.ONE);){if(o.is0(c))return o.ZERO;let d=1,g=o.sqr(c);for(;!o.eql(g,o.ONE);)if(d++,g=o.sqr(g),d===u)throw new Error("Cannot find square root");let m=$<<BigInt(u-d-1),p=o.pow(l,m);u=d,l=o.sqr(p),c=o.mul(c,l),f=o.mul(f,p)}return f}}function jr(e){return e%jn===Wn?ts:e%$n===Xn?Vr:e%As===qr?Wr(e):es(e)}var CA=(e,A)=>(N(e,A)&$)===$,Xr=["create","isValid","is0","neg","inv","sqrt","sqr","eql","add","sub","mul","pow","div","addN","subN","mulN","sqrN"];function ns(e){let A={ORDER:"bigint",MASK:"bigint",BYTES:"number",BITS:"number"},t=Xr.reduce((n,s)=>(n[s]="function",n),A);return zA(e,t),e}function $r(e,A,t){if(t<AA)throw new Error("invalid exponent, negatives unsupported");if(t===AA)return e.ONE;if(t===$)return A;let n=e.ONE,s=A;for(;t>AA;)t&$&&(n=e.mul(n,s)),s=e.sqr(s),t>>=$;return n}function Kt(e,A,t=!1){let n=new Array(A.length).fill(t?e.ZERO:void 0),s=A.reduce((i,a,o)=>e.is0(a)?i:(n[o]=i,e.mul(i,a)),e.ONE),r=e.inv(s);return A.reduceRight((i,a,o)=>e.is0(a)?i:(n[o]=e.mul(i,n[o]),e.mul(i,a)),r),n}function Vn(e,A){let t=(e.ORDER-$)/QA,n=e.pow(A,t),s=e.eql(n,e.ONE),r=e.eql(n,e.ZERO),i=e.eql(n,e.neg(e.ONE));if(!s&&!r&&!i)throw new Error("invalid Legendre symbol result");return s?1:r?0:-1}function ss(e,A){A!==void 0&&nt(A);let t=A!==void 0?A:e.toString(2).length,n=Math.ceil(t/8);return{nBitLength:t,nByteLength:n}}function wA(e,A,t=!1,n={}){if(e<=AA)throw new Error("invalid field: expected ORDER > 0, got "+e);let s,r,i=!1,a;if(typeof A=="object"&&A!=null){if(n.sqrt||t)throw new Error("cannot specify opts in two arguments");let c=A;c.BITS&&(s=c.BITS),c.sqrt&&(r=c.sqrt),typeof c.isLE=="boolean"&&(t=c.isLE),typeof c.modFromBytes=="boolean"&&(i=c.modFromBytes),a=c.allowedLengths}else typeof A=="number"&&(s=A),n.sqrt&&(r=n.sqrt);let{nBitLength:o,nByteLength:h}=ss(e,s);if(h>2048)throw new Error("invalid field: expected ORDER of <= 2048 bytes");let u,l=Object.freeze({ORDER:e,isLE:t,BITS:o,BYTES:h,MASK:ht(o),ZERO:AA,ONE:$,allowedLengths:a,create:c=>N(c,e),isValid:c=>{if(typeof c!="bigint")throw new Error("invalid field element: expected bigint, got "+typeof c);return AA<=c&&c<e},is0:c=>c===AA,isValidNot0:c=>!l.is0(c)&&l.isValid(c),isOdd:c=>(c&$)===$,neg:c=>N(-c,e),eql:(c,f)=>c===f,sqr:c=>N(c*c,e),add:(c,f)=>N(c+f,e),sub:(c,f)=>N(c-f,e),mul:(c,f)=>N(c*f,e),pow:(c,f)=>$r(l,c,f),div:(c,f)=>N(c*qn(f,e),e),sqrN:c=>c*c,addN:(c,f)=>c+f,subN:(c,f)=>c-f,mulN:(c,f)=>c*f,inv:c=>qn(c,e),sqrt:r||(c=>(u||(u=jr(e)),u(l,c))),toBytes:c=>t?Ht(c,h):Je(c,h),fromBytes:(c,f=!0)=>{if(a){if(!a.includes(c.length)||c.length>h)throw new Error("Field.fromBytes: expected "+a+" bytes, got "+c.length);let g=new Uint8Array(h);g.set(c,t?0:g.length-c.length),c=g}if(c.length!==h)throw new Error("Field.fromBytes: expected "+h+" bytes, got "+c.length);let d=t?rA(c):Gn(c);if(i&&(d=N(d,e)),!f&&!l.isValid(d))throw new Error("invalid field element: outside of range 0..ORDER");return d},invertBatch:c=>Kt(l,c),cmov:(c,f,d)=>d?f:c});return Object.freeze(l)}var Ft=BigInt(0),Qe=BigInt(1);function rs(e,A){let t=A.negate();return e?t:A}function lt(e,A){let t=Kt(e.Fp,A.map(n=>n.Z));return A.map((n,s)=>e.fromAffine(n.toAffine(t[s])))}function cs(e,A){if(!Number.isSafeInteger(e)||e<=0||e>A)throw new Error("invalid window size, expected [1.."+A+"], got W="+e)}function Le(e,A){cs(e,A);let t=Math.ceil(A/e)+1,n=2**(e-1),s=2**e,r=ht(e),i=BigInt(e);return{windows:t,windowSize:n,mask:r,maxNumber:s,shiftBy:i}}function is(e,A,t){let{windowSize:n,mask:s,maxNumber:r,shiftBy:i}=t,a=Number(e&s),o=e>>i;a>n&&(a-=r,o+=Qe);let h=A*n,u=h+Math.abs(a)-1,l=a===0,c=a<0,f=A%2!==0;return{nextN:o,offset:u,isZero:l,isNeg:c,isNegF:f,offsetF:h}}function Ai(e,A){if(!Array.isArray(e))throw new Error("array expected");e.forEach((t,n)=>{if(!(t instanceof A))throw new Error("invalid point at index "+n)})}function ti(e,A){if(!Array.isArray(e))throw new Error("array of scalars expected");e.forEach((t,n)=>{if(!A.isValid(t))throw new Error("invalid scalar at index "+n)})}var Ue=new WeakMap,hs=new WeakMap;function ze(e){return hs.get(e)||1}function os(e){if(e!==Ft)throw new Error("invalid wNAF")}var Gt=class{constructor(A,t){this.BASE=A.BASE,this.ZERO=A.ZERO,this.Fn=A.Fn,this.bits=t}_unsafeLadder(A,t,n=this.ZERO){let s=A;for(;t>Ft;)t&Qe&&(n=n.add(s)),s=s.double(),t>>=Qe;return n}precomputeWindow(A,t){let{windows:n,windowSize:s}=Le(t,this.bits),r=[],i=A,a=i;for(let o=0;o<n;o++){a=i,r.push(a);for(let h=1;h<s;h++)a=a.add(i),r.push(a);i=a.double()}return r}wNAF(A,t,n){if(!this.Fn.isValid(n))throw new Error("invalid scalar");let s=this.ZERO,r=this.BASE,i=Le(A,this.bits);for(let a=0;a<i.windows;a++){let{nextN:o,offset:h,isZero:u,isNeg:l,isNegF:c,offsetF:f}=is(n,a,i);n=o,u?r=r.add(rs(c,t[f])):s=s.add(rs(l,t[h]))}return os(n),{p:s,f:r}}wNAFUnsafe(A,t,n,s=this.ZERO){let r=Le(A,this.bits);for(let i=0;i<r.windows&&n!==Ft;i++){let{nextN:a,offset:o,isZero:h,isNeg:u}=is(n,i,r);if(n=a,!h){let l=t[o];s=s.add(u?l.negate():l)}}return os(n),s}getPrecomputes(A,t,n){let s=Ue.get(t);return s||(s=this.precomputeWindow(t,A),A!==1&&(typeof n=="function"&&(s=n(s)),Ue.set(t,s))),s}cached(A,t,n){let s=ze(A);return this.wNAF(s,this.getPrecomputes(s,A,n),t)}unsafe(A,t,n,s){let r=ze(A);return r===1?this._unsafeLadder(A,t,s):this.wNAFUnsafe(r,this.getPrecomputes(r,A,n),t,s)}createCache(A,t){cs(t,this.bits),hs.set(A,t),Ue.delete(A)}hasCache(A){return ze(A)!==1}};function Zt(e,A,t,n){Ai(t,e),ti(n,A);let s=t.length,r=n.length;if(s!==r)throw new Error("arrays of points and scalars must have equal length");let i=e.ZERO,a=Yn(BigInt(s)),o=1;a>12?o=a-3:a>4?o=a-2:a>0&&(o=2);let h=ht(o),u=new Array(Number(h)+1).fill(i),l=Math.floor((A.BITS-1)/o)*o,c=i;for(let f=l;f>=0;f-=o){u.fill(i);for(let g=0;g<r;g++){let m=n[g],p=Number(m>>BigInt(f)&h);u[p]=u[p].add(t[g])}let d=i;for(let g=u.length-1,m=i;g>0;g--)m=m.add(u[g]),d=d.add(m);if(c=c.add(d),f!==0)for(let g=0;g<o;g++)c=c.double()}return c}function as(e,A,t){if(A){if(A.ORDER!==e)throw new Error("Field.ORDER must match order: Fp == p, Fn == n");return ns(A),A}else return wA(e,{isLE:t})}function ls(e,A,t={},n){if(n===void 0&&(n=e==="edwards"),!A||typeof A!="object")throw new Error(`expected valid ${e} CURVE object`);for(let o of["p","n","h"]){let h=A[o];if(!(typeof h=="bigint"&&h>Ft))throw new Error(`CURVE.${o} must be positive bigint`)}let s=as(A.p,t.Fp,n),r=as(A.n,t.Fn,n),a=["Gx","Gy","a",e==="weierstrass"?"b":"d"];for(let o of a)if(!s.isValid(A[o]))throw new Error(`CURVE.${o} must be valid field element of CURVE.Fp`);return A=Object.freeze(Object.assign({},A)),{CURVE:A,Fp:s,Fn:r}}var vA=BigInt(0),G=BigInt(1),Ne=BigInt(2),ei=BigInt(8);function ni(e,A,t,n){let s=e.sqr(t),r=e.sqr(n),i=e.add(e.mul(A.a,s),r),a=e.add(e.ONE,e.mul(A.d,e.mul(s,r)));return e.eql(i,a)}function si(e,A={}){let t=ls("edwards",e,A,A.FpFnLE),{Fp:n,Fn:s}=t,r=t.CURVE,{h:i}=r;zA(A,{},{uvRatio:"function"});let a=Ne<<BigInt(s.BYTES*8)-G,o=m=>n.create(m),h=A.uvRatio||((m,p)=>{try{return{isValid:!0,value:n.sqrt(n.div(m,p))}}catch{return{isValid:!1,value:vA}}});if(!ni(n,r,r.Gx,r.Gy))throw new Error("bad curve params: generator point");function u(m,p,S=!1){let y=S?G:vA;return VA("coordinate "+m,p,y,a),p}function l(m){if(!(m instanceof d))throw new Error("ExtendedPoint expected")}let c=Re((m,p)=>{let{X:S,Y:y,Z:_}=m,J=m.is0();p==null&&(p=J?ei:n.inv(_));let D=o(S*p),B=o(y*p),I=n.mul(_,p);if(J)return{x:vA,y:G};if(I!==G)throw new Error("invZ was invalid");return{x:D,y:B}}),f=Re(m=>{let{a:p,d:S}=r;if(m.is0())throw new Error("bad point: ZERO");let{X:y,Y:_,Z:J,T:D}=m,B=o(y*y),I=o(_*_),M=o(J*J),C=o(M*M),k=o(B*p),T=o(M*o(k+I)),w=o(C+o(S*o(B*I)));if(T!==w)throw new Error("bad point: equation left != right (1)");let E=o(y*_),v=o(J*D);if(E!==v)throw new Error("bad point: equation left != right (2)");return!0});class d{constructor(p,S,y,_){this.X=u("x",p),this.Y=u("y",S),this.Z=u("z",y,!0),this.T=u("t",_),Object.freeze(this)}static CURVE(){return r}static fromAffine(p){if(p instanceof d)throw new Error("extended point not allowed");let{x:S,y}=p||{};return u("x",S),u("y",y),new d(S,y,G,o(S*y))}static fromBytes(p,S=!1){let y=n.BYTES,{a:_,d:J}=r;p=Be(ct(p,y,"point")),Nt(S,"zip215");let D=Be(p),B=p[y-1];D[y-1]=B&-129;let I=rA(D),M=S?a:n.ORDER;VA("point.y",I,vA,M);let C=o(I*I),k=o(C-G),T=o(J*C-_),{isValid:w,value:E}=h(k,T);if(!w)throw new Error("bad point: invalid y coordinate");let v=(E&G)===G,P=(B&128)!==0;if(!S&&E===vA&&P)throw new Error("bad point: x=0 and x_0=1");return P!==v&&(E=o(-E)),d.fromAffine({x:E,y:I})}static fromHex(p,S=!1){return d.fromBytes(X("point",p),S)}get x(){return this.toAffine().x}get y(){return this.toAffine().y}precompute(p=8,S=!0){return g.createCache(this,p),S||this.multiply(Ne),this}assertValidity(){f(this)}equals(p){l(p);let{X:S,Y:y,Z:_}=this,{X:J,Y:D,Z:B}=p,I=o(S*B),M=o(J*_),C=o(y*B),k=o(D*_);return I===M&&C===k}is0(){return this.equals(d.ZERO)}negate(){return new d(o(-this.X),this.Y,this.Z,o(-this.T))}double(){let{a:p}=r,{X:S,Y:y,Z:_}=this,J=o(S*S),D=o(y*y),B=o(Ne*o(_*_)),I=o(p*J),M=S+y,C=o(o(M*M)-J-D),k=I+D,T=k-B,w=I-D,E=o(C*T),v=o(k*w),P=o(C*w),R=o(T*k);return new d(E,v,R,P)}add(p){l(p);let{a:S,d:y}=r,{X:_,Y:J,Z:D,T:B}=this,{X:I,Y:M,Z:C,T:k}=p,T=o(_*I),w=o(J*M),E=o(B*y*k),v=o(D*C),P=o((_+J)*(I+M)-T-w),R=v-E,O=v+E,x=o(w-S*T),L=o(P*R),U=o(O*x),z=o(P*x),V=o(R*O);return new d(L,U,V,z)}subtract(p){return this.add(p.negate())}multiply(p){if(!s.isValidNot0(p))throw new Error("invalid scalar: expected 1 <= sc < curve.n");let{p:S,f:y}=g.cached(this,p,_=>lt(d,_));return lt(d,[S,y])[0]}multiplyUnsafe(p,S=d.ZERO){if(!s.isValid(p))throw new Error("invalid scalar: expected 0 <= sc < curve.n");return p===vA?d.ZERO:this.is0()||p===G?this:g.unsafe(this,p,y=>lt(d,y),S)}isSmallOrder(){return this.multiplyUnsafe(i).is0()}isTorsionFree(){return g.unsafe(this,r.n).is0()}toAffine(p){return c(this,p)}clearCofactor(){return i===G?this:this.multiplyUnsafe(i)}toBytes(){let{x:p,y:S}=this.toAffine(),y=n.toBytes(S);return y[y.length-1]|=p&G?128:0,y}toHex(){return RA(this.toBytes())}toString(){return`<Point ${this.is0()?"ZERO":this.toHex()}>`}get ex(){return this.X}get ey(){return this.Y}get ez(){return this.Z}get et(){return this.T}static normalizeZ(p){return lt(d,p)}static msm(p,S){return Zt(d,s,p,S)}_setWindowSize(p){this.precompute(p)}toRawBytes(){return this.toBytes()}}d.BASE=new d(r.Gx,r.Gy,G,o(r.Gx*r.Gy)),d.ZERO=new d(vA,G,G,vA),d.Fp=n,d.Fn=s;let g=new Gt(d,s.BITS);return d.BASE.precompute(8),d}var Yt=class{constructor(A){this.ep=A}static fromBytes(A){Pe()}static fromHex(A){Pe()}get x(){return this.toAffine().x}get y(){return this.toAffine().y}clearCofactor(){return this}assertValidity(){this.ep.assertValidity()}toAffine(A){return this.ep.toAffine(A)}toHex(){return RA(this.toBytes())}toString(){return this.toHex()}isTorsionFree(){return!0}isSmallOrder(){return!1}add(A){return this.assertSame(A),this.init(this.ep.add(A.ep))}subtract(A){return this.assertSame(A),this.init(this.ep.subtract(A.ep))}multiply(A){return this.init(this.ep.multiply(A))}multiplyUnsafe(A){return this.init(this.ep.multiplyUnsafe(A))}double(){return this.init(this.ep.double())}negate(){return this.init(this.ep.negate())}precompute(A,t){return this.init(this.ep.precompute(A,t))}toRawBytes(){return this.toBytes()}};function ri(e,A,t={}){if(typeof A!="function")throw new Error('"hash" function param is required');zA(t,{},{adjustScalarBytes:"function",randomBytes:"function",domain:"function",prehash:"function",mapToCurve:"function"});let{prehash:n}=t,{BASE:s,Fp:r,Fn:i}=e,a=t.randomBytes||rt,o=t.adjustScalarBytes||(M=>M),h=t.domain||((M,C,k)=>{if(Nt(k,"phflag"),C.length||k)throw new Error("Contexts/pre-hash are not supported");return M});function u(M){return i.create(rA(M))}function l(M){let C=y.secretKey;M=X("private key",M,C);let k=X("hashed private key",A(M),2*C),T=o(k.slice(0,C)),w=k.slice(C,2*C),E=u(T);return{head:T,prefix:w,scalar:E}}function c(M){let{head:C,prefix:k,scalar:T}=l(M),w=s.multiply(T),E=w.toBytes();return{head:C,prefix:k,scalar:T,point:w,pointBytes:E}}function f(M){return c(M).pointBytes}function d(M=Uint8Array.of(),...C){let k=qA(...C);return u(A(h(k,X("context",M),!!n)))}function g(M,C,k={}){M=X("message",M),n&&(M=n(M));let{prefix:T,scalar:w,pointBytes:E}=c(C),v=d(k.context,T,M),P=s.multiply(v).toBytes(),R=d(k.context,P,E,M),O=i.create(v+R*w);if(!i.isValid(O))throw new Error("sign failed: invalid s");let x=qA(P,i.toBytes(O));return ct(x,y.signature,"result")}let m={zip215:!0};function p(M,C,k,T=m){let{context:w,zip215:E}=T,v=y.signature;M=X("signature",M,v),C=X("message",C),k=X("publicKey",k,y.publicKey),E!==void 0&&Nt(E,"zip215"),n&&(C=n(C));let P=v/2,R=M.subarray(0,P),O=rA(M.subarray(P,v)),x,L,U;try{x=e.fromBytes(k,E),L=e.fromBytes(R,E),U=s.multiplyUnsafe(O)}catch{return!1}if(!E&&x.isSmallOrder())return!1;let z=d(w,L.toBytes(),x.toBytes(),C);return L.add(x.multiplyUnsafe(z)).subtract(U).clearCofactor().is0()}let S=r.BYTES,y={secretKey:S,publicKey:S,signature:2*S,seed:S};function _(M=a(y.seed)){return ct(M,y.seed,"seed")}function J(M){let C=I.randomSecretKey(M);return{secretKey:C,publicKey:f(C)}}function D(M){return PA(M)&&M.length===i.BYTES}function B(M,C){try{return!!e.fromBytes(M,C)}catch{return!1}}let I={getExtendedPublicKey:c,randomSecretKey:_,isValidSecretKey:D,isValidPublicKey:B,toMontgomery(M){let{y:C}=e.fromBytes(M),k=y.publicKey,T=k===32;if(!T&&k!==57)throw new Error("only defined for 25519 and 448");let w=T?r.div(G+C,G-C):r.div(C-G,C+G);return r.toBytes(w)},toMontgomerySecret(M){let C=y.secretKey;ct(M,C);let k=A(M.subarray(0,C));return o(k).subarray(0,C)},randomPrivateKey:_,precompute(M=8,C=e.BASE){return C.precompute(M,!1)}};return Object.freeze({keygen:J,getPublicKey:f,sign:g,verify:p,utils:I,Point:e,lengths:y})}function ii(e){let A={a:e.a,d:e.d,p:e.Fp.ORDER,n:e.n,h:e.h,Gx:e.Gx,Gy:e.Gy},t=e.Fp,n=wA(A.n,e.nBitLength,!0),s={Fp:t,Fn:n,uvRatio:e.uvRatio},r={randomBytes:e.randomBytes,adjustScalarBytes:e.adjustScalarBytes,domain:e.domain,prehash:e.prehash,mapToCurve:e.mapToCurve};return{CURVE:A,curveOpts:s,hash:e.hash,eddsaOpts:r}}function oi(e,A){let t=A.Point;return Object.assign({},A,{ExtendedPoint:t,CURVE:e,nBitLength:t.Fn.BITS,nByteLength:t.Fn.BYTES})}function us(e){let{CURVE:A,curveOpts:t,hash:n,eddsaOpts:s}=ii(e),r=si(A,t),i=ri(r,n,s);return oi(e,i)}var ut=BigInt(0),WA=BigInt(1),qt=BigInt(2);function ai(e){return zA(e,{adjustScalarBytes:"function",powPminus2:"function"}),Object.freeze({...e})}function ds(e){let A=ai(e),{P:t,type:n,adjustScalarBytes:s,powPminus2:r,randomBytes:i}=A,a=n==="x25519";if(!a&&n!=="x448")throw new Error("invalid type");let o=i||rt,h=a?255:448,u=a?32:56,l=BigInt(a?9:5),c=BigInt(a?121665:39081),f=a?qt**BigInt(254):qt**BigInt(447),d=a?BigInt(8)*qt**BigInt(251)-WA:BigInt(4)*qt**BigInt(445)-WA,g=f+d+WA,m=w=>N(w,t),p=S(l);function S(w){return Ht(m(w),u)}function y(w){let E=X("u coordinate",w,u);return a&&(E[31]&=127),m(rA(E))}function _(w){return rA(s(X("scalar",w,u)))}function J(w,E){let v=I(y(E),_(w));if(v===ut)throw new Error("invalid private or public key received");return S(v)}function D(w){return J(w,p)}function B(w,E,v){let P=m(w*(E-v));return E=m(E-P),v=m(v+P),{x_2:E,x_3:v}}function I(w,E){VA("u",w,ut,t),VA("scalar",E,f,g);let v=E,P=w,R=WA,O=ut,x=w,L=WA,U=ut;for(let V=BigInt(h-1);V>=ut;V--){let iA=v>>V&WA;U^=iA,{x_2:R,x_3:x}=B(U,R,x),{x_2:O,x_3:L}=B(U,O,L),U=iA;let oA=R+O,aA=m(oA*oA),cA=R-O,mA=m(cA*cA),gA=aA-mA,Er=x+L,br=x-L,Cn=m(br*oA),wn=m(Er*cA),kn=Cn+wn,_n=Cn-wn;x=m(kn*kn),L=m(P*m(_n*_n)),R=m(aA*mA),O=m(gA*(aA+m(c*gA)))}({x_2:R,x_3:x}=B(U,R,x)),{x_2:O,x_3:L}=B(U,O,L);let z=r(O);return m(R*z)}let M={secretKey:u,publicKey:u,seed:u},C=(w=o(u))=>(W(w,M.seed),w);function k(w){let E=C(w);return{secretKey:E,publicKey:D(E)}}return{keygen:k,getSharedSecret:(w,E)=>J(w,E),getPublicKey:w=>D(w),scalarMult:J,scalarMultBase:D,utils:{randomSecretKey:C,randomPrivateKey:C},GuBytes:p.slice(),lengths:M}}var ci=BigInt(0),_A=BigInt(1),fs=BigInt(2),hi=BigInt(3),li=BigInt(5),ui=BigInt(8),jA=BigInt("0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffed"),dt={p:jA,n:BigInt("0x1000000000000000000000000000000014def9dea2f79cd65812631a5cf5d3ed"),h:ui,a:BigInt("0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffec"),d:BigInt("0x52036cee2b6ffe738cc740797779e89800700a4d4141d8ab75eb4dca135978a3"),Gx:BigInt("0x216936d3cd6e53fec0a4e231fdd6dc5c692cc7609525a7b2c9562d608f25d51a"),Gy:BigInt("0x6666666666666666666666666666666666666666666666666666666666666658")};function gs(e){let A=BigInt(10),t=BigInt(20),n=BigInt(40),s=BigInt(80),r=jA,a=e*e%r*e%r,o=tA(a,fs,r)*a%r,h=tA(o,_A,r)*e%r,u=tA(h,li,r)*h%r,l=tA(u,A,r)*u%r,c=tA(l,t,r)*l%r,f=tA(c,n,r)*c%r,d=tA(f,s,r)*f%r,g=tA(d,s,r)*f%r,m=tA(g,A,r)*u%r;return{pow_p_5_8:tA(m,fs,r)*e%r,b2:a}}function ys(e){return e[0]&=248,e[31]&=127,e[31]|=64,e}var He=BigInt("19681161376707505956807079304988542015446066515923890162744021073123829784752");function Ge(e,A){let t=jA,n=N(A*A*A,t),s=N(n*n*A,t),r=gs(e*s).pow_p_5_8,i=N(e*n*r,t),a=N(A*i*i,t),o=i,h=N(i*He,t),u=a===e,l=a===N(-e,t),c=a===N(-e*He,t);return u&&(i=o),(l||c)&&(i=h),CA(i,t)&&(i=N(-i,t)),{isValid:u||l,value:i}}var kA=wA(dt.p,{isLE:!0}),di=wA(dt.n,{isLE:!0}),fi={...dt,Fp:kA,hash:UA,adjustScalarBytes:ys,uvRatio:Ge},NA=us(fi);var HA=(()=>{let e=kA.ORDER;return ds({P:e,type:"x25519",powPminus2:A=>{let{pow_p_5_8:t,b2:n}=gs(A);return N(tA(t,hi,e)*n,e)},adjustScalarBytes:ys})})();var Ke=He,pi=BigInt("25063068953384623474111414158702152701244531502492656460079210482610430750235"),mi=BigInt("54469307008909316920995813868745141605393597292927456921205312896311721017578"),gi=BigInt("1159843021668779879193775521855586647937357759715417654439879720876111806838"),yi=BigInt("40440834346308536858101042469323190826248399146238708352240133220865137265952"),ps=e=>Ge(_A,e),Si=BigInt("0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),Fe=e=>NA.Point.Fp.create(rA(e)&Si);function ms(e){let{d:A}=dt,t=jA,n=p=>kA.create(p),s=n(Ke*e*e),r=n((s+_A)*gi),i=BigInt(-1),a=n((i-A*s)*n(s+A)),{isValid:o,value:h}=Ge(r,a),u=n(h*e);CA(u,t)||(u=n(-u)),o||(h=u),o||(i=s);let l=n(i*(s-_A)*yi-a),c=h*h,f=n((h+h)*a),d=n(l*pi),g=n(_A-c),m=n(_A+c);return new NA.Point(n(f*m),n(g*d),n(d*m),n(f*g))}function Mi(e){W(e,64);let A=Fe(e.subarray(0,32)),t=ms(A),n=Fe(e.subarray(32,64)),s=ms(n);return new xA(t.add(s))}var xA=class e extends Yt{constructor(A){super(A)}static fromAffine(A){return new e(NA.Point.fromAffine(A))}assertSame(A){if(!(A instanceof e))throw new Error("RistrettoPoint expected")}init(A){return new e(A)}static hashToCurve(A){return Mi(X("ristrettoHash",A,64))}static fromBytes(A){W(A,32);let{a:t,d:n}=dt,s=jA,r=_=>kA.create(_),i=Fe(A);if(!Zn(kA.toBytes(i),A)||CA(i,s))throw new Error("invalid ristretto255 encoding 1");let a=r(i*i),o=r(_A+t*a),h=r(_A-t*a),u=r(o*o),l=r(h*h),c=r(t*n*u-l),{isValid:f,value:d}=ps(r(c*l)),g=r(d*h),m=r(d*g*c),p=r((i+i)*g);CA(p,s)&&(p=r(-p));let S=r(o*m),y=r(p*S);if(!f||CA(y,s)||S===ci)throw new Error("invalid ristretto255 encoding 2");return new e(new NA.Point(p,S,_A,y))}static fromHex(A){return e.fromBytes(X("ristrettoHex",A,32))}static msm(A,t){return Zt(e,NA.Point.Fn,A,t)}toBytes(){let{X:A,Y:t,Z:n,T:s}=this.ep,r=jA,i=m=>kA.create(m),a=i(i(n+t)*i(n-t)),o=i(A*t),h=i(o*o),{value:u}=ps(i(a*h)),l=i(u*a),c=i(u*o),f=i(l*c*s),d;if(CA(s*f,r)){let m=i(t*Ke),p=i(A*Ke);A=m,t=p,d=i(l*mi)}else d=c;CA(A*f,r)&&(t=i(-t));let g=i((n-t)*d);return CA(g,r)&&(g=i(-g)),kA.toBytes(g)}equals(A){this.assertSame(A);let{X:t,Y:n}=this.ep,{X:s,Y:r}=A.ep,i=h=>kA.create(h),a=i(t*r)===i(n*s),o=i(n*r)===i(t*s);return a||o}is0(){return this.equals(e.ZERO)}};xA.BASE=new xA(NA.Point.BASE);xA.ZERO=new xA(NA.Point.ZERO);xA.Fp=kA;xA.Fn=di;function Ss(e){return e instanceof Uint8Array||ArrayBuffer.isView(e)&&e.constructor.name==="Uint8Array"}function Wt(e){if(typeof e!="boolean")throw new Error(`boolean expected, not ${e}`)}function jt(e){if(!Number.isSafeInteger(e)||e<0)throw new Error("positive integer expected, got "+e)}function Q(e,...A){if(!Ss(e))throw new Error("Uint8Array expected");if(A.length>0&&!A.includes(e.length))throw new Error("Uint8Array expected of length "+A+", got length="+e.length)}function IA(e,A=!0){if(e.destroyed)throw new Error("Hash instance has been destroyed");if(A&&e.finished)throw new Error("Hash#digest() has already been called")}function ft(e,A){Q(e);let t=A.outputLen;if(e.length<t)throw new Error("digestInto() expects output buffer of length at least "+t)}function Ms(e){return new Uint8Array(e.buffer,e.byteOffset,e.byteLength)}function K(e){return new Uint32Array(e.buffer,e.byteOffset,Math.floor(e.byteLength/4))}function F(...e){for(let A=0;A<e.length;A++)e[A].fill(0)}function XA(e){return new DataView(e.buffer,e.byteOffset,e.byteLength)}var Ci=new Uint8Array(new Uint32Array([287454020]).buffer)[0]===68;function wi(e){if(typeof e!="string")throw new Error("string expected");return new Uint8Array(new TextEncoder().encode(e))}function lA(e){if(typeof e=="string")e=wi(e);else if(Ss(e))e=uA(e);else throw new Error("Uint8Array expected, got "+typeof e);return e}function Cs(e,A){if(A==null||typeof A!="object")throw new Error("options must be defined");return Object.assign(e,A)}function Xt(e,A){if(e.length!==A.length)return!1;let t=0;for(let n=0;n<e.length;n++)t|=e[n]^A[n];return t===0}var pt=(e,A)=>{function t(n,...s){if(Q(n),!Ci)throw new Error("Non little-endian hardware is not yet supported");if(e.nonceLength!==void 0){let u=s[0];if(!u)throw new Error("nonce / iv required");e.varSizeNonce?Q(u):Q(u,e.nonceLength)}let r=e.tagLength;r&&s[1]!==void 0&&Q(s[1]);let i=A(n,...s),a=(u,l)=>{if(l!==void 0){if(u!==2)throw new Error("cipher output not supported");Q(l)}},o=!1;return{encrypt(u,l){if(o)throw new Error("cannot encrypt() twice with same key + nonce");return o=!0,Q(u),a(i.encrypt.length,l),i.encrypt(u,l)},decrypt(u,l){if(Q(u),r&&u.length<r)throw new Error("invalid ciphertext length: smaller than tagLength="+r);return a(i.decrypt.length,l),i.decrypt(u,l)}}}return Object.assign(t,e),t};function mt(e,A,t=!0){if(A===void 0)return new Uint8Array(e);if(A.length!==e)throw new Error("invalid output length, expected "+e+", got: "+A.length);if(t&&!gt(A))throw new Error("invalid output, must be aligned");return A}function Vt(e,A,t,n){if(typeof e.setBigUint64=="function")return e.setBigUint64(A,t,n);let s=BigInt(32),r=BigInt(4294967295),i=Number(t>>s&r),a=Number(t&r),o=n?4:0,h=n?0:4;e.setUint32(A+o,i,n),e.setUint32(A+h,a,n)}function $t(e,A,t){Wt(t);let n=new Uint8Array(16),s=XA(n);return Vt(s,0,BigInt(A),t),Vt(s,8,BigInt(e),t),n}function gt(e){return e.byteOffset%4===0}function uA(e){return Uint8Array.from(e)}var ks=e=>Uint8Array.from(e.split("").map(A=>A.charCodeAt(0))),ki=ks("expand 16-byte k"),_i=ks("expand 32-byte k"),xi=K(ki),Ei=K(_i);function b(e,A){return e<<A|e>>>32-A}function Ze(e){return e.byteOffset%4===0}var Ae=64,bi=16,_s=2**32-1,ws=new Uint32Array;function Ti(e,A,t,n,s,r,i,a){let o=s.length,h=new Uint8Array(Ae),u=K(h),l=Ze(s)&&Ze(r),c=l?K(s):ws,f=l?K(r):ws;for(let d=0;d<o;i++){if(e(A,t,n,u,i,a),i>=_s)throw new Error("arx: counter overflow");let g=Math.min(Ae,o-d);if(l&&g===Ae){let m=d/4;if(d%4!==0)throw new Error("arx: invalid block position");for(let p=0,S;p<bi;p++)S=m+p,f[S]=c[S]^u[p];d+=Ae;continue}for(let m=0,p;m<g;m++)p=d+m,r[p]=s[p]^h[m];d+=g}}function Ye(e,A){let{allowShortKeys:t,extendNonceFn:n,counterLength:s,counterRight:r,rounds:i}=Cs({allowShortKeys:!1,counterLength:8,counterRight:!1,rounds:20},A);if(typeof e!="function")throw new Error("core must be a function");return jt(s),jt(i),Wt(r),Wt(t),(a,o,h,u,l=0)=>{Q(a),Q(o),Q(h);let c=h.length;if(u===void 0&&(u=new Uint8Array(c)),Q(u),jt(l),l<0||l>=_s)throw new Error("arx: counter overflow");if(u.length<c)throw new Error(`arx: output (${u.length}) is shorter than data (${c})`);let f=[],d=a.length,g,m;if(d===32)f.push(g=uA(a)),m=Ei;else if(d===16&&t)g=new Uint8Array(32),g.set(a),g.set(a,16),m=xi,f.push(g);else throw new Error(`arx: invalid 32-byte key, got length=${d}`);Ze(o)||f.push(o=uA(o));let p=K(g);if(n){if(o.length!==24)throw new Error("arx: extended nonce must be 24 bytes");n(m,p,K(o.subarray(0,16)),p),o=o.subarray(16)}let S=16-s;if(S!==o.length)throw new Error(`arx: nonce must be ${S} or 16 bytes`);if(S!==12){let _=new Uint8Array(12);_.set(o,r?0:12-o.length),o=_,f.push(o)}let y=K(o);return Ti(e,m,p,y,h,u,l,i),F(...f),u}}var Y=(e,A)=>e[A++]&255|(e[A++]&255)<<8,qe=class{constructor(A){this.blockLen=16,this.outputLen=16,this.buffer=new Uint8Array(16),this.r=new Uint16Array(10),this.h=new Uint16Array(10),this.pad=new Uint16Array(8),this.pos=0,this.finished=!1,A=lA(A),Q(A,32);let t=Y(A,0),n=Y(A,2),s=Y(A,4),r=Y(A,6),i=Y(A,8),a=Y(A,10),o=Y(A,12),h=Y(A,14);this.r[0]=t&8191,this.r[1]=(t>>>13|n<<3)&8191,this.r[2]=(n>>>10|s<<6)&7939,this.r[3]=(s>>>7|r<<9)&8191,this.r[4]=(r>>>4|i<<12)&255,this.r[5]=i>>>1&8190,this.r[6]=(i>>>14|a<<2)&8191,this.r[7]=(a>>>11|o<<5)&8065,this.r[8]=(o>>>8|h<<8)&8191,this.r[9]=h>>>5&127;for(let u=0;u<8;u++)this.pad[u]=Y(A,16+2*u)}process(A,t,n=!1){let s=n?0:2048,{h:r,r:i}=this,a=i[0],o=i[1],h=i[2],u=i[3],l=i[4],c=i[5],f=i[6],d=i[7],g=i[8],m=i[9],p=Y(A,t+0),S=Y(A,t+2),y=Y(A,t+4),_=Y(A,t+6),J=Y(A,t+8),D=Y(A,t+10),B=Y(A,t+12),I=Y(A,t+14),M=r[0]+(p&8191),C=r[1]+((p>>>13|S<<3)&8191),k=r[2]+((S>>>10|y<<6)&8191),T=r[3]+((y>>>7|_<<9)&8191),w=r[4]+((_>>>4|J<<12)&8191),E=r[5]+(J>>>1&8191),v=r[6]+((J>>>14|D<<2)&8191),P=r[7]+((D>>>11|B<<5)&8191),R=r[8]+((B>>>8|I<<8)&8191),O=r[9]+(I>>>5|s),x=0,L=x+M*a+C*(5*m)+k*(5*g)+T*(5*d)+w*(5*f);x=L>>>13,L&=8191,L+=E*(5*c)+v*(5*l)+P*(5*u)+R*(5*h)+O*(5*o),x+=L>>>13,L&=8191;let U=x+M*o+C*a+k*(5*m)+T*(5*g)+w*(5*d);x=U>>>13,U&=8191,U+=E*(5*f)+v*(5*c)+P*(5*l)+R*(5*u)+O*(5*h),x+=U>>>13,U&=8191;let z=x+M*h+C*o+k*a+T*(5*m)+w*(5*g);x=z>>>13,z&=8191,z+=E*(5*d)+v*(5*f)+P*(5*c)+R*(5*l)+O*(5*u),x+=z>>>13,z&=8191;let V=x+M*u+C*h+k*o+T*a+w*(5*m);x=V>>>13,V&=8191,V+=E*(5*g)+v*(5*d)+P*(5*f)+R*(5*c)+O*(5*l),x+=V>>>13,V&=8191;let iA=x+M*l+C*u+k*h+T*o+w*a;x=iA>>>13,iA&=8191,iA+=E*(5*m)+v*(5*g)+P*(5*d)+R*(5*f)+O*(5*c),x+=iA>>>13,iA&=8191;let oA=x+M*c+C*l+k*u+T*h+w*o;x=oA>>>13,oA&=8191,oA+=E*a+v*(5*m)+P*(5*g)+R*(5*d)+O*(5*f),x+=oA>>>13,oA&=8191;let aA=x+M*f+C*c+k*l+T*u+w*h;x=aA>>>13,aA&=8191,aA+=E*o+v*a+P*(5*m)+R*(5*g)+O*(5*d),x+=aA>>>13,aA&=8191;let cA=x+M*d+C*f+k*c+T*l+w*u;x=cA>>>13,cA&=8191,cA+=E*h+v*o+P*a+R*(5*m)+O*(5*g),x+=cA>>>13,cA&=8191;let mA=x+M*g+C*d+k*f+T*c+w*l;x=mA>>>13,mA&=8191,mA+=E*u+v*h+P*o+R*a+O*(5*m),x+=mA>>>13,mA&=8191;let gA=x+M*m+C*g+k*d+T*f+w*c;x=gA>>>13,gA&=8191,gA+=E*l+v*u+P*h+R*o+O*a,x+=gA>>>13,gA&=8191,x=(x<<2)+x|0,x=x+L|0,L=x&8191,x=x>>>13,U+=x,r[0]=L,r[1]=U,r[2]=z,r[3]=V,r[4]=iA,r[5]=oA,r[6]=aA,r[7]=cA,r[8]=mA,r[9]=gA}finalize(){let{h:A,pad:t}=this,n=new Uint16Array(10),s=A[1]>>>13;A[1]&=8191;for(let a=2;a<10;a++)A[a]+=s,s=A[a]>>>13,A[a]&=8191;A[0]+=s*5,s=A[0]>>>13,A[0]&=8191,A[1]+=s,s=A[1]>>>13,A[1]&=8191,A[2]+=s,n[0]=A[0]+5,s=n[0]>>>13,n[0]&=8191;for(let a=1;a<10;a++)n[a]=A[a]+s,s=n[a]>>>13,n[a]&=8191;n[9]-=8192;let r=(s^1)-1;for(let a=0;a<10;a++)n[a]&=r;r=~r;for(let a=0;a<10;a++)A[a]=A[a]&r|n[a];A[0]=(A[0]|A[1]<<13)&65535,A[1]=(A[1]>>>3|A[2]<<10)&65535,A[2]=(A[2]>>>6|A[3]<<7)&65535,A[3]=(A[3]>>>9|A[4]<<4)&65535,A[4]=(A[4]>>>12|A[5]<<1|A[6]<<14)&65535,A[5]=(A[6]>>>2|A[7]<<11)&65535,A[6]=(A[7]>>>5|A[8]<<8)&65535,A[7]=(A[8]>>>8|A[9]<<5)&65535;let i=A[0]+t[0];A[0]=i&65535;for(let a=1;a<8;a++)i=(A[a]+t[a]|0)+(i>>>16)|0,A[a]=i&65535;F(n)}update(A){IA(this),A=lA(A),Q(A);let{buffer:t,blockLen:n}=this,s=A.length;for(let r=0;r<s;){let i=Math.min(n-this.pos,s-r);if(i===n){for(;n<=s-r;r+=n)this.process(A,r);continue}t.set(A.subarray(r,r+i),this.pos),this.pos+=i,r+=i,this.pos===n&&(this.process(t,0,!1),this.pos=0)}return this}destroy(){F(this.h,this.r,this.buffer,this.pad)}digestInto(A){IA(this),ft(A,this),this.finished=!0;let{buffer:t,h:n}=this,{pos:s}=this;if(s){for(t[s++]=1;s<16;s++)t[s]=0;this.process(t,0,!0)}this.finalize();let r=0;for(let i=0;i<8;i++)A[r++]=n[i]>>>0,A[r++]=n[i]>>>8;return A}digest(){let{buffer:A,outputLen:t}=this;this.digestInto(A);let n=A.slice(0,t);return this.destroy(),n}};function Di(e){let A=(n,s)=>e(s).update(lA(n)).digest(),t=e(new Uint8Array(32));return A.outputLen=t.outputLen,A.blockLen=t.blockLen,A.create=n=>e(n),A}var xs=Di(e=>new qe(e));function Ts(e,A,t,n,s,r=20){let i=e[0],a=e[1],o=e[2],h=e[3],u=A[0],l=A[1],c=A[2],f=A[3],d=A[4],g=A[5],m=A[6],p=A[7],S=s,y=t[0],_=t[1],J=t[2],D=i,B=a,I=o,M=h,C=u,k=l,T=c,w=f,E=d,v=g,P=m,R=p,O=S,x=y,L=_,U=J;for(let V=0;V<r;V+=2)D=D+C|0,O=b(O^D,16),E=E+O|0,C=b(C^E,12),D=D+C|0,O=b(O^D,8),E=E+O|0,C=b(C^E,7),B=B+k|0,x=b(x^B,16),v=v+x|0,k=b(k^v,12),B=B+k|0,x=b(x^B,8),v=v+x|0,k=b(k^v,7),I=I+T|0,L=b(L^I,16),P=P+L|0,T=b(T^P,12),I=I+T|0,L=b(L^I,8),P=P+L|0,T=b(T^P,7),M=M+w|0,U=b(U^M,16),R=R+U|0,w=b(w^R,12),M=M+w|0,U=b(U^M,8),R=R+U|0,w=b(w^R,7),D=D+k|0,U=b(U^D,16),P=P+U|0,k=b(k^P,12),D=D+k|0,U=b(U^D,8),P=P+U|0,k=b(k^P,7),B=B+T|0,O=b(O^B,16),R=R+O|0,T=b(T^R,12),B=B+T|0,O=b(O^B,8),R=R+O|0,T=b(T^R,7),I=I+w|0,x=b(x^I,16),E=E+x|0,w=b(w^E,12),I=I+w|0,x=b(x^I,8),E=E+x|0,w=b(w^E,7),M=M+C|0,L=b(L^M,16),v=v+L|0,C=b(C^v,12),M=M+C|0,L=b(L^M,8),v=v+L|0,C=b(C^v,7);let z=0;n[z++]=i+D|0,n[z++]=a+B|0,n[z++]=o+I|0,n[z++]=h+M|0,n[z++]=u+C|0,n[z++]=l+k|0,n[z++]=c+T|0,n[z++]=f+w|0,n[z++]=d+E|0,n[z++]=g+v|0,n[z++]=m+P|0,n[z++]=p+R|0,n[z++]=S+O|0,n[z++]=y+x|0,n[z++]=_+L|0,n[z++]=J+U|0}function vi(e,A,t,n){let s=e[0],r=e[1],i=e[2],a=e[3],o=A[0],h=A[1],u=A[2],l=A[3],c=A[4],f=A[5],d=A[6],g=A[7],m=t[0],p=t[1],S=t[2],y=t[3];for(let J=0;J<20;J+=2)s=s+o|0,m=b(m^s,16),c=c+m|0,o=b(o^c,12),s=s+o|0,m=b(m^s,8),c=c+m|0,o=b(o^c,7),r=r+h|0,p=b(p^r,16),f=f+p|0,h=b(h^f,12),r=r+h|0,p=b(p^r,8),f=f+p|0,h=b(h^f,7),i=i+u|0,S=b(S^i,16),d=d+S|0,u=b(u^d,12),i=i+u|0,S=b(S^i,8),d=d+S|0,u=b(u^d,7),a=a+l|0,y=b(y^a,16),g=g+y|0,l=b(l^g,12),a=a+l|0,y=b(y^a,8),g=g+y|0,l=b(l^g,7),s=s+h|0,y=b(y^s,16),d=d+y|0,h=b(h^d,12),s=s+h|0,y=b(y^s,8),d=d+y|0,h=b(h^d,7),r=r+u|0,m=b(m^r,16),g=g+m|0,u=b(u^g,12),r=r+u|0,m=b(m^r,8),g=g+m|0,u=b(u^g,7),i=i+l|0,p=b(p^i,16),c=c+p|0,l=b(l^c,12),i=i+l|0,p=b(p^i,8),c=c+p|0,l=b(l^c,7),a=a+o|0,S=b(S^a,16),f=f+S|0,o=b(o^f,12),a=a+o|0,S=b(S^a,8),f=f+S|0,o=b(o^f,7);let _=0;n[_++]=s,n[_++]=r,n[_++]=i,n[_++]=a,n[_++]=m,n[_++]=p,n[_++]=S,n[_++]=y}var Ii=Ye(Ts,{counterRight:!1,counterLength:4,allowShortKeys:!1}),Ji=Ye(Ts,{counterRight:!1,counterLength:8,extendNonceFn:vi,allowShortKeys:!1});var Bi=new Uint8Array(16),Es=(e,A)=>{e.update(A);let t=A.length%16;t&&e.update(Bi.subarray(t))},Pi=new Uint8Array(32);function bs(e,A,t,n,s){let r=e(A,t,Pi),i=xs.create(r);s&&Es(i,s),Es(i,n);let a=$t(n.length,s?s.length:0,!0);i.update(a);let o=i.digest();return F(r,a),o}var Ds=e=>(A,t,n)=>({encrypt(r,i){let a=r.length;i=mt(a+16,i,!1),i.set(r);let o=i.subarray(0,-16);e(A,t,o,o,1);let h=bs(e,A,t,o,n);return i.set(h,a),F(h),i},decrypt(r,i){i=mt(r.length-16,i,!1);let a=r.subarray(0,-16),o=r.subarray(-16),h=bs(e,A,t,a,n);if(!Xt(o,h))throw new Error("invalid tag");return i.set(r.subarray(0,-16)),e(A,t,i,i,1),F(h),i}}),Ve=pt({blockSize:64,nonceLength:12,tagLength:16},Ds(Ii)),Na=pt({blockSize:64,nonceLength:24,tagLength:16},Ds(Ji));var EA=16,je=new Uint8Array(16),dA=K(je),Ri=225,Oi=(e,A,t,n)=>{let s=n&1;return{s3:t<<31|n>>>1,s2:A<<31|t>>>1,s1:e<<31|A>>>1,s0:e>>>1^Ri<<24&-(s&1)}},eA=e=>(e>>>0&255)<<24|(e>>>8&255)<<16|(e>>>16&255)<<8|e>>>24&255|0;function Li(e){e.reverse();let A=e[15]&1,t=0;for(let n=0;n<e.length;n++){let s=e[n];e[n]=s>>>1|t,t=(s&1)<<7}return e[0]^=-A&225,e}var Ui=e=>e>64*1024?8:e>1024?4:2,te=class{constructor(A,t){this.blockLen=EA,this.outputLen=EA,this.s0=0,this.s1=0,this.s2=0,this.s3=0,this.finished=!1,A=lA(A),Q(A,16);let n=XA(A),s=n.getUint32(0,!1),r=n.getUint32(4,!1),i=n.getUint32(8,!1),a=n.getUint32(12,!1),o=[];for(let d=0;d<128;d++)o.push({s0:eA(s),s1:eA(r),s2:eA(i),s3:eA(a)}),{s0:s,s1:r,s2:i,s3:a}=Oi(s,r,i,a);let h=Ui(t||1024);if(![1,2,4,8].includes(h))throw new Error("ghash: invalid window size, expected 2, 4 or 8");this.W=h;let l=128/h,c=this.windowSize=2**h,f=[];for(let d=0;d<l;d++)for(let g=0;g<c;g++){let m=0,p=0,S=0,y=0;for(let _=0;_<h;_++){if(!(g>>>h-_-1&1))continue;let{s0:D,s1:B,s2:I,s3:M}=o[h*d+_];m^=D,p^=B,S^=I,y^=M}f.push({s0:m,s1:p,s2:S,s3:y})}this.t=f}_updateBlock(A,t,n,s){A^=this.s0,t^=this.s1,n^=this.s2,s^=this.s3;let{W:r,t:i,windowSize:a}=this,o=0,h=0,u=0,l=0,c=(1<<r)-1,f=0;for(let d of[A,t,n,s])for(let g=0;g<4;g++){let m=d>>>8*g&255;for(let p=8/r-1;p>=0;p--){let S=m>>>r*p&c,{s0:y,s1:_,s2:J,s3:D}=i[f*a+S];o^=y,h^=_,u^=J,l^=D,f+=1}}this.s0=o,this.s1=h,this.s2=u,this.s3=l}update(A){IA(this),A=lA(A),Q(A);let t=K(A),n=Math.floor(A.length/EA),s=A.length%EA;for(let r=0;r<n;r++)this._updateBlock(t[r*4+0],t[r*4+1],t[r*4+2],t[r*4+3]);return s&&(je.set(A.subarray(n*EA)),this._updateBlock(dA[0],dA[1],dA[2],dA[3]),F(dA)),this}destroy(){let{t:A}=this;for(let t of A)t.s0=0,t.s1=0,t.s2=0,t.s3=0}digestInto(A){IA(this),ft(A,this),this.finished=!0;let{s0:t,s1:n,s2:s,s3:r}=this,i=K(A);return i[0]=t,i[1]=n,i[2]=s,i[3]=r,A}digest(){let A=new Uint8Array(EA);return this.digestInto(A),this.destroy(),A}},We=class extends te{constructor(A,t){A=lA(A),Q(A);let n=Li(uA(A));super(n,t),F(n)}update(A){A=lA(A),IA(this);let t=K(A),n=A.length%EA,s=Math.floor(A.length/EA);for(let r=0;r<s;r++)this._updateBlock(eA(t[r*4+3]),eA(t[r*4+2]),eA(t[r*4+1]),eA(t[r*4+0]));return n&&(je.set(A.subarray(s*EA)),this._updateBlock(eA(dA[3]),eA(dA[2]),eA(dA[1]),eA(dA[0])),F(dA)),this}digestInto(A){IA(this),ft(A,this),this.finished=!0;let{s0:t,s1:n,s2:s,s3:r}=this,i=K(A);return i[0]=t,i[1]=n,i[2]=s,i[3]=r,A.reverse()}};function vs(e){let A=(n,s)=>e(s,n.length).update(lA(n)).digest(),t=e(new Uint8Array(16),0);return A.outputLen=t.outputLen,A.blockLen=t.blockLen,A.create=(n,s)=>e(n,s),A}var Xe=vs((e,A)=>new te(e,A)),zi=vs((e,A)=>new We(e,A));var An=16,Qi=4,ee=new Uint8Array(An),Ni=283;function tn(e){return e<<1^Ni&-(e>>7)}function Is(e,A){let t=0;for(;A>0;A>>=1)t^=e&-(A&1),e=tn(e);return t}var Hi=(()=>{let e=new Uint8Array(256);for(let t=0,n=1;t<256;t++,n^=tn(n))e[t]=n;let A=new Uint8Array(256);A[0]=99;for(let t=0;t<255;t++){let n=e[255-t];n|=n<<8,A[e[t]]=(n^n>>4^n>>5^n>>6^n>>7^99)&255}return F(e),A})();var Ki=e=>e<<24|e>>>8,$e=e=>e<<8|e>>>24;function Fi(e,A){if(e.length!==256)throw new Error("Wrong sbox length");let t=new Uint32Array(256).map((h,u)=>A(e[u])),n=t.map($e),s=n.map($e),r=s.map($e),i=new Uint32Array(256*256),a=new Uint32Array(256*256),o=new Uint16Array(256*256);for(let h=0;h<256;h++)for(let u=0;u<256;u++){let l=h*256+u;i[l]=t[h]^n[u],a[l]=s[h]^r[u],o[l]=e[h]<<8|e[u]}return{sbox:e,sbox2:o,T0:t,T1:n,T2:s,T3:r,T01:i,T23:a}}var Bs=Fi(Hi,e=>Is(e,3)<<24|e<<16|e<<8|Is(e,2));var Gi=(()=>{let e=new Uint8Array(16);for(let A=0,t=1;A<16;A++,t=tn(t))e[A]=t;return e})();function Zi(e){Q(e);let A=e.length;if(![16,24,32].includes(A))throw new Error("aes: invalid key size, should be 16, 24 or 32, got "+A);let{sbox2:t}=Bs,n=[];gt(e)||n.push(e=uA(e));let s=K(e),r=s.length,i=o=>yt(t,o,o,o,o),a=new Uint32Array(A+28);a.set(s);for(let o=r;o<a.length;o++){let h=a[o-1];o%r===0?h=i(Ki(h))^Gi[o/r-1]:r>6&&o%r===4&&(h=i(h)),a[o]=a[o-r]^h}return F(...n),a}function ne(e,A,t,n,s,r){return e[t<<8&65280|n>>>8&255]^A[s>>>8&65280|r>>>24&255]}function yt(e,A,t,n,s){return e[A&255|t&65280]|e[n>>>16&255|s>>>16&65280]<<16}function Js(e,A,t,n,s){let{sbox2:r,T01:i,T23:a}=Bs,o=0;A^=e[o++],t^=e[o++],n^=e[o++],s^=e[o++];let h=e.length/4-2;for(let d=0;d<h;d++){let g=e[o++]^ne(i,a,A,t,n,s),m=e[o++]^ne(i,a,t,n,s,A),p=e[o++]^ne(i,a,n,s,A,t),S=e[o++]^ne(i,a,s,A,t,n);A=g,t=m,n=p,s=S}let u=e[o++]^yt(r,A,t,n,s),l=e[o++]^yt(r,t,n,s,A),c=e[o++]^yt(r,n,s,A,t),f=e[o++]^yt(r,s,A,t,n);return{s0:u,s1:l,s2:c,s3:f}}function se(e,A,t,n,s){Q(t,An),Q(n),s=mt(n.length,s);let r=t,i=K(r),a=XA(r),o=K(n),h=K(s),u=A?0:12,l=n.length,c=a.getUint32(u,A),{s0:f,s1:d,s2:g,s3:m}=Js(e,i[0],i[1],i[2],i[3]);for(let S=0;S+4<=o.length;S+=4)h[S+0]=o[S+0]^f,h[S+1]=o[S+1]^d,h[S+2]=o[S+2]^g,h[S+3]=o[S+3]^m,c=c+1>>>0,a.setUint32(u,c,A),{s0:f,s1:d,s2:g,s3:m}=Js(e,i[0],i[1],i[2],i[3]);let p=An*Math.floor(o.length/Qi);if(p<l){let S=new Uint32Array([f,d,g,m]),y=Ms(S);for(let _=p,J=0;_<l;_++,J++)s[_]=n[_]^y[J];F(S)}return s}function Yi(e,A,t,n,s){let r=s?s.length:0,i=e.create(t,n.length+r);s&&i.update(s);let a=$t(8*n.length,8*r,A);i.update(n),i.update(a);let o=i.digest();return F(a),o}var en=pt({blockSize:16,nonceLength:12,tagLength:16,varSizeNonce:!0},function(A,t,n){if(t.length<8)throw new Error("aes/gcm: invalid nonce length");let s=16;function r(a,o,h){let u=Yi(Xe,!1,a,h,n);for(let l=0;l<o.length;l++)u[l]^=o[l];return u}function i(){let a=Zi(A),o=ee.slice(),h=ee.slice();if(se(a,!1,h,h,o),t.length===12)h.set(t);else{let l=ee.slice(),c=XA(l);Vt(c,8,BigInt(t.length*8),!1);let f=Xe.create(o).update(t).update(l);f.digestInto(h),f.destroy()}let u=se(a,!1,h,ee);return{xk:a,authKey:o,counter:h,tagMask:u}}return{encrypt(a){let{xk:o,authKey:h,counter:u,tagMask:l}=i(),c=new Uint8Array(a.length+s),f=[o,h,u,l];gt(a)||f.push(a=uA(a)),se(o,!1,u,a,c.subarray(0,a.length));let d=r(h,l,c.subarray(0,c.length-s));return f.push(d),c.set(d,a.length),F(...f),c},decrypt(a){let{xk:o,authKey:h,counter:u,tagMask:l}=i(),c=[o,h,l,u];gt(a)||c.push(a=uA(a));let f=a.subarray(0,-s),d=a.subarray(-s),g=r(h,l,f);if(c.push(g),!Xt(g,d))throw new Error("aes/gcm: invalid ghash tag");let m=se(o,!1,u,f);return F(...c),m}}});var nn=new Uint8Array(12),zs=new DataView(nn.buffer);function Ps(e){return zs.setBigUint64(4,e,!0),nn}function Rs(e){return zs.setBigUint64(4,e,!1),nn}var Os=(e,A)=>HA.getSharedSecret(e,A),Ls=e=>HA.getPublicKey(e),Us=()=>{let e=HA.utils.randomSecretKey();return{privateKey:e,publicKey:HA.getPublicKey(e)}},$A={chacha:{name:"ChaChaPoly",dhLen:32,dh:Os,generateKeypair:Us,publicKey:Ls,hash:j,aeadEncrypt:(e,A,t,n)=>Ve(e,Ps(A),t).encrypt(n),aeadDecrypt:(e,A,t,n)=>Ve(e,Ps(A),t).decrypt(n)},aesgcm:{name:"AESGCM",dhLen:32,dh:Os,generateKeypair:Us,publicKey:Ls,hash:j,aeadEncrypt:(e,A,t,n)=>en(e,Rs(A),t).encrypt(n),aeadDecrypt:(e,A,t,n)=>en(e,Rs(A),t).decrypt(n)}},Qs={chacha:"25519_ChaChaPoly_SHA256",aesgcm:"25519_AESGCM_SHA256"};function H(e){let A="";for(let t=0;t<e.length;t++)A+=String.fromCharCode(e[t]);return btoa(A).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"")}function q(e){let A=e.replace(/-/g,"+").replace(/_/g,"/"),t=atob(A),n=new Uint8Array(t.length);for(let s=0;s<t.length;s++)n[s]=t.charCodeAt(s);return n}var Ns="sendspin-identity-sk",St=class e{constructor(A,t){this.privateKey=A,this.publicKey=t,this.clientId=H(t)}get keypair(){return{privateKey:this.privateKey,publicKey:this.publicKey}}static loadOrCreate(A){let t=$A.chacha;if(A){let s=A.getItem(Ns);if(s)try{let i=q(s);return new e(i,t.publicKey(i))}catch{console.warn("Sendspin: stored identity key is invalid, generating a new one")}let r=t.generateKeypair();return A.setItem(Ns,H(r.privateKey)),new e(r.privateKey,r.publicKey)}console.warn("Sendspin: no storage provided, using an ephemeral identity (client_id changes each session, pairing unavailable)");let n=t.generateKeypair();return new e(n.privateKey,n.publicKey)}};var Hs=new TextEncoder,re=j(Hs.encode("sendspin-sentinel-psk-v1")),sn=Hs.encode("sendspin-psk-id-v1");function KA(e){let A=new Uint8Array(sn.length+e.length);return A.set(sn,0),A.set(e,sn.length),H(j(A))}var cc=KA(re);function Ks(){return crypto.getRandomValues(new Uint8Array(32))}var rn="sendspin-psks",on="sendspin-pairing-psk",Mt=class{constructor(A){this.storage=A,this.entries=new Map,this.add({psk:re,pskId:KA(re),category:"sentinel"}),this.loadPersisted()}add(A){this.entries.set(A.pskId,A)}loadPersisted(){if(!this.storage)return;let A=this.storage.getItem(rn);if(A)try{let n=JSON.parse(A);for(let s of n){let r=q(s.psk);this.add({psk:r,pskId:KA(r),category:"long_term",serverId:s.serverId})}}catch{this.storage.setItem(rn,"[]")}let t=this.storage.getItem(on);if(t)try{let n=q(t);this.add({psk:n,pskId:KA(n),category:"pairing"})}catch{this.storage.setItem(on,"")}}persistLongTerm(){if(!this.storage)return;let A=[];for(let t of this.entries.values())t.category==="long_term"&&A.push({psk:H(t.psk),serverId:t.serverId});this.storage.setItem(rn,JSON.stringify(A))}lookup(A){return this.entries.get(A)??null}addLongTerm(A,t){let n={psk:A,pskId:KA(A),category:"long_term",serverId:t};return this.add(n),this.persistLongTerm(),n}removeByPskId(A){let t=this.entries.get(A);!t||t.category!=="long_term"||t.serverId===void 0||(this.entries.delete(A),this.persistLongTerm())}getOrCreatePairingPsk(){for(let A of this.entries.values())if(A.category==="pairing")return A.psk;return this.setPairingPsk(Ks())}rotatePairingPsk(){for(let[A,t]of this.entries)t.category==="pairing"&&this.entries.delete(A);return this.setPairingPsk(Ks())}setPairingPsk(A){return this.add({psk:A,pskId:KA(A),category:"pairing"}),this.storage?.setItem(on,H(A)),A}};var ie=class extends ZA{constructor(A,t){super(),this.finished=!1,this.destroyed=!1,vn(A);let n=st(t);if(this.iHash=A.create(),typeof this.iHash.update!="function")throw new Error("Expected instance of class which extends utils.Hash");this.blockLen=this.iHash.blockLen,this.outputLen=this.iHash.outputLen;let s=this.blockLen,r=new Uint8Array(s);r.set(n.length>s?A.create().update(n).digest():n);for(let i=0;i<r.length;i++)r[i]^=54;this.iHash.update(r),this.oHash=A.create();for(let i=0;i<r.length;i++)r[i]^=106;this.oHash.update(r),SA(r)}update(A){return YA(this),this.iHash.update(A),this}digestInto(A){YA(this),W(A,this.outputLen),this.finished=!0,this.iHash.digestInto(A),this.oHash.update(A),this.oHash.digestInto(A),this.destroy()}digest(){let A=new Uint8Array(this.oHash.outputLen);return this.digestInto(A),A}_cloneInto(A){A||(A=Object.create(Object.getPrototypeOf(this),{}));let{oHash:t,iHash:n,finished:s,destroyed:r,blockLen:i,outputLen:a}=this;return A=A,A.finished=s,A.destroyed=r,A.blockLen=i,A.outputLen=a,A.oHash=t._cloneInto(A.oHash),A.iHash=n._cloneInto(A.iHash),A}clone(){return this._cloneInto()}destroy(){this.destroyed=!0,this.oHash.destroy(),this.iHash.destroy()}},JA=(e,A,t)=>new ie(e,A).update(t).digest();JA.create=(e,A)=>new ie(e,A);var Fs=new Uint8Array(0),At=class{constructor(A){this.suite=A,this.k=null,this.n=0n}initializeKey(A){this.k=A,this.n=0n}hasKey(){return this.k!==null}encryptWithAd(A,t){if(this.k===null)return t;let n=this.suite.aeadEncrypt(this.k,this.n,A,t);return this.n+=1n,n}decryptWithAd(A,t){if(this.k===null)return t;let n=this.suite.aeadDecrypt(this.k,this.n,A,t);return this.n+=1n,n}};var Gs=32;function an(e,A,t){let n=JA(j,e,A),s=JA(j,n,Uint8Array.of(1)),r=JA(j,n,cn(s,Uint8Array.of(2)));if(t===2)return[s,r];let i=JA(j,n,cn(r,Uint8Array.of(3)));return[s,r,i]}function cn(...e){let A=e.reduce((s,r)=>s+r.length,0),t=new Uint8Array(A),n=0;for(let s of e)t.set(s,n),n+=s.length;return t}var oe=class{constructor(A){this.suite=A,this.cipher=new At(A)}initialize(A){let t=new TextEncoder().encode(A);if(t.length<=Gs){let n=new Uint8Array(Gs);n.set(t),this.h=n}else this.h=this.suite.hash(t);this.ck=this.h,this.cipher.initializeKey(null)}mixHash(A){this.h=this.suite.hash(cn(this.h,A))}mixKey(A){let[t,n]=an(this.ck,A,2);this.ck=t,this.cipher.initializeKey(n.slice(0,32))}mixKeyAndHash(A){let[t,n,s]=an(this.ck,A,3);this.ck=t,this.mixHash(n),this.cipher.initializeKey(s.slice(0,32))}encryptAndHash(A){let t=this.cipher.encryptWithAd(this.h,A);return this.mixHash(t),t}decryptAndHash(A){let t=this.cipher.decryptWithAd(this.h,A);return this.mixHash(A),t}split(){let[A,t]=an(this.ck,Fs,2),n=new At(this.suite),s=new At(this.suite);return n.initializeKey(A.slice(0,32)),s.initializeKey(t.slice(0,32)),[n,s]}};var ln=["e","es","ss"],un=["e","ee","se","psk"];function hn(e,A){let t=new Uint8Array(e.length+A.length);return t.set(e,0),t.set(A,e.length),t}var Ct=class{constructor(A){this.suite=A.suite,this.role=A.role,this.s=A.s,this.rs=A.rs,this.psk=A.psk,this.fixedEphemeral=A.fixedEphemeral,this.sym=new oe(A.suite),this.sym.initialize(`Noise_KKpsk2_25519_${A.suite.name}_SHA256`),this.sym.mixHash(A.prologue);let t=A.role==="initiator"?A.s.publicKey:A.rs,n=A.role==="responder"?A.s.publicKey:A.rs;this.sym.mixHash(t),this.sym.mixHash(n)}get handshakeHash(){return this.sym.h}setPsk(A){this.psk=A}dhToken(A){let t=this.role==="initiator";switch(A){case"ee":return this.suite.dh(this.e.privateKey,this.re);case"ss":return this.suite.dh(this.s.privateKey,this.rs);case"es":return t?this.suite.dh(this.e.privateKey,this.rs):this.suite.dh(this.s.privateKey,this.re);case"se":return t?this.suite.dh(this.s.privateKey,this.re):this.suite.dh(this.e.privateKey,this.rs)}}processTokenWrite(A,t){A==="e"?(this.e=this.fixedEphemeral??this.suite.generateKeypair(),this.sym.mixHash(this.e.publicKey),this.sym.mixKey(this.e.publicKey),t.buf=hn(t.buf,this.e.publicKey)):A==="s"?t.buf=hn(t.buf,this.sym.encryptAndHash(this.s.publicKey)):A==="psk"?this.sym.mixKeyAndHash(this.psk):this.sym.mixKey(this.dhToken(A))}processTokenRead(A,t){if(A==="e")this.re=t.buf.slice(0,this.suite.dhLen),t.buf=t.buf.slice(this.suite.dhLen),this.sym.mixHash(this.re),this.sym.mixKey(this.re);else if(A==="s"){let n=this.suite.dhLen+16;this.sym.decryptAndHash(t.buf.slice(0,n)),t.buf=t.buf.slice(n)}else A==="psk"?this.sym.mixKeyAndHash(this.psk):this.sym.mixKey(this.dhToken(A))}writeMessage(A,t){let n={buf:new Uint8Array(0)};for(let s of A)this.processTokenWrite(s,n);return n.buf=hn(n.buf,this.sym.encryptAndHash(t)),n.buf}readMessage(A,t){let n={buf:t};for(let s of A)this.processTokenRead(s,n);return this.sym.decryptAndHash(n.buf)}split(){return this.sym.split()}};var Zs=new Uint8Array(0),wt=class{constructor(A,t){let[n,s]=t;A==="initiator"?(this.sendCs=n,this.recvCs=s):(this.sendCs=s,this.recvCs=n)}encrypt(A){return this.sendCs.encryptWithAd(Zs,A)}decrypt(A){return this.recvCs.decryptWithAd(Zs,A)}};function Ys(e,A,t){if(e==="long_term"){if(A.has("pairing"))return A.size===1;for(let n of A)if(n!=="playback"&&n!=="management")return!1;return!0}return e==="pairing"?A.size===1&&A.has("pairing"):A.size===0||A.size===1&&A.has("pairing")?!0:A.size===1&&A.has("playback")?t:!1}function qs(e,A,t,n){if(!Ys(e,A,n))return!1;if(t){let s=new Set(A);if(s.add("playback"),!Ys(e,s,n))return!1}return!0}function Vs(e,A,t,n){let s=new Set(A),r=!!t&&t.length>0;return qs(e,s,r,n)?{ok:!0}:e==="sentinel"&&!n&&qs(e,s,r,!0)?{ok:!1,goodbye:"pairing_required"}:{ok:!1,goodbye:"unauthorized"}}var kt=new TextEncoder,ae=new TextDecoder,qi=3e4,Xs=65519,Vi=Xs+16,Ws=4*1024*1024;function js(e,A){let t=new Uint8Array(e.length+A.length);return t.set(e,0),t.set(A,e.length),t}var _t=class e{constructor(A,t,n){this.wsManager=A,this.deps=t,this.cb=n,this.state="idle",this.hs=null,this.session=null,this.matched=null,this.serverId="",this.rawClientInit=new Uint8Array(0),this.rawServerInit=new Uint8Array(0),this.timeout=null,this.frag=null,this.lastHandshakeHash=new Uint8Array(0),this.quiesced=!1,this.outboundQueue=[],this.seenActivate=!1,this.effectiveActiveRoles=void 0}get suite(){return $A[this.deps.suiteId]}get ready(){return this.state==="transport"}get handshakeInfo(){return this.matched?{trustLevel:this.matched.category==="long_term"?"user":"none",category:this.matched.category,serverId:this.serverId,entry:this.matched}:null}get handshakeHash(){return this.lastHandshakeHash}start(){this.resetSession();let A=JSON.stringify({type:"client/init",payload:{client_id:this.deps.identity.clientId,version:1,suite:Qs[this.deps.suiteId]}});this.rawClientInit=kt.encode(A),this.wsManager.sendText(A),this.state="await_server_init",this.armTimeout()}resetSession(){this.hs=null,this.session=null,this.matched=null,this.frag=null,this.serverId="",this.rawServerInit=new Uint8Array(0),this.quiesced=!1,this.outboundQueue=[],this.lastHandshakeHash=new Uint8Array(0),this.seenActivate=!1,this.effectiveActiveRoles=void 0}onSocketClosed(){this.clearTimeout(),this.resetSession(),this.state="idle"}close(){this.clearTimeout(),this.wsManager.disconnect()}handleRaw(A){if(this.state==="transport"){if(typeof A.data=="string")return this.fail();let t;try{let n=new Uint8Array(A.data);if(n.length>Vi)return this.fail();t=this.session.decrypt(n)}catch{return this.fail()}if(t.length<1)return this.fail();try{this.dispatchPlain(t)}catch(n){console.warn("Sendspin: dropped malformed transport message",n)}return}try{if(typeof A.data!="string")return this.fail();this.handleHandshakeText(A.data)}catch{this.fail()}}handleHandshakeText(A){let t=JSON.parse(A);if(this.state==="await_server_init"&&t.type==="server/init"){if(t.payload.version!==1)return this.fail();this.serverId=String(t.payload.server_id),this.rawServerInit=kt.encode(A),this.hs=new Ct({suite:this.suite,role:"responder",prologue:js(this.rawClientInit,this.rawServerInit),s:this.deps.identity.keypair,rs:q(this.serverId)}),this.state="await_noise1",this.armTimeout();return}if(this.state==="await_noise1"&&t.type==="noise/handshake"){this.processNoise1(q(String(t.payload.data)));return}this.fail()}processNoise1(A){let t=this.hs.readMessage(ln,A),{psk_id:n}=JSON.parse(ae.decode(t)),s=this.deps.pskStore.lookup(n);if(!s)return this.fail();if(s.category==="long_term"&&s.serverId!==void 0&&s.serverId!==this.serverId)return this.fail();this.hs.setPsk(s.psk);let r=this.hs.writeMessage(un,kt.encode("{}"));this.wsManager.sendText(JSON.stringify({type:"noise/handshake",payload:{data:H(r)}})),this.session=new wt("responder",this.hs.split()),this.matched=s,this.state="transport",this.clearTimeout(),this.lastHandshakeHash=this.hs.handshakeHash,this.cb.onHandshakeComplete(this.handshakeInfo)}dispatchPlain(A){let t=A[0];t===0?this.handleControl(JSON.parse(ae.decode(A.subarray(1)))):t===2||t===3?this.handleFragment(t,A.subarray(1)):this.cb.onBinaryMessage(A)}handleFragment(A,t){if(A===2&&this.frag===null){if(t.length<1)return this.fail();if(t[0]===2||t[0]===3)return this.fail();let i=t.subarray(1);this.frag={origType:t[0],parts:[i],size:i.length};return}if(A===2)return this.frag.parts.push(t),this.frag.size+=t.length,this.frag.size>Ws?(this.frag=null,this.fail()):void 0;if(this.frag===null)return this.fail();if(this.frag.parts.push(t),this.frag.size+=t.length,this.frag.size>Ws)return this.frag=null,this.fail();let n=this.frag.origType,s=new Uint8Array(this.frag.size+1);s[0]=n;let r=1;for(let i of this.frag.parts)s.set(i,r),r+=i.length;this.frag=null,n===0?this.handleControl(JSON.parse(ae.decode(s.subarray(1)))):this.cb.onBinaryMessage(s)}handleControl(A){if(A.type==="noise/handshake"){this.handleRehandshake(A);return}if(A.type==="server/activate"){this.handleActivate(A);return}if(A.type==="server/unpair"){this.handleUnpair();return}this.cb.onControlMessage(A)}handleRehandshake(A){let t=new Ct({suite:this.suite,role:"responder",prologue:this.lastHandshakeHash,s:this.deps.identity.keypair,rs:q(this.serverId)}),n=t.readMessage(ln,q(A.payload.data)),{psk_id:s}=JSON.parse(ae.decode(n)),r=this.deps.pskStore.lookup(s);if(!r)return this.fail();if(r.category==="long_term"&&r.serverId!==void 0&&r.serverId!==this.serverId)return this.fail();t.setPsk(r.psk);let i=t.writeMessage(un,kt.encode("{}"));this.quiesced=!0,this.armTimeout(),this.encryptSend({type:"noise/handshake",payload:{data:H(i)}}),this.session=new wt("responder",t.split()),this.matched=r,this.lastHandshakeHash=t.handshakeHash,this.seenActivate=!1,this.effectiveActiveRoles=void 0,this.cb.onHandshakeComplete(this.handshakeInfo)}handleActivate(A){let t=A.payload.active_roles;if(!this.seenActivate&&t===void 0){this.sendGoodbyeAndClose("unauthorized");return}t!==void 0&&(this.effectiveActiveRoles=t),this.seenActivate=!0;let n=Vs(this.matched.category,A.payload.activities,this.effectiveActiveRoles,this.deps.unpairedAccess);if(!n.ok){this.sendGoodbyeAndClose(n.goodbye);return}this.clearTimeout();let s=!A.payload.activities.includes("pairing")&&this.effectiveActiveRoles?.includes("controller@v1")?this.outboundQueue.filter(r=>r.type==="client/command"):[];this.quiesced=!1,this.outboundQueue=[],this.cb.onControlMessage(A);for(let r of s)this.encryptSend(r)}handleUnpair(){this.matched?.category==="long_term"&&(this.deps.pskStore.removeByPskId(this.matched.pskId),this.sendGoodbyeAndClose("unpaired"))}sendGoodbyeAndClose(A){try{this.encryptSend({type:"client/goodbye",payload:{reason:A}})}catch{}this.close()}sendControl(A){if(this.state!=="transport"||!this.session){console.warn("Sendspin: sendControl before transport ready");return}let t=A.type;if(this.quiesced&&t!==void 0&&e.QUIESCED_TYPES.has(t)){this.outboundQueue.push(A);return}this.encryptSend(A)}encryptSend(A){let t=kt.encode(JSON.stringify(A)),n=js(Uint8Array.of(0),t);if(n.length>Xs)throw new Error("Sendspin: control message exceeds single-frame limit");this.wsManager.sendBinary(this.session.encrypt(n))}armTimeout(){this.clearTimeout(),this.timeout=globalThis.setTimeout(()=>this.fail(),qi)}clearTimeout(){this.timeout!==null&&(clearTimeout(this.timeout),this.timeout=null)}fail(){this.clearTimeout(),this.wsManager.disconnect()}};_t.QUIESCED_TYPES=new Set(["client/command","client/time","client/state"]);var fA=2n**255n-19n,dn=486662n,Wi=2n,ce=32,he=32,nr=64,$s=pn("CPace255"),ji=pn("CPace255_ISK"),Xi=pn("CPaceMac"),$i=128,pA=class extends Error{};function pn(e){return new TextEncoder().encode(e)}function Et(...e){let A=new Uint8Array(e.reduce((n,s)=>n+s.length,0)),t=0;for(let n of e)A.set(n,t),t+=n.length;return A}function fn(e){let A=e.length,t=[];for(;t.push(A<128?A:A&127|128),A>>=7,A!==0;);return Et(new Uint8Array(t),e)}function xt(...e){return Et(...e.map(fn))}function Ao(e,A,t){let n=Math.max(0,$i-1-fn(e).length-fn($s).length);return xt($s,e,new Uint8Array(n),A,t)}function FA(e,A){let t=e%A;return t<0n?t+A:t}function sr(e,A,t){let n=1n,s=FA(e,t),r=A;for(;r>0n;)r&1n&&(n=n*s%t),s=s*s%t,r>>=1n;return n}function Ar(e,A){return sr(e,A-2n,A)}function to(e){let A=e.slice();A[A.length-1]&=127;let t=0n;for(let n=A.length-1;n>=0;n--)t=t<<8n|BigInt(A[n]);return t}function eo(e){let A=new Uint8Array(ce),t=e;for(let n=0;n<ce;n++)A[n]=Number(t&0xffn),t>>=8n;return A}function no(e){let A=FA(e,fA),t=FA(-dn*Ar(FA(1n+Wi*A*A,fA),fA),fA),n=sr(FA(t*t*t+dn*t*t+t,fA),(fA-1n)/2n,fA),s=FA(n*t-FA(1n-n,fA)*dn*Ar(2n,fA),fA);return eo(s)}function so(e,A,t){let n=UA(Ao(e,A,t)).slice(0,ce);return no(to(n))}function tr(e,A,t){let n;try{n=HA.scalarMult(e,A)}catch{throw new pA(`${t} encodes a low-order point`)}if(n.every(s=>s===0))throw new pA(`${t} encodes a low-order point`);return n}function er(e,A){if(e.length!==A.length)return!1;let t=0;for(let n=0;n<e.length;n++)t|=e[n]^A[n];return t===0}var bt=class e{constructor(A,t,n,s,r,i){this.role=A,this.sid=n,this.ada=s,this.adb=r,this.macKey=null,this.initiatorShare=null,this.responderShare=null,this.iskValue=null,this.scalar=t,this.publicShare=tr(t,i,"generator")}static start(A){let t=A.scalar??crypto.getRandomValues(new Uint8Array(ce)),n=so(A.prs,A.ci??new Uint8Array(0),A.sid);return new e(A.role,t,A.sid,A.ada??new Uint8Array(0),A.adb??new Uint8Array(0),n)}derive(A){if(!this.scalar)throw new pA("derive() may only be called once");let t=this.scalar;if(this.scalar=null,A.length!==he)throw new pA(`peer share must be ${he} bytes, got ${A.length}`);let n=tr(t,A,"peer share");this.role==="initiator"?(this.initiatorShare=this.publicShare,this.responderShare=A):(this.initiatorShare=A,this.responderShare=this.publicShare);let s=Et(xt(this.initiatorShare,this.ada),xt(this.responderShare,this.adb));this.iskValue=UA(Et(xt(ji,this.sid,n),s)),this.macKey=UA(Et(Xi,this.sid,this.iskValue))}get isk(){if(!this.iskValue)throw new pA("derive() must be called before reading the ISK");return this.iskValue}tag(){return this.mac(!0)}verify(A){let t=this.mac(!1);return er(t,this.mac(!0))?!1:er(A,t)}mac(A){if(!this.macKey||!this.initiatorShare||!this.responderShare)throw new pA("derive() must be called before confirmation tags");let t=A===(this.role==="initiator"),n=t?this.initiatorShare:this.responderShare,s=t?this.ada:this.adb;return JA(UA,this.macKey,xt(n,s))}};var Tt=new TextEncoder().encode("sendspin-pin-derive-v1"),mn=new TextEncoder().encode("sendspin-pair-commit-v1"),gn=32,rr=4,yn=12,ir=6,ro=8,io=new RegExp(`^[0-9]{${ro}}$`);function or(e){return io.test(e)}function ar(){return crypto.getRandomValues(new Uint8Array(gn))}function cr(e){let A=new Uint8Array(mn.length+e.length);return A.set(mn,0),A.set(e,mn.length),j(A)}function hr(e,A,t,n){let s=new Uint8Array(Tt.length+e.length+A.length+t.length);s.set(Tt,0),s.set(e,Tt.length),s.set(A,Tt.length+e.length),s.set(t,Tt.length+e.length+A.length);let r=j(s),i=0n;for(let o of r)i=i<<8n|BigInt(o);return(i%10n**BigInt(n)).toString().padStart(n,"0")}var ue=e=>new TextEncoder().encode(e);function oo(...e){let A=new Uint8Array(e.reduce((n,s)=>n+s.length,0)),t=0;for(let n of e)A.set(n,t),t+=n.length;return A}var ao="sendspin-pair-pake-v1",co=ue("sendspin-pair-psk-wrap-v1"),lr=ue("server"),ur=ue("client"),ho=12e4,lo=3e5,uo=10,fo=6,dr="sendspin-pair-failures",po=["dynamic_pin","static_pin"];function fr(e,A){return A?.length?{...e,locations:A}:e}function mo(e){if(!(!Array.isArray(e)||e.length===0))return e.every(A=>typeof A=="string"&&A!=="")?e:void 0}var le=class{constructor(A){if(this.deps=A,this.pendingPsk=null,this.phase="idle",this.method=null,this.cpace=null,this.nonceB=null,this.attemptTimer=null,this.windowTimer=null,this.windowOpen=!1,this.currentSid=null,this.pairingActivateCount=0,this.attemptIndex=0,this.pinLength=null,A.staticPin!==void 0&&!or(A.staticPin))throw new Error("staticPin must be exactly 8 decimal digits");this.minPinLength=Math.min(yn,Math.max(rr,A.minPinLength??ir)),!A.storage&&A.onPin&&console.warn("sendspin: dynamic PIN pairing is enabled without storage, so the failure counter will not persist across reboots."),this.failures=this.loadFailures()}descriptors(){let A=[fr({method:"pairing_psk"},this.deps.pairingPskLocations)];return this.deps.staticPin!==void 0&&A.push(fr({method:"static_pin"},this.deps.staticPinLocations)),this.deps.onPin&&A.push({method:"dynamic_pin",out_channels:this.deps.pinOutChannels??["display"],min_pin_length:this.minPinLength}),A}isDynamicPinEscalated(){return this.failures>=uo}openPairingWindow(){if(this.phase==="await-window"){this.startAttempt();return}this.windowOpen=!0,this.windowTimer&&clearTimeout(this.windowTimer),this.windowTimer=setTimeout(()=>this.closeWindow(),lo)}closeWindow(){this.windowOpen=!1,this.windowTimer&&clearTimeout(this.windowTimer),this.windowTimer=null}cancelPairing(){this.phase!=="idle"&&this.abort("user_cancelled")}onActivate(A,t){if(!A.includes("pairing"))return this.abandonAttempt("server_cancelled"),!1;this.abandonAttempt("superseded"),this.pairingActivateCount+=1,this.attemptIndex=this.pairingActivateCount;let s=t?.method,r=this.descriptors().map(a=>a.method),i=s==="pairing_psk"==(this.deps.matchedCategory()==="pairing");if(!s)return console.warn("sendspin: server/activate carried no pairing method, so the server is not speaking the current specification."),this.fail(),!0;if(!i||!r.includes(s))return this.abort("method_not_supported"),!0;if(this.method=s,s==="pairing_psk")return this.sendFinalize(),this.phase="await-finalize",this.armAttemptTimer(),this.deps.onEvent?.("started"),!0;if(s==="dynamic_pin"){let a=t.pin_length;if(typeof a!="number"||!Number.isInteger(a))return this.fail(),!0;if(a<this.minPinLength||a>yn)return this.abort("pin_length_unacceptable"),!0;this.pinLength=a,this.languages=mo(t.languages)}return this.isGestureGated()&&!this.windowOpen?(this.phase="await-window",this.deps.sendControl({type:"client/pair-pending",payload:{pairing_index:this.attemptIndex}}),this.deps.onEvent?.("pending"),!0):(this.startAttempt(),!0)}isGestureGated(){return this.method==="static_pin"?!0:this.method!=="dynamic_pin"?!1:this.isDynamicPinEscalated()||this.pinLength<fo}onPairInit(A){if(this.phase==="idle")return;if(this.phase!=="await-init"||this.method!=="dynamic_pin")return this.fail();let t=this.decode(A.nonce_A,gn);if(!t)return this.fail();let n=this.deps.handshakeHash(),s=hr(n,t,this.nonceB,this.pinLength);this.currentSid=this.sid(n,this.attemptIndex),this.cpace=bt.start({role:"responder",prs:new TextEncoder().encode(s),sid:this.currentSid,ada:lr,adb:ur}),this.phase="await-auth",this.deps.onPin?.(s,this.languages)}onPairAuth(A){if(this.phase==="idle")return;if(this.phase!=="await-auth"||!this.cpace)return this.fail();let t=this.decode(A.pake_msg_1,he);if(!t)return this.fail();this.deps.sendControl({type:"client/pair-auth",payload:{pake_msg_2:H(this.cpace.publicShare)}});try{this.cpace.derive(t)}catch(n){if(n instanceof pA)return this.fail();throw n}this.phase="await-confirm"}onPairConfirm(A){if(this.phase==="idle")return;if(this.phase!=="await-confirm"||!this.cpace)return this.fail();let t=this.decode(A.server_kc,nr);if(!t)return this.fail();if(!this.cpace.verify(t))return this.method==="dynamic_pin"&&this.recordFailure(),this.abort("pin_mismatch");this.method==="dynamic_pin"&&this.resetFailures();let n={client_kc:H(this.cpace.tag())};this.method==="dynamic_pin"&&(n.nonce_B=H(this.nonceB)),this.deps.sendControl({type:"client/pair-confirm",payload:n}),this.phase="await-finalize",this.sendFinalize()}onPairFinalize(){this.pendingPsk&&(this.deps.pskStore.addLongTerm(this.pendingPsk,this.deps.serverId()),this.clearAttempt(),this.deps.onEvent?.("finalized"))}onAbort(A){this.phase==="idle"&&!this.pendingPsk||(this.clearAttempt(),this.deps.onEvent?.("aborted",A))}reset(){this.clearAttempt(),this.pairingActivateCount=0,this.attemptIndex=0}startAttempt(){if(this.closeWindow(),this.armAttemptTimer(),this.deps.onEvent?.("started"),this.method==="dynamic_pin"){this.nonceB=ar(),this.phase="await-init",this.deps.sendControl({type:"client/pair-init",payload:{pairing_index:this.attemptIndex,commit_B:H(cr(this.nonceB))}});return}let A=this.deps.handshakeHash();this.currentSid=this.sid(A,this.attemptIndex),this.cpace=bt.start({role:"responder",prs:new TextEncoder().encode(this.deps.staticPin),sid:this.currentSid,ada:lr,adb:ur}),this.phase="await-auth",this.deps.sendControl({type:"client/pair-init",payload:{pairing_index:this.attemptIndex}})}sendFinalize(){let A=crypto.getRandomValues(new Uint8Array(32));if(this.pendingPsk=A,this.cpace&&this.currentSid){let t=j(oo(co,this.currentSid,this.cpace.isk)),n=this.deps.aeadSeal(t,A);this.deps.sendControl({type:"client/pair-finalize",payload:{wrapped_psk:H(n)}});return}this.deps.sendControl({type:"client/pair-finalize",payload:{long_term_psk:H(A)}})}sid(A,t){let n=ue(ao),s=new Uint8Array(n.length+A.length+4);return s.set(n,0),s.set(A,n.length),new DataView(s.buffer).setUint32(n.length+A.length,t,!1),s}armAttemptTimer(){this.attemptTimer=setTimeout(()=>this.abort("attempt_timeout"),ho)}abort(A){this.clearAttempt(),this.deps.sendControl({type:"pair/abort",payload:{reason:A}}),this.deps.onEvent?.("aborted",A),A==="concurrent_attempt"&&this.deps.close()}fail(){this.clearAttempt(),this.deps.close()}clearAttempt(){this.attemptTimer&&clearTimeout(this.attemptTimer),this.attemptTimer=null,this.method&&po.includes(this.method)&&this.deps.onPin?.(null),this.pendingPsk=null,this.phase="idle",this.method=null,this.cpace=null,this.currentSid=null,this.nonceB=null,this.pinLength=null,this.languages=void 0}abandonAttempt(A){this.phase==="idle"&&!this.pendingPsk||(this.clearAttempt(),this.deps.onEvent?.("aborted",A))}decode(A,t){if(typeof A!="string")return null;try{let n=q(A);return n.length===t?n:null}catch{return null}}loadFailures(){try{let A=this.deps.storage?.getItem(dr);return A?JSON.parse(A).dynamic_pin??0:0}catch{return 0}}saveFailures(){this.deps.storage?.setItem(dr,JSON.stringify({dynamic_pin:this.failures}))}recordFailure(){this.failures+=1,this.saveFailures()}resetFailures(){this.failures=0,this.saveFailures()}};var pr="ABCDEFGHIJKLMNOPQRSTUVWXYZ234567",de=32;function go(e){let A=0,t=0,n="";for(let s of e){for(t=t<<8|s,A+=8;A>=5;)n+=pr[t>>>A-5&31],A-=5;t&=(1<<A)-1}return A>0&&(n+=pr[t<<5-A&31]),n}function Sn(e,A){let t=q(e),n=q(A);if(t.length!==de)throw new Error(`clientId must decode to ${de} bytes`);if(n.length!==de)throw new Error(`pairingPsk must decode to ${de} bytes`);let s=new Uint8Array(t.length+n.length);return s.set(t),s.set(n,t.length),`SP:0${go(s).replace(/2/g,"9")}`}var Dt=class{constructor(A){this.handshakeInfo=null,A.codecs&&Jt(A.codecs),this.hasStorage=(A.storage??null)!==null,this.identity=St.loadOrCreate(A.storage??null);let t=A.clientName??`Sendspin JS Client (${this.identity.clientId.slice(0,6)})`;this.config={...A,clientName:t},this.delayStore=new Lt(A.storage??null);let n=this.delayStore.load(),s=A.syncDelay??n??A.defaultSyncDelay??0;this._syncDelayMs=nA(s),this.timeFilter=new et(0,1.1,2,1e-12),this.stateManager=new Rt(A.onStateChange),this.decoder=new tt(i=>this._onAudioData?.(i),()=>this.stateManager.streamGeneration),this.wsManager=new Ot(A.reconnect),this.pskStore=new Mt(A.storage??null);for(let i of A.longTermPsks??[])this.pskStore.addLongTerm(q(i.psk),i.serverId);this.hasStorage&&this.pskStore.getOrCreatePairingPsk(),this.transport=new _t(this.wsManager,{identity:this.identity,pskStore:this.pskStore,suiteId:A.suite??"chacha",unpairedAccess:A.unpairedAccess??!0},{onHandshakeComplete:i=>{let a=this.handshakeInfo!==null;this.handshakeInfo=i,this.pairing.reset(),this.protocolHandler.resetActivation(a)},onControlMessage:i=>this.routeControl(i),onBinaryMessage:i=>this.handleBinaryMessage(i.buffer)}),this.pairing=new le({sendControl:i=>this.transport.sendControl(i),close:()=>this.transport.close(),pskStore:this.pskStore,serverId:()=>this.handshakeInfo?.serverId??"",matchedCategory:()=>this.handshakeInfo?.category??"sentinel",handshakeHash:()=>this.transport.handshakeHash,aeadSeal:(i,a)=>$A[A.suite??"chacha"].aeadEncrypt(i,0n,new Uint8Array(0),a),storage:A.storage??null,onPin:A.onPairingPin??null,pinOutChannels:A.pinOutChannels,minPinLength:A.minPinLength,staticPin:A.staticPin,staticPinLocations:A.staticPinLocations,pairingPskLocations:A.pairingPskLocations,onEvent:(i,a)=>this.config.onPairing?.(i,a)});let r={trustLevel:()=>this.handshakeInfo?.trustLevel??"none",pairMethods:()=>this.hasStorage?this.pairing.descriptors():[],unpairedAccess:A.unpairedAccess??!0};this.protocolHandler=new Pt(this.transport,r,this,this.stateManager,this.timeFilter,{clientName:t,productName:A.productName,codecs:A.codecs,bufferCapacity:A.bufferCapacity,requiredLeadTimeMs:A.requiredLeadTimeMs,minBufferMs:A.minBufferMs,useHardwareVolume:A.useHardwareVolume,onVolumeCommand:A.onVolumeCommand,onDelayCommand:A.onDelayCommand,getExternalVolume:A.getExternalVolume})}routeControl(A){if(A.type==="server/activate"){let t=A.payload??{};t.activities?.includes("pairing")&&this.protocolHandler.suspendForPairing(),this.pairing.onActivate(t.activities??[],t.pairing)||this.protocolHandler.handleServerMessage(A);return}if(A.type==="server/pair-init")return this.pairing.onPairInit(A.payload??{});if(A.type==="server/pair-auth")return this.pairing.onPairAuth(A.payload??{});if(A.type==="server/pair-confirm")return this.pairing.onPairConfirm(A.payload??{});if(A.type==="server/pair-finalize")return this.pairing.onPairFinalize();if(A.type==="pair/abort")return this.pairing.onAbort((A.payload??{}).reason??"");this.protocolHandler.handleServerMessage(A)}onTransportClose(){this.transport.onSocketClosed(),this.handshakeInfo=null,this.protocolHandler.stopTimeSync(),this.protocolHandler.resetActivation(),this.pairing.reset(),this.stateManager.clearStateUpdateInterval(),console.log("Sendspin: Connection closed"),this._onConnectionClose?.()}handleBinaryMessage(A){let t=this.stateManager.currentStreamFormat;if(!t){console.warn("Sendspin: Received audio chunk but no stream format set");return}let n=this.stateManager.streamGeneration;this.decoder.handleBinaryMessage(A,t,n)}handleStreamStart(A,t){t||this.decoder.clearState(),this._onStreamStart?.(A,t)}handleStreamClear(){this.decoder.clearState(),this._onStreamClear?.()}handleStreamEnd(){this.decoder.clearState(),this._onStreamEnd?.()}handleVolumeUpdate(){this._onVolumeUpdate?.()}applyDelay(A){this._syncDelayMs=nA(A),this.delayStore.save(this._syncDelayMs),this._onSyncDelayChange?.(this._syncDelayMs)}handleSyncDelayChange(A){this.applyDelay(A)}getSyncDelayMs(){return this._syncDelayMs}set onAudioData(A){this._onAudioData=A}set onStreamStart(A){this._onStreamStart=A}set onStreamClear(A){this._onStreamClear=A}set onStreamEnd(A){this._onStreamEnd=A}set onVolumeUpdate(A){this._onVolumeUpdate=A}set onSyncDelayChange(A){this._onSyncDelayChange=A}set onConnectionOpen(A){this._onConnectionOpen=A}set onConnectionClose(A){this._onConnectionClose=A}async connect(){let A=()=>{this._onConnectionOpen?.(),this.transport.start()},t=r=>{this.transport.handleRaw(r)},n=r=>{console.error("Sendspin: WebSocket error",r)},s=()=>this.onTransportClose();if(this.config.webSocket)await this.wsManager.adopt(this.config.webSocket,A,t,n,s);else{if(!this.config.baseUrl)throw new Error("SendspinCore requires either baseUrl or webSocket to be provided.");let r=new URL(this.config.baseUrl,typeof window<"u"?window.location.href:void 0),i=r.protocol==="https:"?"wss:":"ws:",a=r.pathname.replace(/\/$/,""),o=a.endsWith("/sendspin")?`${i}//${r.host}${a}`:`${i}//${r.host}${a}/sendspin`;await this.wsManager.connect(o,A,t,n,s)}}resetPlaybackState(){this.stateManager.isPlaying=!1,this.stateManager.currentStreamFormat=null}disconnect(A="restart"){this.transport.ready&&this.protocolHandler.sendGoodbye(A),this.protocolHandler.stopTimeSync(),this.stateManager.clearAllIntervals(),this.wsManager.disconnect(),this.decoder.close(),this.timeFilter.reset(),this.stateManager.reset()}setVolume(A){this.stateManager.volume=A,this._onVolumeUpdate?.(),this.protocolHandler.sendStateUpdate()}setMuted(A){this.stateManager.muted=A,this._onVolumeUpdate?.(),this.protocolHandler.sendStateUpdate()}setSyncDelay(A){this.applyDelay(A),this.protocolHandler.sendStateUpdate()}setRequiredLeadTimeMs(A){this.protocolHandler.setRequiredLeadTimeMs(A)}setMinBufferMs(A){this.protocolHandler.setMinBufferMs(A)}sendCommand(A,t){let n=this.stateManager.serverState.controller?.supported_commands;if(n&&!n.includes(A))throw new Error(`Command '${A}' is not supported by the server. Supported commands: ${n.join(", ")}`);this.protocolHandler.sendCommand(A,t)}get isPlaying(){return this.stateManager.isPlaying}get volume(){return this.stateManager.volume}get muted(){return this.stateManager.muted}get playerState(){return this.stateManager.playerState}get currentFormat(){return this.stateManager.currentStreamFormat}get isConnected(){return this.wsManager.isConnected()}get clientId(){return this.identity.clientId}get pairingPsk(){return this.hasStorage?H(this.pskStore.getOrCreatePairingPsk()):null}get pairingToken(){let A=this.pairingPsk;return A?Sn(this.clientId,A):null}rotatePairingPsk(){return this.hasStorage?(this.pskStore.rotatePairingPsk(),this.pairingPsk):null}openPairingWindow(){this.pairing.openPairingWindow()}cancelPairing(){this.pairing.cancelPairing()}isDynamicPinEscalated(){return this.pairing.isDynamicPinEscalated()}get timeSyncInfo(){return{synced:this.timeFilter.is_synchronized,offset:Math.round(this.timeFilter.offset/1e3),error:Math.round(this.timeFilter.error/1e3)}}getCurrentServerTimeUs(){return this.timeFilter.computeServerTime(Math.floor(performance.now()*1e3))}get trackProgress(){let A=this.stateManager.serverState.metadata;if(!A?.progress||A.timestamp===void 0)return null;let n=this.getCurrentServerTimeUs()-A.timestamp,s=A.progress.track_progress+n*A.progress.playback_speed/1e6,r=A.progress.track_duration;return{positionMs:r===0?Math.max(0,s):Math.max(0,Math.min(s,r)),durationMs:r,playbackSpeed:A.progress.playback_speed/1e3}}get _stateManager(){return this.stateManager}get _timeFilter(){return this.timeFilter}};var fe=class{constructor(){this.activeSource="estimated",this._pendingCutover=!1,this._lastRejectReason=null,this._timestampPromotionDisabled=!1,this.lastSample=null,this.goodSamples=0,this.badSamples=0,this.goodSinceMs=null,this.estimateAudioTimeSec=null,this.estimateAtMs=null}get active(){return this.activeSource}get pendingCutover(){return this._pendingCutover}set pendingCutover(A){this._pendingCutover=A}get lastRejectReason(){return this._lastRejectReason}get timestampGoodSamples(){return this.goodSamples}get timestampPromotionDisabled(){return this._timestampPromotionDisabled}disableTimestampPromotion(){this._timestampPromotionDisabled=!0}setActive(A){return this.activeSource===A?!1:(this.activeSource=A,this._pendingCutover=A==="timestamp",this._pendingCutover&&this._onPromotion?.(),this._pendingCutover)}onPromotion(A){this._onPromotion=A}reset(){this.activeSource="estimated",this._pendingCutover=!1,this.lastSample=null,this.goodSamples=0,this._lastRejectReason=null,this.badSamples=0,this.goodSinceMs=null,this.estimateAudioTimeSec=null,this.estimateAtMs=null}demote(A){this.reset(),this._lastRejectReason=A}rejectSample(A,t=!1){if(this.lastSample=null,this.goodSamples=0,this.goodSinceMs=null,this._lastRejectReason=A,this.activeSource!=="timestamp"){this.badSamples=0;return}this.badSamples+=1,(t||this.badSamples>=2)&&this.demote(A)}getEstimatedTime(A,t){if(this.estimateAudioTimeSec===null)this.estimateAudioTimeSec=A,this.estimateAtMs=t;else if(this.estimateAtMs!==null){let n=Math.max(0,(t-this.estimateAtMs)/1e3),s=this.estimateAudioTimeSec+n;this.estimateAtMs=t;let r=A-s;if(Math.abs(r)>.5)this.estimateAudioTimeSec=A;else{let i=Math.max(-.002,Math.min(.002,r)),a=Math.max(this.estimateAudioTimeSec,s+i);this.estimateAudioTimeSec=Math.min(a,A+.1)}}return this.estimateAudioTimeSec??A}getTimestampDerivedTime(A,t,n){if(this._timestampPromotionDisabled)return(this.activeSource!=="estimated"||this.lastSample!==null||this.goodSamples!==0||this._lastRejectReason!==null)&&this.reset(),null;let s=t.getOutputTimestamp;if(typeof s!="function")return this.activeSource==="timestamp"&&this.demote("getOutputTimestamp unavailable"),null;try{let r=s.call(t),i=performance.now(),a=i-r.performanceTime;if(a<-5)return this.rejectSample(`performanceTime in future (${a.toFixed(1)}ms)`,!0),null;let o=Math.max(0,a),h=r.contextTime+o/1e3+n,u={contextTimeSec:r.contextTime,performanceTimeMs:r.performanceTime,nowMs:i,predictedAudioTimeSec:h,rawAudioTimeSec:A};if(o>250)return this.rejectSample(`stale timestamp (${o.toFixed(1)}ms old)`,!0),null;let l=h-A;if(Math.abs(l)>.25)return this.rejectSample(`timestamp/raw divergence ${Math.abs(l*1e3).toFixed(1)}ms`,!0),null;let c=this.lastSample;if(c){let f=r.performanceTime-c.performanceTimeMs;if(f<0)return this.rejectSample(`performanceTime moved backward (${f.toFixed(1)}ms)`,!0),null;if(h<c.predictedAudioTimeSec-.005)return this.rejectSample(`predicted audio time moved backward ${((c.predictedAudioTimeSec-h)*1e3).toFixed(1)}ms`,!0),null;let d=c.predictedAudioTimeSec-c.rawAudioTimeSec;if(Math.abs(l-d)>.05)return this.rejectSample(`timestamp/raw divergence drift ${Math.abs((l-d)*1e3).toFixed(1)}ms`),null;if(f>=40){let g=f/1e3,m=(r.contextTime-c.contextTimeSec)/g,p=(h-c.predictedAudioTimeSec)/g;if(m<.95||m>1.05)return this.rejectSample(`context slope ${m.toFixed(3)} out of range`),null;if(p<.95||p>1.05)return this.rejectSample(`predicted slope ${p.toFixed(3)} out of range`),null}}return this.lastSample=u,this.badSamples=0,this.goodSinceMs===null&&(this.goodSinceMs=i),this.goodSamples+=1,this.activeSource!=="timestamp"&&this.goodSamples>=6&&this.goodSinceMs!==null&&i-this.goodSinceMs>=750&&(this.setActive("timestamp"),this._lastRejectReason=null),h}catch(r){let i=r instanceof Error?`getOutputTimestamp failed: ${r.message}`:`getOutputTimestamp failed: ${String(r)}`;return this.rejectSample(i,!0),null}}getTimingSnapshot(A,t=0){let n=performance.now(),s=n*1e3;if(!A)return{audioContextTimeSec:0,audioContextRawTimeSec:0,nowMs:n,nowUs:s};let r=A.currentTime,i=this.getEstimatedTime(r,n),a=this.getTimestampDerivedTime(r,A,t),o=this.activeSource==="timestamp"&&a!==null?a:i;return Number.isFinite(o)||(o=r),{audioContextTimeSec:o,audioContextRawTimeSec:r,nowMs:n,nowUs:s}}};var pe=class{get minScheduleTimeSec(){return this._minScheduleTimeSec}setMinScheduleTime(A){this._minScheduleTimeSec=A}clearMinScheduleTime(){this._minScheduleTimeSec=null}constructor(A){this.onCheck=A,this.interval=null,this.breachStartedAtMs=null,this.lastRecorrectionAtMs=-1/0,this.prevRawSyncErrorMs=null,this.pendingJumpSign=null,this.pendingJumpAtMs=null,this.transientStartedAtMs=null,this._hardResyncGraceUntilMs=null,this._lastHardResyncAtMs=-1/0,this._minScheduleTimeSec=null}start(){this.interval===null&&(this.interval=globalThis.setInterval(()=>this.onCheck(),250))}stop(){this.interval!==null&&(clearInterval(this.interval),this.interval=null),this.resetCheckState(),this.lastRecorrectionAtMs=-1/0}clearBreachState(){this.breachStartedAtMs=null,this.pendingJumpSign=null,this.pendingJumpAtMs=null,this.transientStartedAtMs=null}resetCheckState(){this.clearBreachState(),this.prevRawSyncErrorMs=null}clearHardResyncCooldown(){this._hardResyncGraceUntilMs=null,this._lastHardResyncAtMs=-1/0}armStartupGrace(A,t){if(t){this._hardResyncGraceUntilMs=null;return}this._hardResyncGraceUntilMs===null&&(this._hardResyncGraceUntilMs=A+1e3)}canUseHardResync(A,t){if(t)this._hardResyncGraceUntilMs=null;else if(this._hardResyncGraceUntilMs!==null&&A<this._hardResyncGraceUntilMs)return!1;return A-this._lastHardResyncAtMs>=500}noteHardResync(A){this._lastHardResyncAtMs=A}markRecorrection(A){this.lastRecorrectionAtMs=A}shouldIgnoreTransientJump(A,t){let n=this.prevRawSyncErrorMs;if(this.prevRawSyncErrorMs=A,n===null)return this.pendingJumpSign=null,this.pendingJumpAtMs=null,!1;let s=A-n,r=Math.sign(s);if(!(Math.abs(s)>=25))return this.pendingJumpSign=null,this.pendingJumpAtMs=null,!1;let a=this.pendingJumpSign===r&&this.pendingJumpAtMs!==null&&t-this.pendingJumpAtMs<=1e3;return this.pendingJumpSign=r,this.pendingJumpAtMs=t,!a}shouldRecorrect(A,t,n){let s=this.shouldIgnoreTransientJump(t,n);if(A<30)return this.clearBreachState(),!1;if(s){if(this.transientStartedAtMs===null&&(this.transientStartedAtMs=n),n-this.transientStartedAtMs<400)return this.breachStartedAtMs=null,!1;this.breachStartedAtMs===null&&(this.breachStartedAtMs=this.transientStartedAtMs)}else this.transientStartedAtMs=null;return this.breachStartedAtMs===null?(this.breachStartedAtMs=n,!1):!(n-this.breachStartedAtMs<400||n-this.lastRecorrectionAtMs<1500)}fullReset(){this.stop(),this._hardResyncGraceUntilMs=null,this._lastHardResyncAtMs=-1/0,this._minScheduleTimeSec=null}},mr=.3;var gr="sendspin-output-latency-us";function yr(e,A){return typeof e=="number"&&Number.isFinite(e)&&e>=0?e:A}var me=class{constructor(A){this.storage=A,this.smoothedOutputLatencyUs=null,this.lastLatencyPersistAtMs=null,this.loadPersisted()}loadPersisted(){if(this.storage)try{let A=this.storage.getItem(gr);if(A){let t=parseFloat(A);!isNaN(t)&&t>=0&&(this.smoothedOutputLatencyUs=t)}}catch{}}persist(){if(!(!this.storage||this.smoothedOutputLatencyUs===null))try{this.storage.setItem(gr,this.smoothedOutputLatencyUs.toString())}catch{}}getRawUs(A){if(!A)return 0;let t=yr(A.baseLatency,0),n=yr(A.outputLatency,.04);return(t+n)*1e6}getSmoothedUs(A){let t=this.getRawUs(A);if(t<=0&&this.smoothedOutputLatencyUs!==null)return this.smoothedOutputLatencyUs;this.smoothedOutputLatencyUs===null?this.smoothedOutputLatencyUs=t:this.smoothedOutputLatencyUs=.01*t+(1-.01)*this.smoothedOutputLatencyUs;let n=typeof performance<"u"?performance.now():Date.now();return(this.lastLatencyPersistAtMs===null||n-this.lastLatencyPersistAtMs>=1e4)&&(this.persist(),this.lastLatencyPersistAtMs=n),this.smoothedOutputLatencyUs}reset(){this.smoothedOutputLatencyUs=null}};function Sr(e=typeof navigator>"u"?void 0:navigator){if(!e)return 0;let{userAgent:A}=e;return/iPad|iPhone|iPod/i.test(A)||e.platform==="MacIntel"&&(e.maxTouchPoints??0)>1||/Macintosh/i.test(A)&&/AppleWebKit/i.test(A)&&/Safari/i.test(A)&&!/Chrome|Chromium|Edg|OPR|Firefox/i.test(A)?100:0}var GA=8,yo=1,So=Math.min(1,2*yo/GA),Mn=new Float32Array(GA);for(let e=0;e<GA;e++)Mn[e]=(GA-e)/(GA+1)*So;var Mr=.003,ge=.005,Cr=.05,Mo=20,Co=8,wo=4,ko=1.5,_o=2,xo=8,Eo=.5,bo=.1,To=5,Do=.015;function vo(e){return Math.pow(e/100,1.5)}var wr={sync:{resyncAboveMs:200,rate2AboveMs:35,rate1AboveMs:8,samplesBelowMs:8,deadbandBelowMs:1,enableRecorrectionMonitor:!0,immediateDelayCutover:!0},quality:{resyncAboveMs:35,rate2AboveMs:1/0,rate1AboveMs:1/0,samplesBelowMs:35,deadbandBelowMs:1,enableRecorrectionMonitor:!1,immediateDelayCutover:!1},"quality-local":{resyncAboveMs:600,rate2AboveMs:1/0,rate1AboveMs:1/0,samplesBelowMs:0,deadbandBelowMs:5,enableRecorrectionMonitor:!1,immediateDelayCutover:!1}},vt=class{constructor(A){this.audioContext=null,this.gainNode=null,this.streamDestination=null,this.audioBufferQueue=[],this.scheduledSources=[],this.nextPlaybackTime=0,this.nextScheduleTime=0,this.lastScheduledServerTime=0,this.currentSyncErrorMs=0,this.smoothedSyncErrorMs=0,this.resyncCount=0,this.currentPlaybackRate=1,this.currentCorrectionMethod="none",this.lastSamplesAdjusted=0,this._correctionMode="sync",this._lastStatusLogMs=0,this._intervalResyncCount=0,this.scheduleTimeout=null,this.refillTimeout=null,this.queueProcessScheduled=!1,this.clockSource=new fe,this.stateManager=A.stateManager,this.timeFilter=A.timeFilter,this.outputMode=A.outputMode??"direct",this.audioElement=A.audioElement,this.isAndroid=A.isAndroid??!1,this.isCastRuntime=A.isCastRuntime??!1,this.ownsAudioElement=A.ownsAudioElement??!1,this.silentAudioSrc=A.silentAudioSrc,this.syncDelayMs=nA(A.syncDelayMs??0),this.useHardwareVolume=A.useHardwareVolume??!1,this._correctionMode=A.correctionMode??"sync",this.useOutputLatencyCompensation=A.useOutputLatencyCompensation??!0,this.unreportedOutputLatencySec=this.useOutputLatencyCompensation?Sr()/1e3:0,this.correctionThresholds={...wr};let t=A.correctionThresholds;if(t)for(let n of Object.keys(t)){let s=t[n];s&&(this.correctionThresholds[n]={...wr[n],...s})}this.latencyTracker=new me(A.storage??null),this.isCastRuntime&&this.clockSource.disableTimestampPromotion(),this.clockSource.onPromotion(()=>{(this.audioBufferQueue.length>0||this.scheduledSources.length>0)&&this.scheduleQueueProcessing()}),this.recorrectionMonitor=new pe(()=>this.checkRecorrection())}get correctionMode(){return this._correctionMode}setCorrectionMode(A){this._correctionMode=A,this.correctionThresholds[A].enableRecorrectionMonitor?this.recorrectionMonitor.start():this.recorrectionMonitor.stop()}get usesRecorrectionMonitor(){return this.correctionThresholds[this._correctionMode].enableRecorrectionMonitor}get usesImmediateDelayCutover(){return this.correctionThresholds[this._correctionMode].immediateDelayCutover}measurePlayoutLatencySec(){return this.latencyTracker.getSmoothedUs(this.audioContext)/1e6}getTargetScheduledHorizonSec(){if(this.isCastRuntime)return ko;let A=this.timeFilter.error/1e3;return A<_o?Mo:A<=xo?Co:wo}getScheduledAheadSec(A){let t=this.nextScheduleTime;for(let n of this.scheduledSources)n.endTime>t&&(t=n.endTime);return t<=0?0:Math.max(0,t-A)}resetScheduledPlaybackState(A){this.nextPlaybackTime=0,this.nextScheduleTime=0,this.lastScheduledServerTime=0,this.recorrectionMonitor.clearMinScheduleTime(),this.recorrectionMonitor.clearHardResyncCooldown(),this.clockSource.pendingCutover=!1,this.recorrectionMonitor.resetCheckState(),this.resetSyncErrorEma(),this.currentSyncErrorMs=0,this.currentPlaybackRate=1,this.currentCorrectionMethod="none",this.lastSamplesAdjusted=0,this._lastStatusLogMs=0,this._intervalResyncCount=0}pruneExpiredScheduledSources(A){this.scheduledSources.length!==0&&(this.scheduledSources=this.scheduledSources.filter(t=>t.endTime>A),this.scheduledSources.length===0&&this.resetScheduledPlaybackState("no scheduled audio ahead"))}performGuardedCutover(A,t={}){if(!this.audioContext)return;let n=t.incrementResyncCount??!1,s=t.markCooldown??!0,r=performance.now(),i=this.audioContext.currentTime+mr;n&&(this.resyncCount++,this._intervalResyncCount++),this.resetSyncErrorEma(),this.currentCorrectionMethod="resync",this.lastSamplesAdjusted=0,this.currentPlaybackRate=1;let a=this.cutScheduledSources(i);this.recorrectionMonitor.setMinScheduleTime(Math.max(i,a.keptTailEndTimeSec)),this.nextPlaybackTime=0,this.nextScheduleTime=0,this.lastScheduledServerTime=0,this.recorrectionMonitor.resetCheckState(),s&&this.recorrectionMonitor.markRecorrection(r),this.recorrectionMonitor.noteHardResync(r),this.processAudioQueue()}checkRecorrection(){if(!this.usesRecorrectionMonitor){this.recorrectionMonitor.resetCheckState();return}if(!this.audioContext||this.audioContext.state!=="running"){this.recorrectionMonitor.resetCheckState();return}if(!this.stateManager.isPlaying||this.nextPlaybackTime===0||this.lastScheduledServerTime===0){this.recorrectionMonitor.resetCheckState();return}let A=this.measurePlayoutLatencySec(),{audioContextTimeSec:t,audioContextRawTimeSec:n,nowMs:s,nowUs:r}=this.clockSource.getTimingSnapshot(this.audioContext,A);if(this.pruneExpiredScheduledSources(n),this.getScheduledAheadSec(n)<=0){this.recorrectionMonitor.resetCheckState(),this.audioBufferQueue.length>0&&this.processAudioQueue();return}let i=this.useOutputLatencyCompensation?A:0,a=this.computeTargetPlaybackTime(this.lastScheduledServerTime,t,r,i),o=(this.nextPlaybackTime-a)*1e3,h=this.applySyncErrorEma(o);this.recorrectionMonitor.shouldRecorrect(Math.abs(h),o,s)&&this.performGuardedCutover("recorrection",{incrementResyncCount:!0,markCooldown:!0})}getSyncDelayMs(){return this.syncDelayMs}setSyncDelay(A){let t=nA(A),n=t-this.syncDelayMs;this.syncDelayMs=t,!(n===0||!this.usesImmediateDelayCutover)&&(!this.audioContext||this.audioContext.state!=="running"||this.stateManager.isPlaying&&(this.scheduledSources.length===0&&this.audioBufferQueue.length===0&&this.nextPlaybackTime===0||this.performGuardedCutover("delay-change",{incrementResyncCount:!1,markCooldown:!0})))}get syncInfo(){return{clockDriftPercent:this.timeFilter.drift*100,syncErrorMs:this.currentSyncErrorMs,resyncCount:this.resyncCount,outputLatencyMs:this.latencyTracker.getRawUs(this.audioContext)/1e3+this.unreportedOutputLatencySec*1e3,playbackRate:this.currentPlaybackRate,correctionMethod:this.currentCorrectionMethod,samplesAdjusted:this.lastSamplesAdjusted,correctionMode:this._correctionMode}}emitStatusLog(A){if(this._lastStatusLogMs!==0&&A-this._lastStatusLogMs<1e4)return;this._lastStatusLogMs=A;let t;switch(this.currentCorrectionMethod){case"rate":t=`rate@${this.currentPlaybackRate}`;break;case"samples":t=`samples:${this.lastSamplesAdjusted}`;break;default:t=this.currentCorrectionMethod}let n=this.audioBufferQueue.length+this.scheduledSources.length,s=this.audioContext?this.getScheduledAheadSec(this.audioContext.currentTime):0,r;this.clockSource.timestampPromotionDisabled?r="estimated(cast-disabled)":this.clockSource.active==="timestamp"?r=`timestamp(good:${this.clockSource.timestampGoodSamples})`:this.clockSource.lastRejectReason?r=`estimated(reject:"${this.clockSource.lastRejectReason}")`:r="estimated";let i=this.timeFilter.is_synchronized?`synced(err=${(this.timeFilter.error/1e3).toFixed(1)}ms,drift=${this.timeFilter.drift.toFixed(3)},n=${this.timeFilter.count})`:`pending(n=${this.timeFilter.count})`,a=this.latencyTracker.getSmoothedUs(this.audioContext),o=Math.round(a/1e3+this.unreportedOutputLatencySec*1e3);console.log(`Sendspin: sync=${this.smoothedSyncErrorMs>=0?"+":""}${this.smoothedSyncErrorMs.toFixed(1)}ms corr=${t} q=${n}/${s.toFixed(1)}s resyncs=${this._intervalResyncCount} clock=${r} tf=${i} lat=${o}ms mode=${this._correctionMode} ctx=${this.audioContext?.state??"null"} gen=${this.stateManager.streamGeneration}`),this._intervalResyncCount=0}applySyncErrorEma(A){return this.currentSyncErrorMs=A,this.smoothedSyncErrorMs=Cr*A+(1-Cr)*this.smoothedSyncErrorMs,this.smoothedSyncErrorMs}resetSyncErrorEma(){this.smoothedSyncErrorMs=0}copyBuffer(A){if(!this.audioContext)return A;let t=this.audioContext.createBuffer(A.numberOfChannels,A.length,A.sampleRate);for(let n=0;n<A.numberOfChannels;n++)t.getChannelData(n).set(A.getChannelData(n));return t}adjustBufferSamples(A,t){if(!this.audioContext||t===0||A.length<2)return this.copyBuffer(A);let n=A.numberOfChannels,s=A.length,r=A.sampleRate;try{if(t>0){let i=this.audioContext.createBuffer(n,s+1,r);for(let a=0;a<n;a++){let o=A.getChannelData(a),h=i.getChannelData(a);h[0]=o[0];let u=(o[0]+o[1])/2;h[1]=u,h.set(o.subarray(1),2);for(let l=0;l<GA;l++){let c=2+l;if(c>=h.length)break;let f=Mn[l];h[c]=h[c]*(1-f)+u*f}}return i}else{let i=this.audioContext.createBuffer(n,s-1,r);for(let a=0;a<n;a++){let o=A.getChannelData(a),h=i.getChannelData(a);h.set(o.subarray(0,s-2));let u=(o[s-2]+o[s-1])/2;h[s-2]=u;for(let l=0;l<GA;l++){let c=s-3-l;if(c<0)break;let f=Mn[l];h[c]=h[c]*(1-f)+u*f}}return i}}catch(i){return console.error("Sendspin: adjustBufferSamples error:",i),A}}initAudioContext(){if(this.audioContext)return;this.outputMode==="media-element"&&this.ownsAudioElement&&(this.audioElement=document.createElement("audio"),this.audioElement.style.display="none",document.body.appendChild(this.audioElement)),navigator.audioSession&&(navigator.audioSession.type="playback");let A=this.stateManager.currentStreamFormat?.sample_rate||48e3;this.audioContext=new AudioContext({sampleRate:A}),this.gainNode=this.audioContext.createGain();let t=this.audioElement;if(this.outputMode==="direct")this.gainNode.connect(this.audioContext.destination);else{if(!t)throw new Error("Media-element output requires an audio element.");this.isAndroid&&this.silentAudioSrc?(this.gainNode.connect(this.audioContext.destination),t.src=this.silentAudioSrc,t.loop=!0,t.muted=!1,t.volume=1,t.play().catch(n=>{console.warn("Sendspin: Audio autoplay blocked:",n)})):(this.streamDestination=this.audioContext.createMediaStreamDestination(),this.gainNode.connect(this.streamDestination),t.srcObject=this.streamDestination.stream,t.volume=1,t.play().catch(n=>{console.warn("Sendspin: Audio autoplay blocked:",n)}))}this.updateVolume(),this.usesRecorrectionMonitor&&this.recorrectionMonitor.start()}async resumeAudioContext(){this.audioContext&&this.audioContext.state==="suspended"&&(await this.audioContext.resume(),console.log("Sendspin: AudioContext resumed"),this.audioBufferQueue.length>0&&this.scheduleQueueProcessing(),this.usesRecorrectionMonitor&&this.recorrectionMonitor.start())}cutScheduledSources(A){if(!this.audioContext)return{requeuedCount:0,cutCount:0,keptTailEndTimeSec:0};let t=Math.max(A,this.audioContext.currentTime),n=0,s=0,r=0;return this.scheduledSources=this.scheduledSources.filter(i=>{if(i.startTime<t)return r=Math.max(r,i.endTime),!0;try{i.source.onended=null,i.source.stop(t)}catch{}return this.audioBufferQueue.push({buffer:i.buffer,serverTime:i.serverTime,generation:i.generation}),n++,s++,!1}),n>0&&this.audioBufferQueue.sort((i,a)=>i.serverTime-a.serverTime),{requeuedCount:n,cutCount:s,keptTailEndTimeSec:r}}updateVolume(){if(!this.gainNode)return;if(this.useHardwareVolume){this.gainNode.gain.value=1;return}let A=this.stateManager.muted?0:vo(this.stateManager.volume);this.audioContext?this.gainNode.gain.setTargetAtTime(A,this.audioContext.currentTime,Do):this.gainNode.gain.value=A}measureBufferedPlaybackRunwaySec(){if(!this.audioContext)return 0;let A=this.audioContext.currentTime;this.pruneExpiredScheduledSources(A);let t=this.getScheduledAheadSec(A),n=this.audioBufferQueue.reduce((s,r)=>s+r.buffer.duration,0);return Math.max(0,t+n)}cancelScheduledRefill(){this.refillTimeout!==null&&(clearTimeout(this.refillTimeout),this.refillTimeout=null)}getScheduledRefillThresholdSec(A){return Math.max(bo,Math.min(To,A*Eo))}scheduleQueueRefill(A){if(this.cancelScheduledRefill(),!this.audioContext||this.audioContext.state!=="running"||!this.stateManager.isPlaying||this.audioBufferQueue.length===0)return;let t=this.audioContext.currentTime;this.pruneExpiredScheduledSources(t);let n=this.getScheduledAheadSec(t),s=this.getScheduledRefillThresholdSec(A);if(n<=s){this.scheduleQueueProcessing();return}let r=(n-s)*1e3,i=()=>{this.refillTimeout=null,!(!this.audioContext||this.audioContext.state!=="running"||!this.stateManager.isPlaying||this.audioBufferQueue.length===0)&&this.scheduleQueueProcessing()};if(typeof globalThis.setTimeout=="function"){this.refillTimeout=globalThis.setTimeout(i,r);return}if(this.refillTimeout=null,typeof globalThis.queueMicrotask=="function"){globalThis.queueMicrotask(i);return}Promise.resolve().then(i)}scheduleQueueProcessing(){if(this.cancelScheduledRefill(),this.queueProcessScheduled)return;if(this.queueProcessScheduled=!0,typeof globalThis.setTimeout=="function"){this.scheduleTimeout=globalThis.setTimeout(()=>{this.scheduleTimeout=null,this.queueProcessScheduled=!1,this.processAudioQueue()},15);return}let A=()=>{this.queueProcessScheduled=!1,this.processAudioQueue()};typeof globalThis.queueMicrotask=="function"?globalThis.queueMicrotask(A):Promise.resolve().then(A)}handleDecodedChunk(A){if(!this.audioContext||!this.gainNode){console.warn("Sendspin: Received audio chunk but no audio context");return}if(A.generation!==this.stateManager.streamGeneration)return;let t=A.samples.length,n=A.samples[0].length,s=this.audioContext.createBuffer(t,n,A.sampleRate);for(let r=0;r<t;r++)s.getChannelData(r).set(A.samples[r]);this.audioBufferQueue.push({buffer:s,serverTime:A.serverTimeUs,generation:A.generation}),this.scheduleQueueProcessing()}processAudioQueue(){if(this.cancelScheduledRefill(),!this.audioContext||!this.gainNode||this.audioContext.state!=="running")return;let A=this.stateManager.streamGeneration;if(this.audioBufferQueue=this.audioBufferQueue.filter(u=>u.generation===A),this.audioBufferQueue.sort((u,l)=>u.serverTime-l.serverTime),!this.timeFilter.is_synchronized)return;let t=this.measurePlayoutLatencySec(),{audioContextTimeSec:n,audioContextRawTimeSec:s,nowMs:r,nowUs:i}=this.clockSource.getTimingSnapshot(this.audioContext,t);this.pruneExpiredScheduledSources(s);let a=this.useOutputLatencyCompensation?t:0,o=this.syncDelayMs/1e3+this.unreportedOutputLatencySec,h=this.getTargetScheduledHorizonSec();if(this.usesRecorrectionMonitor&&this.recorrectionMonitor.start(),this.clockSource.pendingCutover&&(this.clockSource.pendingCutover=!1,this.scheduledSources.length>0||this.nextPlaybackTime!==0||this.lastScheduledServerTime!==0)){this.performGuardedCutover("delay-change",{incrementResyncCount:!1,markCooldown:!1});return}for(;this.audioBufferQueue.length>0;){let u=this.getScheduledAheadSec(s);if(this.nextPlaybackTime>0&&u>=h)break;let l=this.audioBufferQueue.shift(),c,f,d,g=this.computeTargetPlaybackTime(l.serverTime,n,i,a),m=this.clockSource.active==="timestamp";if(this.nextPlaybackTime===0||this.lastScheduledServerTime===0){this.recorrectionMonitor.armStartupGrace(r,m),c=g,f=c-o;let D=this.recorrectionMonitor.minScheduleTimeSec;if(D!==null){if(f+l.buffer.duration<=D)continue;f=Math.max(f,D),c=f+o}this.recorrectionMonitor.clearMinScheduleTime(),d=1}else{let B=(l.serverTime-this.lastScheduledServerTime)/1e6;if(Math.abs(B)<.1){let M=(this.nextPlaybackTime-g)*1e3,C=this.applySyncErrorEma(M),k=this.correctionThresholds[this._correctionMode],T=this.recorrectionMonitor.canUseHardResync(r,m);if(Math.abs(C)>k.resyncAboveMs&&T)this.recorrectionMonitor.noteHardResync(r),this.resyncCount++,this._intervalResyncCount++,this.resetSyncErrorEma(),this.cutScheduledSources(g-o),c=g,f=c-o,d=1,this.currentCorrectionMethod="resync",this.lastSamplesAdjusted=0;else if(Math.abs(C)>k.resyncAboveMs)c=this.nextPlaybackTime,f=this.nextScheduleTime,d=Number.isFinite(k.rate2AboveMs)?C>0?1+ge:1-ge:1,this.currentCorrectionMethod=d===1?"none":"rate",this.lastSamplesAdjusted=0;else if(Math.abs(C)<k.deadbandBelowMs)c=this.nextPlaybackTime,f=this.nextScheduleTime,d=1,this.currentCorrectionMethod="none",this.lastSamplesAdjusted=0;else if(Math.abs(C)<=k.samplesBelowMs){c=this.nextPlaybackTime,f=this.nextScheduleTime,d=1;let w=C>0?-1:1;l.buffer=this.adjustBufferSamples(l.buffer,w),this.currentCorrectionMethod="samples",this.lastSamplesAdjusted=w}else{c=this.nextPlaybackTime,f=this.nextScheduleTime;let w=Math.abs(C);C>0?d=w>=k.rate2AboveMs?1+ge:w>=k.rate1AboveMs?1+Mr:1:d=w>=k.rate2AboveMs?1-ge:w>=k.rate1AboveMs?1-Mr:1,this.currentCorrectionMethod=d===1?"none":"rate",this.lastSamplesAdjusted=0}}else this.recorrectionMonitor.canUseHardResync(r,m)&&(this.recorrectionMonitor.noteHardResync(r),this.resyncCount++,this._intervalResyncCount++,this.cutScheduledSources(g-o)),c=g,f=c-o,d=1,this.currentCorrectionMethod="resync",this.lastSamplesAdjusted=0}if(this.currentPlaybackRate=d,c<s){this.nextPlaybackTime=0,this.nextScheduleTime=0,this.lastScheduledServerTime=0;continue}let p=Math.max(f,s),S=p+(c-f),y=this.audioContext.createBufferSource();y.buffer=l.buffer,y.playbackRate.value=d,y.connect(this.gainNode),y.start(p);let _=l.buffer.duration/d;this.nextPlaybackTime=S+_,this.nextScheduleTime=p+_,this.lastScheduledServerTime=l.serverTime+l.buffer.duration*1e6;let J={source:y,startTime:p,endTime:p+_,buffer:l.buffer,serverTime:l.serverTime,generation:l.generation};this.scheduledSources.push(J),y.onended=()=>{let D=this.scheduledSources.indexOf(J);D>-1&&this.scheduledSources.splice(D,1),this.scheduledSources.length===0&&(this.resetScheduledPlaybackState("all scheduled audio ended"),this.audioBufferQueue.length>0&&this.processAudioQueue())}}this.scheduleQueueRefill(h),this.emitStatusLog(r)}computeTargetPlaybackTime(A,t,n,s){let i=(this.timeFilter.computeClientTime(A)-n)/1e6;return t+i-s}startAudioElement(){this.outputMode==="media-element"&&this.audioElement?.paused&&this.audioElement.play().catch(A=>{console.warn("Sendspin: Failed to start audio element:",A)})}stopAudioElement(){this.outputMode==="media-element"&&this.audioElement&&!this.audioElement.paused&&this.audioElement.pause()}clearBuffers(){this.recorrectionMonitor.fullReset(),this.cancelScheduledRefill(),this.scheduledSources.forEach(A=>{try{A.source.stop()}catch{}}),this.scheduledSources=[],this.audioBufferQueue=[],this.scheduleTimeout!==null&&(clearTimeout(this.scheduleTimeout),this.scheduleTimeout=null),this.queueProcessScheduled=!1,this.stateManager.resetStreamAnchors(),this.resetScheduledPlaybackState(),this.resyncCount=0,this.latencyTracker.reset(),this.clockSource.reset()}close(){this.clearBuffers(),this.audioContext&&(this.audioContext.close(),this.audioContext=null),this.gainNode=null,this.streamDestination=null,this.outputMode==="media-element"&&this.audioElement&&(this.audioElement.pause(),this.audioElement.srcObject=null,this.audioElement.loop=!1,this.audioElement.removeAttribute("src"),this.audioElement.load(),this.ownsAudioElement&&(this.audioElement.remove(),this.audioElement=void 0))}getAudioContext(){return this.audioContext}};var kr="data:audio/flac;base64,ZkxhQwAAACICQAJAAAAMAADIAfQBcAAHkwCKnZ7FLvzY30lWx+3k6wJCBAAALAwAAABMYXZmNjEuNy4xMDABAAAAFAAAAGVuY29kZXI9TGF2ZjYxLjcuMTAwgQAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//gkDACeQAAAAOc/4kgf///////////////////////B///////////////////////+D//////////////////JJJJJJJJJJCSSSSSSEKSSSRJJJIkkkSSRJJEkiSRJIkiSJIkiRJEiRIkSJEiJEiJESIiRERIiIiIiIiIiIiEREQiIREIhEIhEIhCIQhEIQhDZuP/4JAwBmUIAAGkAAGvmv+jALIAJJJJDJDDDDDCTCSSSSSQyGGQmEwkkkkkkMhkMJhMJJJJJJDIZDCYYSYSSSSSSQyQyGQwwyGEwwwmGGEwwwwwwwyGQySQzCSTDDDDJJJMMMhkwmGQzCYZJMMkkwySYZMMMwySYZhkkySZJhmGTDJkkyTDhkmSYcMkyTJJkmTul7776XS+l6UvpS/ppZZcuXLKU9JZTSWaFnykp55zlJrWtra2ttrdbdbrtt227SZB1cf/4JAwCkEL/78H/79Pmv+jALIAk4UM4cmZkzMnJmZmTmZmclCk5zOc5QoSSEkMJDCSSQmEkhkMhhhhkMkwmQ4YZkKGEJAwJCQhIQkJCQhISQMISEkJCSEMISSEhJISQkkJJCSQwkMJJISSSQkkkhhJJJDCSSSQmEkkMMJJDDCSQwkkMJIYSQwkMJCSTnkpOcnMzJyZMyZJmGTL0pf/5Snz5zzKF1tSO4lu7ulS++l+lLL+X/y5SlKf/LKaafT/9NNl+y6VzL//4JAwDl0L/6vT/6zLmv/TAFIASpSJaUMyZmTkoeShTnPNCynJIZIZJJhMkwyZJmHJk5OEJIQwhJCSGBhIYSGEkMJJDDCSSGSGGGEwwwwwySSSSYZDJJhMhkkmEyGSSSSYSYYTDCTCSSQyEwkhhJIYSGEkJISQmZlChQoUOTMmFDJkmGTDDJf5ZpynnPOZlDmZbtpXvaXsiaX6UsvL8vLKUp05cpTTyylKdP/l9PSllpS99Im3u5MzJyczmcoUwXCb/+CQMBIJC//kY//lw5r/8wASAEyn5SlJhMMhkwySZJmGZMycmZnCGBhISQkhJISSEkhhIZCSSSGEmEkkkMkhkkMkkkkkmEwwwyQySSYSYTDCYYYYTCTCSQyGEwhkJJJCSGEkJJCSEhhCSEyczJyZkyThkwzDIUJMMMLKU/lMp5znM5mZmSJbt7S2RKVN6UvppZeX/l8ssppp0/5eXLL5dOlL9L0tL3e7d8mZmczKFMpKcpymnlkkMmEwySZJgtmz/+CQMBYVCAAe1AAgK5r/0wBSAIcOHChyckkISQkhISQkhJCSQkkhJITCGQwkkhhhhMJJJMJJJJJMJMJhMMMhkkhkmEkmEkwkmEkkkMhhhJJITCQwkkhJISQkkJISE5OZmZmTJwzJMkySTJJJ6af5plPOcoUlCk5nru3d3pUvsidyp02UuXLyyylNNP/y5SylKUspZf9L9L33ukS6nChzJyc5KTzzKfKfDIZDIZJMMhQmTDhmTJmZOQkhDAwhhCSEkhNez//gkDAaMQgAUVAAUk+a/6cAqgAJIYSQwkhhMDJDCTCSGSGQyGGQwyGQySSSSSYTDDIYZIZJIZJJDJIZDCYSSQwwkkMJIYSQkkMDCShTM5mZmThQzJkmTDJhn6U0pp5SmU5QslJQpnbUiRKkS3dIlIm6X0vppcv/p/5eWUpp0/l5cuXL/pSl0pe+lS7syZOHMnMzOc5z55SSSGQyGGQySYYcMOGZJkzMkhISEkDCGBhDCEkhJCSQkkMJDCYGQwkkkkMhMMJOpOv/4JAwHi0IAHAEAHBvmv+XAMoAMJhMJhhhkMhkkkkwkwwmGQwwyGGGGEmEkhkMJJIYSSGEhhIYSGBTmc4UycnChwoZMwyZJMv6U00/KeUlOUKZyXXXbdpEtKl330vTcvTppTSlNNOn+XKUpTp9P6emmy/stKWl31MmZMyZmZnJQpnmaFKSwkkkhkMhhkkkyGYZMkyZMySEhIQkhISQhJIQwhhISSEkhhDDCQyEkkkMJhJJJJJJJDJJJMJJhMJkMMkMkkkmAwBv/+CQMCKZCABy+ABys5r/owCyACYTCTCTCSSSGQwkwMhhJDCSQwhhJCSFCkpOZycmZkyZhwyZJMP6U0pT+U5TnnM8KW3Ert2lfaWl6XpS/TSyy5cuWUpSmn/LllKU00ppSll/Sy0pdlS72hyThzCk5OZzPMplPKSSSGQwwyQzCYZhkmTJMyZkhCSEJISEhJCQkkJDAyEhhIYSSQwkkMMJJJJIZDIYYYYZDIZIZJJJhMJhhhkMkMkkhkkkMhkMJhJJIYSSQwkDxB//4JAwJoUIAFlwAFiLmv/HAGoACSSEkJJCQkklJzMzMwpJwzJhmGYTJJNNKU9C58+c5lJzM6kSJUiW7velpelLppZf/0//lylmmn//Ly/kT6UvpS6XS0t7vMKTJQ5mZQpKSkp55T5JDDIZDJMJkmGYZkmYUKGcKEJCQkhIYEkhJCSEkhhDCSQwkkMMJJIZDCYTCTCSYSYSYYYYZDJJJJJhJhhhhhhkMMMJhJJJJDDCSGGEhhJISSGBhJCQwpmcnMnChgCxl//gkDAqoQgAKbwAKHea//MAEgBDJmGYZJhkkmEymn+fnKZyhSUKTk5O3aRLSpaXS9l0pctPTSmlNNOn+XKWaafT/+nTSy6bLS+9Il7evwpMzM5yUzlMpyn8syGGSSTDJhkyTJkzJmShzJIQkkIYSEkJJDCGEkMJJIYSSGQwkwkkkkhkkkkkkkkwmGGGSGSSSSYSTCYTCTCSSSSSGGEkkhhJITAyEkJJCSEkJISQkzOFJmThw4cMmGYYZJMJhTTpKPwz/+CQMC69C//vx//ua5r/3wA6AE5TKZ5yUnJQ5dSJUqV9pdLSlpsvppSlllyyylKaaf+XKUpSmlNKUpcvSl+lpelS0qRLsOTkzmZzPOeaFn+ZDDIZJJhkmHDJMyZMzJyZCGBhDAwkMDCSEkhJJCSSEwkMhMJJJIZDIYYYYZDIZDJJJJJMJhhhkMhkkhkkkhkkMMMJhJDITCGQkkhJIYGGBhISSEMnJQpMlDhQzJkmTIcMMkwmaUp/KeUlOc5yUKTM0roArk//4JAwMukL/7nn/7jPmv+zAJIAbu96VN6X9KWX/p//5cpSmnT/y+X/+my9KXS6Xe7yZkzMnMzKFJQp5ymUpkkMhhkMhmEwyYZhmHJMzJkhISEkISSEMDCSEkJJCSQmBkJJJDCTAySGGGEwkwkwmEwmGGQyQySSSYSYYTDDIYYYYYYSYSSGQwkkhhJITAwwhhDCSEnkoUnJzCknJMw4ZhkmGfTTSn8p5TPkpnMzddSJUiW93vvstNL8GfP/4JAwNvUL/5VD/5Szmv+XAMoA000ppTTT6cvLKU00/p/6dKUv0pabpdKlockzJmZmShSc5znnyhJIYYYYTDDIZhMkwzJJw4UMJCQkJCGBgYQwMJCSEkJJCSQkkMJIYSSSGEkkkkMhhMJhJhJMJMJMJhMJhMMJhhMJhJMJJIZDDCSSQwkkhhIYSSEkhIYSEkJISHMzMzMmZMmSZMkmGTCZDOXllPymU55zmczk5k3bt3d3ulS96XS6Uqb9lpS030F0O//gkDA60Qv/nEP/nEOa/5cAygDS++9Lfd3t6ldu1IkdszOc5lM+eaSzpLllLKX+l9MmGYZhmSZhyYUKGZkzMnJyZycnJQoUKTmZmczM5KHOFJycnJycmZkzMwock4cOHDMkyYZhmGSTJJMhkwmQySHCSSYSSSSSSGQwkkkhhJJIYSQp88pz55QsymUzQpzlJTnPKFOUKUKeZTnznzymU5TynKUylPlP8pp+XKUD7qf/4JAwPs0T//tr//uX//vHmrU8KcbXVAElMlJTJwzhySSZM4cmThyZOGknIUmckzkmcmZzOSTOTOSTh5OSSZyTM5JmckkzOSSSZnDkkkkyTMmZwzM4ZmZKSkpP+czMn/MydCczJSTzJ/MyfmZPzMn5mT/MyfzmSk/OZmTSf55zmZmSmSkpkpKZkpmcOHDkkOZJJkzM4ckkkmTM4ckkkyZnIckmTJw4ckkyTM4chyZJMmZXP//gkDBDuRAAAvAAAuwAAueamNyOLn/0AHPn+k9JSUlMzMzmcznM5zM5mZmSkpKTSf/+c5mZkpKT/55zMyUmk/+eczMyUlJ0n/z88OHDhmcMzMmZmZMzJmZmZmZmcM4cOHIckOSSSSSSSTJJkmTMycMzhyHJDkkkkkkkySZJkyZmZmZnOc558+fz/n/8/+f+fn58855zmczMzMzJTJSaSk6Tp1DH/+CQMEelA///U5z/4QB///+fnzznOc5zOZmZzMzMzMmZmZmZMzMzMzMkJCQkJCQkhISEkJCSEhJCSEkJISQkkJJCSSEkkJJJCSSSSQkkkkkkkkkkkySSSTJJJkkmSTJJkmSZJkmSZMkyZMkyZMmSZMmTJMn3e73ve+9++/v9/9//////z/8/5/n8/P58/Pz8+fn58/kkkhJJJCSSSEkkkhJL53f/4JAwS4EAAAAXnP+xABJISSSSSQkkkkkkkkhJJJJJJJJJJJJJJJJJJJMkkkkkkkkmSSSSSTJJJJJMkkkkySSSTJJJJMkkkk/+/+//f/7//9////////////z///z//8///P//n//+SSSSSSSSSSSSQkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkmSSSSSSSSSSSSSSST////+BVP//gkDBPnQAAAAOc/VEAP/////9//////////////////z////////+f/////////////////////////////////3///////////////////////////gAhn//gkDBTyQP///+c/y0Af/////5//////////////////////////////////v/////////////////////////////////P////////////////////+T8L/+CQMFfVAAAAA5z9xQB////////////3//////////////////////////////////+f///////////////////////////////////////////////gm0f/4JAwW/EAAAADnP9JAH///////7///////////////////////////////////////////////n///////////////////////////////////////+BEl//gkDBf7AAAAABAL//gkDBjWAAAAADVc//gkDBnRAAAAAEw0//gkDBrYAAAAAMeM//gkDBvfAAAAAL7k//gkDBzKAAAAAFD5//gkDB3NAAAAACmR//gkDB7EAAAAAKIp//gkDB/DAAAAANtB//gkDCB+AAAAAMWl//gkDCF5AAAAALzN//gkDCJwAAAAADd1//gkDCN3AAAAAE4d//gkDCRiAAAAAKAA//gkDCVlAAAAANlo//gkDCZsAAAAAFLQ//gkDCdrAAAAACu4//gkDChGAAAAAA7v//gkDClBAAAAAHeH//gkDCpIAAAAAPw///gkDCtPAAAAAIVX//gkDCxaAAAAAGtK//gkDC1dAAAAABIi//gkDC5UAAAAAJma//gkDC9TAAAAAODy//gkDDAOAAAAANM0//gkDDEJAAAAAKpc//gkDDIAAAAAACHk//gkDDMHAAAAAFiM//gkDDQSAAAAALaR//gkDDUVAAAAAM/5//gkDDYcAAAAAERB//gkDDcbAAAAAD0p//gkDDg2AAAAABh+//gkDDkxAAAAAGEW//gkDDo4AAAAAOqu//gkDDs/AAAAAJPG//gkDDwqAAAAAH3b//gkDD0tAAAAAASz//gkDD4kAAAAAI8L//gkDD8jAAAAAPZj//gkDEBZAAAAAMur//gkDEFeAAAAALLD//gkDEJXAAAAADl7//gkDENQAAAAAEAT//gkDERFAAAAAK4O//gkDEVCAAAAANdm//gkDEZLAAAAAFze//gkDEdMAAAAACW2//gkDEhhAAAAAADh//gkDElmAAAAAHmJ//gkDEpvAAAAAPIx//gkDEtoAAAAAItZ//gkDEx9AAAAAGVE//gkDE16AAAAABws//gkDE5zAAAAAJeU//gkDE90AAAAAO78//gkDFApAAAAAN06//gkDFEuAAAAAKRS//gkDFInAAAAAC/q//gkDFMgAAAAAFaC//gkDFQ1AAAAALif//gkDFUyAAAAAMH3//gkDFY7AAAAAEpP//gkDFc8AAAAADMn//gkDFgRAAAAABZw//gkDFkWAAAAAG8Y//gkDFofAAAAAOSg//gkDFsYAAAAAJ3I//gkDFwNAAAAAHPV//gkDF0KAAAAAAq9//gkDF4DAAAAAIEF//gkDF8EAAAAAPht//gkDGC5AAAAAOaJ//gkDGG+AAAAAJ/h//gkDGK3AAAAABRZ//gkDGOwAAAAAG0x//gkDGSlAAAAAIMs//gkDGWiAAAAAPpE//gkDGarAAAAAHH8//gkDGesAAAAAAiU//gkDGiBAAAAAC3D//gkDGmGAAAAAFSr//gkDGqPAAAAAN8T//gkDGuIAAAAAKZ7//gkDGydAAAAAEhm//gkDG2aAAAAADEO//gkDG6TAAAAALq2//gkDG+UAAAAAMPe//gkDHDJAAAAAPAY//gkDHHOAAAAAIlw//gkDHLHAAAAAALI//gkDHPAAAAAAHug//gkDHTVAAAAAJW9//gkDHXSAAAAAOzV//gkDHbbAAAAAGdt//gkDHfcAAAAAB4F//gkDHjxAAAAADtS//gkDHn2AAAAAEI6//gkDHr/AAAAAMmC//gkDHv4AAAAALDq//gkDHztAAAAAF73//gkDH3qAAAAACef//gkDH7jAAAAAKwn//gkDH/kAAAAANVP//gkDMKAnQAAAAAilv/4JAzCgZoAAAAAW/7/+CQMwoKTAAAAANBG//gkDMKDlAAAAACpLv/4JAzChIEAAAAARzP/+CQMwoWGAAAAAD5b//gkDMKGjwAAAAC14//4JAzCh4gAAAAAzIv/+CQMwoilAAAAAOnc//gkDMKJogAAAACQtP/4JAzCiqsAAAAAGwz/+CQMwousAAAAAGJk//gkDMKMuQAAAACMef/4JAzCjb4AAAAA9RH/+CQMwo63AAAAAH6p//gkDMKPsAAAAAAHwf/4JAzCkO0AAAAANAf/+CQMwpHqAAAAAE1v//gkDMKS4wAAAADG1//4JAzCk+QAAAAAv7//+CQMwpTxAAAAAFGi//gkDMKV9gAAAAAoyv/4JAzClv8AAAAAo3L/+CQMwpf4AAAAANoa//gkDMKY1QAAAAD/Tf/4JAzCmdIAAAAAhiX/+CQMwprbAAAAAA2d//gkDMKb3AAAAAB09f/4JAzCnMkAAAAAmuj/+CQMwp3OAAAAAOOA//gkDMKexwAAAABoOP/4JAzCn8AAAAAAEVD/+CQMwqB9AAAAAA+0//gkDMKhegAAAAB23P/4JAzConMAAAAA/WT/+CQMwqN0AAAAAIQM//gkDMKkYQAAAABqEf/4JAzCpWYAAAAAE3n/+CQMwqZvAAAAAJjB//gkDMKnaAAAAADhqf/4JAzCqEUAAAAAxP7/+CQMwqlCAAAAAL2W//gkDMKqSwAAAAA2Lv/4JAzCq0wAAAAAT0b/+CQMwqxZAAAAAKFb//gkDMKtXgAAAADYM//4JAzCrlcAAAAAU4v/+CQMwq9QAAAAACrj//gkDMKwDQAAAAAZJf/4JAzCsQoAAAAAYE3/+CQMwrIDAAAAAOv1//gkDMKzBAAAAACSnf/4JAzCtBEAAAAAfID/+CQMwrUWAAAAAAXo//gkDMK2HwAAAACOUP/4JAzCtxgAAAAA9zj/+CQMwrg1AAAAANJv//gkDMK5MgAAAACrB//4JAzCujsAAAAAIL//+CQMwrs8AAAAAFnX//gkDMK8KQAAAAC3yv/4JAzCvS4AAAAAzqL/+CQMwr4nAAAAAEUa//gkDMK/IAAAAAA8cv/4JAzDgIgAAAAAJZ7/+CQMw4GPAAAAAFz2//gkDMOChgAAAADXTv/4JAzDg4EAAAAArib/+CQMw4SUAAAAAEA7//gkDMOFkwAAAAA5U//4JAzDhpoAAAAAsuv/+CQMw4edAAAAAMuD//gkDMOIsAAAAADu1P/4JAzDibcAAAAAl7z/+CQMw4q+AAAAABwE//gkDMOLuQAAAABlbP/4JAzDjKwAAAAAi3H/+CQMw42rAAAAAPIZ//gkDMOOogAAAAB5of/4JAzDj6UAAAAAAMn/+CQMw5D4AAAAADMP//gkDMOR/wAAAABKZ//4JAzDkvYAAAAAwd//+CQMw5PxAAAAALi3//gkDMOU5AAAAABWqv/4JAzDleMAAAAAL8L/+CQMw5bqAAAAAKR6//gkDMOX7QAAAADdEv/4JAzDmMAAAAAA+EX/+CQMw5nHAAAAAIEt//gkDMOazgAAAAAKlf/4JAzDm8kAAAAAc/3/+CQMw5zcAAAAAJ3g//gkDMOd2wAAAADkiP/4JAzDntIAAAAAbzD/+CQMw5/VAAAAABZY//gkDMOgaAAAAAAIvP/4JAzDoW8AAAAAcdT/+CQMw6JmAAAAAPps//gkDMOjYQAAAACDBP/4JAzDpHQAAAAAbRn/+CQMw6VzAAAAABRx//gkDMOmegAAAACfyf/4JAzDp30AAAAA5qH/+CQMw6hQAAAAAMP2//gkDMOpVwAAAAC6nv/4JAzDql4AAAAAMSb/+CQMw6tZAAAAAEhO//gkDMOsTAAAAACmU//4JAzDrUsAAAAA3zv/+CQMw65CAAAAAFSD//gkDMOvRQAAAAAt6//4JAzDsBgAAAAAHi3/+CQMw7EfAAAAAGdF//gkDMOyFgAAAADs/f/4JAzDsxEAAAAAlZX/+CQMw7QEAAAAAHuI//gkDMO1AwAAAAAC4P/4JAzDtgoAAAAAiVj/+CQMw7cNAAAAAPAw//gkDMO4IAAAAADVZ//4JAzDuScAAAAArA//+CQMw7ouAAAAACe3//gkDMO7KQAAAABe3//4JAzDvDwAAAAAsML/+CQMw707AAAAAMmq//gkDMO+MgAAAABCEv/4JAzDvzUAAAAAO3r/+CQMxIDjAAAAADCm//gkDMSB5AAAAABJzv/4JAzEgu0AAAAAwnb/+CQMxIPqAAAAALse//gkDMSE/wAAAABVA//4JAzEhfgAAAAALGv/+CQMxIbxAAAAAKfT//gkDMSH9gAAAADeu//4JAzEiNsAAAAA++z/+CQMxIncAAAAAIKE//gkDMSK1QAAAAAJPP/4JAzEi9IAAAAAcFT/+CQMxIzHAAAAAJ5J//gkDMSNwAAAAADnIf/4JAzEjskAAAAAbJn/+CQMxI/OAAAAABXx//gkDMSQkwAAAAAmN//4JAzEkZQAAAAAX1//+CQMxJKdAAAAANTn//gkDMSTmgAAAACtj//4JAzElI8AAAAAQ5L/+CQMxJWIAAAAADr6//gkDMSWgQAAAACxQv/4JAzEl4YAAAAAyCr/+CQMxJirAAAAAO19//gkDMSZrAAAAACUFf/4JAzEmqUAAAAAH63/+CQMxJuiAAAAAGbF//gkDMSctwAAAACI2P/4JAzEnbAAAAAA8bD/+CQMxJ65AAAAAHoI//gkDMSfvgAAAAADYP/4JAzEoAMAAAAAHYT/+CQMxKEEAAAAAGTs//gkDMSiDQAAAADvVP/4JAzEowoAAAAAljz/+CQMxKQfAAAAAHgh//gkDMSlGAAAAAABSf/4JAzEphEAAAAAivH/+CQMxKcWAAAAAPOZ//gkDMSoOwAAAADWzv/4JAzEqTwAAAAAr6b/+CQMxKo1AAAAACQe//gkDMSrMgAAAABddv/4JAzErCcAAAAAs2v/+CQMxK0gAAAAAMoD//gkDMSuKQAAAABBu//4JAzEry4AAAAAONP/+CQMxLBzAAAAAAsV//gkDMSxdAAAAAByff/4JAzEsn0AAAAA+cX/+CQMxLN6AAAAAICt//gkDMS0bwAAAABusP/4JAzEtWgAAAAAF9j/+CQMxLZhAAAAAJxg//gkDMS3ZgAAAADlCP/4JAzEuEsAAAAAwF//+CQMxLlMAAAAALk3//gkDMS6RQAAAAAyj//4JAzEu0IAAAAAS+f/+CQMxLxXAAAAAKX6//gkDMS9UAAAAADckv/4JAzEvlkAAAAAVyr/+CQMxL9eAAAAAC5C//gkDMWA9gAAAAA3rv/4JAzFgfEAAAAATsb/+CQMxYL4AAAAAMV+//gkDMWD/wAAAAC8Fv/4JAzFhOoAAAAAUgv/+CQMxYXtAAAAACtj//gkDMWG5AAAAACg2//4JAzFh+MAAAAA2bP/+CQMxYjOAAAAAPzk//gkDMWJyQAAAACFjP/4JAzFisAAAAAADjT/+CQMxYvHAAAAAHdc//gkDMWM0gAAAACZQf/4JAzFjdUAAAAA4Cn/+CQMxY7cAAAAAGuR//gkDMWP2wAAAAAS+f/4JAzFkIYAAAAAIT//+CQMxZGBAAAAAFhX//gkDMWSiAAAAADT7//4JAzFk48AAAAAqof/+CQMxZSaAAAAAESa//gkDMWVnQAAAAA98v/4JAzFlpQAAAAAtkr/+CQMxZeTAAAAAM8i//gkDMWYvgAAAADqdf/4JAzFmbkAAAAAkx3/+CQMxZqwAAAAABil//gkDMWbtwAAAABhzf/4JAzFnKIAAAAAj9D/+CQMxZ2lAAAAAPa4//gkDMWerAAAAAB9AP/4JAzFn6sAAAAABGj/+CQMxaAWAAAAABqM//gkDMWhEQAAAABj5P/4JAzFohgAAAAA6Fz/+CQMxaMfAAAAAJE0//gkDMWkCgAAAAB/Kf/4JAzFpQ0AAAAABkH/+CQMxaYEAAAAAI35//gkDMWnAwAAAAD0kf/4JAzFqC4AAAAA0cb/+CQMxakpAAAAAKiu//gkDMWqIAAAAAAjFv/4JAzFqycAAAAAWn7/+CQMxawyAAAAALRj//gkDMWtNQAAAADNC//4JAzFrjwAAAAARrP/+CQMxa87AAAAAD/b//gkDMWwZgAAAAAMHf/4JAzFsWEAAAAAdXX/+CQMxbJoAAAAAP7N//gkDMWzbwAAAACHpf/4JAzFtHoAAAAAabj/+CQMxbV9AAAAABDQ//gkDMW2dAAAAACbaP/4JAzFt3MAAAAA4gD/+CQMxbheAAAAAMdX//gkDMW5WQAAAAC+P//4JAzFulAAAAAANYf/+CQMxbtXAAAAAEzv//gkDMW8QgAAAACi8v/4JAzFvUUAAAAA25r/+CQMxb5MAAAAAFAi//gkDMW/SwAAAAApSv/4JAzGgMkAAAAAPrb/+CQMxoHOAAAAAEfe//gkDMaCxwAAAADMZv/4JAzGg8AAAAAAtQ7/+CQMxoTVAAAAAFsT//gkDMaF0gAAAAAie//4JAzGhtsAAAAAqcP/+CQMxofcAAAAANCr//gkDMaI8QAAAAD1/P/4JAzGifYAAAAAjJT/+CQMxor/AAAAAAcs//gkDMaL+AAAAAB+RP/4JAzGjO0AAAAAkFn/+CQMxo3qAAAAAOkx//gkDMaO4wAAAABiif/4JAzGj+QAAAAAG+H/+CQMxpC5AAAAACgn//gkDMaRvgAAAABRT//4JAzGkrcAAAAA2vf/+CQMxpOwAAAAAKOf//gkDMaUpQAAAABNgv/4JAzGlaIAAAAANOr/+CQMxparAAAAAL9S//gkDMaXrAAAAADGOv/4JAzGmIEAAAAA423/+CQMxpmGAAAAAJoF//gkDMaajwAAAAARvf/4JAzGm4gAAAAAaNX/+CQMxpydAAAAAIbI//gkDMadmgAAAAD/oP/4JAzGnpMAAAAAdBj/+CQMxp+UAAAAAA1w//gkDMagKQAAAAATlP/4JAzGoS4AAAAAavz/+CQMxqInAAAAAOFE//gkDMajIAAAAACYLP/4JAzGpDUAAAAAdjH/+CQMxqUyAAAAAA9Z//gkDMamOwAAAACE4f/4JAzGpzwAAAAA/Yn/+CQMxqgRAAAAANje//gkDMapFgAAAAChtv/4JAzGqh8AAAAAKg7/+CQMxqsYAAAAAFNm//gkDMasDQAAAAC9e//4JAzGrQoAAAAAxBP/+CQMxq4DAAAAAE+r//gkDMavBAAAAAA2w//4JAzGsFkAAAAABQX/+CQMxrFeAAAAAHxt//gkDMayVwAAAAD31f/4JAzGs1AAAAAAjr3/+CQMxrRFAAAAAGCg//gkDMa1QgAAAAAZyP/4JAzGtksAAAAAknD/+CQMxrdMAAAAAOsY//gkDMa4YQAAAADOT//4JAzGuWYAAAAAtyf/+CQMxrpvAAAAADyf//gkDMa7aAAAAABF9//4JAzGvH0AAAAAq+r/+CQMxr16AAAAANKC//gkDMa+cwAAAABZOv/4JAzGv3QAAAAAIFL/+CQMx4DcAAAAADm+//gkDMeB2wAAAABA1v/4JAzHgtIAAAAAy27/+CQMx4PVAAAAALIG//gkDMeEwAAAAABcG//4JAzHhccAAAAAJXP/+CQMx4bOAAAAAK7L//gkDMeHyQAAAADXo//4JAzHiOQAAAAA8vT/+CQMx4njAAAAAIuc//gkDMeK6gAAAAAAJP/4JAzHi+0AAAAAeUz/+CQMx4z4AAAAAJdR//gkDMeN/wAAAADuOf/4JAzHjvYAAAAAZYH/+CQMx4/xAAAAABzp//gkDMeQrAAAAAAvL//4JAzHkasAAAAAVkf/+CQMx5KiAAAAAN3///gkDMeTpQAAAACkl//4JAzHlLAAAAAASor/+CQMx5W3AAAAADPi//gkDMeWvgAAAAC4Wv/4JAzHl7kAAAAAwTL/+CQMx5iUAAAAAORl//gkDMeZkwAAAACdDf/4JAzHmpoAAAAAFrX/+CQMx5udAAAAAG/d//gkDMeciAAAAACBwP/4JAzHnY8AAAAA+Kj/+CQMx56GAAAAAHMQ//gkDMefgQAAAAAKeP/4JAzHoDwAAAAAFJz/+CQMx6E7AAAAAG30//gkDMeiMgAAAADmTP/4JAzHozUAAAAAnyT/+CQMx6QgAAAAAHE5//gkDMelJwAAAAAIUf/4JAzHpi4AAAAAg+n/+CQMx6cpAAAAAPqB//gkDMeoBAAAAADf1v/4JAzHqQMAAAAApr7/+CQMx6oKAAAAAC0G//gkDMerDQAAAABUbv/4JAzHrBgAAAAAunP/+CQMx60fAAAAAMMb//gkDMeuFgAAAABIo//4JAzHrxEAAAAAMcv/+CQMx7BMAAAAAAIN//gkDMexSwAAAAB7Zf/4JAzHskIAAAAA8N3/+CQMx7NFAAAAAIm1//gkDMe0UAAAAABnqP/4JAzHtVcAAAAAHsD/+CQMx7ZeAAAAAJV4//gkDMe3WQAAAADsEP/4JAzHuHQAAAAAyUf/+CQMx7lzAAAAALAv//gkDMe6egAAAAA7l//4JAzHu30AAAAAQv//+CQMx7xoAAAAAKzi//gkDMe9bwAAAADViv/4JAzHvmYAAAAAXjL/+CQMx79hAAAAACda//gkDMiAHwAAAAAUxv/4JAzIgRgAAAAAba7/+CQMyIIRAAAAAOYW//gkDMiDFgAAAACffv/4JAzIhAMAAAAAcWP/+CQMyIUEAAAAAAgL//gkDMiGDQAAAACDs//4JAzIhwoAAAAA+tv/+CQMyIgnAAAAAN+M//gkDMiJIAAAAACm5P/4JAzIiikAAAAALVz/+CQMyIsuAAAAAFQ0//gkDMiMOwAAAAC6Kf/4JAzIjTwAAAAAw0H/+CQMyI41AAAAAEj5//gkDMiPMgAAAAAxkf/4JAzIkG8AAAAAAlf/+CQMyJFoAAAAAHs///gkDMiSYQAAAADwh//4JAzIk2YAAAAAie//+CQMyJRzAAAAAGfy//gkDMiVdAAAAAAemv/4JAzIln0AAAAAlSL/+CQMyJd6AAAAAOxK//gkDMiYVwAAAADJHf/4JAzImVAAAAAAsHX/+CQMyJpZAAAAADvN//gkDMibXgAAAABCpf/4JAzInEsAAAAArLj/+CQMyJ1MAAAAANXQ//gkDMieRQAAAABeaP/4JAzIn0IAAAAAJwD/+CQMyKD/AAAAADnk//gkDMih+AAAAABAjP/4JAzIovEAAAAAyzT/+CQMyKP2AAAAALJc//gkDMik4wAAAABcQf/4JAzIpeQAAAAAJSn/+CQMyKbtAAAAAK6R//gkDMin6gAAAADX+f/4JAzIqMcAAAAA8q7/+CQMyKnAAAAAAIvG//gkDMiqyQAAAAAAfv/4JAzIq84AAAAAeRb/+CQMyKzbAAAAAJcL//gkDMit3AAAAADuY//4JAzIrtUAAAAAZdv/+CQMyK/SAAAAAByz//gkDMiwjwAAAAAvdf/4JAzIsYgAAAAAVh3/+CQMyLKBAAAAAN2l//gkDMizhgAAAACkzf/4JAzItJMAAAAAStD/+CQMyLWUAAAAADO4//gkDMi2nQAAAAC4AP/4JAzIt5oAAAAAwWj/+CQMyLi3AAAAAOQ///gkDMi5sAAAAACdV//4JAzIurkAAAAAFu//+CQMyLu+AAAAAG+H//gkDMi8qwAAAACBmv/4JAzIvawAAAAA+PL/+CQMyL6lAAAAAHNK//gkDMi/ogAAAAAKIv/4JAzJgAoAAAAAE87/+CQMyYENAAAAAGqm//gkDMmCBAAAAADhHv/4JAzJgwMAAAAAmHb/+CQMyYQWAAAAAHZr//gkDMmFEQAAAAAPA//4JAzJhhgAAAAAhLv/+CQMyYcfAAAAAP3T//gkDMmIMgAAAADYhP/4JAzJiTUAAAAAoez/+CQMyYo8AAAAACpU//gkDMmLOwAAAABTPP/4JAzJjC4AAAAAvSH/+CQMyY0pAAAAAMRJ//gkDMmOIAAAAABP8f/4JAzJjycAAAAANpn/+CQMyZB6AAAAAAVf//gkDMmRfQAAAAB8N//4JAzJknQAAAAA94//+CQMyZNzAAAAAI7n//gkDMmUZgAAAABg+v/4JAzJlWEAAAAAGZL/+CQMyZZoAAAAAJIq//gkDMmXbwAAAADrQv/4JAzJmEIAAAAAzhX/+CQMyZlFAAAAALd9//gkDMmaTAAAAAA8xf/4JAzJm0sAAAAARa3/+CQMyZxeAAAAAKuw//gkDMmdWQAAAADS2P/4JAzJnlAAAAAAWWD/+CQMyZ9XAAAAACAI//gkDMmg6gAAAAA+7P/4JAzJoe0AAAAAR4T/+CQMyaLkAAAAAMw8//gkDMmj4wAAAAC1VP/4JAzJpPYAAAAAW0n/+CQMyaXxAAAAACIh//gkDMmm+AAAAACpmf/4JAzJp/8AAAAA0PH/+CQMyajSAAAAAPWm//gkDMmp1QAAAACMzv/4JAzJqtwAAAAAB3b/+CQMyavbAAAAAH4e//gkDMmszgAAAACQA//4JAzJrckAAAAA6Wv/+CQMya7AAAAAAGLT//gkDMmvxwAAAAAbu//4JAzJsJoAAAAAKH3/+CQMybGdAAAAAFEV//gkDMmylAAAAADarf/4JAzJs5MAAAAAo8X/+CQMybSGAAAAAE3Y//gkDMm1gQAAAAA0sP/4JAzJtogAAAAAvwj/+CQMybePAAAAAMZg//gkDMm4ogAAAADjN//4JAzJuaUAAAAAml//+CQMybqsAAAAABHn//gkDMm7qwAAAABoj//4JAzJvL4AAAAAhpL/+CQMyb25AAAAAP/6//gkDMm+sAAAAAB0Qv/4JAzJv7cAAAAADSr/+CQMyoA1AAAAABrW//gkDMqBMgAAAABjvv/4JAzKgjsAAAAA6Ab/+CQMyoM8AAAAAJFu//gkDMqEKQAAAAB/c//4JAzKhS4AAAAABhv/+CQMyoYnAAAAAI2j//gkDMqHIAAAAAD0y//4JAzKiA0AAAAA0Zz/+CQMyokKAAAAAKj0//gkDMqKAwAAAAAjTP/4JAzKiwQAAAAAWiT/+CQMyowRAAAAALQ5//gkDMqNFgAAAADNUf/4JAzKjh8AAAAARun/+CQMyo8YAAAAAD+B//gkDMqQRQAAAAAMR//4JAzKkUIAAAAAdS//+CQMypJLAAAAAP6X//gkDMqTTAAAAACH///4JAzKlFkAAAAAaeL/+CQMypVeAAAAABCK//gkDMqWVwAAAACbMv/4JAzKl1AAAAAA4lr/+CQMyph9AAAAAMcN//gkDMqZegAAAAC+Zf/4JAzKmnMAAAAANd3/+CQMypt0AAAAAEy1//gkDMqcYQAAAACiqP/4JAzKnWYAAAAA28D/+CQMyp5vAAAAAFB4//gkDMqfaAAAAAApEP/4JAzKoNUAAAAAN/T/+CQMyqHSAAAAAE6c//gkDMqi2wAAAADFJP/4JAzKo9wAAAAAvEz/+CQMyqTJAAAAAFJR//gkDMqlzgAAAAArOf/4JAzKpscAAAAAoIH/+CQMyqfAAAAAANnp//gkDMqo7QAAAAD8vv/4JAzKqeoAAAAAhdb/+CQMyqrjAAAAAA5u//gkDMqr5AAAAAB3Bv/4JAzKrPEAAAAAmRv/+CQMyq32AAAAAOBz//gkDMqu/wAAAABry//4JAzKr/gAAAAAEqP/+CQMyrClAAAAACFl//gkDMqxogAAAABYDf/4JAzKsqsAAAAA07X/+CQMyrOsAAAAAKrd//gkDMq0uQAAAABEwP/4JAzKtb4AAAAAPaj/+CQMyra3AAAAALYQ//gkDMq3sAAAAADPeP/4JAzKuJ0AAAAA6i//+CQMyrmaAAAAAJNH//gkDMq6kwAAAAAY///4JAzKu5QAAAAAYZf/+CQMyryBAAAAAI+K//gkDMq9hgAAAAD24v/4JAzKvo8AAAAAfVr/+CQMyr+IAAAAAAQy//gkDMuAIAAAAAAd3v/4JAzLgScAAAAAZLb/+CQMy4IuAAAAAO8O//gkDMuDKQAAAACWZv/4JAzLhDwAAAAAeHv/+CQMy4U7AAAAAAET//gkDMuGMgAAAACKq//4JAzLhzUAAAAA88P/+CQMy4gYAAAAANaU//gkDMuJHwAAAACv/P/4JAzLihYAAAAAJET/+CQMy4sRAAAAAF0s//gkDMuMBAAAAACzMf/4JAzLjQMAAAAAyln/+CQMy44KAAAAAEHh//gkDMuPDQAAAAA4if/4JAzLkFAAAAAAC0//+CQMy5FXAAAAAHIn//gkDMuSXgAAAAD5n//4JAzLk1kAAAAAgPf/+CQMy5RMAAAAAG7q//gkDMuVSwAAAAAXgv/4JAzLlkIAAAAAnDr/+CQMy5dFAAAAAOVS//gkDMuYaAAAAADABf/4JAzLmW8AAAAAuW3/+CQMy5pmAAAAADLV//gkDMubYQAAAABLvf/4JAzLnHQAAAAApaD/+CQMy51zAAAAANzI//gkDMueegAAAABXcP/4JAzLn30AAAAALhj/+CQMy6DAAAAAADD8//gkDMuhxwAAAABJlP/4JAzLos4AAAAAwiz/+CQMy6PJAAAAALtE//gkDMuk3AAAAABVWf/4JAzLpdsAAAAALDH/+CQMy6bSAAAAAKeJ//gkDMun1QAAAADe4f/4JAzLqPgAAAAA+7b/+CQMy6n/AAAAAILe//gkDMuq9gAAAAAJZv/4JAzLq/EAAAAAcA7/+CQMy6zkAAAAAJ4T//gkDMut4wAAAADne//4JAzLruoAAAAAbMP/+CQMy6/tAAAAABWr//gkDMuwsAAAAAAmbf/4JAzLsbcAAAAAXwX/+CQMy7K+AAAAANS9//gkDMuzuQAAAACt1f/4JAzLtKwAAAAAQ8j/+CQMy7WrAAAAADqg//gkDMu2ogAAAACxGP/4JAzLt6UAAAAAyHD/+CQMy7iIAAAAAO0n//gkDMu5jwAAAACUT//4JAzLuoYAAAAAH/f/+CQMy7uBAAAAAGaf//gkDMu8lAAAAACIgv/4JAzLvZMAAAAA8er/+CQMy76aAAAAAHpS//gkDMu/nQAAAAADOv/4JAzMgEsAAAAACOb/+CQMzIFMAAAAAHGO//gkDMyCRQAAAAD6Nv/4JAzMg0IAAAAAg17/+CQMzIRXAAAAAG1D//gkDMyFUAAAAAAUK//4JAzMhlkAAAAAn5P/+CQMzIdeAAAAAOb7//gkDMyIcwAAAADDrP/4JAzMiXQAAAAAusT/+CQMzIp9AAAAADF8//gkDMyLegAAAABIFP/4JAzMjG8AAAAApgn/+CQMzI1oAAAAAN9h//gkDMyOYQAAAABU2f/4JAzMj2YAAAAALbH/+CQMzJA7AAAAAB53//gkDMyRPAAAAABnH//4JAzMkjUAAAAA7Kf/+CQMzJMyAAAAAJXP//gkDMyUJwAAAAB70v/4JAzMlSAAAAAAArr/+CQMzJYpAAAAAIkC//gkDMyXLgAAAADwav/4JAzMmAMAAAAA1T3/+CQMzJkEAAAAAKxV//gkDMyaDQAAAAAn7f/4JAzMmwoAAAAAXoX/+CQMzJwfAAAAALCY//gkDMydGAAAAADJ8P/4JAzMnhEAAAAAQkj/+CQMzJ8WAAAAADsg//gkDMygqwAAAAAlxP/4JAzMoawAAAAAXKz/+CQMzKKlAAAAANcU//gkDMyjogAAAACufP/4JAzMpLcAAAAAQGH/+CQMzKWwAAAAADkJ//gkDMymuQAAAACysf/4JAzMp74AAAAAy9n/+CQMzKiTAAAAAO6O//gkDMyplAAAAACX5v/4JAzMqp0AAAAAHF7/+CQMzKuaAAAAAGU2//gkDMysjwAAAACLK//4JAzMrYgAAAAA8kP/+CQMzK6BAAAAAHn7//gkDMyvhgAAAAAAk//4JAzMsNsAAAAAM1X/+CQMzLHcAAAAAEo9//gkDMyy1QAAAADBhf/4JAzMs9IAAAAAuO3/+CQMzLTHAAAAAFbw//gkDMy1wAAAAAAvmP/4JAzMtskAAAAApCD/+CQMzLfOAAAAAN1I//gkDMy44wAAAAD4H//4JAzMueQAAAAAgXf/+CQMzLrtAAAAAArP//gkDMy76gAAAABzp//4JAzMvP8AAAAAnbr/+CQMzL34AAAAAOTS//gkDMy+8QAAAABvav/4JAzMv/YAAAAAFgL/+CQMzYBeAAAAAA/u//gkDM2BWQAAAAB2hv/4JAzNglAAAAAA/T7/+CQMzYNXAAAAAIRW//gkDM2EQgAAAABqS//4JAzNhUUAAAAAEyP/+CQMzYZMAAAAAJib//gkDM2HSwAAAADh8//4JAzNiGYAAAAAxKT/+CQMzYlhAAAAAL3M//gkDM2KaAAAAAA2dP/4JAzNi28AAAAATxz/+CQMzYx6AAAAAKEB//gkDM2NfQAAAADYaf/4JAzNjnQAAAAAU9H/+CQMzY9zAAAAACq5//gkDM2QLgAAAAAZf//4JAzNkSkAAAAAYBf/+CQMzZIgAAAAAOuv//gkDM2TJwAAAACSx//4JAzNlDIAAAAAfNr/+CQMzZU1AAAAAAWy//gkDM2WPAAAAACOCv/4JAzNlzsAAAAA92L/+CQMzZgWAAAAANI1//gkDM2ZEQAAAACrXf/4JAzNmhgAAAAAIOX/+CQMzZsfAAAAAFmN//gkDM2cCgAAAAC3kP/4dAzNnQG/IAAAAACJcA==";var _r;(function(e){e.CLIENT_HELLO="client/hello",e.SERVER_HELLO="server/hello",e.CLIENT_TIME="client/time",e.SERVER_TIME="server/time",e.CLIENT_STATE="client/state",e.SERVER_STATE="server/state",e.CLIENT_COMMAND="client/command",e.CLIENT_GOODBYE="client/goodbye",e.SERVER_COMMAND="server/command",e.STREAM_START="stream/start",e.STREAM_CLEAR="stream/clear",e.STREAM_REQUEST_FORMAT="stream/request-format",e.STREAM_END="stream/end",e.GROUP_UPDATE="group/update",e.CLIENT_INIT="client/init",e.SERVER_INIT="server/init",e.NOISE_HANDSHAKE="noise/handshake",e.SERVER_ACTIVATE="server/activate",e.CLIENT_PAIR_PENDING="client/pair-pending",e.CLIENT_PAIR_INIT="client/pair-init",e.SERVER_PAIR_INIT="server/pair-init",e.SERVER_PAIR_AUTH="server/pair-auth",e.CLIENT_PAIR_AUTH="client/pair-auth",e.SERVER_PAIR_CONFIRM="server/pair-confirm",e.CLIENT_PAIR_CONFIRM="client/pair-confirm",e.CLIENT_PAIR_FINALIZE="client/pair-finalize",e.SERVER_PAIR_FINALIZE="server/pair-finalize",e.PAIR_ABORT="pair/abort",e.SERVER_UNPAIR="server/unpair"})(_r||(_r={}));function xr(){return typeof navigator>"u"?!1:/Android/i.test(navigator.userAgent)}function Io(){return typeof navigator>"u"?!1:/iPad|iPhone|iPod/.test(navigator.userAgent)||navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1}function Jo(){return xr()||Io()}function Bo(){return typeof navigator>"u"?!1:/CrKey/i.test(navigator.userAgent)}var Po=250,ye=class{constructor(A){this.ownsAudioElement=!1,this.disconnectPlaybackResetTimeout=null,this.suppressDisconnectPlaybackReset=!1;let t=xr(),n=Bo(),s=Jo(),r=A.audioElement||s?"media-element":"direct";if(this.ownsAudioElement=r==="media-element"&&!A.audioElement,this.ownsAudioElement&&typeof document>"u")throw new Error("SendspinPlayer requires a DOM document to use media-element output without a provided audioElement.");let i=null;A.storage!==void 0?i=A.storage:typeof localStorage<"u"&&(i=localStorage),this.core=new Dt({baseUrl:A.baseUrl,clientName:A.clientName,productName:A.productName,webSocket:A.webSocket,codecs:A.codecs,bufferCapacity:A.bufferCapacity,syncDelay:A.syncDelay,defaultSyncDelay:A.defaultSyncDelay,storage:i,requiredLeadTimeMs:A.requiredLeadTimeMs,minBufferMs:A.minBufferMs,useHardwareVolume:A.useHardwareVolume,onVolumeCommand:A.onVolumeCommand,onDelayCommand:A.onDelayCommand,getExternalVolume:A.getExternalVolume,reconnect:A.reconnect,onStateChange:A.onStateChange,onPairing:A.onPairing,onPairingPin:A.onPairingPin,pinOutChannels:A.pinOutChannels,minPinLength:A.minPinLength,staticPin:A.staticPin,staticPinLocations:A.staticPinLocations,pairingPskLocations:A.pairingPskLocations,suite:A.suite,unpairedAccess:A.unpairedAccess,longTermPsks:A.longTermPsks});let a=this.core.getSyncDelayMs();this.scheduler=new vt({stateManager:this.core._stateManager,timeFilter:this.core._timeFilter,outputMode:r,audioElement:A.audioElement,isAndroid:t,isCastRuntime:n,ownsAudioElement:this.ownsAudioElement,silentAudioSrc:t?kr:void 0,syncDelayMs:a,useHardwareVolume:A.useHardwareVolume??!1,correctionMode:A.correctionMode??"sync",storage:i,useOutputLatencyCompensation:A.useOutputLatencyCompensation??!0,correctionThresholds:A.correctionThresholds}),this.core.onAudioData=o=>{this.scheduler.handleDecodedChunk(o)},this.core.onStreamStart=(o,h)=>{this.scheduler.initAudioContext(),this.scheduler.resumeAudioContext().catch(u=>{console.warn("Sendspin: Failed to resume AudioContext:",u)}),h||this.scheduler.clearBuffers(),this.scheduler.startAudioElement()},this.core.onStreamClear=()=>{this.scheduler.clearBuffers()},this.core.onStreamEnd=()=>{this.scheduler.clearBuffers(),this.scheduler.stopAudioElement()},this.core.onVolumeUpdate=()=>{this.scheduler.updateVolume()},this.core.onSyncDelayChange=o=>{this.scheduler.setSyncDelay(o)},this.core.onConnectionOpen=()=>{this.cancelPendingDisconnectPlaybackReset()},this.core.onConnectionClose=()=>{this.suppressDisconnectPlaybackReset||this.scheduleDisconnectPlaybackReset()}}cancelPendingDisconnectPlaybackReset(){this.disconnectPlaybackResetTimeout!==null&&(clearTimeout(this.disconnectPlaybackResetTimeout),this.disconnectPlaybackResetTimeout=null)}resetPlaybackStateAfterDisconnect(){this.disconnectPlaybackResetTimeout=null,!this.core.isConnected&&(this.scheduler.clearBuffers(),this.core.resetPlaybackState(),this.scheduler.stopAudioElement(),typeof navigator<"u"&&navigator.mediaSession&&(navigator.mediaSession.playbackState="paused"))}scheduleDisconnectPlaybackReset(){this.cancelPendingDisconnectPlaybackReset();let A=this.scheduler.measureBufferedPlaybackRunwaySec();if(A<=0){this.resetPlaybackStateAfterDisconnect();return}this.disconnectPlaybackResetTimeout=setTimeout(()=>{this.resetPlaybackStateAfterDisconnect()},A*1e3+Po)}async unlock(){this.scheduler.initAudioContext(),await this.scheduler.resumeAudioContext()}async connect(){return this.suppressDisconnectPlaybackReset=!1,this.core.connect()}disconnect(A="restart"){this.cancelPendingDisconnectPlaybackReset(),this.suppressDisconnectPlaybackReset=!0,this.core.disconnect(A),this.scheduler.close(),typeof navigator<"u"&&navigator.mediaSession&&(navigator.mediaSession.playbackState="none",navigator.mediaSession.metadata=null)}setVolume(A){this.core.setVolume(A)}setMuted(A){this.core.setMuted(A)}setSyncDelay(A){this.core.setSyncDelay(A)}setRequiredLeadTimeMs(A){this.core.setRequiredLeadTimeMs(A)}setMinBufferMs(A){this.core.setMinBufferMs(A)}setCorrectionMode(A){this.scheduler.setCorrectionMode(A)}sendCommand(A,t){this.core.sendCommand(A,t)}get isPlaying(){return this.core.isPlaying}get volume(){return this.core.volume}get muted(){return this.core.muted}get playerState(){return this.core.playerState}get currentFormat(){return this.core.currentFormat}get isConnected(){return this.core.isConnected}get clientId(){return this.core.clientId}get pairingPsk(){return this.core.pairingPsk}get pairingToken(){return this.core.pairingToken}rotatePairingPsk(){return this.core.rotatePairingPsk()}openPairingWindow(){this.core.openPairingWindow()}cancelPairing(){this.core.cancelPairing()}isDynamicPinEscalated(){return this.core.isDynamicPinEscalated()}get correctionMode(){return this.scheduler.correctionMode}get timeSyncInfo(){return this.core.timeSyncInfo}getCurrentServerTimeUs(){return this.core.getCurrentServerTimeUs()}get trackProgress(){return this.core.trackProgress}get syncInfo(){return this.scheduler.syncInfo}};return Br(Ro);})();
   window.__crowaiSendspinLib = __CrowSendspinLib;
   return __CrowSendspinLib;
