@@ -4094,7 +4094,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         _maEntities.forEach(eid => {
           const st = hass.states[eid]?.state;
           if (st === 'playing' || st === 'buffering') {
-            this._hass.callService('media_player', 'media_stop', { entity_id: eid }).catch(() => {});
+            this._call('media_player', 'media_stop', { entity_id: eid }).catch(() => {});
           }
         });
         // Release manual selection lock
@@ -4230,7 +4230,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           // If switching from MA → non-MA (e.g. Apple TV resumed), stop the MA speaker
           // so it doesn't linger in a stale playing state
           if (_prevIsMA && _nextIsNonMA) {
-            this._hass.callService('media_player', 'media_stop', { entity_id: _prevEntity }).catch(() => {});
+            this._call('media_player', 'media_stop', { entity_id: _prevEntity }).catch(() => {});
           }
           // Hide iTunes badges immediately so they don't carry over from the
           // previous entity while the new entity's artwork is still loading.
@@ -4268,10 +4268,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       if (wasPlaying && isNowIdle && !newTitle && this._maEntityIds?.has(this._entity)) {
         const _attrs = stateObj.attributes || {};
         if (_attrs.shuffle) {
-          this._hass.callService('media_player', 'shuffle_set', { entity_id: this._entity, shuffle: false }).catch(() => {});
+          this._call('media_player', 'shuffle_set', { entity_id: this._entity, shuffle: false }).catch(() => {});
         }
         if (_attrs.repeat && _attrs.repeat !== 'off') {
-          this._hass.callService('media_player', 'repeat_set', { entity_id: this._entity, repeat: 'off' }).catch(() => {});
+          this._call('media_player', 'repeat_set', { entity_id: this._entity, repeat: 'off' }).catch(() => {});
         }
       }
       if (wasNotPlaying && isNowPlaying) {
@@ -4867,7 +4867,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         const isAlexa = id.includes('alexa') || name.includes('alexa') ||
                         (state.attributes?.platform || '').toLowerCase().includes('alexa');
         if (!isAlexa) return;
-        this._hass.callService('homeassistant', 'update_entity', { entity_id: this._entity }).catch(() => {});
+        this._call('homeassistant', 'update_entity', { entity_id: this._entity }).catch(() => {});
       } catch (_) {}
     }, 10000);
 
@@ -4896,7 +4896,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           const isAlexa = id.includes('alexa') || name.includes('alexa') ||
                           (state.attributes?.platform || '').toLowerCase().includes('alexa');
           if (!isAlexa) return;
-          this._hass.callService('homeassistant', 'update_entity', { entity_id: this._entity }).catch(() => {});
+          this._call('homeassistant', 'update_entity', { entity_id: this._entity }).catch(() => {});
         } catch (_) {}
       }, 10000);
         // Force Safari to repaint backdrop-filter elements (blur disappears after app reopen)
@@ -5065,7 +5065,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       return sawPlaying && (st === 'paused' || st === 'idle' || st === 'off');
     };
     const wait = (ms) => new Promise(r => { this._ssWatchTimer = setTimeout(r, ms); });
-    const svc = (name, data = {}) => this._hass.callService('media_player', name, { entity_id: eid, ...data }).catch(() => {});
+    const svc = (name, data = {}) => this._call('media_player', name, { entity_id: eid, ...data }).catch(() => {});
     (async () => {
       await wait(3500);
       if (!live() || pausedOnPurpose() || m.isSounding()) return;
@@ -5754,7 +5754,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         if (cur) cur.textContent = this.formatTime(pos);
       }
     }
-    // Sync lyric line highlight
+    // Sync lyric line highlight — and hand the smooth scroll the exact position the progress bar shows
+    // (including a seek HA hasn't caught up with yet), so the two never disagree
+    if (pos !== undefined) { this._lyLivePos = pos; this._lyLiveAt = performance.now(); }
     if (this._lyricsOpen && this._lyricLines && pos !== undefined) {
       this._syncLyricHighlight(pos);
     }
@@ -6226,7 +6228,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         e.stopPropagation();
         const name = b.dataset.app;
         this._atvAppUsed(name);
-        this._hass.callService('media_player', 'select_source', { entity_id: this._entity, source: name })
+        this._call('media_player', 'select_source', { entity_id: this._entity, source: name })
           .then(() => this._showToast('Opening ' + name, 1600))
           .catch(() => this._showToast('The Apple TV couldn\u2019t open ' + name, 2600));
         close();
@@ -6290,34 +6292,73 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       const yt = (vids?.results || []).filter(v => v.site === 'YouTube' && v.key);
       const pick = yt.find(v => v.type === 'Trailer' && v.official) || yt.find(v => v.type === 'Trailer') || yt.find(v => v.type === 'Teaser') || yt[0];
       if (!pick) throw new Error('none');
-      await this._hass.callService('media_player', 'play_media', { entity_id: target, media_content_type: 'url', media_content_id: 'youtube://watch/' + pick.key });
+      await this._call('media_player', 'play_media', { entity_id: target, media_content_type: 'url', media_content_id: 'youtube://watch/' + pick.key });
       this._showToast('Playing the trailer on ' + (this._hass.states[target]?.attributes?.friendly_name || 'the Apple TV'), 2500);
     } catch (e) {
       this._showToast(String(e?.message) === 'none' ? 'No trailer found for this title' : 'The Apple TV couldn\u2019t open the trailer', 3000);
     }
   }
 
-  // Wake: turns the remote entity back on first (it can switch itself off), wakes the Apple TV,
-  // and tells Home Assistant it's on. Sleep: suspends it and tells Home Assistant it's off.
-  async _atvWake() {
-    const rem = this._entity.replace('media_player.', 'remote.');
-    try { if (this._hass.states[rem]?.state === 'off') await this._hass.callService('remote', 'turn_on', { entity_id: rem }); } catch (_) {}
-    this.sendRemoteCommand('wakeup');
-    setTimeout(() => { this._hass.callService('media_player', 'turn_on', { entity_id: this._entity }).catch(() => {}); }, 800);
-    this._showToast('Waking the Apple TV\u2026', 1800);
-  }
-  _atvSleep() {
-    this.sendRemoteCommand('suspend');
-    setTimeout(() => { this._hass.callService('media_player', 'turn_off', { entity_id: this._entity }).catch(() => {}); }, 800);
-    this._showToast('Putting the Apple TV to sleep\u2026', 1800);
+  // Every Home Assistant action the card runs goes through here. Home Assistant's own "Failed to perform
+  // the action" bar is switched off (notifyOnError: false), so it never pops up over the dashboard. The
+  // promise still rejects, so callers that handle a failure themselves carry on as before, and `fail` (a
+  // message) shows the failure in the card's own toast. The same message isn't repeated within 4 seconds,
+  // so a run of failed button presses gives one toast, not a stack of them.
+  // Some Apple TV commands report a failure even though they worked (pyatv's "Command _hidC failed" after
+  // wake / sleep), so those are never toasted.
+  _call(domain, service, data = {}, target, { fail = '' } = {}) {
+    const h = this._hass;
+    if (!h) return Promise.reject(new Error('Not connected to Home Assistant'));
+    const p = Promise.resolve().then(() => h.callService(domain, service, data, target, false));
+    if (fail) p.catch(err => {
+      const msg = String(err?.message || err?.error?.message || err || '');
+      if (/_?hidC\b/i.test(msg)) return;
+      const now = Date.now();
+      if (this._callFailMsg === fail && now - (this._callFailAt || 0) < 4000) return;
+      this._callFailAt = now; this._callFailMsg = fail;
+      this._showToast(fail, 3000);
+    });
+    return p;
   }
 
-  sendRemoteCommand(command) {
+  // Wake: turns the remote entity back on first (it can switch itself off), wakes the Apple TV,
+  // and tells Home Assistant it's on. Sleep: suspends it and tells Home Assistant it's off.
+  // The Apple TV often reports these as failed when they worked, so the errors are ignored and the
+  // card checks a few seconds later whether it really woke up / went to sleep instead.
+  async _atvWake() {
+    const rem = this._entity.replace('media_player.', 'remote.');
+    try { if (this._hass.states[rem]?.state === 'off') await this._call('remote', 'turn_on', { entity_id: rem }); } catch (_) {}
+    this.sendRemoteCommand('wakeup', '');
+    setTimeout(() => { this._call('media_player', 'turn_on', { entity_id: this._entity }).catch(() => {}); }, 800);
+    this._showToast('Waking the Apple TV\u2026', 1800);
+    this._atvCheckPower(true);
+  }
+  _atvSleep() {
+    this.sendRemoteCommand('suspend', '');
+    setTimeout(() => { this._call('media_player', 'turn_off', { entity_id: this._entity }).catch(() => {}); }, 800);
+    this._showToast('Putting the Apple TV to sleep\u2026', 1800);
+    this._atvCheckPower(false);
+  }
+  _atvCheckPower(wantOn) {
+    clearTimeout(this._atvPowerCheck);
+    const eid = this._entity;
+    this._atvPowerCheck = setTimeout(() => {
+      if (this._entity !== eid) return;   // switched to another player meanwhile
+      const st = this._hass?.states[eid]?.state;
+      if (!st) return;
+      if (st === 'unavailable') { this._showToast('Can\u2019t reach the Apple TV. Check it\u2019s plugged in and on the network.', 3500); return; }
+      const on = !['off', 'standby'].includes(st);
+      if (on !== wantOn) this._showToast(wantOn ? 'The Apple TV didn\u2019t wake up. Try again.' : 'The Apple TV is still on. Try again.', 3000);
+    }, 8000);
+  }
+
+  // fail: the toast if it goes wrong ('' for none)
+  sendRemoteCommand(command, fail = 'The Apple TV didn\u2019t respond') {
     const remoteEntityId = this._entity.replace('media_player.', 'remote.');
-    this._hass.callService('remote', 'send_command', {
+    this._call('remote', 'send_command', {
       entity_id: remoteEntityId,
       command: command
-    }).catch(() => {});
+    }, undefined, { fail }).catch(() => {});
   }
 
   _applyRemoteButtonsPosition() {
@@ -6898,19 +6939,21 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
         .lyrics-scroll {
           flex: 1; overflow-y: auto; padding: 24px 20px 80px;
-          scrollbar-width: none; scroll-behavior: smooth;
+          scrollbar-width: none; scroll-behavior: auto;   /* the scroll is driven frame by frame on a spring (_lyricsScrollTick) */
+          overscroll-behavior: contain;
         }
         .lyrics-scroll::-webkit-scrollbar { display: none; }
 
+        /* lines are never re-sized while they play: the current line is scaled up (set per frame), so nothing re-flows */
         .lyrics-line {
           font-size: 18px; font-weight: 600; line-height: 1.55;
           color: var(--lyrics-text-dim, rgba(255,255,255,0.22)); letter-spacing: -0.2px;
-          transition: color 0.35s ease, font-size 0.25s ease;
+          transition: color 0.45s ease;
           padding: 3px 0; cursor: default; user-select: none;
-          text-align: center;
+          text-align: center; transform-origin: 50% 50%;
           text-shadow: 0 1px 6px rgba(0,0,0,0.55), 0 0 20px rgba(0,0,0,0.35);
         }
-        .lyrics-line.active { color: var(--lyrics-text-active, #fff); font-size: 20px; }
+        .lyrics-line.active { color: var(--lyrics-text-active, #fff); }
         .lyrics-line.past   { color: var(--lyrics-text-past, rgba(255,255,255,0.38)); }
 
         /* Instrumental-break placeholder — shown for long gaps between lines */
@@ -6975,7 +7018,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           letter-spacing: 0; color: var(--lyrics-text-dim, rgba(255,255,255,0.4));
         }
         .lyrics-line .lyrics-pron { font-style: italic; font-size: 12px; }
-        .lyrics-line.active .lyrics-trans { color: rgba(255,255,255,0.72); font-size: 14px; }
+        .lyrics-line.active .lyrics-trans { color: rgba(255,255,255,0.72); }
         .lyrics-line.active .lyrics-pron { color: rgba(255,255,255,0.6); }
         .lyrics-line.past .lyrics-trans, .lyrics-line.past .lyrics-pron { color: var(--lyrics-text-past, rgba(255,255,255,0.32)); }
         #lyricsScroll[data-mode="scroll"] .lyrics-line.active,
@@ -9713,7 +9756,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       const state  = this._hass.states[volEnt];
       // Use volume_up/down services — remote.send_command maps incorrectly on
       // Apple TV + HomePod group (causes mute instead of volume change).
-      this._hass.callService('media_player', direction > 0 ? 'volume_up' : 'volume_down', { entity_id: volEnt }).catch(() => {});
+      this._call('media_player', direction > 0 ? 'volume_up' : 'volume_down', { entity_id: volEnt }, undefined, { fail: 'Couldn\u2019t change the volume' }).catch(() => {});
 
       // Optimistic UI update — HA won't push a new volume_level for Apple TV /
       // HomePod groups, so we maintain our own estimate and update the display now.
@@ -9921,6 +9964,16 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             ocean: 'M20,12H22V14H20C18.62,14 17.26,13.65 16,13C13.5,14.3 10.5,14.3 8,13C6.74,13.65 5.37,14 4,14H2V12H4C5.39,12 6.78,11.53 8,10.67C10.44,12.38 13.56,12.38 16,10.67C17.22,11.53 18.6,12 20,12M20,6H22V8H20C18.62,8 17.26,7.65 16,7C13.5,8.3 10.5,8.3 8,7C6.74,7.65 5.37,8 4,8H2V6H4C5.39,6 6.78,5.53 8,4.67C10.44,6.38 13.56,6.38 16,4.67C17.22,5.53 18.6,6 20,6M20,18H22V20H20C18.62,20 17.26,19.65 16,19C13.5,20.3 10.5,20.3 8,19C6.74,19.65 5.37,20 4,20H2V18H4C5.39,18 6.78,17.53 8,16.67C10.44,18.38 13.56,18.38 16,16.67C17.22,17.53 18.6,18 20,18Z',
             shuffle: 'M14.83,13.41L13.42,14.82L16.55,17.95L14.5,20H20V14.5L17.96,16.54L14.83,13.41M14.5,4L16.54,6.04L4,18.59L5.41,20L17.96,7.46L20,9.5V4M10.59,9.17L5.41,4L4,5.41L9.17,10.58L10.59,9.17Z',
           };
+          // a switch for the editor's Start Automatically → Screensaver (kept on this device)
+          items.push({ id: 'qm_saver_auto', label: 'Auto Start', toggle: this._saverAutoOn(),
+            icon: '<path d="M12,20A7,7 0 0,1 5,13A7,7 0 0,1 12,6A7,7 0 0,1 19,13A7,7 0 0,1 12,20M19.03,7.39L20.45,5.97C20,5.46 19.55,5 19.04,4.56L17.62,6C16.07,4.74 14.12,4 12,4A9,9 0 0,0 3,13A9,9 0 0,0 12,22C17,22 21,17.97 21,13C21,10.88 20.26,8.93 19.03,7.39M11,14H13V8H11M15,1H9V3H15V1Z"/>',
+            onToggle: (on) => {
+              try { localStorage.setItem('crow_saver_auto', on ? 'on' : 'off'); } catch (_) {}
+              this._saverActiveAt = Date.now();   // the time left alone counts from now
+              if (!on && this._saverEl) this._saverStop();
+              const mins = this._saverAutoAfter();
+              this._showToast?.(on ? 'Screensaver starts after ' + (mins < 1 ? Math.round(mins * 60) + ' seconds' : mins + (mins === 1 ? ' minute' : ' minutes')) + ' left alone' : 'Screensaver won\u2019t start by itself', 2500);
+            } });
           [['wall', 'Album Wall'], ['rain', 'Rain on Glass'], ['aurora', 'Ambient Aurora'], ['lava', 'Lava Lamp'],
            ['night', 'Night Sky'], ['fire', 'Fireplace'], ['ocean', 'Ocean'],
            ['clock', 'Clock & Weather'], ['flip', 'Flip Clock'], ['analog', 'Analogue Clock'], ['words', 'Word Clock'], ['shuffle', 'Shuffle']]
@@ -10040,7 +10093,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           reports: { label: 'Export',          icon: QM_ICON.reports, ids: ['qm_pdf_lyrics', 'qm_pdf_case', 'qm_rep_listening', 'qm_rep_month', 'qm_rep_recent', 'qm_rep_watch', 'qm_rep_pins'] },
           share:  { label: 'Share & Announce', icon: QM_ICON.share,  ids: ['qm_copy_link', 'qm_announce', 'qm_sendmsg'] },
           viz:    { label: 'Visualiser',       icon: '<path d="' + CROWAI_VIZ_ICONS.eq + '"/>', ids: ['qm_viz_artwork', ...CROWAI_VIZ_STYLES.map(s => 'qm_viz_' + s[0]), 'qm_viz_shuffle'] },
-          saver:  { label: 'Screensaver',      icon: '<path d="M14,6L10.25,11L13.1,14.8L11.5,16C9.81,13.75 7,10 7,10L1,18H23L14,6Z"/>', ids: ['wall', 'rain', 'aurora', 'lava', 'night', 'fire', 'ocean', 'clock', 'flip', 'analog', 'words', 'shuffle'].map(k => 'qm_saver_' + k) },
+          saver:  { label: 'Screensaver',      icon: '<path d="M14,6L10.25,11L13.1,14.8L11.5,16C9.81,13.75 7,10 7,10L1,18H23L14,6Z"/>', ids: ['auto', 'wall', 'rain', 'aurora', 'lava', 'night', 'fire', 'ocean', 'clock', 'flip', 'analog', 'words', 'shuffle'].map(k => 'qm_saver_' + k) },
         };
         // Top level, in sections: find & browse · discover & build · what's
         // playing now · recaps and sharing.
@@ -10143,7 +10196,24 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             _maTag.style.cssText = 'font-size:9px;font-weight:700;color:rgba(99,179,237,0.6);background:rgba(99,179,237,0.1);border:1px solid rgba(99,179,237,0.2);border-radius:4px;padding:1px 4px;margin-left:4px;letter-spacing:0.3px;flex-shrink:0;';
             btn.appendChild(_maTag);
           }
-          // something switched on shows in the accent colour; no On / Off badge
+          // something switched on shows in the accent colour; no On / Off badge — except a setting, which
+          // gets an iOS switch like the card editor's (it flips in place and the menu stays open)
+          let _qmSwitch = null;
+          if (item.toggle !== undefined) {
+            _qmSwitch = document.createElement('span');
+            const knob = document.createElement('span');
+            _qmSwitch.appendChild(knob);
+            _qmSwitch.style.cssText = 'position:relative;width:44px;height:26px;border-radius:26px;flex-shrink:0;margin-left:auto;transition:background 0.25s ease;';
+            knob.style.cssText = 'position:absolute;top:2px;left:2px;width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,0.3);transition:transform 0.25s ease;';
+            _qmSwitch._set = (on) => {
+              _qmSwitch.style.background = on ? '#34C759' : 'rgba(120,120,128,0.32)';
+              knob.style.transform = on ? 'translateX(18px)' : 'none';
+              btn.setAttribute('aria-checked', on ? 'true' : 'false');
+            };
+            btn.setAttribute('role', 'switch');
+            _qmSwitch._set(!!item.toggle);
+            btn.appendChild(_qmSwitch);
+          }
           let _qmSy = 0, _qmMoved = false;
           if (item.disabled) {
             btn.style.opacity = '0.35';
@@ -10157,6 +10227,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             if (Date.now() - _popupOpenedAt < 350) return;
             ev.preventDefault();
             ev.stopPropagation();
+            if (_qmSwitch) {
+              item.toggle = !item.toggle;
+              _qmSwitch._set(item.toggle);
+              try { item.onToggle?.(item.toggle); } catch (_) {}
+              return;
+            }
             popup.remove();
             // Cancel any artwork-tap timer outright — covers both the menu's own
             // closing tap falling through to the artwork underneath, AND a
@@ -10402,14 +10478,14 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           const now = Date.now();
           if (!this._volLastFired || (now - this._volLastFired) >= 380) {
             if (this._volDebounce) { clearTimeout(this._volDebounce); this._volDebounce = null; }
-            this._hass.callService('remote', 'send_command', {
+            this._call('remote', 'send_command', {
               entity_id: remoteEntityId, command: cmd
-            }).catch(() => {});
+            }, undefined, { fail: 'The Apple TV didn\u2019t respond' }).catch(() => {});
             this._volLastFired = now;
           } else {
             if (this._volDebounce) clearTimeout(this._volDebounce);
             this._volDebounce = setTimeout(() => {
-              this._hass.callService('remote', 'send_command', {
+              this._call('remote', 'send_command', {
                 entity_id: remoteEntityId, command: cmd
               }).catch(() => {});
               this._volLastFired = Date.now();
@@ -10808,7 +10884,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           else {
             // hold on the touchpad: select held down, which opens the options menu in most apps
             g.el?.classList.add('cp-held');
-            this._hass.callService('remote', 'send_command', { entity_id: this._entity.replace('media_player.', 'remote.'), command: 'select', hold_secs: 1 }).catch(() => {});
+            this._call('remote', 'send_command', { entity_id: this._entity.replace('media_player.', 'remote.'), command: 'select', hold_secs: 1 }, undefined, { fail: 'The Apple TV didn\u2019t respond' }).catch(() => {});
           }
         }, HOLD);
         window.addEventListener('pointermove', move, true); window.addEventListener('pointerup', end, true); window.addEventListener('pointercancel', end, true);
@@ -11615,7 +11691,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
               try {
                 // target player goes in the HA `target` field, not service_data
                 // source_player in service_data is optional but explicit is safer
-                await this._hass.callService(
+                await this._call(
                   'music_assistant',
                   'transfer_queue',
                   { source_player: this._entity },
@@ -11697,7 +11773,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             this._closeInfoPopup();
 
             try {
-              await this._hass.callService('media_player', 'clear_playlist', { entity_id: this._entity });
+              await this._call('media_player', 'clear_playlist', { entity_id: this._entity });
             } catch (err) {
               console.error('[Queue clear]', err);
               this._showToast('\u26a0\ufe0f Couldn\u2019t clear the queue \u2014 check Music Assistant.', 4000);
@@ -11705,7 +11781,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             // Also stop playback — clear_playlist only empties the upcoming
             // queue, the current track keeps playing with no artwork shown.
             try {
-              await this._hass.callService('media_player', 'media_stop', { entity_id: this._entity });
+              await this._call('media_player', 'media_stop', { entity_id: this._entity });
             } catch (err) {
               console.error('[Queue clear stop]', err);
             }
@@ -12961,6 +13037,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     this._lyricsPaused = false;
     this._lyricsOpen  = false;
     this._lyricLines  = null;
+    this._lyricsStopScroll();
     this._lastLyricIdx = -1;
     this._lyricsClosedAt = Date.now();
   }
@@ -13338,6 +13415,21 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     let _lyricsTouchStartY = 0;
     let _lyricsTouchMoved = false;
 
+    // the smooth scroll lets go while you swipe through the lyrics, and glides back a moment after you stop
+    // (listened for on the overlay in the capture phase, so the lyrics' own tap handler, which stops
+    // the event, can't hide the end of a swipe — and nothing here can ever leave the scroll stuck)
+    const _lyHost = r.getElementById('lyricsOverlay') || scroll;
+    if (!_lyHost._crowLySwipe) {
+      _lyHost._crowLySwipe = true;
+      let _sy = 0;
+      const cap = { passive: true, capture: true };
+      _lyHost.addEventListener('touchstart', (e) => { _sy = e.touches[0]?.clientY ?? 0; }, cap);
+      _lyHost.addEventListener('touchmove', (e) => { if (Math.abs((e.touches[0]?.clientY ?? 0) - _sy) > 6) this._lyUserUntil = Date.now() + 3000; }, cap);
+      _lyHost.addEventListener('touchend', () => { if (this._lyUserUntil > Date.now()) this._lyUserUntil = Date.now() + 3000; }, cap);
+      _lyHost.addEventListener('wheel', () => { this._lyUserUntil = Date.now() + 3000; }, cap);
+    }
+    this._lyUserUntil = 0;
+
     scroll.addEventListener('touchstart', (e) => {
       _lyricsTouchStartY = e.touches[0]?.clientY ?? 0;
       _lyricsTouchMoved = false;
@@ -13371,7 +13463,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           let _p = _s?.attributes?.media_position ?? 0;
           if (_p && _s?.attributes?.media_position_updated_at)
             _p += (Date.now() - new Date(_s.attributes.media_position_updated_at).getTime()) / 1000;
-          requestAnimationFrame(() => this._syncLyricHighlight(_p, true));
+          // glide back to where the song is, rather than jumping
+          this._syncLyricHighlight(_p);
+          this._lyricsStartScroll();
         }
         _lyricsTapLast = 0;
       } else {
@@ -13484,7 +13578,11 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       else break;
     }
 
-    if (idx === this._lastLyricIdx && !instant) return; // no change
+    if (idx === this._lastLyricIdx && !instant) {
+      // no new line, but keep the smooth scroll running (it rests while the music is stopped)
+      if ((this._config?.lyrics_scroll_mode || 'highlight') !== 'none') this._lyricsStartScroll();
+      return;
+    }
     this._lastLyricIdx = idx;
 
     const scrollMode = this._config?.lyrics_scroll_mode || 'highlight';
@@ -13502,17 +13600,126 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       }
     });
 
-    // Auto-scroll to current line for 'highlight' and 'scroll' modes; not for 'none'
+    // Auto-scroll for 'highlight' and 'scroll' modes (not 'none'): the same continuous, spring-driven
+    // teleprompter scroll as the Synced Lyrics visualisation, run every frame by _lyricsScrollTick
     if (scrollMode !== 'none') {
-      if (idx >= 0 && els[idx]) {
-        const lineEl    = els[idx];
-        const container = scroll;
-        const target    = lineEl.offsetTop - container.clientHeight * 0.35;
-        container.scrollTo({ top: Math.max(0, target), behavior: instant ? 'auto' : 'smooth' });
-      } else if (idx < 0) {
-        scroll.scrollTo({ top: 0, behavior: instant ? 'auto' : 'smooth' });
+      if (instant) this._lyPos = null;   // snap straight to the right place on the next frame
+      this._lyricsStartScroll();
+    }
+  }
+
+  // ── Smooth lyrics scroll ──
+  // The lyrics glide like the Synced Lyrics visualisation: the scroll never stops, drifting gently through
+  // each line and gliding into the next so it arrives just as the next line starts, on a soft spring that
+  // never jolts or overshoots. The current line grows smoothly as it reaches its place. A swipe through the
+  // lyrics is left alone; a moment after you let go the scroll glides back to where the song is.
+  _lyricsStartScroll() {
+    if (this._lyRaf) return;
+    this._lyLast = performance.now();
+    const step = (now) => {
+      let more = false;
+      try { more = this._lyricsScrollTick(now); } catch (_) { more = false; }
+      this._lyRaf = more ? requestAnimationFrame(step) : null;
+    };
+    this._lyRaf = requestAnimationFrame(step);
+  }
+
+  _lyricsStopScroll() {
+    if (this._lyRaf) cancelAnimationFrame(this._lyRaf);
+    this._lyRaf = null;
+    this._lyPos = null;
+    this._lyScaled = null;
+  }
+
+  _lyricsScrollTick(now) {
+    const scroll = this.shadowRoot?.getElementById('lyricsScroll');
+    const L = this._lyricLines;
+    const mode = this._config?.lyrics_scroll_mode || 'highlight';
+    if (!this.isConnected || !this._lyricsOpen || !L || !L.length || !scroll || scroll.classList.contains('hidden') || mode === 'none') {
+      this._lyPos = null;
+      return false;
+    }
+    const els = scroll.children, n = Math.min(els.length, L.length);
+    if (!n) return false;
+    const dt = Math.min(0.05, Math.max(0.001, (now - (this._lyLast || now)) / 1000));
+    this._lyLast = now;
+
+    // where the song is: the progress bar's own position, carried forward smoothly between its updates
+    const _st = this._hass?.states[this._entity]?.state;
+    const _moving = _st === 'playing' || _st === 'buffering';
+    let pos;
+    if (this._lyLiveAt != null && now - this._lyLiveAt < 3000) pos = this._lyLivePos + (_moving ? (now - this._lyLiveAt) / 1000 : 0);
+    else pos = this._lyricsPosNow();
+    // keep the highlighted line in step with the scroll
+    this._syncLyricHighlight(pos);
+
+    // where the scroll should be, as a fractional line number — the same timing as the visualisation
+    const p = pos + 0.25;
+    let idx = -1;
+    for (let k = 0; k < n; k++) { if (L[k].time <= p) idx = k; else break; }
+    let target = Math.max(0, idx);
+    if (idx >= 0 && idx < n - 1) {
+      const s0 = L[idx].time, s1 = L[idx + 1].time, span = Math.max(0.3, s1 - s0);
+      const f = Math.max(0, Math.min(1, (p - s0) / span));
+      const gs = Math.max(0.35, 1 - 1.4 / span), g = f <= gs ? 0 : (f - gs) / (1 - gs), ge = g * g * (3 - 2 * g);
+      target = idx + 0.14 * f + 0.86 * ge;
+    }
+
+    // follow it on a soft spring, just over critically damped (it jumps if the song is skipped)
+    let snapped = false;
+    if (this._lyPos == null || Math.abs(target - this._lyPos) > 4 || this._lyFor !== L) {
+      this._lyPos = target; this._lyVel = 0; this._lyFor = L; this._lyOff = 0; this._lyOffVel = 0; snapped = true;
+    }
+    const K = 90, D = 2 * Math.sqrt(K) * 1.05;
+    for (let i = 0, steps = Math.ceil(dt / 0.008); i < steps; i++) {
+      const h = dt / steps;
+      this._lyVel += ((target - this._lyPos) * K - this._lyVel * D) * h;
+      this._lyPos += this._lyVel * h;
+    }
+
+    // a fractional line number → scrollTop, measured from the live layout every frame, so taller
+    // lines (wrapped, or with a translation under them) are followed exactly
+    const anchor = scroll.clientHeight * 0.4;
+    const lineY = (k) => { const el = els[Math.max(0, Math.min(n - 1, k))]; return el.offsetTop + el.offsetHeight / 2 - anchor; };
+    const toPx = (x) => { const k = Math.floor(x), f = x - k; const a = lineY(k); return a + (lineY(k + 1) - a) * f; };
+    const want = toPx(this._lyPos);
+
+    // hands off while you're swiping through the lyrics, or have paused the scroll with a double-tap
+    const driving = !this._lyricsPaused && !(this._lyUserUntil > Date.now());
+    if (driving) {
+      // coming back from a swipe or a pause: glide home from wherever the lyrics were left
+      if (!this._lyDriving && !snapped) { this._lyOff = scroll.scrollTop - want; this._lyOffVel = 0; }
+      if (this._lyOff) {
+        const K2 = 28, D2 = 2 * Math.sqrt(K2);
+        this._lyOffVel += (-this._lyOff * K2 - this._lyOffVel * D2) * dt;
+        this._lyOff += this._lyOffVel * dt;
+        if (Math.abs(this._lyOff) < 0.3 && Math.abs(this._lyOffVel) < 0.3) { this._lyOff = 0; this._lyOffVel = 0; }
+      }
+      const top = Math.max(0, want + this._lyOff);
+      if (Math.abs(scroll.scrollTop - top) > 0.25) scroll.scrollTop = top;
+    }
+    this._lyDriving = driving;
+
+    // the current line grows as it reaches its place and shrinks as it leaves (scaled, so nothing re-flows)
+    if (!this._lyScaled) this._lyScaled = new Set();
+    const keep = new Set();
+    if (mode === 'highlight') {
+      const c = Math.round(this._lyPos);
+      for (let k = Math.max(0, c - 2); k <= Math.min(n - 1, c + 2); k++) {
+        const d = Math.min(1, Math.abs(k - this._lyPos)), e = d * d * (3 - 2 * d);
+        const s = 1 + 0.11 * (1 - e);
+        if (s > 1.0005) { els[k].style.transform = 'scale(' + s.toFixed(4) + ')'; keep.add(k); }
       }
     }
+    this._lyScaled.forEach(k => { if (!keep.has(k) && els[k]) els[k].style.transform = ''; });
+    this._lyScaled = keep;
+
+    // nothing left to move while the music is stopped: rest until the next position update
+    const playing = _moving;
+    // (and while the scroll is paused with a double-tap: a double-tap to resume starts it again)
+    const settled = Math.abs(target - this._lyPos) < 0.0005 && Math.abs(this._lyVel) < 0.001 && !this._lyOff;
+    if (this._lyricsPaused || (!playing && settled)) { this._lyDriving = false; return false; }
+    return true;
   }
 
   // ─── Lyrics options: Translate (card editor → Lyrics & Discovery) ───
@@ -16481,12 +16688,13 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const menu = document.createElement('div');
     menu.id = 'rpMenu';
     menu.className = 'queue-dropdown-menu';
-    const _expanded = !!this._mtWatchExpanded;
+    // how many titles the list shows: the last 10, 50 or 100 (the other two are offered)
+    const _limitNow = this._mtWatchLimit();
     menu.innerHTML =
-      `<div class="queue-dropdown-item" id="mtWatchToggleLimit" role="button">
+      `${[10, 50, 100].filter(n => n !== _limitNow).map(n => `<div class="queue-dropdown-item mt-watch-limit" data-limit="${n}" role="button">
         <svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12.5,7V12.25L17,14.92L16.25,16.15L11,13V7H12.5Z"/></svg>
-        <span class="queue-dropdown-label">${_expanded ? 'Show last 10' : 'Show last 50'}</span>
-      </div>
+        <span class="queue-dropdown-label">Show last ${n}</span>
+      </div>`).join('')}
 <div class="queue-dropdown-item" id="mtWatchExportReport" data-pdf="history" role="button"><svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M19 3H5C3.9 3 3 3.9 3 5V19C3 20.1 3.9 21 5 21H19C20.1 21 21 20.1 21 19V5C21 3.9 20.1 3 19 3M9 17H7V10H9V17M13 17H11V7H13V17M17 17H15V13H17V17Z"/></svg><span class="queue-dropdown-label">Export Report to PDF</span></div>
       <div class="queue-dropdown-item danger" id="mtWatchClearHistory" role="button">
         <svg class="queue-dropdown-icon" viewBox="0 0 24 24"><path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/></svg>
@@ -16504,11 +16712,11 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     host.appendChild(menu);
 
     const closeMenu = () => { menu.remove(); backdrop.remove(); };
-    menu.querySelector('#mtWatchToggleLimit')?.addEventListener('click', () => {
+    menu.querySelectorAll('.mt-watch-limit').forEach(el => el.addEventListener('click', () => {
       closeMenu();
-      this._mtWatchExpanded = !_expanded;
+      this._mtWatchExpanded = +el.dataset.limit;
       this._loadMATab('recently_watched');
-    });
+    }));
     menu.querySelector('#mtWatchClearHistory')?.addEventListener('click', () => {
       closeMenu();
       this._confirmClearMtWatchHistory();
@@ -17037,6 +17245,19 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     return ok(pick) ? pick : crowaiAutoStart(this._config).saverStyle;
   }
   _saverStyles() { return CROWAI_SAVER_STYLES; }
+  // Does the screensaver start by itself? The editor's Start Automatically → Screensaver, unless it's been
+  // switched on or off from the quick menu's Screensaver toggle on this device (kept in the browser)
+  _saverAutoAfter() {
+    const a = crowaiAutoStart(this._config).after;
+    return a >= 0.5 ? a : 10;
+  }
+  _saverAutoOn() {
+    let dev = null;
+    try { dev = localStorage.getItem('crow_saver_auto'); } catch (_) {}
+    if (dev === 'on') return true;
+    if (dev === 'off') return false;
+    return crowaiAutoStart(this._config).mode === 'screensaver';
+  }
 
   // Every second, from updateLiveProgress
   _saverTick() {
@@ -17069,7 +17290,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // Start Automatically → Screensaver: it starts after the chosen time left alone whether or not music
     // is playing, and stays until it's tapped (music starting or a new song doesn't close it)
     const auto = crowaiAutoStart(this._config);
-    const anyTime = auto.mode === 'screensaver';
+    const anyTime = this._saverAutoOn();
     if (playing && !anyTime) this._saverActiveAt = now;
     if (this._saverEl) {
       // otherwise music starting closes it (one opened from the menu while music played stays until tapped)
@@ -17079,7 +17300,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // a visualiser showing counts as being in use: the screensaver doesn't start over it
     const vizEl = r?.getElementById('crowViz');
     if (this._vizRaf && vizEl?.classList.contains('on')) { this._saverActiveAt = now; return; }
-    const mins = anyTime ? auto.after : 0;
+    const mins = anyTime ? this._saverAutoAfter() : 0;
     if (!mins || now - this._saverActiveAt < mins * 60000) return;
     if (!this._saverCanShow(false)) return;
     this._saverStart(false);
@@ -18367,27 +18588,17 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       const stars = Array.from({ length: Math.round(W * hy / 450) }, () => ({ x: Math.random() * W, y: Math.random() * hy * 0.92, s: Math.random() < 0.06 ? 5 + Math.random() * 5 : 0.4 + Math.random() * 0.7, ph: Math.random() * 6, tw: 0.6 + Math.random() * 2 }));
       B = { rows, clouds, stars, hiP: null, loP: null };
     };
-    // ── Life on the ocean: one thing at a time, now and then — a boat crossing the horizon, dolphins leaping
-    //    (alone or in a pod), seabirds gliding over, or a whale far out ──
+    // ── Life on the ocean: one thing at a time, now and then — dolphins leaping (alone or in a pod),
+    //    seabirds gliding over, or a whale far out ──
     const life = { ev: null, bird: null, next: 2 + Math.random() * 3, nextBird: 3 + Math.random() * 3, splashes: [], caps: [], force: null };
     this._saverOceanLife = life;
-    const navSpr = (col) => { const c = document.createElement('canvas'); c.width = c.height = 32; const g = c.getContext('2d'), gr = g.createRadialGradient(16, 16, 0, 16, 16, 16); gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.15, 'rgba(' + col + ',1)'); gr.addColorStop(0.4, 'rgba(' + col + ',0.3)'); gr.addColorStop(1, 'rgba(' + col + ',0)'); g.fillStyle = gr; g.fillRect(0, 0, 32, 32); return c; };
-    const NAV = { w: navSpr('255,250,235'), r: navSpr('255,60,50'), g: navSpr('70,255,120') };
     const rr = (a, b) => a + Math.random() * (b - a);
     const startEvent = (W, H, hy) => {
-      const night = pal.dark > 0.6;
-      const pick = [['boat', 0.4], ['dolphins', 0.42], ['whale', 0.18]];
-      let r = Math.random() * pick.reduce((s, p) => s + p[1], 0), kind = 'boat';
+      const pick = [['dolphins', 0.7], ['whale', 0.3]];
+      let r = Math.random() * pick.reduce((s, p) => s + p[1], 0), kind = 'dolphins';
       for (const [k, w] of pick) { if ((r -= w) <= 0) { kind = k; break; } }
       if (life.force) { kind = life.force; life.force = null; }
       const dir = Math.random() < 0.5 ? 1 : -1;
-      if (kind === 'boat') {
-        const type = ['sail', 'sail', 'yacht', 'ship', 'ferry'][Math.floor(Math.random() * 5)];
-        const u = H * (type === 'ship' || type === 'ferry' ? rr(0.009, 0.012) : rr(0.011, 0.014));
-        const dur = rr(32, 50) * (type === 'sail' ? 1.25 : 1);
-        return { kind, type, u, dir, t: 0, dur, x0: dir > 0 ? -u * 8 : W + u * 8, x1: dir > 0 ? W + u * 8 : -u * 8,
-          cont: Array.from({ length: 9 }, () => ['#b23a2c', '#2f5d8a', '#c98b2a', '#3c7a4a', '#7a7f86', '#9a3f6a'][Math.floor(Math.random() * 6)]) };
-      }
       if (kind === 'dolphins') {
         const n = Math.random() < 0.4 ? 1 : 3 + Math.floor(Math.random() * 4);
         const d = rr(0.2, 0.4), len = W * 0.05 * (d / 0.35);
@@ -18477,74 +18688,16 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       // eye
       ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.beginPath(); ctx.arc(0.36 * L, -0.025 * L, Math.max(0.35, L * 0.008), 0, Math.PI * 2); ctx.fill();
     };
-    const drawBoat = (ctx, e, x, y, night, tint) => {
-      const u = e.u, d = e.dir;
-      const hullC = night ? '#05070c' : tint(e.type === 'sail' ? '#1e2a3a' : '#f2f2f0'), dark = night ? '#03050a' : tint('#1c232c');
-      ctx.save(); ctx.translate(x, y); ctx.scale(d, 1);
-      if (e.type === 'sail') {
-        // hull, mast, mainsail and jib, leaning a touch with the wind
-        ctx.fillStyle = hullC; ctx.beginPath(); ctx.moveTo(-u * 0.9, -u * 0.12); ctx.lineTo(u * 1.0, -u * 0.12); ctx.lineTo(u * 0.7, u * 0.12); ctx.lineTo(-u * 0.75, u * 0.12); ctx.closePath(); ctx.fill();
-        ctx.strokeStyle = dark; ctx.lineWidth = Math.max(0.4, u * 0.04); ctx.beginPath(); ctx.moveTo(0, -u * 0.12); ctx.lineTo(u * 0.05, -u * 1.5); ctx.stroke();
-        const sail = night ? '#0a0d14' : tint('#fbfaf6');
-        ctx.fillStyle = sail; ctx.beginPath(); ctx.moveTo(u * 0.02, -u * 1.45); ctx.quadraticCurveTo(-u * 0.55, -u * 0.8, -u * 0.72, -u * 0.2); ctx.lineTo(-u * 0.02, -u * 0.2); ctx.closePath(); ctx.fill();
-        ctx.beginPath(); ctx.moveTo(u * 0.08, -u * 1.35); ctx.quadraticCurveTo(u * 0.55, -u * 0.75, u * 0.85, -u * 0.18); ctx.lineTo(u * 0.1, -u * 0.18); ctx.closePath(); ctx.fill();
-        if (!night) { ctx.fillStyle = 'rgba(0,0,0,0.12)'; ctx.beginPath(); ctx.moveTo(u * 0.02, -u * 1.45); ctx.lineTo(-u * 0.02, -u * 0.2); ctx.lineTo(-u * 0.2, -u * 0.2); ctx.closePath(); ctx.fill(); }
-      } else if (e.type === 'yacht') {
-        ctx.fillStyle = hullC; ctx.beginPath(); ctx.moveTo(-u * 1.4, -u * 0.2); ctx.lineTo(u * 1.6, -u * 0.2); ctx.lineTo(u * 1.1, u * 0.14); ctx.lineTo(-u * 1.3, u * 0.14); ctx.closePath(); ctx.fill();
-        ctx.fillStyle = night ? '#070a10' : tint('#e8e8e6'); ctx.beginPath(); ctx.moveTo(-u * 0.9, -u * 0.2); ctx.lineTo(u * 0.7, -u * 0.2); ctx.lineTo(u * 0.4, -u * 0.55); ctx.lineTo(-u * 0.7, -u * 0.55); ctx.closePath(); ctx.fill();
-        ctx.fillStyle = night ? '#070a10' : tint('#dcdcda'); ctx.fillRect(-u * 0.45, -u * 0.8, u * 0.75, u * 0.25);
-        if (!night) { ctx.fillStyle = tint('#26323f'); ctx.fillRect(-u * 0.75, -u * 0.47, u * 1.3, u * 0.12); ctx.fillRect(-u * 0.38, -u * 0.74, u * 0.6, u * 0.1); }
-      } else if (e.type === 'ship') {
-        // a container ship: a long dark hull, stacks of containers and the bridge at the back
-        ctx.fillStyle = night ? '#04060b' : tint('#2b2f36'); ctx.beginPath(); ctx.moveTo(-u * 3.6, -u * 0.3); ctx.lineTo(u * 3.9, -u * 0.3); ctx.lineTo(u * 3.5, u * 0.22); ctx.lineTo(-u * 3.5, u * 0.22); ctx.closePath(); ctx.fill();
-        if (!night) { ctx.fillStyle = tint('#8a2a22'); ctx.fillRect(-u * 3.5, u * 0.08, u * 7, u * 0.14); }
-        for (let i = 0; i < 9; i++) { ctx.fillStyle = night ? '#05070c' : tint(e.cont[i]); const hgt = u * (0.3 + ((i * 37) % 3) * 0.12); ctx.fillRect(-u * 2.4 + i * u * 0.62, -u * 0.3 - hgt, u * 0.58, hgt); }
-        ctx.fillStyle = night ? '#05070c' : tint('#ecebe6'); ctx.fillRect(-u * 3.3, -u * 1.05, u * 0.7, u * 0.75);
-        ctx.fillStyle = night ? '#05070c' : tint('#ecebe6'); ctx.fillRect(-u * 3.45, -u * 1.2, u * 1.0, u * 0.18);
-        ctx.fillStyle = night ? '#05070c' : tint('#2b2f36'); ctx.fillRect(-u * 3.1, -u * 1.45, u * 0.22, u * 0.3);
-      } else {
-        // a ferry: white, with rows of windows and a funnel
-        ctx.fillStyle = night ? '#04060b' : tint('#1f3c63'); ctx.beginPath(); ctx.moveTo(-u * 3, -u * 0.2); ctx.lineTo(u * 3.2, -u * 0.2); ctx.lineTo(u * 2.8, u * 0.2); ctx.lineTo(-u * 2.9, u * 0.2); ctx.closePath(); ctx.fill();
-        ctx.fillStyle = night ? '#05070c' : tint('#f4f4f2'); ctx.beginPath(); ctx.moveTo(-u * 2.8, -u * 0.2); ctx.lineTo(u * 2.9, -u * 0.2); ctx.lineTo(u * 2.4, -u * 0.95); ctx.lineTo(-u * 2.5, -u * 0.95); ctx.closePath(); ctx.fill();
-        ctx.fillRect(-u * 1.6, -u * 1.3, u * 2.6, u * 0.36);
-        if (!night) { ctx.fillStyle = tint('#2a3746'); ctx.fillRect(-u * 2.5, -u * 0.6, u * 4.9, u * 0.12); ctx.fillRect(-u * 2.3, -u * 0.85, u * 4.4, u * 0.1); ctx.fillRect(-u * 1.4, -u * 1.2, u * 2.2, u * 0.1); }
-        ctx.fillStyle = night ? '#05070c' : tint('#c23b2e'); ctx.fillRect(-u * 0.9, -u * 1.75, u * 0.45, u * 0.45);
-      }
-      ctx.restore();
-      if (night) {
-        // navigation lights: white on the mast, red and green at the sides, warm lit windows
-        const side = d > 0 ? NAV.g : NAV.r;   // the side facing us: starboard (green) heading right, port (red) heading left
-        const L = (lx, ly, c, s) => { ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = 0.95; ctx.drawImage(c === 0 ? NAV.w : side, x + lx * d - s / 2, y + ly - s / 2, s, s); ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over'; };
-        const s = Math.max(3, u * 1.1);
-        if (e.type === 'sail') { L(u * 0.05, -u * 1.5, 0, s * 0.8); L(u * 0.6, -u * 0.05, 3, s * 0.6); }
-        else if (e.type === 'yacht') { L(0, -u * 0.85, 0, s * 0.8); L(u * 1.2, -u * 0.1, 3, s * 0.6); ctx.fillStyle = 'rgba(255,205,130,0.85)'; for (let i = 0; i < 4; i++) ctx.fillRect(x + d * (-u * 0.7 + i * u * 0.32), y - u * 0.45, u * 0.18, u * 0.08); }
-        else { L(e.type === 'ship' ? -u * 3 : 0, -u * 1.6, 0, s); L(u * 3.2, -u * 0.6, 0, s * 0.8); L(u * 2.5, -u * 0.1, 3, s * 0.6);
-          ctx.fillStyle = 'rgba(255,205,130,0.85)';
-          const rows = e.type === 'ferry' ? [[-u * 0.62, 14], [-u * 0.87, 12]] : [[-u * 0.95, 3]];
-          rows.forEach(([ry, n]) => { for (let i = 0; i < n; i++) ctx.fillRect(x + d * ((e.type === 'ferry' ? -u * 2.3 : -u * 3.2) + i * u * (e.type === 'ferry' ? 0.33 : 0.2)), y + ry, u * 0.12, u * 0.08); }); }
-      }
-    };
     const lifeDraw = (ctx, t, dt, W, H, S, hy, day, sunC, hor, bx) => {
-      // the main visitors (a boat, dolphins or a whale) one at a time; seabirds come and go on their own
+      // the main visitors (dolphins or a whale) one at a time; seabirds come and go on their own
       life.next -= dt; life.nextBird -= dt;
       if (!life.ev && life.next <= 0) life.ev = startEvent(W, H, hy);
       if (!life.bird && life.nextBird <= 0 && pal.dark < 0.6) { life.force = 'birds'; life.bird = startEvent(W, H, hy); }
-      const night = pal.dark > 0.6;
-      const tint = (hex) => { const c = hex.length === 7 ? [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16)) : [128, 128, 128]; const k = 0.15; const lt = day ? 1 : 0.55; return rgb(c.map((v, i) => Math.round((v * (1 - k) + hor[i] * k) * lt))); };
       const lightC = day ? [255, 255, 255] : [200, 210, 235];
       for (const e of [life.ev, life.bird]) {
         if (!e) continue;
         e.t += dt;
-        if (e.kind === 'boat') {
-          const k = e.t / e.dur, x = e.x0 + (e.x1 - e.x0) * k, y = hy + 0.8 + Math.sin(t * 1.3) * 0.25;
-          // its reflection, broken by the water, then the boat
-          ctx.save(); ctx.beginPath(); ctx.rect(0, y, W, e.u * 3); ctx.clip();
-          ctx.globalAlpha = night ? 0.5 : 0.28;
-          for (let i = 0; i < 6; i++) { ctx.save(); ctx.beginPath(); ctx.rect(0, y + i * e.u * 0.25, W, e.u * 0.25); ctx.clip(); ctx.translate(Math.sin(t * 3 + i) * e.u * 0.12, 2 * y); ctx.scale(1, -1); drawBoat(ctx, e, x, y, night, tint); ctx.restore(); }
-          ctx.restore();
-          drawBoat(ctx, e, x, y, night, tint);
-          if (k >= 1) e.done = true;
-        } else if (e.kind === 'dolphins') {
+        if (e.kind === 'dolphins') {
           const light = day ? 1 : 0.4;
           for (const p of e.pod) {
             const wy = e.yW + p.dy;
@@ -18841,7 +18994,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       const hz = ctx.createLinearGradient(0, hy - H * 0.04, 0, hy + H * 0.07);
       hz.addColorStop(0, rgb(hor, 0)); hz.addColorStop(0.4, rgb(hor, 0.55)); hz.addColorStop(1, rgb(hor, 0));
       ctx.fillStyle = hz; ctx.fillRect(0, hy - H * 0.04, W, H * 0.11);
-      // a boat, dolphins, seabirds or a whale, now and then
+      // dolphins, seabirds or a whale, now and then
       lifeDraw(ctx, t, dt, W, H, S, hy, day, sunC, hor, bx);
       // a little darker at the bottom corners
       const vg = ctx.createRadialGradient(W / 2, H * 0.45, Math.min(W, H) * 0.4, W / 2, H * 0.45, Math.max(W, H) * 0.85);
@@ -19184,7 +19337,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (songChanged || stopped || left <= 0) {
       // time's up (or the song finished): pause, then put the volume back for next time
       if (!stopped && st?.state === 'playing') {
-        this._hass.callService('media_player', 'media_pause', { entity_id: s.entity }).catch(() => {});
+        this._call('media_player', 'media_pause', { entity_id: s.entity }).catch(() => {});
       }
       this._stopSleepTimer({ restore: true, delay: 2500, quiet: true });
       if (!stopped || left <= 0) this._showToast('Sleep timer: playback paused');
@@ -19200,7 +19353,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       if (!s.lastVolAt || Date.now() - s.lastVolAt > 1400) {
         s.lastVolAt = Date.now();
         if (Math.abs((vs.attributes.volume_level || 0) - target) > 0.008) {
-          this._hass.callService('media_player', 'volume_set', { entity_id: s.volEnt, volume_level: Math.round(target * 100) / 100 }).catch(() => {});
+          this._call('media_player', 'volume_set', { entity_id: s.volEnt, volume_level: Math.round(target * 100) / 100 }).catch(() => {});
         }
       }
     }
@@ -19217,7 +19370,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     r?.getElementById('sleepPill')?.classList.remove('fading');
     r?.getElementById('sleepMini')?.classList.add('hidden');
     if (restore && s && s.vol0 != null) {
-      setTimeout(() => this._hass?.callService('media_player', 'volume_set', { entity_id: s.volEnt, volume_level: s.vol0 }).catch(() => {}), delay);
+      setTimeout(() => this._call('media_player', 'volume_set', { entity_id: s.volEnt, volume_level: s.vol0 }).catch(() => {}), delay);
     }
   }
 
@@ -22019,8 +22172,21 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     } else {
       preview.status('Getting the tracklist\u2026');
       const tl = await safe(() => this._cdTracklist(release?.id)) || { tracks: [], discs: 0 };
-      items.push({ kind: 'genBack', tray: true, w: TW, h: TH, tl, cap: 'Back tray card - 150 x 118 mm (fold at the two small ticks)' + (tl.tracks.length ? ' - tracklist from MusicBrainz' : ' - title only') });
-      rows.push(['Back cover', 'Not found - printed a ' + (tl.tracks.length ? 'tracklist card from MusicBrainz' : 'title card') + ' instead']);
+      // a faint copy of the front cover, between the two spine folds (editor -> Export & PDF -> Cover on the Back)
+      let wm = null;
+      if (blobs.front && this._pdfOn('back_art')) wm = await safe(async () => {
+        const bmp = await createImageBitmap(blobs.front);
+        try {
+          const dpi = 200, W = Math.round((TW - 12) / 25.4 * dpi), H = Math.round(TH / 25.4 * dpi);
+          const c = document.createElement('canvas'); c.width = W; c.height = H;
+          const ctx = c.getContext('2d');
+          ctx.fillStyle = 'rgb(246,246,248)'; ctx.fillRect(0, 0, W, H);   // the stand-in's paper colour
+          ctx.drawImage(this._cdFadedArt(bmp, W, H, { opacity: 0.08, mono: true }), 0, 0);
+          return c.toDataURL('image/jpeg', 0.88);
+        } finally { try { bmp.close(); } catch (_) {} }
+      });
+      items.push({ kind: 'genBack', tray: true, w: TW, h: TH, tl, wm, cap: 'Back tray card - 150 x 118 mm (fold at the two small ticks)' + (tl.tracks.length ? ' - tracklist from MusicBrainz' : ' - title only') });
+      rows.push(['Back cover', 'Not found - printed a ' + (tl.tracks.length ? 'tracklist card from MusicBrainz' : 'title card') + ' instead' + (wm ? ' (with a faint copy of the front cover)' : '')]);
     }
 
     let pages = 0, bkSkipped = 0, bkSplit = 0;
@@ -22113,6 +22279,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       } else if (it.kind === 'genBack') {
         doc.setFillColor(...paperRgb); doc.setDrawColor(200, 200, 205); doc.setLineWidth(0.2);
         doc.rect(x, y, it.w, it.h, 'FD');
+        if (it.wm) {
+          doc.addImage(it.wm, 'JPEG', x + 6, y, it.w - 12, it.h, undefined, 'FAST');
+          doc.rect(x, y, it.w, it.h, 'S');   // the border back over it
+        }
         doc.setLineDashPattern([1.2, 1.2], 0);
         doc.line(x + 6, y, x + 6, y + it.h); doc.line(x + it.w - 6, y, x + it.w - 6, y + it.h);
         doc.setLineDashPattern([], 0);
@@ -22762,7 +22932,27 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   // The back + spine background as one image: a top-to-bottom gradient built from the poster colours
   // (a richer, lighter tone at the top fading to a deep shade at the bottom), with the spine a shade darker.
   // A touch of fine noise stops the gradient printing as visible bands.
-  _cdGradientBg(backMm, spineMm, hMm, baseRgb, accentRgb, dpi = 110) {
+  // A faint copy of the front artwork for a back panel that has none of its own, filling the whole panel
+  // (cropped to fit, never stretched) at an even strength. Returns a canvas to draw onto a background.
+  _cdFadedArt(bmp, pxW, pxH, { opacity = 0.1, mono = false, focusY = 0.5 } = {}) {
+    const c = document.createElement('canvas'); c.width = pxW; c.height = pxH;
+    const ctx = c.getContext('2d');
+    ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+    const s = Math.max(pxW / bmp.width, pxH / bmp.height), dw = bmp.width * s, dh = bmp.height * s;
+    ctx.globalAlpha = opacity;
+    ctx.drawImage(bmp, (pxW - dw) / 2, (pxH - dh) * focusY, dw, dh);
+    ctx.globalAlpha = 1;
+    if (mono) {   // by hand rather than ctx.filter, which older Safari (and the iOS app) may not support
+      const im = ctx.getImageData(0, 0, pxW, pxH), d = im.data;
+      for (let i = 0; i < d.length; i += 4) { const l = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114; d[i] = d[i + 1] = d[i + 2] = l; }
+      ctx.putImageData(im, 0, 0);
+    }
+    return c;
+  }
+
+
+  // wm: an ImageBitmap of the front artwork, laid faintly over the back panel (not the spine)
+  _cdGradientBg(backMm, spineMm, hMm, baseRgb, accentRgb, dpi = 110, wm = null) {
     const W = Math.round((backMm + spineMm) / 25.4 * dpi), H = Math.round(hMm / 25.4 * dpi);
     const bw = Math.round(backMm / (backMm + spineMm) * W);
     const lum = c => (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255;
@@ -22784,6 +22974,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       }
     }
     ctx.putImageData(img, 0, 0);
+    if (wm) { try { ctx.drawImage(this._cdFadedArt(wm, bw, H, { opacity: 0.13, focusY: 0.35 }), 0, 0); } catch (_) {} }   // stops at the spine
     return c.toDataURL('image/jpeg', 0.9);
   }
 
@@ -22878,7 +23069,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // an accent colour from the poster for headings and spine bands, and a gradient background for the back + spine
     const accentLbl = (await this._mvAccent(poster.blob).catch(() => null)) || [200, 200, 208];
     let backdrop = null;
-    try { backdrop = this._cdGradientBg(PW, SP, CH, base, accentLbl); } catch (_) {}
+    // a faint copy of the poster on the back (editor -> Export & PDF -> Cover on the Back)
+    const wmBmp = this._pdfOn('back_art') ? await createImageBitmap(poster.blob).catch(() => null) : null;
+    try { backdrop = this._cdGradientBg(PW, SP, CH, base, accentLbl, wmBmp ? 150 : 110, wmBmp); } catch (_) {}
+    try { wmBmp?.close(); } catch (_) {}
     const yearTxt = (String(data.year || '').match(/\d{4}/) || [])[0] || '';
     const front = await this._cdRender(poster.blob, PW, CH, { bg: bgCss, fade: true, focusY: 0.35 });
     const disc = await this._cdRender(poster.blob, DD, DD, { shape: 'disc', hole: HOLE, fit: 'cover', focusY: 0.3, bg: bgCss, banner: { title: title, sub: yearTxt } });
@@ -27009,7 +27203,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
     // Grouped by title — one row per show/movie, most recently watched
     // first. The 10/50 limit applies to titles, not individual plays.
-    const limit = this._mtWatchExpanded ? 50 : 10;
+    const limit = this._mtWatchLimit();
     const groups = this._groupWatchLog(this._getWatchLogEntries()).slice(0, limit);
     const ytGroups = this._groupYouTubeLog().slice(0, limit);
 
@@ -27101,6 +27295,12 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
   // YouTube's part of Watch History: one row per video, most recent first.
   // Watching the same video again within six hours counts as one watch.
+  // Watch History shows the last 10, 50 or 100 titles (an older true still means 50)
+  _mtWatchLimit() {
+    const v = this._mtWatchExpanded;
+    return v === 10 || v === 50 || v === 100 ? v : v ? 50 : 10;
+  }
+
   _groupYouTubeLog() {
     const groups = new Map();
     this._getYouTubeLogEntries().sort((a, b) => (b.ts || 0) - (a.ts || 0)).forEach(e => {
@@ -31865,7 +32065,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         // If queue is still empty, silently turn off radio mode if active
         if (!queueItems.length && attrs.shuffle) {
           try {
-            await this._hass.callService('media_player', 'shuffle_set', {
+            await this._call('media_player', 'shuffle_set', {
               entity_id: this._entity, shuffle: false
             });
           } catch(_) {}
@@ -32684,7 +32884,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
           s.entity_id !== resolvedEid
         );
         if (_parentGroup) return; // static member of another group — skip
-        this._hass.callService('media_player', 'unjoin', { entity_id: resolvedEid }).catch(() => {});
+        this._call('media_player', 'unjoin', { entity_id: resolvedEid }).catch(() => {});
       });
     } else if (_curGroupMembers?.length > 1 && !_destIsMA) {
       // Switching to non-MA entity (e.g. Apple TV) — leave MA group alone
@@ -33157,10 +33357,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       targets.forEach(eid => {
         const s = self._hass?.states[eid];
         savedStates[eid] = { wasPlaying: s?.state === 'playing', volume: s?.attributes?.volume_level != null ? s.attributes.volume_level : null };
-        if (savedStates[eid].wasPlaying) self._hass.callService('media_player', 'media_pause', { entity_id: eid }).catch(() => {});
+        if (savedStates[eid].wasPlaying) self._call('media_player', 'media_pause', { entity_id: eid }).catch(() => {});
         const annVol = announceVolumes[eid];
         if (modifiedVolumes.has(eid) && annVol != null && savedStates[eid].volume != null && Math.abs(annVol / 100 - savedStates[eid].volume) > 0.01)
-          self._hass.callService('media_player', 'volume_set', { entity_id: eid, volume_level: annVol / 100 }).catch(() => {});
+          self._call('media_player', 'volume_set', { entity_id: eid, volume_level: annVol / 100 }).catch(() => {});
       });
       // Delay 1 second after pausing to let speakers fully stop before TTS fires
       setTimeout(() => {
@@ -33168,10 +33368,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         const ttsEid = isSpeak ? (Object.keys(self._hass.states).find(e => e.startsWith('tts.') && self._hass.states[e].state !== 'unavailable') || null) : null;
         targets.forEach(eid => {
           if (isSpeak) {
-            self._hass.callService('tts', 'speak', { entity_id: ttsEid || 'tts.home_assistant_cloud', media_player_entity_id: eid, message: text })
-              .catch(() => { self._hass.callService('tts', 'speak', { entity_id: eid, message: text }).catch(() => {}); });
+            self._call('tts', 'speak', { entity_id: ttsEid || 'tts.home_assistant_cloud', media_player_entity_id: eid, message: text })
+              .catch(() => { self._call('tts', 'speak', { entity_id: eid, message: text }, undefined, { fail: 'Couldn\u2019t play the announcement' }).catch(() => {}); });
           } else {
-            self._hass.callService(tts.domain, tts.service, { entity_id: eid, message: text }).catch(() => {});
+            self._call(tts.domain, tts.service, { entity_id: eid, message: text }, undefined, { fail: 'Couldn\u2019t play the announcement' }).catch(() => {});
           }
         });
         const ms = Math.max(4000, text.length * 80 + 3000);
@@ -33180,9 +33380,9 @@ class CrowAIMediaPlayerCard extends HTMLElement {
             const saved = savedStates[eid];
             const annVol = announceVolumes[eid];
             if (modifiedVolumes.has(eid) && annVol != null && saved.volume != null && Math.abs(annVol / 100 - saved.volume) > 0.01)
-              self._hass?.callService('media_player', 'volume_set', { entity_id: eid, volume_level: saved.volume }).catch(() => {});
+              self._call('media_player', 'volume_set', { entity_id: eid, volume_level: saved.volume }).catch(() => {});
             if (saved.wasPlaying)
-              self._hass?.callService('media_player', 'media_play', { entity_id: eid }).catch(() => {});
+              self._call('media_player', 'media_play', { entity_id: eid }).catch(() => {});
           });
           self._announceActive = false;
           self._updateMulticastPills();
@@ -33457,7 +33657,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       targetArr.forEach(svc => {
         const svcData = { message };
         if (title) svcData.title = title;
-        this._hass.callService('notify', svc, svcData).catch(() => {});
+        this._call('notify', svc, svcData, undefined, { fail: 'Couldn\u2019t send the message' }).catch(() => {});
       });
       msgOverlay.remove();
       maPopup.classList.remove('visible');
@@ -36701,7 +36901,7 @@ Include ALL tracks. Use null for unknown fields.`;
     const sendText = () => {
       const text = input?.value ?? '';
       if (!configEntryId) { this._showToast('Could not find this Apple TV\u2019s config entry'); return; }
-      this._hass.callService('apple_tv', 'set_keyboard_text', { config_entry_id: configEntryId, text }).catch(() => {
+      this._call('apple_tv', 'set_keyboard_text', { config_entry_id: configEntryId, text }).catch(() => {
         this._showToast('Failed to send text to Apple TV');
       });
     };
@@ -36722,7 +36922,7 @@ Include ALL tracks. Use null for unknown fields.`;
       if (input) input.value = '';
       clearBtn.style.display = 'none';
       input?.focus();
-      if (configEntryId) this._hass.callService('apple_tv', 'clear_keyboard_text', { config_entry_id: configEntryId }).catch(() => {});
+      if (configEntryId) this._call('apple_tv', 'clear_keyboard_text', { config_entry_id: configEntryId }).catch(() => {});
     });
     // Manual close only hides this card's panel — the keyboard may still be
     // focused on the Apple TV itself, so this doesn't try to un-focus it.
@@ -36955,6 +37155,30 @@ Include ALL tracks. Use null for unknown fields.`;
     badge.style.display = this._maLibIsStarred({ uri: trackUri }, 'track') ? 'flex' : 'none';
   }
 
+  // Discogs & AI / TMDB & AI: the fun fact out of an AI reply, however the AI worded the key
+  // ("fact", "fun_fact", "funFact"), or '' — and never the word "null"
+  _mixFactFrom(raw) {
+    raw = String(raw || '');
+    let o = null;
+    const a = raw.indexOf('{'), b = raw.lastIndexOf('}');
+    if (a !== -1 && b > a) { try { o = JSON.parse(raw.slice(a, b + 1)); } catch (_) { o = null; } }
+    let f = o ? (o.fact ?? o.fun_fact ?? o.funFact ?? o.funfact ?? '') : '';
+    // a reply that isn't quite JSON: pull the fact straight out of the text
+    if (!o) { const m = raw.match(/"(?:fun_?fact|funFact|fact)"\s*:\s*"([\s\S]*?)"\s*[,}]/i); if (m) { try { f = JSON.parse('"' + m[1] + '"'); } catch (_) { f = m[1]; } } }
+    f = String(f || '').trim();
+    return /^(null|none|n\/a|unknown|undefined)$/i.test(f) ? '' : f;
+  }
+  // "Fun Fact" box: the fact, or a quiet placeholder while it's being found
+  _mixFactBox(fact, { k = '', video = false } = {}) {
+    const esc = v => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const box = video ? 'margin:10px 0;' : 'margin-bottom:12px;';
+    const lab = video ? 'font-size:10px;margin-bottom:4px' : 'font-size:9px;margin-bottom:3px';
+    const body = fact
+      ? `<div style="font-size:12px;color:${this._pt("text")};line-height:1.5">${esc(fact)}</div>`
+      : `<div style="font-size:12px;color:${this._pt("dim")};line-height:1.5;font-style:italic;">Finding a fun fact…</div>`;
+    return `<div ${fact ? '' : `id="mixFactSlot" data-k="${k}" `}style="${box}padding:10px 12px;background:rgba(99,179,237,0.07);border:1px solid rgba(99,179,237,0.14);border-radius:10px;"><div style="${lab};font-weight:700;color:rgba(99,179,237,0.6);letter-spacing:0.5px;text-transform:uppercase;">Fun Fact</div>${body}</div>`;
+  }
+
   // Discogs & AI: a fun fact and similar tracks for a song from the AI, kept per song. A full AI answer for
   // the song (from AI First or Look Up in Advance) is used if there is one.
   _songMixKey(artist, title) { return ('songmix1|' + artist + '|' + title).toLowerCase(); }
@@ -36963,8 +37187,33 @@ Include ALL tracks. Use null for unknown fields.`;
     const mine = this._aiCachedRead(this._aiTrackInfoCache, 'trackInfo', this._songMixKey(artist, title));
     if (mine) return mine;
     const full = this._aiCachedRead(this._aiTrackInfoCache, 'trackInfo', ('trackinfo3|' + artist + '|' + title).toLowerCase());
-    if (full && !full._notFound && !full._incomplete && (full.fact || (full.similar || []).length)) return { fact: full.fact || '', similar: full.similar || [] };
+    if (full && !full._notFound && !full._incomplete && (full.fact || (full.similar || []).length)) return { fact: this._mixFactFrom(JSON.stringify({ fact: full.fact || '' })), similar: full.similar || [] };
+    const factOnly = this._aiCachedRead(this._aiTrackInfoCache, 'trackInfo', this._songMixFactKey(artist, title));
+    if (factOnly?.fact) return { fact: factOnly.fact, similar: [] };
     return null;
+  }
+  _songMixFactKey(artist, title) { return ('songmixfact1|' + artist + '|' + title).toLowerCase(); }
+  // Discogs & AI: just the fun fact, asked on its own so it comes back quickly (the similar songs follow)
+  async _songMixFact(artist, title) {
+    const agentId = this._config?.ai_conversation_agent || '';
+    if (!agentId || agentId === 'conversation.home_assistant') return '';
+    if (!(await this._aiCheckAvailable())) return '';
+    const prompt = 'You are a music encyclopedia. Give one genuinely interesting or surprising fact, in 1-2 sentences, about the song "' + title + '" by "' + artist + '" (or, if you know little about the song itself, about its recording or the artist at the time). '
+      + 'CRITICAL: Use your training knowledge. Return a single raw JSON object, start with { end with }: {"fact":"..."}. If you truly don\'t know the song return {}.';
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const resp = await this._aiProcess({ _crowFeature: 'info', _crowFallback: true, _crowSilent: true,
+          type: 'conversation/process', text: prompt, agent_id: agentId, language: navigator.language || 'en' });
+        const fact = this._mixFactFrom(resp?.response?.speech?.plain?.speech);
+        if (fact) this._aiCachedWrite(this._aiTrackInfoCache || (this._aiTrackInfoCache = new Map()), 'trackInfo', this._songMixFactKey(artist, title), { fact });
+        return fact;
+      } catch (e) {
+        // one more go after a moment if the AI was just busy or slow; not if it's paused or switched off
+        if (attempt || e?._paused || e?.kind === 'disabled' || e?.kind === 'agent') return '';
+        await new Promise(r => setTimeout(r, 2500));
+      }
+    }
+    return '';
   }
   async _songMixExtras(artist, title) {
     const agentId = this._config?.ai_conversation_agent || '';
@@ -36977,9 +37226,9 @@ Include ALL tracks. Use null for unknown fields.`;
         type: 'conversation/process', text: prompt, agent_id: agentId, language: navigator.language || 'en' });
       const raw = String(resp?.response?.speech?.plain?.speech || '');
       const a = raw.indexOf('{'), b = raw.lastIndexOf('}');
-      if (a === -1 || b <= a) return null;
-      const o = JSON.parse(raw.slice(a, b + 1));
-      const out = { fact: o?.fact ? String(o.fact) : '', similar: Array.isArray(o?.similar) ? o.similar.filter(x => x && x.title && x.artist).slice(0, 10).map(x => ({ title: String(x.title), artist: String(x.artist) })) : [] };
+      let o = null;
+      if (a !== -1 && b > a) { try { o = JSON.parse(raw.slice(a, b + 1)); } catch (_) { o = null; } }
+      const out = { fact: this._mixFactFrom(raw), similar: Array.isArray(o?.similar) ? o.similar.filter(x => x && x.title && x.artist).slice(0, 10).map(x => ({ title: String(x.title), artist: String(x.artist) })) : [] };
       if (!out.fact && !out.similar.length) return null;
       this._aiCachedWrite(this._aiTrackInfoCache || (this._aiTrackInfoCache = new Map()), 'trackInfo', this._songMixKey(artist, title), out);
       return out;
@@ -37254,7 +37503,7 @@ Include ALL tracks. Use null for unknown fields.`;
             const _hasMoveNext = !!(this._hass?.services?.mass_queue?.move_queue_item_next);
             try {
               if (_hasMoveNext && context.queueItemId) {
-                await this._hass.callService('mass_queue', 'move_queue_item_next', {
+                await this._call('mass_queue', 'move_queue_item_next', {
                   entity: _target, queue_item_id: context.queueItemId
                 });
               } else {
@@ -37265,7 +37514,7 @@ Include ALL tracks. Use null for unknown fields.`;
               }
             } catch(e) { this._showToast('Could not play track'); return; }
             await new Promise(res => setTimeout(res, 300));
-            try { await this._hass.callService('media_player', 'media_next_track', { entity_id: _target }); } catch(_) {}
+            try { await this._call('media_player', 'media_next_track', { entity_id: _target }); } catch(_) {}
             this._queuePanelDirection = null;
             this._closeInfoPopup();
             return;
@@ -37408,7 +37657,8 @@ Include ALL tracks. Use null for unknown fields.`;
             if (_mx) {
               if (_mx.fact) _earlyDiscogsData.fact = _mx.fact;
               if ((_mx.similar || []).length && !(_earlyDiscogsData.similar || []).length) _earlyDiscogsData.similar = _mx.similar;
-              _earlyDiscogsData._mixDone = true;
+              // a known fact means there's nothing left to look up; without one, it's still asked for
+              if (_mx.fact) _earlyDiscogsData._mixDone = true;
             }
           }
         }
@@ -37786,12 +38036,26 @@ Include ALL tracks. Use null for unknown fields.`;
     const _sMix = !!(data._fromDiscogs && data._mixedAI && !_aiOff);
     const _sMixTok = _sMix ? (this._songMixTok = (this._songMixTok || 0) + 1) : 0;
     if (_sMix && !data._mixDone) {
-      this._songMixExtras(artistName, trackTitle).then(x => {
+      const _okSlot = el => el && el.dataset.k === String(_sMixTok);
+      let _factShown = false, _factTries = 0;
+      // similar songs already known (from a cached answer): only the fact still needs asking for
+      const _needSim = !(data.similar || []).length;
+      const _factAsks = (data.fact ? 0 : 1) + (_needSim ? 1 : 0);
+      // fill the Fun Fact box when a fact arrives; take the placeholder away if neither request finds one
+      const _putFact = (fact) => {
+        _factTries++;
+        const fs = content.querySelector('#mixFactSlot');
+        if (!_okSlot(fs) || _factShown) return;
+        if (fact) { _factShown = true; data.fact = fact; fs.outerHTML = this._mixFactBox(fact); }
+        else if (_factTries >= _factAsks) fs.remove();
+      };
+      if (!data.fact) this._songMixFact(artistName, trackTitle).then(_putFact).catch(() => _putFact(''));
+      if (_needSim) this._songMixExtras(artistName, trackTitle).then(x => {
+        if (!data.fact || !_factShown) _putFact(x?.fact || '');
         if (!x) return;
-        const ok = el => el && el.dataset.k === String(_sMixTok);
-        const fs = content.querySelector('#mixFactSlot'), ss = content.querySelector('#mixSimSlot');
+        const ok = _okSlot;
+        const ss = content.querySelector('#mixSimSlot');
         const esc = v => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-        if (ok(fs) && x.fact) fs.outerHTML = `<div style="padding:10px 12px;background:rgba(99,179,237,0.07);border:1px solid rgba(99,179,237,0.14);border-radius:10px;margin-bottom:12px;"><div style="font-size:9px;font-weight:700;color:rgba(99,179,237,0.6);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:3px">Fun Fact</div><div style="font-size:12px;color:${this._pt("text")};line-height:1.5">${esc(x.fact)}</div></div>`;
         if (ok(ss) && (x.similar || []).length) {
           ss.innerHTML = `<div style="margin-top:14px;"><div style="font-size:10px;font-weight:700;color:${this._pt("dim")};letter-spacing:0.5px;text-transform:uppercase;margin-bottom:6px;">Similar Tracks</div>`
             + x.similar.map(t => `<div class="ai-sim-wrap" style="position:relative;overflow:hidden;border-radius:10px;margin-bottom:4px;"><div class="ai-sim-row mix-sim-row" data-title="${esc(t.title)}" data-artist="${esc(t.artist)}" style="display:flex;align-items:center;gap:10px;padding:9px 10px;background:${this._pt("bg")};cursor:pointer;">`
@@ -37977,7 +38241,7 @@ Include ALL tracks. Use null for unknown fields.`;
       ${data.fact ? `<div style="padding:10px 12px;background:rgba(99,179,237,0.07);border:1px solid rgba(99,179,237,0.14);border-radius:10px;margin-bottom:12px;">
         <div style="font-size:9px;font-weight:700;color:rgba(99,179,237,0.6);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:3px">Fun Fact</div>
         <div style="font-size:12px;color:${this._pt("text")};line-height:1.5">${data.fact}</div>
-      </div>` : (_sMix && !data._mixDone ? `<div id="mixFactSlot" data-k="${_sMixTok}"></div>` : '')}
+      </div>` : (_sMix && !data._mixDone ? this._mixFactBox('', { k: _sMixTok }) : '')}
       ${(!_aiOff && (!data._fromDiscogs || _sMix) && this._aiFeatureOn('ask')) ? `
       <div id="music-action-row" style="display:flex;gap:8px;margin:0 0 12px;">
         <button id="music-ask-btn" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:9px 12px;border-radius:12px;background:${this._pt("btnBg")};border:1px solid ${this._pt("border")};color:${this._pt("text")};font-size:12px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;-webkit-tap-highlight-color:transparent;">
@@ -38114,7 +38378,7 @@ Include ALL tracks. Use null for unknown fields.`;
           try {
             if (_hasMoveNext && context.queueItemId) {
               // Best path: move the existing queue item to play next, then skip to it
-              await this._hass.callService('mass_queue', 'move_queue_item_next', {
+              await this._call('mass_queue', 'move_queue_item_next', {
                 entity: _target, queue_item_id: context.queueItemId
               });
             } else {
@@ -38128,7 +38392,7 @@ Include ALL tracks. Use null for unknown fields.`;
           // Small delay before skipping so MA has time to move the item
           await new Promise(r => setTimeout(r, 300));
           try {
-            await this._hass.callService('media_player', 'media_next_track', { entity_id: _target });
+            await this._call('media_player', 'media_next_track', { entity_id: _target });
           } catch(_) {}
           this._queuePanelDirection = null;
           this._closeInfoPopup();
@@ -44239,11 +44503,11 @@ Include ALL tracks. Use null for unknown fields.`;
       const resp = await this._aiProcess({ _crowFeature: 'info', _crowFallback: true, _crowSilent: true,
         type: 'conversation/process', text: prompt, agent_id: agentId, language: navigator.language || 'en' });
       const raw = String(resp?.response?.speech?.plain?.speech || '');
-      const a = raw.indexOf('{'), b = raw.lastIndexOf('}');
-      if (a === -1 || b <= a) return null;
-      const o = JSON.parse(raw.slice(a, b + 1));
-      if (!o?.fun_fact) return null;
-      const out = { fun_fact: String(o.fun_fact), vibe: o.vibe ? String(o.vibe) : '' };
+      const fact = this._mixFactFrom(raw);
+      if (!fact) return null;
+      let vibe = '';
+      try { const a = raw.indexOf('{'), b = raw.lastIndexOf('}'); vibe = String(JSON.parse(raw.slice(a, b + 1))?.vibe || ''); } catch (_) {}
+      const out = { fun_fact: fact, vibe };
       this._aiCachedWrite(this._aiVideoInfoCache || (this._aiVideoInfoCache = new Map()), 'videoInfo', this._videoMixKey(t), out);
       return out;
     } catch (_) { return null; }
@@ -44419,10 +44683,11 @@ Include ALL tracks. Use null for unknown fields.`;
       if (_hit) { data = { ...data, fun_fact: _hit.fun_fact || '', _mixDone: true }; this._videoPdfData = data; }
       else this._videoMixExtras(data).then(x => {
         const slot = content.querySelector('#mixFactSlot');
-        if (!x?.fun_fact || !slot || slot.dataset.k !== String(_vMixTok)) return;
+        if (!slot || slot.dataset.k !== String(_vMixTok)) return;
+        if (!x?.fun_fact) { slot.remove(); return; }   // no fact to be had: take the placeholder away
         data.fun_fact = x.fun_fact;
         slot.outerHTML = `<div style="margin:10px 0;padding:10px 12px;background:rgba(99,179,237,0.07);border:1px solid rgba(99,179,237,0.14);border-radius:10px;"><div style="font-size:10px;font-weight:700;color:rgba(99,179,237,0.6);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:4px">Fun Fact</div><div style="font-size:12px;color:${this._pt("text")};line-height:1.5">${String(x.fun_fact).replace(/</g, '&lt;')}</div></div>`;
-      }).catch(() => {});
+      }).catch(() => { const slot = content.querySelector('#mixFactSlot'); if (slot && slot.dataset.k === String(_vMixTok)) slot.remove(); });
     }
     if (_videoTitleEl) _videoTitleEl.textContent = _vMix ? 'TMDB & AI Info' : data._fromTmdb ? 'TMDB Info' : data._fromTvmaze ? 'TVmaze Info' : 'AI Info';
 
@@ -44501,7 +44766,7 @@ Include ALL tracks. Use null for unknown fields.`;
       </div>
       ${data.overview ? `<div class="info-section-label">Overview</div><div class="info-overview">${data.overview}</div>` : ''}
       ${genreTags ? `<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:8px;">${genreTags}</div>` : ''}
-      ${(data.fun_fact || data.fact) ? `<div style="margin:10px 0;padding:10px 12px;background:rgba(99,179,237,0.07);border:1px solid rgba(99,179,237,0.14);border-radius:10px;"><div style="font-size:10px;font-weight:700;color:rgba(99,179,237,0.6);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:4px">Fun Fact</div><div style="font-size:12px;color:${this._pt("text")};line-height:1.5">${data.fun_fact || data.fact}</div></div>` : (_vMix && !data._mixDone ? `<div id="mixFactSlot" data-k="${_vMixTok}"></div>` : '')}
+      ${(data.fun_fact || data.fact) ? `<div style="margin:10px 0;padding:10px 12px;background:rgba(99,179,237,0.07);border:1px solid rgba(99,179,237,0.14);border-radius:10px;"><div style="font-size:10px;font-weight:700;color:rgba(99,179,237,0.6);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:4px">Fun Fact</div><div style="font-size:12px;color:${this._pt("text")};line-height:1.5">${data.fun_fact || data.fact}</div></div>` : (_vMix && !data._mixDone ? this._mixFactBox('', { k: _vMixTok, video: true }) : '')}
       <div id="content-warning-section"></div>
       ${(this._aiFeatureOn('ask') && (!data._fromTmdb || _vMix)) ? `
       <div id="action-row" style="display:flex;gap:8px;margin:12px 0 8px;">
@@ -49275,7 +49540,7 @@ Include ALL tracks. Use null for unknown fields.`;
   // caller wants to chain off a successful call.
   _playMediaDirect(entityId, contentId, contentType, friendlyName) {
     this._showLoadingToast('Starting playback\u2026');
-    return this._hass.callService('media_player', 'play_media', {
+    return this._call('media_player', 'play_media', {
       entity_id: entityId, media_content_id: contentId, media_content_type: contentType
     }).catch((err) => {
       const msg = (err?.message || err?.error?.message || String(err)).toLowerCase();
@@ -49395,7 +49660,7 @@ Include ALL tracks. Use null for unknown fields.`;
       const entName = (this._hass?.states[ent]?.attributes?.friendly_name || '').toLowerCase().trim();
       if (entName && (entName === maName || maName.includes(entName) || entName.includes(maName))) {
         try {
-          await this._hass.callService('media_player', 'media_stop', { entity_id: ent });
+          await this._call('media_player', 'media_stop', { entity_id: ent });
           stoppedAny = true;
         } catch (_) {}
       }
@@ -49533,10 +49798,10 @@ Include ALL tracks. Use null for unknown fields.`;
 
     // 1. Join secondaries to primary using resolved MA entity IDs
     if (resolvedSecondaries.length) {
-      self._hass.callService('media_player', 'join', {
+      self._call('media_player', 'join', {
         entity_id: resolvedPrimary,
         group_members: resolvedSecondaries
-      }).catch(() => {});
+      }, undefined, { fail: 'Couldn\u2019t group the speakers' }).catch(() => {});
     }
 
     // 2. Play on the resolved primary — MA propagates to all joined speakers
@@ -49866,10 +50131,10 @@ Include ALL tracks. Use null for unknown fields.`;
     }
 
     // Step 1: unjoin — removes eid from MA's group, updates group_members in HA state
-    this._hass.callService('media_player', 'unjoin', { entity_id: eid }).catch(() => {});
+    this._call('media_player', 'unjoin', { entity_id: eid }).catch(() => {});
 
     // Step 2: stop — propagates to all members (unavoidable). Accept it.
-    this._hass.callService('media_player', 'media_stop', { entity_id: eid }).catch(() => {});
+    this._call('media_player', 'media_stop', { entity_id: eid }).catch(() => {});
 
     // Step 3: restart keepers at the captured position.
     // media_play after media_stop can advance the queue, so we replay the exact
@@ -49895,7 +50160,7 @@ Include ALL tracks. Use null for unknown fields.`;
       setTimeout(() => {
         // Re-join keepers if more than one so they stay in sync
         if (keepers.length > 1) {
-          self._hass?.callService('media_player', 'join', {
+          self._call('media_player', 'join', {
             entity_id: keepers[0], group_members: keepers.slice(1)
           }).catch(() => {});
         }
@@ -49910,12 +50175,12 @@ Include ALL tracks. Use null for unknown fields.`;
           // Only the "insert next, then skip to it" path needs the skip —
           // 'replace' already starts playing the track directly.
           if (_removingMaster) return;
-          return self._hass?.callService('media_player', 'media_next_track', { entity_id: keepers[0] }).catch(() => {});
+          return self._call('media_player', 'media_next_track', { entity_id: keepers[0] }).catch(() => {});
         }).then(() => {
           // Seek to the captured position once playback starts
           if (_resumePos && _resumePos > 1) {
             setTimeout(() => {
-              self._hass?.callService('media_player', 'media_seek', {
+              self._call('media_player', 'media_seek', {
                 entity_id: keepers[0], seek_position: Math.floor(_resumePos)
               }).catch((err) => {
                 console.warn('[CrowAI] Resume-position seek failed after removing a speaker', err);
@@ -50121,9 +50386,9 @@ Include ALL tracks. Use null for unknown fields.`;
 
     members.filter(m => m !== sourceEid && m !== this._resolveMAEntity(sourceEid))
       .forEach(eid => {
-        this._hass.callService('media_player', 'volume_set', {
+        this._call('media_player', 'volume_set', {
           entity_id: eid, volume_level: sourceVol
-        }).catch(() => {});
+        }, undefined, { fail: 'Couldn\u2019t sync the volume on every speaker' }).catch(() => {});
       });
     this._showToast(`Volume synced to ${Math.round(sourceVol * 100)}%`, 1800);
   }
@@ -50215,7 +50480,7 @@ Include ALL tracks. Use null for unknown fields.`;
 
     this._showToast(`Adding ${name}\u2026`, 2500);
 
-    const doJoin = () => this._hass.callService('media_player', 'join', {
+    const doJoin = () => this._call('media_player', 'join', {
       entity_id: masterEid,
       group_members: allMembers
     });
@@ -50229,7 +50494,7 @@ Include ALL tracks. Use null for unknown fields.`;
     // sidestepping whatever that limitation is, rather than trying to
     // extend an already-active group in place.
     const attempt = existingOthers.length
-      ? this._hass.callService('media_player', 'unjoin', { entity_id: masterEid })
+      ? this._call('media_player', 'unjoin', { entity_id: masterEid })
           .catch(() => {})
           .then(() => new Promise(res => setTimeout(res, 600)))
           .then(doJoin)
@@ -51248,7 +51513,7 @@ Include ALL tracks. Use null for unknown fields.`;
         if (!match) continue; // couldn't resolve — skip rather than risk moving the wrong track
 
         usedIds.add(match.queueItemId);
-        await this._hass.callService('mass_queue', 'move_queue_item_next', {
+        await this._call('mass_queue', 'move_queue_item_next', {
           entity: this._entity, queue_item_id: match.queueItemId
         });
         await new Promise(res => setTimeout(res, 60));
@@ -51626,7 +51891,7 @@ Include ALL tracks. Use null for unknown fields.`;
             return;
           }
           try {
-            await self._hass.callService('mass_queue', 'move_queue_item_next', {
+            await self._call('mass_queue', 'move_queue_item_next', {
               entity: self._entity, queue_item_id: queueItemId
             });
             // The service call updates MA's queue immediately, but this
@@ -51735,7 +52000,7 @@ Include ALL tracks. Use null for unknown fields.`;
           };
           try {
             if (isMa && queueItemId && hasMassRem) {
-              await self._hass.callService('mass_queue', 'remove_queue_item', {
+              await self._call('mass_queue', 'remove_queue_item', {
                 entity: self._entity, queue_item_id: queueItemId
               });
               _dropQueueRow();
@@ -51765,7 +52030,7 @@ Include ALL tracks. Use null for unknown fields.`;
               (queueItemId !== null && queueItemId !== undefined && String(queueItemId) === '0');
             if (_isNowPlaying) {
               // Currently playing — seek to beginning
-              await self._hass.callService('media_player', 'media_seek', {
+              await self._call('media_player', 'media_seek', {
                 entity_id: self._entity, seek_position: 0
               });
             } else {
@@ -51775,20 +52040,20 @@ Include ALL tracks. Use null for unknown fields.`;
               const _hasMoveNext = !!(self._hass?.services?.mass_queue?.move_queue_item_next);
               if (_hasMoveNext && queueItemId && !isHistory) {
                 try {
-                  await self._hass.callService('mass_queue', 'move_queue_item_next', {
+                  await self._call('mass_queue', 'move_queue_item_next', {
                     entity: self._entity, queue_item_id: queueItemId
                   });
-                  try { await self._hass.callService('media_player', 'media_next_track', { entity_id: self._entity }); } catch(_) {}
+                  try { await self._call('media_player', 'media_next_track', { entity_id: self._entity }); } catch(_) {}
                 } catch(_moveErr) {
                   const _errMsg = (_moveErr?.message || _moveErr?.error?.message || String(_moveErr)).toLowerCase();
                   if (_errMsg.includes('already played') || _errMsg.includes('buffered')) {
-                    try { await self._hass.callService('media_player', 'media_next_track', { entity_id: self._entity }); } catch(_) {}
+                    try { await self._call('media_player', 'media_next_track', { entity_id: self._entity }); } catch(_) {}
                   } else if (uri) {
                     await self._hass.connection.sendMessagePromise({
                       type: 'call_service', domain: 'music_assistant', service: 'play_media',
                       service_data: { entity_id: self._entity, media_id: uri, media_type: 'track', enqueue: 'next' }
                     });
-                    try { await self._hass.callService('media_player', 'media_next_track', { entity_id: self._entity }); } catch(_) {}
+                    try { await self._call('media_player', 'media_next_track', { entity_id: self._entity }); } catch(_) {}
                   }
                 }
               } else if (uri) {
@@ -51797,7 +52062,7 @@ Include ALL tracks. Use null for unknown fields.`;
                   type: 'call_service', domain: 'music_assistant', service: 'play_media',
                   service_data: { entity_id: self._entity, media_id: uri, media_type: 'track', enqueue: 'next' }
                 });
-                try { await self._hass.callService('media_player', 'media_next_track', { entity_id: self._entity }); } catch(_) {}
+                try { await self._call('media_player', 'media_next_track', { entity_id: self._entity }); } catch(_) {}
               }
             }
             self._queuePanelDirection = null;
@@ -53280,6 +53545,13 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                 </div>
                 <div class="toggle-item" style="align-items:flex-start;gap:12px;padding:8px 0;">
                   <div style="flex:1;">
+                    <div class="toggle-label">Cover on the Back</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">A faint copy of the front cover filling backs that have no artwork of their own: the CD tracklist card and the DVD / Blu-ray back. A real back cover scan is never changed.</div>
+                  </div>
+                  <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="pdf_back_art" checked><span class="toggle-track"></span></label>
+                </div>
+                <div class="toggle-item" style="align-items:flex-start;gap:12px;padding:8px 0;">
+                  <div style="flex:1;">
                     <div class="toggle-label">Info Panel PDFs</div>
                     <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">The music, movie, TV and podcast info panels, and TV episode guides.</div>
                   </div>
@@ -54669,7 +54941,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       _applyPdfDepState(pdfEnabledEl.checked);
       pdfEnabledEl.onchange = (e) => { this._updateConfig('pdf_enabled', e.target.checked); _applyPdfDepState(e.target.checked); };
     }
-    ['lyrics', 'cd', 'disc', 'marks', 'info', 'history', 'month', 'recent', 'recap', 'pins', 'lists'].forEach(k => {
+    ['lyrics', 'cd', 'disc', 'marks', 'back_art', 'info', 'history', 'month', 'recent', 'recap', 'pins', 'lists'].forEach(k => {
       const el = root.getElementById('pdf_' + k);
       if (!el) return;
       el.checked = this._config?.['pdf_' + k] !== false;
