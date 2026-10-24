@@ -18,6 +18,7 @@ CrowAI is about **discovery** as much as playback — AI-powered info panels, re
 - **Modern Design** — a **Classic** solid card or a **Glass** frosted-glass card, with an Auto / Light / Dark theme setting, rounded corners, smooth animations and customisable accent colours
 - **Skins** — twelve whole-card looks, each with a light and a dark version, chosen under **Skin** in the editor's Appearance section: **Retro Players** (Winamp Classic, Winamp Modern, iPod Classic, iTunes 2005, Windows Media Player and Walkman), **Retro Desktops** (Windows 98, Windows XP and Mac OS X Aqua) and **Modern** (Zune, Spotify Style and Terminal). A skin dresses every screen, panel, menu and popup of the card, with its own title bar, buttons, lists and fonts. Some add an LCD display with a seven-segment clock and a spectrum that moves while music plays, the iPod skin has a working click wheel (Menu, back, forward, play/pause, the centre button for More Info, and a finger round the wheel for the volume), and the Walkman skin turns the artwork into a cassette whose reels turn as the song plays. The Theme setting picks light or dark (or follows Home Assistant's own mode when Theme is Auto); Style and the custom colours sit out while a skin is chosen. **Crow (Original)** is the card's own look. With **Skin in Quick Menu** on (the default), **Skin ›** in the quick menu lets each phone, tablet or computer choose its own skin, remembered on that device; turn it off and every device uses the skin chosen in the editor. In YAML: `skin` (`winamp`, `winamp5`, `ipod`, `itunes`, `wmp`, `walkman`, `win98`, `xp`, `aqua`, `zune`, `spotify` or `terminal`) and `skin_menu`
 - **Row Swipes** — swipe a row right or left for its most useful actions, as in Apple's Mail app: right for the "do it" actions such as Add to Queue, Play Next or Pin, left for the "manage" ones such as Info, Remove or More. A short swipe shows the buttons; a long swipe does the one nearest the edge straight away. Press and hold still opens the full menu. It works on songs, library items, history, pins, films and shows throughout the card. On by default, and rows are a little taller while it's on; turn it off with **Row Swipes** in Appearance, or `row_swipes: false` in YAML
+- **Keyboard Shortcuts** — on a tablet or computer with a keyboard: Space plays or pauses, the arrows skip and change the volume, L, I, Q and B open Lyrics, Info, the Queue and the Library, / searches and Esc closes (see [Keyboard Shortcuts](#keyboard-shortcuts)). The keys work in the player you last tapped. On by default; turn it off with **Keyboard Shortcuts** in Appearance, or `keyboard_shortcuts: false` in YAML
 - **Player Icon Themes** — eight icon sets: Standard, Modern, Robot (default), Chunky, Retro Player, Sharp, Pixel and LCD
 - **Button Icons** — choose the icon for the Discover button and the Apple TV remote button from a set of ready-made icons, or use any Home Assistant icon (e.g. `mdi:bookshelf`). In Appearance, or `discover_icon` / `remote_icon` in YAML
 - **Artwork Crossfade** — optional cinematic fade-to-black transition between track changes
@@ -53,6 +54,33 @@ CrowAI is about **discovery** as much as playback — AI-powered info panels, re
 - **Live/Podcast/Audiobook Pill** — optional badge identifying what's currently playing (off by default)
 - **In-card Notifications** — toast alerts appear inside the card. Home Assistant's own "Failed to perform the action" bar never pops up over the dashboard: when something the card asks Home Assistant to do fails (an Apple TV button, a volume change, an announcement, a message, grouping speakers), a short message in the card says so instead, once rather than a stack of them
 - **Controls Theme** — 12 colour presets for the control icons (Classic, Vivid, Warm, Ocean, Rose, Forest, Neon, Soft, Midnight, Gold, Retro, Ember)
+
+## Keyboard Shortcuts
+
+On a tablet or computer with a keyboard, tap the player once and these keys control it. Press **?** in the card to see the list at any time.
+
+| Key | Does |
+|-----|------|
+| **Space** or **K** | Play or pause |
+| **→** / **←** | Next / previous track |
+| **Shift + →** / **Shift + ←** | Forward / back 10 seconds (when the player can seek) |
+| **↑** / **↓**, or **+** / **−** | Volume up / down |
+| **M** | Mute |
+| **S** | Shuffle |
+| **R** | Repeat |
+| **L** | Lyrics |
+| **I** | Info |
+| **Q** | Queue |
+| **B** | Library |
+| **/** | Search the library |
+| **Esc** | Close a menu or panel (in a search box, the first Esc leaves the box) |
+| **?** | Show these shortcuts |
+
+- **Only the player you last tapped responds**, so two players on one dashboard don't both react to a key
+- **Typing is never caught** — keys typed into a search box (or anywhere else on the page) go to that box
+- **While a panel is open**, ↑ and ↓ scroll it instead of changing the volume; use **+** and **−** for the volume
+- **Home Assistant's own shortcuts** (such as **E** to search entities) still work; only the keys above go to the card, and only while you're using it
+- Turn them off with **Keyboard Shortcuts** in the editor's Appearance section (under Row Swipes), or `keyboard_shortcuts: false` in YAML
 
 ## Full-Screen Screensaver
 
@@ -477,7 +505,7 @@ The editor includes a filter box at the top that searches the editor's own text:
 - **Visualiser & Screensaver** *(collapsible)* — Start Automatically switch, then Start (Visualiser or Screensaver, one or the other), After (Immediately for the visualiser, or 30 seconds to 1 hour), Visualiser Style or Screensaver Style. **Quick Menu:** Visualiser in Quick Menu, Screensaver in Quick Menu. **Screensaver:** Full Screen (off by default), Analogue Clock Face (Luxury by default), Show Clock, Weather
 - **Export & PDF** *(collapsible)* — **Enable PDF Exports** master switch, then **PDF Types**: Lyrics, CD Case Printables, DVD / Blu-ray Case Printables, Format Marks (on the case printables), Cover on the Back (a faint copy of the front cover on case backs that have no artwork of their own), Info Panel PDFs, Listening & Watch Reports, Your Month in Music, Recently Played, Recaps, Pinned Items, and Lists & Results (queue, saved queues, album tracklists, playlists, artists, AI Search and Recommendations results, podcast episodes). All are on by default
 - **Caches, Data & Support** *(collapsible)* — **Health & Support:** Run Health Check, Test AI and Report a Problem. **Keep in Home Assistant:** Pins, Lyrics, AI Info, iTunes Artwork and Wikipedia Artwork, each saved to your Home Assistant user as well as the device so it survives app restarts and is on your other devices. Then AI caches (bios, trivia, where-to-watch, content warnings, year-in-music, vibe history, AI response cache, Discogs info, already added songs), artwork caches (iTunes, Wikipedia links and photos, report and PDF covers), library & radio caches (MA library, radio stations, today's charts, podcast episodes and audiobook chapters, HA registry), announcement history (favourites kept), icon lookups, song tempos, pinned items (Clear All Pins), TV Episode Cache (season counts, episode lists and episode details from the AI and TVmaze), Clear All Caches and Clear Persistent Storage. Clear All Pins, Clear All Caches and Clear Persistent Storage turn red and say **Tap Again to Clear** first, so nothing is cleared by a stray tap
-- **Appearance** *(collapsible)* — **Theme & Colours:** Skin (Crow (Original) or one of the twelve skins), Skin in Quick Menu, Style (Classic or Glass), Theme (Auto, Light or Dark), Follow Home Assistant Theme, Controls Theme (12 presets), Player Icon Theme (8 sets), Button Icons (Discover and Apple TV remote buttons: ready-made icons or any Home Assistant icon), Accent Preset, accent, volume accent, title, artist, button, +Add pill, volume %, custom background and lyrics colours, with live preview. **Glass & Glow:** Remote Liquid Glass, Volume HUD Liquid Glass, Ambient Glow, Row Glow, Row Swipes. **Animations:** Artwork Crossfade, Pin Hearts, Resize Button Spin
+- **Appearance** *(collapsible)* — **Theme & Colours:** Skin (Crow (Original) or one of the twelve skins), Skin in Quick Menu, Style (Classic or Glass), Theme (Auto, Light or Dark), Follow Home Assistant Theme, Controls Theme (12 presets), Player Icon Theme (8 sets), Button Icons (Discover and Apple TV remote buttons: ready-made icons or any Home Assistant icon), Accent Preset, accent, volume accent, title, artist, button, +Add pill, volume %, custom background and lyrics colours, with live preview. **Glass & Glow:** Remote Liquid Glass, Volume HUD Liquid Glass, Ambient Glow, Row Glow, Row Swipes, Keyboard Shortcuts. **Animations:** Artwork Crossfade, Pin Hearts, Resize Button Spin
 
 ## Health Check and Reporting a Problem
 
@@ -528,6 +556,7 @@ artwork_crossfade: false
 ambient_glow: false
 row_glow: false
 row_swipes: true
+keyboard_shortcuts: true
 skin_menu: true
 show_media_type_pill: false
 pdf_enabled: true

@@ -125,6 +125,7 @@ The Recommended tab, Queue Browser and Library drill-in all require the **Music 
 - **Modern design** — choose a **Classic** solid card or a **Glass** frosted-glass card, with an Auto / Light / Dark theme setting, rounded corners and customisable accent colours
 - **Skins** — twelve whole-card looks, each with a light and a dark version, chosen under **Skin** in the editor's Appearance section: **Retro Players** (Winamp Classic, Winamp Modern, iPod Classic, iTunes 2005, Windows Media Player and Walkman), **Retro Desktops** (Windows 98, Windows XP and Mac OS X Aqua) and **Modern** (Zune, Spotify Style and Terminal). A skin dresses every screen, panel, menu and popup of the card, with its own title bar, buttons, lists and fonts. Some add an LCD display with a seven-segment clock and a spectrum that moves while music plays, the iPod skin has a working click wheel (Menu, back, forward, play/pause, the centre button for More Info, and a finger round the wheel for the volume), and the Walkman skin turns the artwork into a cassette whose reels turn as the song plays. The Theme setting picks light or dark (or follows Home Assistant's own mode when Theme is Auto); Style and the custom colours sit out while a skin is chosen. **Crow (Original)** is the card's own look. With **Skin in Quick Menu** on (the default), **Skin ›** in the quick menu lets each phone, tablet or computer choose its own skin, remembered on that device; turn it off and every device uses the skin chosen in the editor. In YAML: `skin` (`winamp`, `winamp5`, `ipod`, `itunes`, `wmp`, `walkman`, `win98`, `xp`, `aqua`, `zune`, `spotify` or `terminal`) and `skin_menu`
 - **Row Swipes** — swipe a row right or left for its most useful actions, as in Apple's Mail app: right for the "do it" actions such as Add to Queue, Play Next or Pin, left for the "manage" ones such as Info, Remove or More. A short swipe shows the buttons; a long swipe does the one nearest the edge straight away. Press and hold still opens the full menu. It works on songs, library items, history, pins, films and shows throughout the card. On by default, and rows are a little taller while it's on; turn it off with **Row Swipes** in Appearance, or `row_swipes: false` in YAML
+- **Keyboard Shortcuts** — on a tablet or computer with a keyboard: Space plays or pauses, the arrows skip and change the volume, L, I, Q and B open Lyrics, Info, the Queue and the Library, / searches and Esc closes (see [Keyboard Shortcuts](#keyboard-shortcuts)). The keys work in the player you last tapped. On by default; turn it off with **Keyboard Shortcuts** in Appearance, or `keyboard_shortcuts: false` in YAML
 - **Compact and expanded modes** — toggle between full album art and a space-saving mini player
 - **Automatic device switching** — card follows whichever device starts playing
 - **Full media controls** — play/pause, skip, shuffle, repeat, seek via progress bar
@@ -160,6 +161,33 @@ The Recommended tab, Queue Browser and Library drill-in all require the **Music 
 - **Screensaver** *(start it from **Screensaver** in the quick menu, or have it start by itself with **Start Automatically** in the editor's Visualiser & Screensaver section)* — a screensaver over the full-size player's artwork, or over the whole screen with **Full Screen** switched on (see [Full-Screen Screensaver](#full-screen-screensaver)). Start any style from **Screensaver** in the quick menu, or let it start by itself in the style chosen in the editor after a chosen time (30 seconds to 1 hour) with the card left alone, whether or not music is playing; it stays until tapped (or until music starts, unless it was set to start by itself as a screensaver). Tap anywhere on it to close it. **Auto Start**, a switch at the top of the quick menu's **Screensaver ›**, turns starting by itself on or off for that device without opening the editor (after the time set in the editor, or 10 minutes if none is set). Eleven styles, or **Shuffle** to change style every five minutes: **Album Wall** (a grid of recent album covers, flipping over one tile at a time), **Rain on Glass** (raindrops gathering and running down a window over a blurred album cover, each drop showing the cover upside down like a little lens), **Ambient Aurora** (an aurora that slowly shifts through greens, teals, blues, violets, pinks and ambers, with curtains of light swaying across a starry sky), **Lava Lamp** (glossy blobs rising, merging and sinking in a glowing lamp, in the colours of the last song's album cover, drifting gently around them; a cover with no real colour gets slowly changing colours instead), **Night Sky** (thousands of twinkling stars and the Milky Way flowing slowly up across the sky over hazy hills and pine trees, the odd shooting star and tonight's moon in its real phase), **Fireplace** (flames licking up in the dark, white-hot at the base and cooling through yellow and orange to red at the tips, with sparks rising and the darkness around them warmed by the firelight), **Ocean** (a rippling sea under a sky that follows Home Assistant's sun: dawn pink, midday blue, dusk orange and deep blue with the moon and stars at night, with a sparkling path of light under the sun or moon. Now and then something happens, one thing at a time: dolphins leap alone or in a pod, seabirds glide over, or a whale spouts far out and lifts its tail. The screensaver's weather entity sets the clouds and the sea: glassy when it's still, choppier with white caps in the wind, with a rain shower hanging out on the horizon when it's raining and silent lightning in a storm), **Clock & Weather** (a big clock and the date, over an animated sky with drifting clouds, sun, moon, stars, rain, snow or lightning to match the weather when a weather entity is chosen), **Flip Clock** (split-flap digits that flip over as the minutes change), **Analogue Clock** (a dial with a smoothly sweeping second hand, in any of twelve faces chosen in the editor, Luxury by default) and **Word Clock** (the time spelled out in a grid of letters, such as "IT IS TWENTY PAST TEN", lit in the album's colour when there is one). A small clock and the date (and the weather) can sit in the corner of the styles that don't show the time themselves. No account or key needed
 - **In-card notifications** — toast alerts appear inside the card. Home Assistant's own "Failed to perform the action" bar never pops up over the dashboard: when something the card asks Home Assistant to do fails (an Apple TV button, a volume change, an announcement, a message, grouping speakers), a short message in the card says so instead, once rather than a stack of them
 - **Controls Theme** — 12 colour presets for the control icons (Classic, Vivid, Warm, Ocean, Rose, Forest, Neon, Soft, Midnight, Gold, Retro, Ember)
+
+### Keyboard Shortcuts
+
+On a tablet or computer with a keyboard, tap the player once and these keys control it. Press **?** in the card to see the list at any time.
+
+| Key | Does |
+|-----|------|
+| **Space** or **K** | Play or pause |
+| **→** / **←** | Next / previous track |
+| **Shift + →** / **Shift + ←** | Forward / back 10 seconds (when the player can seek) |
+| **↑** / **↓**, or **+** / **−** | Volume up / down |
+| **M** | Mute |
+| **S** | Shuffle |
+| **R** | Repeat |
+| **L** | Lyrics |
+| **I** | Info |
+| **Q** | Queue |
+| **B** | Library |
+| **/** | Search the library |
+| **Esc** | Close a menu or panel (in a search box, the first Esc leaves the box) |
+| **?** | Show these shortcuts |
+
+- **Only the player you last tapped responds**, so two players on one dashboard don't both react to a key
+- **Typing is never caught** — keys typed into a search box (or anywhere else on the page) go to that box
+- **While a panel is open**, ↑ and ↓ scroll it instead of changing the volume; use **+** and **−** for the volume
+- **Home Assistant's own shortcuts** (such as **E** to search entities) still work; only the keys above go to the card, and only while you're using it
+- Turn them off with **Keyboard Shortcuts** in the editor's Appearance section (under Row Swipes), or `keyboard_shortcuts: false` in YAML
 
 ### Full-Screen Screensaver
 
@@ -578,7 +606,7 @@ The editor includes a filter box at the top that searches the editor's own text:
 | Visualiser & Screensaver *(collapsible)* | Start Automatically switch, then Start (Visualiser or Screensaver, one or the other), After (Immediately for the visualiser, or 30 seconds to 1 hour), Visualiser Style or Screensaver Style. **Quick Menu:** Visualiser in Quick Menu, Screensaver in Quick Menu. **Screensaver:** Full Screen (off by default), Analogue Clock Face (Luxury by default), Show Clock, Weather |
 | Export & PDF *(collapsible)* | **Enable PDF Exports** master switch, then **PDF Types**: Lyrics, CD Case Printables, DVD / Blu-ray Case Printables, Format Marks (on the case printables), Cover on the Back (a faint copy of the front cover on case backs that have no artwork of their own), Info Panel PDFs, Listening & Watch Reports, Your Month in Music, Recently Played, Recaps, Pinned Items, and Lists & Results (queue, saved queues, album tracklists, playlists, artists, AI Search and Recommendations results, podcast episodes). All are on by default |
 | Caches, Data & Support *(collapsible)* | **Health & Support:** Run Health Check, Test AI and Report a Problem (see [Health Check and Reporting a Problem](#health-check-and-reporting-a-problem)). **Keep in Home Assistant:** Pins, Lyrics, AI Info, iTunes Artwork and Wikipedia Artwork, each saved to your Home Assistant user as well as the device so it survives app restarts and is on your other devices. Then AI caches (bios, trivia, where-to-watch, content warnings, year-in-music, vibe history, AI response cache, Discogs info, already added songs), artwork caches (iTunes, Wikipedia links and photos, report and PDF covers), library & radio caches (MA library, radio stations, today's charts, podcast episodes and audiobook chapters, HA registry), announcement history (favourites kept), icon lookups, song tempos, pinned items (Clear All Pins), TV Episode Cache (season counts, episode lists and episode details from the AI and TVmaze), Clear All Caches and Clear Persistent Storage. Clear All Pins, Clear All Caches and Clear Persistent Storage turn red and say **Tap Again to Clear** first, so nothing is cleared by a stray tap |
-| Appearance *(collapsible)* | **Theme & Colours:** Skin (Crow (Original) or one of the twelve skins), Skin in Quick Menu, Style (Classic or Glass), Theme (Auto, Light or Dark), Follow Home Assistant Theme, Controls Theme (12 presets), Player Icon Theme (8 sets), Button Icons (Discover and Apple TV remote buttons: ready-made icons or any Home Assistant icon), Accent Preset, accent, volume accent, title, artist, button, +Add pill, volume %, custom background and lyrics colours, with live preview. **Glass & Glow:** Remote Liquid Glass, Volume HUD Liquid Glass, Ambient Glow, Row Glow, Row Swipes. **Animations:** Artwork Crossfade, Pin Hearts, Resize Button Spin |
+| Appearance *(collapsible)* | **Theme & Colours:** Skin (Crow (Original) or one of the twelve skins), Skin in Quick Menu, Style (Classic or Glass), Theme (Auto, Light or Dark), Follow Home Assistant Theme, Controls Theme (12 presets), Player Icon Theme (8 sets), Button Icons (Discover and Apple TV remote buttons: ready-made icons or any Home Assistant icon), Accent Preset, accent, volume accent, title, artist, button, +Add pill, volume %, custom background and lyrics colours, with live preview. **Glass & Glow:** Remote Liquid Glass, Volume HUD Liquid Glass, Ambient Glow, Row Glow, Row Swipes, Keyboard Shortcuts. **Animations:** Artwork Crossfade, Pin Hearts, Resize Button Spin |
 ---
 
 ## Quick Start
@@ -609,6 +637,7 @@ artwork_crossfade: false
 ambient_glow: false
 row_glow: false
 row_swipes: true
+keyboard_shortcuts: true
 skin_menu: true
 show_media_type_pill: false
 pdf_enabled: true
@@ -718,6 +747,12 @@ If Apple's chart feeds can't be reached from your device or network, the card fa
 
 **Card feels sluggish or iPhone gets warm**
 - This is expected during intensive AI operations. Avoid triggering multiple AI features simultaneously. Subsequent loads of cached content are near-instant.
+
+**The keyboard shortcuts don't do anything**
+- Tap the player once first: the keys only go to the player you last tapped.
+- Check **Keyboard Shortcuts** is on in the editor's Appearance section.
+- Keys aren't used while you're typing in a box. Press **Esc** to leave the box.
+- On an iPhone or iPad, the shortcuts need a keyboard attached; the on-screen keyboard only types into boxes.
 
 ---
 
