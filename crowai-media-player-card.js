@@ -2472,7 +2472,7 @@ function crowaiAutoStart(cfg) {
 // checking it answers in time AND still answers in the shape the card reads. Run from the browser,
 // the same way the card reaches each service, so it shows what works on this device.
 // ══════════════════════════════════════════════════════════════════════
-const CROWAI_VERSION = '0.6.23';
+const CROWAI_VERSION = '0.6.25';
 const CROWAI_ISSUES_URL = 'https://github.com/jamesmcginnis/crowai-media-player-card/issues';
 // tidy away a setting earlier versions saved on this device
 try { localStorage.removeItem('crowai_star_prompt'); } catch (_) {}
@@ -4095,7 +4095,8 @@ ${crowaiSkinSquareCss(':host([data-sk-square])')}
 :host([data-skin="aqua"]) .controls { gap: 8px; }
 
 /* Zune */
-:host([data-skin="zune"]) { --sk-r: 0; --sk-pb-h: 4px; --sk-pb-r: 0; --sk-th-w: 4px; --sk-th-h: 16px; --sk-th-r: 0; --sk-th: var(--sk-text); --sk-th-bd: 0; --sk-th-sh: none; --sk-sl-img: var(--sk-fill); --sk-r-small: 0;
+/* rounded corners, the same as the default Crow look (card and panels 24px, small artwork 10px, round-ended bars) */
+:host([data-skin="zune"]) { --sk-r: 24px; --sk-pb-h: 4px; --sk-pb-r: 2px; --sk-pb-fr: 2px; --sk-th-w: 4px; --sk-th-h: 16px; --sk-th-r: 2px; --sk-th: var(--sk-text); --sk-th-bd: 0; --sk-th-sh: none; --sk-sl-img: var(--sk-fill); --sk-r-small: 10px;
   --sk-card-sh: none; }
 :host([data-skin="zune"]) .content { padding: 18px 20px 16px; }
 :host([data-skin="zune"]) .track-title { font-size: 28px; font-weight: 300; text-transform: lowercase; letter-spacing: -1px; line-height: 1.15; }
@@ -4241,6 +4242,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
       announce_tts_service: '',
       row_glow: false,
       row_swipes: true,
+      keyboard_shortcuts: true,
       show_remote_button: true,
       artwork_crossfade: false,
       icon_theme: 'robot',
@@ -5313,8 +5315,15 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
     // Single global capture-phase click guard, replacing the need for a
     // separate timing check on every individual hero-art/interactive element.
+    // A ghost click is one whose press started before the content changed (the tap that opened
+    // something landing on what replaced it). A press that starts after the change is a real tap
+    // on what's showing, so it always gets through: otherwise artwork arriving in a list (Similar,
+    // Cast…) would keep swallowing taps on its rows and their swipe buttons.
+    this._ghostPressHandler = () => { this._lastPressAt = Date.now(); };
+    this.shadowRoot.addEventListener('pointerdown', this._ghostPressHandler, true);
     this._ghostClickHandler = (e) => {
-      if (this._lastContentSwapAt && (Date.now() - this._lastContentSwapAt) < 350) {
+      const swap = this._lastContentSwapAt;
+      if (swap && (Date.now() - swap) < 350 && !(this._lastPressAt > swap)) {
         e.stopPropagation();
         e.preventDefault();
       }
@@ -5324,6 +5333,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
 
   connectedCallback() {
     try { localStorage.removeItem('crow_watch_diag'); } catch (_) {}
+    try { this._kbWire(true); } catch (_) {}   // keyboard shortcuts
     try { this._appIconCacheReady(); } catch (_) {}   // also moves any icon pictures out of normal storage
     if (this._config?.sendspin_enabled && !this._ssUnsub) this._ssUnsub = crowaiSendspin().subscribe(() => this._ssOnManagerChange());
     // Reset any expanded panel left open from a previous visit — navigating
@@ -5579,6 +5589,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   }
 
   disconnectedCallback() {
+    try { this._kbWire(false); } catch (_) {}
     try { this._saverStop(true); } catch (_) {}
     if (this._saverDocAct) {
       ['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach(t => document.removeEventListener(t, this._saverDocAct, { capture: true }));
@@ -5614,6 +5625,10 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     if (this._ghostClickHandler && this.shadowRoot) {
       this.shadowRoot.removeEventListener('click', this._ghostClickHandler, true);
       this._ghostClickHandler = null;
+    }
+    if (this._ghostPressHandler && this.shadowRoot) {
+      this.shadowRoot.removeEventListener('pointerdown', this._ghostPressHandler, true);
+      this._ghostPressHandler = null;
     }
     this._ghostClickGuardSetup = false;
 
@@ -7957,7 +7972,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
         :host([data-skin="xp"][data-mode="dark"]) { --cg-bg: var(--crow-panel-bg); --cg-bd: 1px solid #3a3a3a; }
         :host([data-skin="aqua"]) { --cg-r: 4px; --cg-gap: 10px; --cg-bg: var(--crow-panel-bg); --cg-stripe: #edf3fe; --cg-sep: transparent; --cg-bd: 1px solid var(--sk-edge); }
         :host([data-skin="aqua"][data-mode="dark"]) { --cg-stripe: color-mix(in srgb, var(--sk-accent) 12%, var(--crow-panel-bg)); }
-        :host([data-skin="zune"]) { --cg-r: 0px; --cg-gap: 10px; --cg-bg: transparent; --cg-sep: transparent; --cg-pad: 4px; }
+        :host([data-skin="zune"]) { --cg-r: 14px; --cg-gap: 10px; --cg-bg: transparent; --cg-sep: transparent; --cg-pad: 4px; }
         :host([data-skin="spotify"]) { --cg-r: 0px; --cg-gap: 10px; --cg-bg: transparent; --cg-sep: transparent; --cg-pad: 8px; --cg-active: color-mix(in srgb, var(--sk-text) 10%, transparent); }
         :host([data-skin="terminal"]) { --cg-r: 0px; --cg-gap: 10px; --cg-bg: transparent; --cg-sep: var(--sk-edge); --cg-sep-w: 1px; --cg-sep-style: dashed; --cg-sep-full: 1; --cg-bd: 1px dashed var(--sk-edge);
           --cg-active: color-mix(in srgb, var(--sk-accent) 18%, transparent); }
@@ -12803,7 +12818,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const t = p.text, acc = solid(p.accent);
     const pop = s.square
       ? { r: '0px', bd: `1px solid ${p.edge}`, sh: `inset -1px -1px 0 ${p.lo}, inset 1px 1px 0 ${p.hi}, 2px 2px 0 rgba(0,0,0,0.35)` }
-      : { r: s.id === 'xp' ? '6px' : s.id === 'zune' ? '0px' : '12px', bd: `1px solid ${p.edge}`, sh: '0 10px 30px rgba(0,0,0,0.35)' };
+      : { r: s.id === 'xp' ? '6px' : s.id === 'zune' ? '16px' : '12px', bd: `1px solid ${p.edge}`, sh: '0 10px 30px rgba(0,0,0,0.35)' };
     return {
       '--sk-bg': p.bg, '--sk-bg2': p.bg2, '--sk-text': t, '--sk-dim': p.dim, '--sk-accent': acc, '--sk-accent2': acc,
       '--sk-on-accent': lum(acc) > 0.55 ? '#000000' : '#ffffff', '--sk-ctl': p.ctl, '--sk-face': p.face, '--sk-face-glyph': p.faceGlyph || p.ctl,
@@ -17111,7 +17126,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     menu.style.position = 'absolute';
     menu.style.top = (ar.bottom - cr.top + 4) + 'px';
     menu.style.right = Math.max(4, cr.right - ar.right) + 'px';
-    const host = r.getElementById('maPopup') || r.host;
+    const host = this._menuHost(anchorEl);
     host.appendChild(backdrop);
     host.appendChild(menu);
     const close = () => { menu.remove(); backdrop.remove(); };
@@ -17302,7 +17317,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const ar = anchor.getBoundingClientRect(), cr = r.host.getBoundingClientRect();
     menu.style.position = 'absolute';
     menu.style.top = (ar.bottom - cr.top + 4) + 'px';
-    const host = r.getElementById('maPopup') || r.host;
+    const host = this._menuHost(anchor);
     if (!headless) { host.appendChild(backdrop); host.appendChild(menu); }
     const openedAt = Date.now(), ready = () => headless || Date.now() - openedAt > 320;
     const close = () => { menu.remove(); backdrop.remove(); };
@@ -17620,7 +17635,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     menu.style.position = 'absolute';
     menu.style.top = (anchorRect.bottom - cardRect.top + 4) + 'px';
     menu.style.right = Math.max(4, cardRect.right - anchorRect.right) + 'px';
-    const host = r.getElementById('maPopup') || r.host;
+    const host = this._menuHost(anchorEl);
     host.appendChild(backdrop);
     host.appendChild(menu);
     const closeMenu = () => { menu.remove(); backdrop.remove(); };
@@ -17669,7 +17684,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     menu.style.top = (anchorRect.bottom - cardRect.top + 4) + 'px';
     menu.style.right = Math.max(4, cardRect.right - anchorRect.right) + 'px';
 
-    const host = r.getElementById('maPopup') || r.host;
+    const host = this._menuHost(anchorEl);
     host.appendChild(backdrop);
     host.appendChild(menu);
 
@@ -17744,7 +17759,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     menu.style.top = (anchorRect.bottom - cardRect.top + 4) + 'px';
     menu.style.right = Math.max(4, cardRect.right - anchorRect.right) + 'px';
 
-    const host = r.getElementById('maPopup') || r.host;
+    const host = this._menuHost(anchorEl);
     host.appendChild(backdrop);
     host.appendChild(menu);
 
@@ -28184,7 +28199,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const cardRect = r.host.getBoundingClientRect();
     menu.style.position = 'absolute';
     menu.style.top = (anchorRect.bottom - cardRect.top + 4) + 'px';
-    const host = r.getElementById('maPopup') || r.host;
+    const host = this._menuHost(anchor);
     if (!headless) { host.appendChild(backdrop); host.appendChild(menu); }
     const _menuOpenedAt = Date.now();
     const _menuReady = () => headless || (Date.now() - _menuOpenedAt) > 320;
@@ -28797,7 +28812,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     menu.style.position = 'absolute';
     menu.style.top = (anchorRect.bottom - cardRect.top + 4) + 'px';
     menu.style.right = Math.max(4, cardRect.right - anchorRect.right) + 'px';
-    const host = r.getElementById('maPopup') || r.host;
+    const host = this._menuHost(anchorEl);
     if (!headless) { host.appendChild(backdrop); host.appendChild(menu); }
     const openedAt = Date.now();
     const ready = () => headless || Date.now() - openedAt > 320;
@@ -29838,9 +29853,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     const cardRect = r.host.getBoundingClientRect();
     menu.style.position = 'absolute';
     menu.style.top = (anchorRect.bottom - cardRect.top + 4) + 'px';
-    const infoPopupEl = r.getElementById('infoPopup');
-    const visibleInfoPopup = infoPopupEl?.classList.contains('visible') ? infoPopupEl : null;
-    const host = visibleInfoPopup || r.getElementById('maPopup') || r.host;
+    const host = this._menuHost(anchor);
     if (!headless) { host.appendChild(backdrop); host.appendChild(menu); }
     const _menuOpenedAt = Date.now();
     const _menuReady = () => headless || (Date.now() - _menuOpenedAt) > 320;
@@ -30371,13 +30384,8 @@ class CrowAIMediaPlayerCard extends HTMLElement {
     // conflicted with that baked-in "right" value on an absolutely
     // positioned element, which could render it off-screen or collapsed —
     // looking exactly like "instantly disappeared".
-    // #infoPopup persists in the DOM (just hidden via a class) once the card
-    // has rendered once, so checking existence alone isn't enough — using it
-    // as host while it's actually hidden puts the menu in an invisible
-    // container, which looks exactly like "long-press does nothing".
-    const infoPopupEl = r.getElementById('infoPopup');
-    const visibleInfoPopup = infoPopupEl?.classList.contains('visible') ? infoPopupEl : null;
-    const host = visibleInfoPopup || r.getElementById('maPopup') || r.host;
+    // Both popups stay in the DOM while hidden, so _menuHost picks the one that's showing.
+    const host = this._menuHost(anchor);
     if (!headless) { host.appendChild(backdrop); host.appendChild(menu); }
     const _menuOpenedAt = Date.now();
     const _menuReady = () => headless || (Date.now() - _menuOpenedAt) > 320;
@@ -49480,6 +49488,143 @@ Include ALL tracks. Use null for unknown fields.`;
   //   spec.extra           → [{ id, label, icon, danger, run }] for rows without a menu
   //   spec.disabled()      → true while the row shouldn't swipe (e.g. reordering)
   // Returns the row's wrap (made if the row doesn't already sit in one of its own).
+  // ── Keyboard shortcuts (a tablet or computer with a keyboard) ───────────
+  // The keys work in the card you last tapped, so two players on one dashboard don't both
+  // answer. Never while typing in a box. Keys the card uses aren't passed on to Home Assistant's
+  // own shortcuts (e, c, a, m…) while you're using the card; everything else is.
+  _kbOn() { return this._config?.keyboard_shortcuts !== false; }
+
+  _kbWire(on) {
+    if (!this._kbDown) {
+      this._kbDown = (e) => this._kbKey(e);
+      this._kbPtr = (e) => { this._kbActive = e.composedPath().includes(this); };
+    }
+    const m = on ? 'addEventListener' : 'removeEventListener';
+    document[m]('keydown', this._kbDown);
+    document[m]('pointerdown', this._kbPtr, true);
+    if (!on) this._kbActive = false;
+  }
+
+  _kbKey(e) {
+    if (!this._kbOn() || !this._kbActive || !this.isConnected) return;
+    if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+    const r = this.shadowRoot;
+    if (!r || this._saverEl) return;                       // a key just wakes the screensaver
+    const done = () => { e.preventDefault(); e.stopPropagation(); };
+    const k = e.key;
+    const t = e.composedPath()[0];
+    if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || ''))) {
+      // typing in a box: the keys are for the box. A box left focused in a panel that's since
+      // closed doesn't count; Escape steps out of the box (a second Escape then closes the panel).
+      const pop = r.contains(t) ? t.closest('.ma-popup, .info-popup') : null;
+      if (!pop || pop.classList.contains('visible')) {
+        if (k === 'Escape' && r.contains(t)) { done(); t.blur(); }
+        return;
+      }
+      t.blur();
+    }
+    // a menu or sheet is open: Escape closes it, and nothing else happens underneath
+    const sheet = r.querySelector('.cw-popup');
+    const backdrops = [...r.querySelectorAll('.enqueue-backdrop, .queue-dropdown-backdrop, #rpMenuBackdrop')]
+      .filter(b => { const p = b.closest('.ma-popup, .info-popup'); return !p || p.classList.contains('visible'); });
+    if (sheet || backdrops.length || this._swMenuOpen()) {
+      if (k !== 'Escape') return;
+      done();
+      if (sheet) { sheet.remove(); return; }
+      const b = backdrops[backdrops.length - 1];
+      if (b) {
+        b.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+        // menus that wait a moment before a tap outside counts: take them away directly
+        if (b.isConnected) {
+          const host = b.parentNode;
+          host?.querySelectorAll(':scope > .queue-dropdown-menu, :scope > .enqueue-menu').forEach(m => m.remove());
+          b.remove();
+        }
+      }
+      return;
+    }
+    if (k === 'Escape' && this._swOpen) { done(); this._swClose(); return; }
+    const st = this._hass?.states?.[this._entity];
+    const infoOpen = !!r.getElementById('infoPopup')?.classList.contains('visible');
+    const libOpen = !!r.getElementById('maPopup')?.classList.contains('visible');
+    const panelOpen = infoOpen || libOpen || !!this._lyricsOpen || Date.now() < (this._kbOpeningUntil || 0);
+    const click = (id) => { const b = r.getElementById(id); if (b) b.click(); return !!b; };
+    const expanded = (fn) => {
+      this._kbOpeningUntil = Date.now() + 900;            // a panel's on its way: ↑/↓ will scroll it
+      const c = r.getElementById('cardOuter');
+      if (c?.classList.contains('mode-compact')) this._expandFromCompact().then(() => setTimeout(fn, 320));
+      else fn();
+    };
+    const seek = (secs) => {
+      const a = st?.attributes || {};
+      if (!((a.supported_features || 0) & 2) || typeof a.media_position !== 'number') return false;
+      let pos = a.media_position;
+      if (st.state === 'playing' && a.media_position_updated_at) pos += (Date.now() - new Date(a.media_position_updated_at).getTime()) / 1000;
+      const dur = typeof a.media_duration === 'number' ? a.media_duration : Infinity;
+      this.call('media_seek', { seek_position: Math.max(0, Math.min(dur - 1, pos + secs)) });
+      this._showToast(secs > 0 ? `Forward ${secs} seconds` : `Back ${-secs} seconds`, 1200);
+      return true;
+    };
+    switch (k) {
+      case ' ': case 'k': case 'K':
+        if (e.repeat) { done(); return; }
+        done(); this.call('media_play_pause'); return;
+      case 'ArrowRight':
+        if (e.shiftKey) { if (seek(10)) done(); return; }
+        done(); this.call('media_next_track'); return;
+      case 'ArrowLeft':
+        if (e.shiftKey) { if (seek(-10)) done(); return; }
+        done(); this.call('media_previous_track'); return;
+      case 'ArrowUp': case 'ArrowDown':
+        if (panelOpen) return;                              // the arrows scroll the panel
+        done(); click(k === 'ArrowUp' ? 'btnVolUp' : 'btnVolDown'); return;
+      case '+': case '=': done(); click('btnVolUp'); return;
+      case '-': case '_': done(); click('btnVolDown'); return;
+      case 'm': case 'M': done(); this._toggleMute(); return;
+      case 's': case 'S': if (st) { done(); click('btnShuffle'); } return;
+      case 'r': case 'R': if (st) { done(); click('btnRepeat'); } return;
+      case 'l': case 'L': done(); expanded(() => this._toggleLyrics()); return;
+      case 'i': case 'I':
+        done();
+        if (infoOpen && !this._queuePanelOpen()) this._closeInfoPopup();
+        else expanded(() => this._openInfoPopup());
+        return;
+      case 'q': case 'Q':
+        done();
+        if (this._queuePanelOpen()) this._closeInfoPopup();
+        else expanded(() => this._showQueuePanel('next', true));
+        return;
+      case 'b': case 'B':
+        done();
+        if (libOpen) this._closeMABrowser(); else expanded(() => this._openMABrowser());
+        return;
+      case '/': done(); expanded(() => this._openLibrarySearch()); return;
+      case '?': done(); this._kbHelp(); return;
+      case 'Escape':
+        if (this._lyricsOpen) { done(); this._closeLyrics(); return; }
+        if (infoOpen) { done(); this._closeInfoPopup(); return; }
+        if (libOpen) { done(); this._closeMABrowser(); return; }
+        return;
+    }
+  }
+
+  _kbHelp() {
+    const rows = [
+      ['Playing'], ['Space / K', 'Play or pause'], ['→ / ←', 'Next / previous'], ['Shift + → / ←', 'Forward / back 10 seconds'],
+      ['↑ / ↓  or  + / −', 'Volume up / down'], ['M', 'Mute'], ['S', 'Shuffle'], ['R', 'Repeat'],
+      ['Panels'], ['L', 'Lyrics'], ['I', 'Info'], ['Q', 'Queue'], ['B', 'Library'], ['/', 'Search the library'],
+      ['Esc', 'Close a menu or panel'], ['?', 'Show these shortcuts'],
+    ];
+    const esc = v => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    const kbd = `font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12px;padding:2px 7px;border-radius:6px;background:${this._panelIsLight ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.1)'};justify-self:start;white-space:nowrap;`;
+    const sheet = this._showNoteSheet('Keyboard Shortcuts', '');
+    const body = sheet.el.querySelector('.cw-popup-body');
+    body.innerHTML = `<div style="display:grid;grid-template-columns:auto 1fr;gap:8px 14px;align-items:center;">${rows.map(x => x.length === 1
+      ? `<div style="grid-column:1/-1;margin-top:6px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${this._pt('dim')}">${esc(x[0])}</div>`
+      : `<kbd style="${kbd}">${esc(x[0])}</kbd><span>${esc(x[1])}</span>`).join('')}</div>
+      <div style="margin-top:14px;font-size:11.5px;color:${this._pt('dim')};line-height:1.5">The keys work in the player you last tapped. ↑ and ↓ scroll instead while a panel is open.</div>`;
+  }
+
   _swipesOn() { return this._config?.row_swipes !== false; }
 
   // A row's own small menu, built from a list of { id, label, icon (path), danger, run }.
@@ -49761,8 +49906,30 @@ Include ALL tracks. Use null for unknown fields.`;
     }
   }
 
+  // Is a row menu open? A menu left behind in a popup that's since been hidden doesn't count
+  // (it can't be seen or tapped away): it's tidied up, so swipes keep working.
   _swMenuOpen() {
-    return !!this.shadowRoot?.querySelector('.enqueue-backdrop, .queue-dropdown-backdrop, #rpMenuBackdrop');
+    const r = this.shadowRoot;
+    if (!r) return false;
+    let open = false;
+    r.querySelectorAll('.enqueue-backdrop, .queue-dropdown-backdrop, #rpMenuBackdrop').forEach(b => {
+      const pop = b.closest('.ma-popup, .info-popup');
+      if (!pop || pop.classList.contains('visible')) { open = true; return; }
+      pop.querySelectorAll(':scope > .queue-dropdown-menu, :scope > .enqueue-menu').forEach(m => m.remove());
+      b.remove();
+    });
+    return open;
+  }
+
+  // Where a menu opened from a row goes: the Library or Info popup the row is in, when it's showing.
+  // Both popups stay in the DOM while hidden (opacity 0, no taps), so a menu put in a hidden one
+  // can't be seen, and its backdrop would make every swipe think a menu is still open.
+  _menuHost(anchor) {
+    const r = this.shadowRoot;
+    const shown = (el) => (el && el.classList.contains('visible')) ? el : null;
+    return shown(anchor?.closest?.('.ma-popup, .info-popup'))
+      || shown(r.getElementById('infoPopup')) || shown(r.getElementById('maPopup'))
+      || r.getElementById('cardOuter') || r;
   }
 
   // what's behind the row, made solid
@@ -53684,7 +53851,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       itunes_persistent_storage: false,
       wiki_persistent_storage: false,
       ma_library_cache_enabled: true,
-      ma_radio_mode: false, ambient_glow: false, row_glow: false, row_swipes: true, screensaver: false, screensaver_style: 'wall', screensaver_after: 10, screensaver_clock: true, screensaver_dial: 'luxury', music_visual: 'artwork', music_visual_style: 'eq', qm_visualiser: true, qm_screensaver: true, video_match: 'standard', screensaver_weather: '',
+      ma_radio_mode: false, ambient_glow: false, row_glow: false, row_swipes: true, keyboard_shortcuts: true, screensaver: false, screensaver_style: 'wall', screensaver_after: 10, screensaver_clock: true, screensaver_dial: 'luxury', music_visual: 'artwork', music_visual_style: 'eq', qm_visualiser: true, qm_screensaver: true, video_match: 'standard', screensaver_weather: '',
       show_remote_button: true,
       artwork_crossfade: false, show_ma_library_button: true,
       resize_btn_spin: true, pin_hearts: true, remote_art_blur: true, volume_hud: true,
@@ -55408,6 +55575,13 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
                   </div>
                   <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="row_swipes"><span class="toggle-track"></span></label>
                 </div>
+<div class="toggle-item" style="align-items:flex-start;gap:12px;padding:10px 0;">
+                  <div style="flex:1;">
+                    <div class="toggle-label">Keyboard Shortcuts</div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;line-height:1.4;">On a tablet or computer with a keyboard: Space plays or pauses, the arrows skip and change the volume, L, I, Q and B open Lyrics, Info, the Queue and the Library, / searches and Esc closes. Press ? in the card for the full list. The keys work in the player you last tapped.</div>
+                  </div>
+                  <label class="toggle-switch" style="flex-shrink:0;margin-top:2px;"><input type="checkbox" id="keyboard_shortcuts"><span class="toggle-track"></span></label>
+                </div>
 <div class="grp-sub">Animations</div>
 <div class="toggle-item" style="align-items:flex-start;gap:12px;padding:10px 0;">
                   <div style="flex:1;">
@@ -56777,6 +56951,11 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       rowSwipesEl.checked = this._config?.row_swipes !== false;
       rowSwipesEl.onchange = (e) => this._updateConfig('row_swipes', e.target.checked);
     }
+    const kbEl = root.getElementById('keyboard_shortcuts');
+    if (kbEl) {
+      kbEl.checked = this._config?.keyboard_shortcuts !== false;
+      kbEl.onchange = (e) => this._updateConfig('keyboard_shortcuts', e.target.checked);
+    }
     const iconThemeEl = root.getElementById('icon_theme');
     if (iconThemeEl) {
       iconThemeEl.value = this._config?.icon_theme || 'robot';
@@ -57938,7 +58117,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       itunes_persistent_storage: false,
       wiki_persistent_storage: false,
       ma_library_cache_enabled: true,
-      ma_radio_mode: false, ambient_glow: false, row_glow: false, row_swipes: true, screensaver: false, screensaver_style: 'wall', screensaver_after: 10, screensaver_clock: true, screensaver_dial: 'luxury', music_visual: 'artwork', music_visual_style: 'eq', qm_visualiser: true, qm_screensaver: true, video_match: 'standard', screensaver_weather: '',
+      ma_radio_mode: false, ambient_glow: false, row_glow: false, row_swipes: true, keyboard_shortcuts: true, screensaver: false, screensaver_style: 'wall', screensaver_after: 10, screensaver_clock: true, screensaver_dial: 'luxury', music_visual: 'artwork', music_visual_style: 'eq', qm_visualiser: true, qm_screensaver: true, video_match: 'standard', screensaver_weather: '',
       show_remote_button: true,
       artwork_crossfade: false, show_ma_library_button: true,
       resize_btn_spin: true, pin_hearts: true, remote_art_blur: true, volume_hud: true,
@@ -57987,7 +58166,7 @@ class CrowAIMediaPlayerCardEditor extends HTMLElement {
       itunes_persistent_storage: false,
       wiki_persistent_storage: false,
       ma_library_cache_enabled: true,
-      ma_radio_mode: false, ambient_glow: false, row_glow: false, row_swipes: true, screensaver: false, screensaver_style: 'wall', screensaver_after: 10, screensaver_clock: true, screensaver_dial: 'luxury', music_visual: 'artwork', music_visual_style: 'eq', qm_visualiser: true, qm_screensaver: true, video_match: 'standard', screensaver_weather: '',
+      ma_radio_mode: false, ambient_glow: false, row_glow: false, row_swipes: true, keyboard_shortcuts: true, screensaver: false, screensaver_style: 'wall', screensaver_after: 10, screensaver_clock: true, screensaver_dial: 'luxury', music_visual: 'artwork', music_visual_style: 'eq', qm_visualiser: true, qm_screensaver: true, video_match: 'standard', screensaver_weather: '',
       show_remote_button: true,
       artwork_crossfade: false, show_ma_library_button: true,
       resize_btn_spin: true, pin_hearts: true, remote_art_blur: true, volume_hud: true,
