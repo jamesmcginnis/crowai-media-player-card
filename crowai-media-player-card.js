@@ -2474,6 +2474,128 @@ function crowaiAutoStart(cfg) {
 // ══════════════════════════════════════════════════════════════════════
 const CROWAI_VERSION = '0.6.25';
 const CROWAI_ISSUES_URL = 'https://github.com/jamesmcginnis/crowai-media-player-card/issues';
+
+// ── Retirement notice ─────────────────────────────────────────────────────
+// This card is being replaced by the Crow Media Player integration. A short
+// pop-up says so, at most CROWAI_RETIRE_MAX times on each device; "Don't Show
+// Again" (or opening the link) stops it for good. One pop-up per page, however
+// many cards the dashboard has, and never inside the card editor or picker.
+const CROWAI_RETIRE_URL = 'https://github.com/jamesmcginnis/crow-media-player';
+const CROWAI_RETIRE_KEY = 'crowai_retire_notice';
+const CROWAI_RETIRE_MAX = 3;
+const crowaiRetireState = () => {
+  try { const v = JSON.parse(localStorage.getItem(CROWAI_RETIRE_KEY) || '{}'); return (v && typeof v === 'object') ? v : {}; }
+  catch (e) { return {}; }
+};
+const crowaiRetireSave = (v) => { try { localStorage.setItem(CROWAI_RETIRE_KEY, JSON.stringify(v)); } catch (e) {} };
+const crowaiRetireInEditor = (el) => {
+  // Walk up through shadow roots looking for Home Assistant's card editor or picker.
+  let n = el, hops = 0;
+  while (n && hops++ < 60) {
+    const tag = (n.tagName || '').toLowerCase();
+    if (tag === 'hui-card-picker' || tag === 'hui-dialog-edit-card' || tag === 'hui-card-preview'
+      || tag === 'hui-dialog-create-card' || tag === 'hui-card-element-editor') return true;
+    n = n.parentNode || (n instanceof ShadowRoot ? n.host : null);
+  }
+  return false;
+};
+const crowaiRetireNotice = (card) => {
+  try {
+    if (window.__crowaiRetireShown) return;
+    if (!card || !card.isConnected || crowaiRetireInEditor(card)) return;
+    const st = crowaiRetireState();
+    if (st.off || (st.n || 0) >= CROWAI_RETIRE_MAX) return;
+    window.__crowaiRetireShown = true;
+    crowaiRetireSave({ ...st, n: (st.n || 0) + 1, last: Date.now() });
+
+    const hass = card._hass;
+    const dark = (hass?.themes && typeof hass.themes.darkMode === 'boolean')
+      ? hass.themes.darkMode
+      : !!window.matchMedia?.('(prefers-color-scheme: dark)').matches;
+
+    const host = document.createElement('crowai-retire-notice');
+    host.style.cssText = 'position:fixed;inset:0;z-index:2147483000;';
+    const root = host.attachShadow({ mode: 'open' });
+    root.innerHTML = `<style>
+      :host{all:initial}
+      .back{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;
+        background:rgba(0,0,0,.32);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px);
+        font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Inter",system-ui,sans-serif;-webkit-font-smoothing:antialiased;
+        opacity:0;transition:opacity .22s ease}
+      .back.in{opacity:1}
+      .alert{position:relative;box-sizing:border-box;width:min(330px,100%);max-height:calc(100% - 20px);overflow:auto;border-radius:34px;padding:24px 16px 16px;text-align:center;
+        background:linear-gradient(160deg,rgba(40,40,48,.78),rgba(22,22,28,.72));
+        -webkit-backdrop-filter:blur(26px) saturate(2.1);backdrop-filter:blur(26px) saturate(2.1);
+        border:1px solid rgba(255,255,255,.2);box-shadow:0 30px 70px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.3);color:#fff;
+        transform:scale(1.08);transition:transform .26s cubic-bezier(.2,.9,.3,1.2)}
+      .back.in .alert{transform:scale(1)}
+      .lt .alert{background:linear-gradient(160deg,rgba(255,255,255,.9),rgba(255,255,255,.72));border-color:rgba(255,255,255,.85);
+        box-shadow:0 30px 70px rgba(0,0,0,.22),inset 0 1px 0 #fff;color:#000}
+      .ic{width:56px;height:56px;margin:0 auto 12px;border-radius:15px;background:linear-gradient(145deg,#4AA8F5,#1f6fb5);
+        display:flex;align-items:center;justify-content:center;box-shadow:0 8px 20px rgba(0,122,255,.35)}
+      .ic svg{width:30px;height:30px;fill:#fff}
+      .t{font-size:17px;font-weight:700;line-height:1.3;padding:0 4px;margin:0;text-wrap:balance}
+      .m{font-size:15px;line-height:1.42;margin:8px 0 0;padding:0 6px;color:rgba(235,235,245,.75)}
+      .lt .m{color:rgba(60,60,67,.78)}
+      .m b{color:inherit;font-weight:600}
+      .link{display:inline-flex;align-items:center;gap:5px;margin-top:12px;font-size:15px;font-weight:600;color:#4AA8F5;text-decoration:none;
+        padding:4px 8px;border-radius:8px}
+      .lt .link{color:#1f6fb5}
+      .link:hover{text-decoration:underline}
+      .link:focus-visible,button:focus-visible{outline:2px solid #4AA8F5;outline-offset:2px}
+      .link svg{width:14px;height:14px;fill:currentColor}
+      .btns{display:flex;gap:10px;margin-top:18px}
+      .btns.stack{flex-direction:column}
+      button{flex:1 1 auto;min-width:0;padding:13px 6px;border-radius:999px;font:inherit;font-size:15.5px;letter-spacing:-.01em;font-weight:600;white-space:nowrap;cursor:pointer;
+        -webkit-tap-highlight-color:transparent;transition:transform .1s ease,opacity .1s ease}
+      button:active{transform:scale(.96);opacity:.85}
+      .c{order:-1;color:#fff;background:rgba(255,255,255,.12);border:.5px solid rgba(255,255,255,.2);box-shadow:inset 0 1px 0 rgba(255,255,255,.25)}
+      .lt .c{color:#000;background:rgba(255,255,255,.8);border-color:rgba(0,0,0,.08);box-shadow:inset 0 1px 0 #fff,0 1px 3px rgba(0,0,0,.08)}
+      .ok{color:#fff;border:0;background:linear-gradient(180deg,rgba(0,122,255,.95),rgba(0,122,255,.8));
+        box-shadow:0 8px 22px rgba(0,122,255,.35),inset 0 1px 0 rgba(255,255,255,.45)}
+    </style>
+    <div class="back ${dark ? '' : 'lt'}">
+      <div class="alert" role="alertdialog" aria-modal="true" aria-labelledby="crt" aria-describedby="crm">
+        <div class="ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12,3V13.55C11.41,13.21 10.73,13 10,13C7.79,13 6,14.79 6,17C6,19.21 7.79,21 10,21C12.21,21 14,19.21 14,17V7H18V3H12Z"/></svg></div>
+        <h2 class="t" id="crt">CrowAI Media Player has a new home</h2>
+        <p class="m" id="crm">This card is being retired. Its replacement, <b>Crow Media Player</b>, does everything this card does and much more, and it’s a free install from HACS.</p>
+        <a class="link" href="${CROWAI_RETIRE_URL}" target="_blank" rel="noopener noreferrer">See what’s new on GitHub <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14,3V5H17.59L7.76,14.83L9.17,16.24L19,6.41V10H21V3M19,19H5V5H12V3H5C3.89,3 3,3.9 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V12H19V19Z"/></svg></a>
+        <div class="btns">
+          <button class="ok" type="button">OK</button>
+          <button class="c" type="button">Don’t Show Again</button>
+        </div>
+      </div>
+    </div>`;
+
+    const back = root.querySelector('.back');
+    let closed = false;
+    const close = (forever) => {
+      if (closed) return; closed = true;
+      if (forever) crowaiRetireSave({ ...crowaiRetireState(), off: true });
+      document.removeEventListener('keydown', onKey, true);
+      back.classList.remove('in');
+      setTimeout(() => host.remove(), 240);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.stopPropagation(); close(false); }
+    };
+    root.querySelector('.ok').addEventListener('click', () => close(false));
+    root.querySelector('.c').addEventListener('click', () => close(true));
+    root.querySelector('.link').addEventListener('click', () => close(true));
+    back.addEventListener('click', (e) => { if (e.target === back) close(false); });
+    document.addEventListener('keydown', onKey, true);
+
+    document.body.appendChild(host);
+    requestAnimationFrame(() => {
+      back.classList.add('in');
+      // Stack the buttons if a long label won't fit side by side.
+      const btns = root.querySelector('.btns');
+      if ([...btns.children].some(b => b.scrollWidth > b.clientWidth + 1)) btns.classList.add('stack');
+    });
+  } catch (e) {
+    console.warn('CrowAI: retirement notice failed', e);
+  }
+};
 // tidy away a setting earlier versions saved on this device
 try { localStorage.removeItem('crowai_star_prompt'); } catch (_) {}
 
@@ -4375,6 +4497,7 @@ class CrowAIMediaPlayerCard extends HTMLElement {
   }
 
   set hass(hass) {
+    if (!this._retireTried) { this._retireTried = true; setTimeout(() => crowaiRetireNotice(this), 2000); }
     // Keep the working spinner on for as long as a job (e.g. a vibe) is still running.
     if ((this._busyJobs || 0) > 0) this.shadowRoot?.getElementById('cardOuter')?.classList.add('crow-busy');
     if (this._loadingFrom) setTimeout(() => this._checkLoadingToast(), 0);

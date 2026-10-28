@@ -1,5 +1,15 @@
 # CrowAI Media Player Card
 
+> ## 👋 This card is being retired
+>
+> **CrowAI Media Player Card has a new home: [Crow Media Player](https://github.com/jamesmcginnis/crow-media-player).**
+>
+> Crow Media Player is the next version of this card, together with a Home Assistant integration that does the heavy lifting in the background. It has everything this card has and much more, and one download from HACS installs both.
+>
+> This card will no longer receive updates or fixes. It keeps working for now, but please move to Crow Media Player when you can. See [Moving to Crow Media Player](#moving-to-crow-media-player) below.
+>
+> **[👉 Get Crow Media Player](https://github.com/jamesmcginnis/crow-media-player)**
+
 CrowAI is a Home Assistant media player card built specifically for **iPhone**. Designed from the ground up for iPhone, it brings frosted-glass aesthetics, fluid touch animations, full Music Assistant integration, synced lyrics, a queue browser, multi-room multicast playback, rich AI-powered media info panels, movie and TV info, an Apple TV remote and twelve retro and modern skins — all in a card that feels like a native iPhone app.
 
 CrowAI is about **discovery** as much as playback — AI-powered info panels, recommendations, artist radio, similar tracks/shows/movies, AI-interpreted library search, Ask / Trivia panels, and personal Music Recap / Video Recap recaps all help you find your next favourite song, album, TV show or film, not just control what's already playing. And when you want something to keep, almost anything can be saved as a PDF, from listening reports to printable CD and DVD / Blu-ray case covers.
@@ -19,7 +29,23 @@ CrowAI is about **discovery** as much as playback — AI-powered info panels, re
 
 ---
 
+## Moving to Crow Media Player
+
+Moving over takes a few minutes:
+
+1. Follow the install steps on the [Crow Media Player page](https://github.com/jamesmcginnis/crow-media-player) to download it from HACS, then restart Home Assistant
+2. Go to **Settings → Devices & Services → + Add Integration**, choose **Crow Media Player** and click **Submit**
+3. Refresh your browser, or close and reopen the Home Assistant app
+4. Edit each dashboard and add the **Crow Media Player** card (`type: custom:crow-media-player-card`) in place of this one, then choose your speakers and settings in its editor
+5. When you're happy, remove this card: in **HACS**, find **CrowAI Media Player Card**, open the **⋮ menu** and choose **Remove**. If you installed it by hand, delete `crowai-media-player-card.js` from `/config/www/` and remove its entry under **Settings → Dashboards → Resources**
+
+Until you move, the card shows a short pop-up about the move, at most 3 times. Choose **Don't Show Again** to stop it straight away.
+
+---
+
 ## Installation
+
+> These steps install the retired card. For new installs, use [Crow Media Player](https://github.com/jamesmcginnis/crow-media-player) instead.
 
 ### Via HACS (Recommended)
 

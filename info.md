@@ -1,5 +1,15 @@
 # CrowAI Media Player Card
 
+> ## 👋 This card is being retired
+>
+> **CrowAI Media Player Card has a new home: [Crow Media Player](https://github.com/jamesmcginnis/crow-media-player).**
+>
+> Crow Media Player is the next version of this card, together with a Home Assistant integration that does the heavy lifting in the background. It has everything this card has and much more, and one download from HACS installs both.
+>
+> This card will no longer receive updates or fixes. It keeps working for now, but please move to Crow Media Player when you can. Moving over takes a few minutes: install Crow Media Player, add its integration, then swap this card for the **Crow Media Player** card on your dashboards. Step-by-step instructions are on the [Crow Media Player page](https://github.com/jamesmcginnis/crow-media-player).
+>
+> **[👉 Get Crow Media Player](https://github.com/jamesmcginnis/crow-media-player)**
+
 CrowAI is a Home Assistant media player card built specifically for **iPhone**. Designed from the ground up for iPhone, it brings frosted-glass aesthetics, fluid touch animations, full Music Assistant integration, synced lyrics, a queue browser, multi-room multicast playback, rich AI-powered media info panels, movie and TV info, an Apple TV remote, twelve retro and modern skins, and the option to play on the iPhone itself — all in a card that feels like a native iPhone app.
 
 CrowAI is about **discovery** as much as playback — AI-powered info panels, recommendations, artist radio, similar tracks/shows/movies, AI-interpreted library search, Ask / Trivia panels, and personal Music Recap / Video Recap recaps all help you find your next favourite song, album, TV show or film, not just control what's already playing. And when you want something to keep, almost anything can be saved as a PDF, from listening reports to printable CD and DVD / Blu-ray case covers.
@@ -518,6 +528,8 @@ In the visual editor, open **Caches, Data & Support**. At the top are three butt
 If Apple's chart feeds can't be reached from your device or network, the card falls back to Deezer's charts on its own: Top Songs and Top Albums come from Deezer, and Top Podcasts uses Deezer's podcast chart matched to Apple Podcasts so the shows still open and play. The card remembers for three hours that Apple was unreachable, so charts open straight away instead of waiting. MusicBrainz sometimes answers "busy" (HTTP 503) when it's been asked too often; the Health Check retries once and shows this as amber rather than red, and it usually clears within a minute. The Relays row always tests the relays, since Apple TV app icons use them whenever Apple refuses lookups for being too many, and says which relays are working.
 
 ## Installation
+
+> These steps install the retired card. For new installs, use [Crow Media Player](https://github.com/jamesmcginnis/crow-media-player) instead.
 
 Install via **HACS** (recommended):
 
